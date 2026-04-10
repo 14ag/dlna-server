@@ -1,0 +1,42 @@
+#ifndef MEDIA_SOURCES_H
+#define MEDIA_SOURCES_H
+
+#include <string>
+#include <vector>
+#include <mutex>
+#include <unordered_map>
+
+struct MediaItem {
+    int id;
+    int parentId;
+    std::wstring path;
+    std::wstring title;
+    bool isFolder;
+    std::wstring mimeType;
+    std::wstring upnpClass;
+    long long sizeBytes;
+};
+
+class MediaSources {
+public:
+    static MediaSources& Get();
+
+    void Scan();
+    std::vector<MediaItem> GetChildren(int parentId);
+    MediaItem GetItem(int id);
+    int GetSystemUpdateID();
+
+private:
+    MediaSources();
+    void ScanFolder(const std::wstring& rootPath, int parentId);
+    bool IsAllowedExtension(const std::wstring& ext, std::wstring& mime, std::wstring& uclass);
+
+    std::mutex m_mutex;
+    std::vector<MediaItem> m_items;
+    int m_nextId;
+    int m_systemUpdateId;
+};
+
+#define AppMedia MediaSources::Get()
+
+#endif // MEDIA_SOURCES_H
