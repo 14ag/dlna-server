@@ -1,7 +1,122 @@
 #include "config.h"
+#include "netutils.h"
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <sstream>
+#include <unordered_map>
+#include <vector>
+#include <algorithm>
+#include <cctype>
+#include <stdio.h>
+
+namespace {
+std::string TrimAscii(const std::string& value) {
+    size_t start = 0;
+    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
+        ++start;
+    }
+
+    size_t end = value.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+        --end;
+    }
+
+    return value.substr(start, end - start);
+}
+
+std::unordered_map<std::string, std::string> ParseConfigText(std::string text) {
+    std::unordered_map<std::string, std::string> values;
+    if (text.size() >= 3 &&
+        static_cast<unsigned char>(text[0]) == 0xEF &&
+        static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF) {
+        text.erase(0, 3);
+    }
+
+    std::istringstream stream(text);
+    std::string line;
+    std::string currentSection;
+
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+
+        std::string trimmed = TrimAscii(line);
+        if (trimmed.empty() || trimmed[0] == ';' || trimmed[0] == '#') {
+            continue;
+        }
+
+        if (trimmed.front() == '[' && trimmed.back() == ']') {
+            currentSection = trimmed.substr(1, trimmed.size() - 2);
+            continue;
+        }
+
+        if (currentSection != "Settings") {
+            continue;
+        }
+
+        size_t eq = trimmed.find('=');
+        if (eq == std::string::npos) {
+            continue;
+        }
+
+        std::string key = TrimAscii(trimmed.substr(0, eq));
+        std::string value = trimmed.substr(eq + 1);
+        values[key] = value;
+    }
+
+    return values;
+}
+
+std::unordered_map<std::string, std::string> ReadConfigFile(const std::wstring& path) {
+    FILE* fp = NULL;
+    if (_wfopen_s(&fp, path.c_str(), L"rb") != 0 || !fp) {
+        return {};
+    }
+
+    fseek(fp, 0, SEEK_END);
+    long size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    if (size <= 0) {
+        fclose(fp);
+        return {};
+    }
+
+    std::vector<unsigned char> bytes(static_cast<size_t>(size));
+    fread(bytes.data(), 1, bytes.size(), fp);
+    fclose(fp);
+
+    std::string text;
+    if (bytes.size() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) {
+        const wchar_t* wideData = reinterpret_cast<const wchar_t*>(bytes.data() + 2);
+        size_t wideCount = (bytes.size() - 2) / sizeof(wchar_t);
+        std::wstring wideText(wideData, wideCount);
+        if (!wideText.empty() && wideText.back() == L'\0') {
+            wideText.pop_back();
+        }
+        text = WideToUtf8(wideText);
+    } else {
+        text.assign(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    }
+
+    return ParseConfigText(text);
+}
+
+int ParseIntOrDefault(const std::unordered_map<std::string, std::string>& values, const char* key, int defaultValue) {
+    auto it = values.find(key);
+    if (it == values.end() || it->second.empty()) {
+        return defaultValue;
+    }
+
+    try {
+        return std::stoi(it->second);
+    } catch (...) {
+        return defaultValue;
+    }
+}
+}
 
 Config& Config::Get() {
     static Config instance;
@@ -51,71 +166,76 @@ void Config::SetRunOnBoot(bool enable) {
 
 void Config::Load() {
     std::wstring path = GetConfigPath();
-    wchar_t buf[1024];
+    auto values = ReadConfigFile(path);
 
-    GetPrivateProfileStringW(L"Settings", L"ServerName", L"WinDLNA Server", buf, 1024, path.c_str());
-    serverName = buf;
-
-    port = GetPrivateProfileIntW(L"Settings", L"Port", 8200, path.c_str());
-    fileServerPort = GetPrivateProfileIntW(L"Settings", L"FileServerPort", 8201, path.c_str());
-
-    flatFolderStyle = GetPrivateProfileIntW(L"Settings", L"FlatFolderStyle", 0, path.c_str());
-    showFileNamesInsteadOfTitles = GetPrivateProfileIntW(L"Settings", L"ShowFileNamesInsteadOfTitles", 0, path.c_str());
-    proxyStreams = GetPrivateProfileIntW(L"Settings", L"ProxyStreams", 0, path.c_str());
-    sortByTitle = GetPrivateProfileIntW(L"Settings", L"SortByTitle", 0, path.c_str());
-    doNotShowAllMediaFolders = GetPrivateProfileIntW(L"Settings", L"DoNotShowAllMediaFolders", 0, path.c_str());
-    addArtistAlbumFolders = GetPrivateProfileIntW(L"Settings", L"AddArtistAlbumFolders", 0, path.c_str());
-    debugLog = GetPrivateProfileIntW(L"Settings", L"DebugLog", 0, path.c_str());
-    runOnBoot = GetPrivateProfileIntW(L"Settings", L"RunOnBoot", 0, path.c_str());
-
-    GetPrivateProfileStringW(L"Settings", L"IPWhiteList", L"", buf, 1024, path.c_str());
-    ipWhiteList = buf;
-
-    GetPrivateProfileStringW(L"Settings", L"DeviceUUID", L"", buf, 1024, path.c_str());
-    deviceUUID = buf;
-    if (deviceUUID.empty()) {
-        deviceUUID = GenerateUUID();
-        WritePrivateProfileStringW(L"Settings", L"DeviceUUID", deviceUUID.c_str(), path.c_str());
+    serverName = Utf8ToWide(values.count("ServerName") ? values["ServerName"] : "WinDLNA Server");
+    if (serverName.empty()) {
+        serverName = L"WinDLNA Server";
     }
 
-    // Media Sources
-    GetPrivateProfileStringW(L"Settings", L"MediaSources", L"", buf, 1024, path.c_str());
-    std::wstring sourcesStr(buf);
-    
+    port = ParseIntOrDefault(values, "Port", 8200);
+    fileServerPort = ParseIntOrDefault(values, "FileServerPort", 8201);
+    flatFolderStyle = ParseIntOrDefault(values, "FlatFolderStyle", 0) != 0;
+    showFileNamesInsteadOfTitles = ParseIntOrDefault(values, "ShowFileNamesInsteadOfTitles", 0) != 0;
+    proxyStreams = ParseIntOrDefault(values, "ProxyStreams", 0) != 0;
+    sortByTitle = ParseIntOrDefault(values, "SortByTitle", 0) != 0;
+    doNotShowAllMediaFolders = ParseIntOrDefault(values, "DoNotShowAllMediaFolders", 0) != 0;
+    addArtistAlbumFolders = ParseIntOrDefault(values, "AddArtistAlbumFolders", 0) != 0;
+    debugLog = ParseIntOrDefault(values, "DebugLog", 0) != 0;
+    runOnBoot = ParseIntOrDefault(values, "RunOnBoot", 0) != 0;
+
+    ipWhiteList = Utf8ToWide(values.count("IPWhiteList") ? values["IPWhiteList"] : "");
+    deviceUUID = Utf8ToWide(values.count("DeviceUUID") ? values["DeviceUUID"] : "");
+    if (deviceUUID.empty()) {
+        deviceUUID = GenerateUUID();
+        Save();
+    }
+
     mediaSources.clear();
+    std::wstring sourcesStr = Utf8ToWide(values.count("MediaSources") ? values["MediaSources"] : "");
     size_t pos = 0;
     while ((pos = sourcesStr.find(L"|")) != std::wstring::npos) {
         std::wstring token = sourcesStr.substr(0, pos);
-        if(!token.empty()) mediaSources.push_back({token, true});
+        if (!token.empty()) mediaSources.push_back({ token, true });
         sourcesStr.erase(0, pos + 1);
     }
-    if(!sourcesStr.empty()) mediaSources.push_back({sourcesStr, true});
+    if (!sourcesStr.empty()) mediaSources.push_back({ sourcesStr, true });
 }
 
 void Config::Save() {
     std::wstring path = GetConfigPath();
 
-    WritePrivateProfileStringW(L"Settings", L"ServerName", serverName.c_str(), path.c_str());
-    WritePrivateProfileStringW(L"Settings", L"Port", std::to_wstring(port).c_str(), path.c_str());
-    WritePrivateProfileStringW(L"Settings", L"FileServerPort", std::to_wstring(fileServerPort).c_str(), path.c_str());
-    
-    WritePrivateProfileStringW(L"Settings", L"FlatFolderStyle", flatFolderStyle ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"Settings", L"ShowFileNamesInsteadOfTitles", showFileNamesInsteadOfTitles ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"Settings", L"ProxyStreams", proxyStreams ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"Settings", L"SortByTitle", sortByTitle ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"Settings", L"DoNotShowAllMediaFolders", doNotShowAllMediaFolders ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"Settings", L"AddArtistAlbumFolders", addArtistAlbumFolders ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"Settings", L"DebugLog", debugLog ? L"1" : L"0", path.c_str());
-    WritePrivateProfileStringW(L"Settings", L"RunOnBoot", runOnBoot ? L"1" : L"0", path.c_str());
-    
-    WritePrivateProfileStringW(L"Settings", L"IPWhiteList", ipWhiteList.c_str(), path.c_str());
-
     std::wstring sourcesStr;
-    for(size_t i = 0; i < mediaSources.size(); i++) {
+    for (size_t i = 0; i < mediaSources.size(); i++) {
         sourcesStr += mediaSources[i].path;
-        if(i < mediaSources.size() - 1) sourcesStr += L"|";
+        if (i < mediaSources.size() - 1) sourcesStr += L"|";
     }
-    WritePrivateProfileStringW(L"Settings", L"MediaSources", sourcesStr.c_str(), path.c_str());
+
+    std::ostringstream ss;
+    ss << "[Settings]\n";
+    ss << "ServerName=" << WideToUtf8(serverName) << "\n";
+    ss << "Port=" << port << "\n";
+    ss << "FileServerPort=" << fileServerPort << "\n";
+    ss << "FlatFolderStyle=" << (flatFolderStyle ? 1 : 0) << "\n";
+    ss << "ShowFileNamesInsteadOfTitles=" << (showFileNamesInsteadOfTitles ? 1 : 0) << "\n";
+    ss << "ProxyStreams=" << (proxyStreams ? 1 : 0) << "\n";
+    ss << "SortByTitle=" << (sortByTitle ? 1 : 0) << "\n";
+    ss << "DoNotShowAllMediaFolders=" << (doNotShowAllMediaFolders ? 1 : 0) << "\n";
+    ss << "AddArtistAlbumFolders=" << (addArtistAlbumFolders ? 1 : 0) << "\n";
+    ss << "DebugLog=" << (debugLog ? 1 : 0) << "\n";
+    ss << "RunOnBoot=" << (runOnBoot ? 1 : 0) << "\n";
+    ss << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
+    ss << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
+    ss << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";
+
+    FILE* fp = NULL;
+    if (_wfopen_s(&fp, path.c_str(), L"wb") == 0 && fp) {
+        static const unsigned char bom[] = { 0xEF, 0xBB, 0xBF };
+        fwrite(bom, 1, sizeof(bom), fp);
+        std::string content = ss.str();
+        fwrite(content.data(), 1, content.size(), fp);
+        fclose(fp);
+    }
 
     SetRunOnBoot(runOnBoot);
 }

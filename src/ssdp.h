@@ -2,26 +2,32 @@
 #define SSDP_H
 
 #include <string>
+#include <vector>
 #include <winsock2.h>
+#include "netutils.h"
 
 class SSDP {
 public:
     static SSDP& Get();
 
-    bool Start(const std::string& ipAddress, int port, const std::wstring& serverName, const std::wstring& uuid);
+    bool Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid);
     void Stop();
 
 private:
     SSDP();
-    
-    void SendNotify(const char* type);
+
+    void CloseSockets();
+    void SendNotifyRound(const char* nts);
+    void SendNotifyBurst(const char* nts, int rounds, DWORD delayMs);
+    void HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int remoteLen, const std::string& request);
     static DWORD WINAPI ThreadWorker(LPVOID lpParam);
 
     bool m_running;
     HANDLE m_hThread;
-    SOCKET m_socket;
-    
-    std::string m_ip;
+    SOCKET m_ipv4Socket;
+    SOCKET m_ipv6Socket;
+
+    std::vector<NetworkEndpoint> m_endpoints;
     int m_port;
     std::string m_serverName;
     std::string m_uuidStr;

@@ -1,4 +1,5 @@
 #include "ipwhitelist.h"
+#include "netutils.h"
 
 IPWhitelist& IPWhitelist::Get() {
     static IPWhitelist instance;
@@ -17,14 +18,14 @@ void IPWhitelist::Load(const std::wstring& configStr) {
     size_t end = configStr.find(L',');
     while (end != std::wstring::npos) {
         std::wstring tk = configStr.substr(start, end - start);
-        std::string ipTk(tk.begin(), tk.end());
+        std::string ipTk = NormalizeIpLiteral(WideToUtf8(tk));
         if(!ipTk.empty()) m_allowedIps.push_back(ipTk);
         start = end + 1;
         end = configStr.find(L',', start);
     }
     std::wstring tk = configStr.substr(start);
     if (!tk.empty()) {
-        std::string ipTk(tk.begin(), tk.end());
+        std::string ipTk = NormalizeIpLiteral(WideToUtf8(tk));
         m_allowedIps.push_back(ipTk);
     }
 }
@@ -32,8 +33,10 @@ void IPWhitelist::Load(const std::wstring& configStr) {
 bool IPWhitelist::IsAllowed(const std::string& ipAddress) {
     if (m_allowedIps.empty()) return true; // Empty means all allowed
 
+    std::string normalized = NormalizeIpLiteral(ipAddress);
+
     for (const auto& allowed : m_allowedIps) {
-        if (ipAddress == allowed) return true;
+        if (normalized == allowed) return true;
     }
     return false;
 }
