@@ -4,9 +4,12 @@
 #include "ipwhitelist.h"
 #include "contentdirectory.h"
 #include "media_sources.h"
+#include "netutils.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <sstream>
+#include <algorithm>
+#include <cctype>
 
 #define HTTP_BUF_SIZE 8192
 
@@ -16,64 +19,161 @@ struct WorkData {
     std::string ip;
 };
 
+namespace {
+std::string TrimAscii(const std::string& value) {
+    size_t start = 0;
+    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
+        ++start;
+    }
+
+    size_t end = value.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
+        --end;
+    }
+
+    return value.substr(start, end - start);
+}
+
+std::string ToLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::string FindHeaderValueCaseInsensitive(const std::string& request, const std::string& headerName) {
+    std::string needle = ToLowerAscii(headerName) + ":";
+    size_t lineStart = request.find("\r\n");
+
+    while (lineStart != std::string::npos) {
+        lineStart += 2;
+        size_t lineEnd = request.find("\r\n", lineStart);
+        if (lineEnd == std::string::npos || lineEnd == lineStart) {
+            break;
+        }
+
+        std::string line = request.substr(lineStart, lineEnd - lineStart);
+        std::string lowerLine = ToLowerAscii(line);
+        if (lowerLine.rfind(needle, 0) == 0) {
+            return TrimAscii(line.substr(headerName.size() + 1));
+        }
+
+        lineStart = lineEnd;
+    }
+
+    return std::string();
+}
+
+SOCKET CreateListenSocket(int family, int port) {
+    SOCKET listenSocket = socket(family, SOCK_STREAM, IPPROTO_TCP);
+    if (listenSocket == INVALID_SOCKET) {
+        return INVALID_SOCKET;
+    }
+
+    BOOL reuse = TRUE;
+    setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+
+    if (family == AF_INET6) {
+        DWORD v6Only = 1;
+        setsockopt(listenSocket, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&v6Only), sizeof(v6Only));
+    }
+
+    if (family == AF_INET) {
+        sockaddr_in addr = {};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(static_cast<u_short>(port));
+        addr.sin_addr.s_addr = INADDR_ANY;
+
+        if (bind(listenSocket, reinterpret_cast<SOCKADDR*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+            closesocket(listenSocket);
+            return INVALID_SOCKET;
+        }
+    } else {
+        sockaddr_in6 addr6 = {};
+        addr6.sin6_family = AF_INET6;
+        addr6.sin6_port = htons(static_cast<u_short>(port));
+        addr6.sin6_addr = in6addr_any;
+
+        if (bind(listenSocket, reinterpret_cast<SOCKADDR*>(&addr6), sizeof(addr6)) == SOCKET_ERROR) {
+            closesocket(listenSocket);
+            return INVALID_SOCKET;
+        }
+    }
+
+    if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
+        closesocket(listenSocket);
+        return INVALID_SOCKET;
+    }
+
+    return listenSocket;
+}
+}
+
 HttpServer& HttpServer::Get() {
     static HttpServer instance;
     return instance;
 }
 
-HttpServer::HttpServer() : m_running(false), m_hAcceptThread(NULL), m_listenSocket(INVALID_SOCKET), m_threadPool(NULL), m_cleanupGroup(NULL) {
+HttpServer::HttpServer()
+    : m_running(false),
+      m_hAcceptThread(NULL),
+      m_listenSocketV4(INVALID_SOCKET),
+      m_listenSocketV6(INVALID_SOCKET),
+      m_threadPool(NULL),
+      m_cleanupGroup(NULL) {
 }
 
 bool HttpServer::Start(int port) {
     if (m_running) return true;
 
-    m_listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (m_listenSocket == INVALID_SOCKET) {
-        return false;
-    }
+    m_listenSocketV4 = CreateListenSocket(AF_INET, port);
+    m_listenSocketV6 = CreateListenSocket(AF_INET6, port);
 
-    BOOL reuse = TRUE;
-    setsockopt(m_listenSocket, SOL_SOCKET, SO_REUSEADDR, (char*)&reuse, sizeof(reuse));
-
-    sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = INADDR_ANY;
-
-    if (bind(m_listenSocket, (SOCKADDR*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-        closesocket(m_listenSocket);
-        m_listenSocket = INVALID_SOCKET;
-        return false;
-    }
-
-    if (listen(m_listenSocket, SOMAXCONN) == SOCKET_ERROR) {
-        closesocket(m_listenSocket);
-        m_listenSocket = INVALID_SOCKET;
+    if (m_listenSocketV4 == INVALID_SOCKET && m_listenSocketV6 == INVALID_SOCKET) {
         return false;
     }
 
     m_threadPool = CreateThreadpool(NULL);
+    if (!m_threadPool) {
+        Stop();
+        return false;
+    }
+
     SetThreadpoolThreadMinimum(m_threadPool, 4);
     SetThreadpoolThreadMaximum(m_threadPool, 8);
     InitializeThreadpoolEnvironment(&m_cbe);
     m_cleanupGroup = CreateThreadpoolCleanupGroup();
+    if (!m_cleanupGroup) {
+        Stop();
+        return false;
+    }
+
     SetThreadpoolCallbackPool(&m_cbe, m_threadPool);
     SetThreadpoolCallbackCleanupGroup(&m_cbe, m_cleanupGroup, NULL);
 
     m_running = true;
     m_hAcceptThread = CreateThread(NULL, 0, AcceptThreadWorker, this, 0, NULL);
+    if (!m_hAcceptThread) {
+        Stop();
+        return false;
+    }
 
     return true;
 }
 
 void HttpServer::Stop() {
-    if (!m_running) return;
-    
+    if (!m_running && m_listenSocketV4 == INVALID_SOCKET && m_listenSocketV6 == INVALID_SOCKET) return;
+
     m_running = false;
-    
-    if (m_listenSocket != INVALID_SOCKET) {
-        closesocket(m_listenSocket);
-        m_listenSocket = INVALID_SOCKET;
+
+    if (m_listenSocketV4 != INVALID_SOCKET) {
+        closesocket(m_listenSocketV4);
+        m_listenSocketV4 = INVALID_SOCKET;
+    }
+
+    if (m_listenSocketV6 != INVALID_SOCKET) {
+        closesocket(m_listenSocketV6);
+        m_listenSocketV6 = INVALID_SOCKET;
     }
 
     if (m_hAcceptThread) {
@@ -95,44 +195,77 @@ void HttpServer::Stop() {
 }
 
 DWORD WINAPI HttpServer::AcceptThreadWorker(LPVOID lpParam) {
-    HttpServer* pThis = (HttpServer*)lpParam;
-    
+    HttpServer* pThis = reinterpret_cast<HttpServer*>(lpParam);
+
     while (pThis->m_running) {
-        sockaddr_in clientAddr;
-        int clientAddrLen = sizeof(clientAddr);
-        SOCKET clientSocket = accept(pThis->m_listenSocket, (SOCKADDR*)&clientAddr, &clientAddrLen);
-        
-        if (clientSocket == INVALID_SOCKET) {
-            break; 
+        fd_set readfds;
+        FD_ZERO(&readfds);
+
+        int socketCount = 0;
+        if (pThis->m_listenSocketV4 != INVALID_SOCKET) {
+            FD_SET(pThis->m_listenSocketV4, &readfds);
+            ++socketCount;
+        }
+        if (pThis->m_listenSocketV6 != INVALID_SOCKET) {
+            FD_SET(pThis->m_listenSocketV6, &readfds);
+            ++socketCount;
+        }
+        if (socketCount == 0) {
+            break;
         }
 
-        char ipBuf[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &(clientAddr.sin_addr), ipBuf, INET_ADDRSTRLEN);
-        std::string clientIP(ipBuf);
-
-        // Check Whitelist
-        if (!IPWhitelist::Get().IsAllowed(clientIP)) {
-            LogPrint(L"Blocked connection from %hs", clientIP.c_str());
-            closesocket(clientSocket);
+        timeval tv = { 1, 0 };
+        int result = select(0, &readfds, NULL, NULL, &tv);
+        if (result <= 0) {
             continue;
         }
 
-        // Package work for threadpool
-        WorkData* wd = new WorkData{pThis, clientSocket, clientIP};
-        PTP_WORK work = CreateThreadpoolWork(WorkerCallback, wd, &pThis->m_cbe);
-        SubmitThreadpoolWork(work);
+        SOCKET readySockets[] = { pThis->m_listenSocketV4, pThis->m_listenSocketV6 };
+        for (SOCKET listenSocket : readySockets) {
+            if (listenSocket == INVALID_SOCKET || !FD_ISSET(listenSocket, &readfds)) {
+                continue;
+            }
+
+            sockaddr_storage clientAddr = {};
+            int clientAddrLen = sizeof(clientAddr);
+            SOCKET clientSocket = accept(listenSocket, reinterpret_cast<SOCKADDR*>(&clientAddr), &clientAddrLen);
+            if (clientSocket == INVALID_SOCKET) {
+                continue;
+            }
+
+            std::string clientIP = NormalizeIpLiteral(SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&clientAddr)));
+
+            if (!IPWhitelist::Get().IsAllowed(clientIP)) {
+                LogPrint(L"Blocked connection from %hs", clientIP.c_str());
+                static const char* forbidden = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+                send(clientSocket, forbidden, static_cast<int>(strlen(forbidden)), 0);
+                closesocket(clientSocket);
+                continue;
+            }
+
+            WorkData* wd = new WorkData{ pThis, clientSocket, clientIP };
+            PTP_WORK work = CreateThreadpoolWork(WorkerCallback, wd, &pThis->m_cbe);
+            if (!work) {
+                closesocket(clientSocket);
+                delete wd;
+                continue;
+            }
+
+            SubmitThreadpoolWork(work);
+        }
     }
+
     return 0;
 }
 
-void CALLBACK HttpServer::WorkerCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work) {
-    auto wd = (WorkData*)Context;
+void CALLBACK HttpServer::WorkerCallback(PTP_CALLBACK_INSTANCE, PVOID Context, PTP_WORK Work) {
+    WorkData* wd = reinterpret_cast<WorkData*>(Context);
     wd->pServer->HandleClient(wd->s, wd->ip);
     closesocket(wd->s);
     delete wd;
+    CloseThreadpoolWork(Work);
 }
 
-// Very basic HTTP reader to parse first line and headers, and optional body
 void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) {
     char buf[HTTP_BUF_SIZE];
     int bytesRead = recv(clientSocket, buf, HTTP_BUF_SIZE - 1, 0);
@@ -145,22 +278,22 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
     if (firstLineEnd == std::string::npos) return;
     std::string firstLine = req.substr(0, firstLineEnd);
 
-    size_t space1 = firstLine.find(" ");
-    size_t space2 = firstLine.rfind(" ");
-    if (space1 == std::string::npos || space2 == std::string::npos) return;
+    size_t space1 = firstLine.find(' ');
+    size_t space2 = firstLine.rfind(' ');
+    if (space1 == std::string::npos || space2 == std::string::npos || space2 <= space1) return;
 
     std::string method = firstLine.substr(0, space1);
     std::string path = firstLine.substr(space1 + 1, space2 - space1 - 1);
 
-    // Host URL for Browse responses
-    char hostName[256];
-    gethostname(hostName, sizeof(hostName));
-    std::string hostUrl = clientIP + ":" + std::to_string(AppConfig.port);
-
-    size_t hostPos = req.find("Host: ");
-    if(hostPos != std::string::npos) {
-        size_t endHost = req.find("\r\n", hostPos);
-        hostUrl = req.substr(hostPos + 6, endHost - hostPos - 6);
+    std::string hostUrl = FindHeaderValueCaseInsensitive(req, "Host");
+    if (hostUrl.empty()) {
+        sockaddr_storage localAddr = {};
+        int localAddrLen = sizeof(localAddr);
+        if (getsockname(clientSocket, reinterpret_cast<SOCKADDR*>(&localAddr), &localAddrLen) == 0) {
+            hostUrl = SockaddrToHostPort(reinterpret_cast<const SOCKADDR*>(&localAddr), AppConfig.port);
+        } else {
+            hostUrl = clientIP + ":" + std::to_string(AppConfig.port);
+        }
     }
 
     if (method == "GET") {
@@ -168,40 +301,50 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
         if (path == "/description.xml") {
             std::string body = AppContent.GetDeviceDescriptionXML();
             response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n" + body;
-            send(clientSocket, response.c_str(), response.length(), 0);
-        } else if (path == "/ContentDirectory.xml") {
+            send(clientSocket, response.c_str(), static_cast<int>(response.length()), 0);
+            return;
+        }
+
+        if (path == "/ContentDirectory.xml") {
             std::string body = AppContent.GetContentDirectoryXML();
             response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n" + body;
-            send(clientSocket, response.c_str(), response.length(), 0);
-        } else if (path == "/ConnectionManager.xml") {
+            send(clientSocket, response.c_str(), static_cast<int>(response.length()), 0);
+            return;
+        }
+
+        if (path == "/ConnectionManager.xml") {
             std::string body = AppContent.GetConnectionManagerXML();
             response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n" + body;
-            send(clientSocket, response.c_str(), response.length(), 0);
-        } else if (path.find("/media/") == 0) {
+            send(clientSocket, response.c_str(), static_cast<int>(response.length()), 0);
+            return;
+        }
+
+        if (path.rfind("/media/", 0) == 0) {
             int fileId = std::stoi(path.substr(7));
             MediaItem item = AppMedia.GetItem(fileId);
             if (item.id != -1) {
                 HANDLE hFile = CreateFileW(item.path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
                 if (hFile != INVALID_HANDLE_VALUE) {
-                    LARGE_INTEGER fileSize;
+                    LARGE_INTEGER fileSize = {};
                     GetFileSizeEx(hFile, &fileSize);
 
-                    // Parse Range bytes=X-Y
                     long long startByte = 0;
                     long long endByte = fileSize.QuadPart - 1;
                     bool isPartial = false;
 
-                    size_t rh = req.find("Range: bytes=");
-                    if (rh != std::string::npos) {
-                        size_t rn = req.find("\r\n", rh);
-                        std::string rangeStr = req.substr(rh + 13, rn - (rh + 13));
-                        size_t dash = rangeStr.find("-");
-                        if (dash != std::string::npos) {
-                            std::string startStr = rangeStr.substr(0, dash);
-                            std::string endStr = rangeStr.substr(dash + 1);
-                            if (!startStr.empty()) startByte = std::stoll(startStr);
-                            if (!endStr.empty()) endByte = std::stoll(endStr);
-                            isPartial = true;
+                    std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
+                    if (!rangeHeader.empty()) {
+                        std::string lowerRange = ToLowerAscii(rangeHeader);
+                        if (lowerRange.rfind("bytes=", 0) == 0) {
+                            std::string rangeStr = rangeHeader.substr(6);
+                            size_t dash = rangeStr.find('-');
+                            if (dash != std::string::npos) {
+                                std::string startStr = TrimAscii(rangeStr.substr(0, dash));
+                                std::string endStr = TrimAscii(rangeStr.substr(dash + 1));
+                                if (!startStr.empty()) startByte = std::stoll(startStr);
+                                if (!endStr.empty()) endByte = std::stoll(endStr);
+                                isPartial = true;
+                            }
                         }
                     }
 
@@ -209,7 +352,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     if (startByte > endByte) startByte = endByte;
 
                     long long contentLength = endByte - startByte + 1;
-                    std::string mime(item.mimeType.begin(), item.mimeType.end());
+                    std::string mime = WideToUtf8(item.mimeType);
 
                     std::stringstream headers;
                     if (isPartial) {
@@ -218,6 +361,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     } else {
                         headers << "HTTP/1.1 200 OK\r\n";
                     }
+
                     headers << "Content-Type: " << mime << "\r\n"
                             << "Content-Length: " << contentLength << "\r\n"
                             << "Accept-Ranges: bytes\r\n"
@@ -227,58 +371,71 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             << "\r\n";
 
                     std::string headStr = headers.str();
-                    send(clientSocket, headStr.c_str(), headStr.length(), 0);
+                    send(clientSocket, headStr.c_str(), static_cast<int>(headStr.length()), 0);
 
-                    LARGE_INTEGER movePos;
+                    LARGE_INTEGER movePos = {};
                     movePos.QuadPart = startByte;
                     SetFilePointerEx(hFile, movePos, NULL, FILE_BEGIN);
 
                     long long remaining = contentLength;
                     char fileBuf[65536];
-                    DWORD bytesToRead, bytesReaded;
+                    DWORD bytesToRead = 0;
+                    DWORD bytesReadFile = 0;
 
                     while (remaining > 0 && m_running) {
-                        bytesToRead = (remaining > sizeof(fileBuf)) ? sizeof(fileBuf) : (DWORD)remaining;
-                        if (!ReadFile(hFile, fileBuf, bytesToRead, &bytesReaded, NULL) || bytesReaded == 0) break;
-                        
-                        int sent = send(clientSocket, fileBuf, bytesReaded, 0);
-                        if (sent == SOCKET_ERROR) break;
-                        
-                        remaining -= bytesReaded;
+                        bytesToRead = (remaining > static_cast<long long>(sizeof(fileBuf))) ? static_cast<DWORD>(sizeof(fileBuf)) : static_cast<DWORD>(remaining);
+                        if (!ReadFile(hFile, fileBuf, bytesToRead, &bytesReadFile, NULL) || bytesReadFile == 0) {
+                            break;
+                        }
+
+                        int sent = send(clientSocket, fileBuf, bytesReadFile, 0);
+                        if (sent == SOCKET_ERROR) {
+                            break;
+                        }
+
+                        remaining -= bytesReadFile;
                     }
 
                     CloseHandle(hFile);
                     return;
                 }
             }
-            response = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n";
-            send(clientSocket, response.c_str(), response.length(), 0);
-        }
-    } else if (method == "POST") {
-        if (path == "/upnp/control/content_directory") {
-            size_t headersEnd = req.find("\r\n\r\n");
-            std::string body;
-            if (headersEnd != std::string::npos) {
-                size_t bodyStart = headersEnd + 4;
-                body = req.substr(bodyStart);
 
-                // Quick Content-Length parse to read more if body was cut off
-                size_t clPos = req.find("Content-Length: ");
-                if (clPos != std::string::npos) {
-                    size_t clEnd = req.find("\r\n", clPos);
-                    int cl = std::stoi(req.substr(clPos + 16, clEnd - clPos - 16));
-                    while (body.length() < cl && m_running) {
-                        int r = recv(clientSocket, buf, HTTP_BUF_SIZE, 0);
-                        if (r <= 0) break;
-                        body.append(buf, r);
-                    }
+            response = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n";
+            send(clientSocket, response.c_str(), static_cast<int>(response.length()), 0);
+            return;
+        }
+
+        response = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n";
+        send(clientSocket, response.c_str(), static_cast<int>(response.length()), 0);
+        return;
+    }
+
+    if (method == "POST" && path == "/upnp/control/content_directory") {
+        size_t headersEnd = req.find("\r\n\r\n");
+        std::string body;
+        if (headersEnd != std::string::npos) {
+            size_t bodyStart = headersEnd + 4;
+            body = req.substr(bodyStart);
+
+            std::string contentLengthHeader = FindHeaderValueCaseInsensitive(req, "Content-Length");
+            if (!contentLengthHeader.empty()) {
+                int contentLength = std::stoi(contentLengthHeader);
+                while (static_cast<int>(body.length()) < contentLength && m_running) {
+                    int r = recv(clientSocket, buf, HTTP_BUF_SIZE, 0);
+                    if (r <= 0) break;
+                    body.append(buf, r);
                 }
-                
-                std::string browseResp = AppContent.HandleBrowse(body, hostUrl);
-                std::string headers = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(browseResp.length()) + "\r\nConnection: close\r\n\r\n";
-                send(clientSocket, headers.c_str(), headers.length(), 0);
-                send(clientSocket, browseResp.c_str(), browseResp.length(), 0);
             }
+
+            std::string browseResp = AppContent.HandleBrowse(body, hostUrl);
+            std::string headers = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(browseResp.length()) + "\r\nConnection: close\r\n\r\n";
+            send(clientSocket, headers.c_str(), static_cast<int>(headers.length()), 0);
+            send(clientSocket, browseResp.c_str(), static_cast<int>(browseResp.length()), 0);
+            return;
         }
     }
+
+    static const char* badRequest = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    send(clientSocket, badRequest, static_cast<int>(strlen(badRequest)), 0);
 }

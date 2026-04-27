@@ -8,10 +8,8 @@
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <iphlpapi.h>
 
 #pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "iphlpapi.lib")
 
 Server& Server::Get() {
     static Server instance;
@@ -23,32 +21,22 @@ Server::Server() : m_running(false) {
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 }
 
-std::string Server::GetLocalIPv4() {
-    std::string result = "127.0.0.1";
-    ULONG outBufLen = 15000;
-    PIP_ADAPTER_ADDRESSES pAddresses = (IP_ADAPTER_ADDRESSES*)malloc(outBufLen);
-    
-    if (GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER, NULL, pAddresses, &outBufLen) == NO_ERROR) {
-        PIP_ADAPTER_ADDRESSES pCurrAddresses = pAddresses;
-        while (pCurrAddresses) {
-            if (pCurrAddresses->IfType != IF_TYPE_SOFTWARE_LOOPBACK && pCurrAddresses->OperStatus == IfOperStatusUp) {
-                PIP_ADAPTER_UNICAST_ADDRESS pUnicast = pCurrAddresses->FirstUnicastAddress;
-                if (pUnicast) {
-                    sockaddr_in* sa_in = (sockaddr_in*)pUnicast->Address.lpSockaddr;
-                    char ipBuf[INET_ADDRSTRLEN];
-                    inet_ntop(AF_INET, &(sa_in->sin_addr), ipBuf, INET_ADDRSTRLEN);
-                    std::string ipStr(ipBuf);
-                    if (ipStr.find("169.254.") != 0) { // Skip APIPA
-                        result = ipStr;
-                        break;
-                    }
-                }
-            }
-            pCurrAddresses = pCurrAddresses->Next;
+void Server::RefreshEndpoints() {
+    m_endpoints.clear();
+    if (!EnumerateNetworkEndpoints(AppConfig.port, m_endpoints)) {
+        return;
+    }
+
+    if (AppConfig.debugLog) {
+        for (const auto& endpoint : m_endpoints) {
+            LogPrint(L"Discovery endpoint selected: family=%d addr=%hs if=%lu prefix=%lu location=%hs",
+                     endpoint.family,
+                     endpoint.address.c_str(),
+                     endpoint.interfaceIndex,
+                     endpoint.prefixLength,
+                     endpoint.locationUrl.c_str());
         }
     }
-    free(pAddresses);
-    return result;
 }
 
 bool Server::Start() {
@@ -68,18 +56,32 @@ bool Server::Start() {
     }
 
     AppMedia.Scan();
+    RefreshEndpoints();
+    if (m_endpoints.empty()) {
+        LogPrint(L"Failed to find any active network endpoint for discovery.");
+        return false;
+    }
 
-    std::string ipStr = GetLocalIPv4();
-    m_endpoint = std::wstring(ipStr.begin(), ipStr.end()) + L":" + std::to_wstring(AppConfig.port);
+    const NetworkEndpoint* displayEndpoint = NULL;
+    for (const auto& endpoint : m_endpoints) {
+        if (endpoint.family == AF_INET) {
+            displayEndpoint = &endpoint;
+            break;
+        }
+    }
+    if (displayEndpoint == NULL) {
+        displayEndpoint = &m_endpoints.front();
+    }
 
-    LogPrint(L"Starting server on %s", m_endpoint.c_str());
+    m_endpoint = std::wstring(displayEndpoint->host.begin(), displayEndpoint->host.end()) + L":" + std::to_wstring(AppConfig.port);
+    LogPrint(L"Starting server on %ls", m_endpoint.c_str());
 
     if (!HttpServer::Get().Start(AppConfig.port)) {
         LogPrint(L"Failed to start HTTP server.");
         return false;
     }
 
-    if (!SSDP::Get().Start(ipStr, AppConfig.port, AppConfig.serverName, AppConfig.deviceUUID)) {
+    if (!SSDP::Get().Start(m_endpoints, AppConfig.port, AppConfig.serverName, AppConfig.deviceUUID)) {
         LogPrint(L"Failed to start SSDP.");
         HttpServer::Get().Stop();
         return false;

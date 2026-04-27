@@ -20,7 +20,8 @@ private:
 
     bool m_running;
     HANDLE m_hAcceptThread;
-    SOCKET m_listenSocket;
+    SOCKET m_listenSocketV4;
+    SOCKET m_listenSocketV6;
 
     PTP_POOL m_threadPool;
     PTP_CLEANUP_GROUP m_cleanupGroup;

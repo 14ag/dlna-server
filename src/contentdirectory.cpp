@@ -1,6 +1,7 @@
 #include "contentdirectory.h"
 #include "config.h"
 #include "log.h"
+#include "netutils.h"
 #include <sstream>
 
 ContentDirectory& ContentDirectory::Get() {
@@ -31,11 +32,11 @@ std::string ContentDirectory::XMLEscape(const std::wstring& wstr) {
 
 std::string ContentDirectory::GetDeviceDescriptionXML() {
     auto& cfg = AppConfig;
-    std::string deviceUUID(cfg.deviceUUID.begin(), cfg.deviceUUID.end());
-    std::string serverName(cfg.serverName.begin(), cfg.serverName.end());
+    std::string deviceUUID = WideToUtf8(cfg.deviceUUID);
+    std::string serverName = XMLEscapeUtf8(WideToUtf8(cfg.serverName));
 
     std::stringstream ss;
-    ss << "<?xml version=\"1.0\"?>\n"
+    ss << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
        << "<root xmlns=\"urn:schemas-upnp-org:device-1-0\" xmlns:dlna=\"urn:schemas-dlna-org:device-1-0\">\n"
        << "  <specVersion><major>1</major><minor>0</minor></specVersion>\n"
        << "  <device>\n"
@@ -127,7 +128,7 @@ std::string ContentDirectory::HandleBrowse(const std::string& req, const std::st
                 << "</container>";
             didl += css.str();
         } else {
-            std::string mime(it.mimeType.begin(), it.mimeType.end());
+            std::string mime = WideToUtf8(it.mimeType);
             std::stringstream iss;
             iss << "<item id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" restricted=\"1\">"
                 << "<dc:title>" << XMLEscape(it.title) << "</dc:title>"
@@ -142,8 +143,7 @@ std::string ContentDirectory::HandleBrowse(const std::string& req, const std::st
     }
     didl += "</DIDL-Lite>";
 
-    std::wstring wdidl = std::wstring(didl.begin(), didl.end());
-    std::string escapedDidl = XMLEscape(wdidl);
+    std::string escapedDidl = XMLEscapeUtf8(didl);
 
     std::stringstream ss;
     ss << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
