@@ -46,7 +46,10 @@ _deps
 # CMake build directories
 build/
 build-*/
+build_output/
+build_plan/
 out/
+output/
 bin/
 
 # Visual Studio
@@ -66,6 +69,8 @@ bin/
 
 # Logs
 build.log
+output.log
+vlc-help.txt
 *.log
 
 # Personal/AI specific

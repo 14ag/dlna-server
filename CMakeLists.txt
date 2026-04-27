@@ -12,6 +12,7 @@ set(SOURCES
     src/logdlg.cpp
     src/server.cpp
     src/ssdp.cpp
+    src/netutils.cpp
     src/httpserver.cpp
     src/contentdirectory.cpp
     src/media_sources.cpp
@@ -26,6 +27,7 @@ set(HEADERS
     src/logdlg.h
     src/server.h
     src/ssdp.h
+    src/netutils.h
     src/httpserver.h
     src/contentdirectory.h
     src/media_sources.h
