@@ -17,7 +17,14 @@ std::string Trim(const std::string& value) {
     const size_t start = value.find_first_not_of(ws);
     if (start == std::string::npos) return {};
     const size_t end = value.find_last_not_of(ws);
-    return value.substr(start, end - start + 1);
+    std::string result = value.substr(start, end - start + 1);
+    if (result.size() >= 3 &&
+        static_cast<unsigned char>(result[0]) == 0xEF &&
+        static_cast<unsigned char>(result[1]) == 0xBB &&
+        static_cast<unsigned char>(result[2]) == 0xBF) {
+        result.erase(0, 3);
+    }
+    return result;
 }
 
 std::string AppRootConfigPath() {

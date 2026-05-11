@@ -1,0 +1,16 @@
+set(applications_dir "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_DATADIR@/applications")
+set(exec_path "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@/dlna-server-gui")
+set(icon_path "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_DATADIR@/icons/hicolor/scalable/apps/dlna-server.svg")
+
+file(MAKE_DIRECTORY "${applications_dir}")
+file(WRITE "${applications_dir}/dlna-server.desktop"
+"[Desktop Entry]
+Type=Application
+Name=DLNA Server
+Comment=Share local media with DLNA and UPnP clients
+Exec=${exec_path}
+Icon=${icon_path}
+Terminal=false
+Categories=AudioVideo;Network;
+StartupNotify=true
+")

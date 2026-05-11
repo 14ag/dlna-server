@@ -6,7 +6,7 @@
 
 WinDLNAServer streams local video, audio, and image files to DLNA and UPnP clients on the local network.
 
-The Windows build provides a native Win32 desktop app for managing folders and server settings. The POSIX build provides a headless `dlna-server` target for Linux, macOS, and Termux-style environments.
+The Windows build provides a native Win32 desktop app for managing folders and server settings. The POSIX build provides a headless `dlna-server` target plus a small desktop GUI launcher for Linux and macOS.
 
 ## Features
 
@@ -16,7 +16,7 @@ The Windows build provides a native Win32 desktop app for managing folders and s
 - Handles UPnP `ContentDirectory:1` Browse SOAP requests.
 - Serves device, ContentDirectory, and ConnectionManager XML descriptions.
 - Provides a native Windows UI with tray behavior.
-- Provides a headless POSIX target for Linux/macOS testing and server use.
+- Provides Linux/macOS desktop launchers with a GUI for media folders, server name, port, start, stop, and logs.
 - Supports optional IP whitelisting on Windows and POSIX builds.
 - Stores settings in `config.ini` beside the executable.
 - Includes smoke tests for Windows, Android VLC reachability, and POSIX-over-SSH detection.
@@ -34,6 +34,7 @@ The Windows build provides a native Win32 desktop app for managing folders and s
 - CMake 3.20 or newer
 - A C++17 compiler such as `clang++` or `g++`
 - `make` or another CMake-supported build tool
+- Python 3 with Tkinter for the optional desktop GUI
 
 On Termux, the test setup uses:
 
@@ -43,7 +44,7 @@ pkg install clang cmake make python
 
 ## Build
 
-### Windows GUI
+### Windows
 
 ```cmd
 cmake -B build
@@ -58,7 +59,7 @@ To build and copy the release binary into `output/`, run:
 .\build-output.ps1
 ```
 
-### Headless Linux/macOS
+### Linux
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -67,6 +68,16 @@ cmake --build build
 
 The headless executable is written to `build/dlna-server`.
 
+On macOS, CMake also assembles `build/DLNA Server.app`. Copy that app bundle to `/Applications` or `~/Applications` to launch it from Launchpad or Finder.
+
+On Linux, install the app launcher and desktop entry with:
+
+```sh
+cmake --install build --prefix "$HOME/.local"
+```
+
+After install, `DLNA Server` appears in desktop app launchers that read `~/.local/share/applications`.
+
 ## Usage
 
 ### Windows
@@ -74,6 +85,12 @@ The headless executable is written to `build/dlna-server`.
 Run `WinDLNAServer.exe`. Add one or more media folders with the `+` button, then start the server with the play button.
 
 When the main window closes, the app stays in the tray. Use the tray menu to show the window, stop the server, or exit.
+
+### Linux/macOS GUI
+
+Launch `DLNA Server` from the desktop app list on Linux, or open `DLNA Server.app` on macOS. Add one or more media folders, set the server name and port, then press Start.
+
+The GUI uses the same POSIX server binary and writes `config.ini` beside it, so command-line and desktop launches share settings.
 
 ### Headless Linux/macOS
 
@@ -137,7 +154,7 @@ Run the POSIX headless build in Termux over SSH and detect it from the Windows c
 `verify-posix-ssh.ps1` reads SSH credentials from `.env`:
 
 ```ini
-username=u0_a120
+username=your-username
 password=your-password
 ```
 
@@ -148,6 +165,7 @@ The script builds `dlna-server` on the remote device, starts it headless, verifi
 - `src/main.cpp`, `src/mainwindow.cpp`, `src/settingsdlg.cpp` - Windows UI entry points.
 - `src/server.cpp`, `src/httpserver.cpp`, `src/ssdp.cpp` - Windows server and discovery implementation.
 - `src/posix_main.cpp`, `src/posix_httpserver.cpp`, `src/posix_ssdp.cpp` - headless POSIX implementation.
+- `src/posix_gui.py`, `packaging/linux`, `packaging/macos` - Linux/macOS GUI launcher and desktop packaging.
 - `src/contentdirectory.cpp` - shared UPnP XML and Browse response generation.
 - `src/media_sources.cpp`, `src/posix_media_sources.cpp` - media indexing.
 - `verify-smoke.ps1`, `verify-android-smoke.ps1`, `verify-posix-ssh.ps1` - protocol and device smoke tests.
