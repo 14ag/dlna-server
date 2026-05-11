@@ -35,6 +35,7 @@ On Windows, you get the native Win32 app. On Linux and macOS, you can run `dlna-
 - A C++17 compiler such as `clang++` or `g++`
 - `make` or another CMake-supported build tool
 - Python 3 with Tkinter for the optional desktop GUI
+- PowerShell 7 (`pwsh`) for the standardized `build-output.ps1` release command
 
 On Debian or Ubuntu, the desktop GUI needs the `python3-tk` package in addition to the compiler and CMake packages.
 
@@ -46,39 +47,46 @@ pkg install clang cmake make python
 
 ## Build and install
 
+Use `build-output.ps1` for release builds. It configures CMake, builds the selected target, clears `./output` by default, and installs the runnable artifacts there. Add `-KeepOutput` if you want to keep existing verification logs while rebuilding.
+
 ### Windows
 
 Build the desktop app from the repository root:
-
-```cmd
-cmake -B build
-cmake --build build --config Release
-```
-
-The executable lands at `build/Release/WinDLNAServer.exe`.
-
-If you want the release binary copied into `output/`, run:
 
 ```powershell
 .\build-output.ps1
 ```
 
-### Linux desktop app
+The executable lands at `output/WinDLNAServer.exe`.
 
-Build the POSIX server first. This also prepares the files that the GUI launcher uses.
+For a debug build:
 
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+```powershell
+.\build-output.ps1 -Config Debug
 ```
 
-Install everything into your user profile:
+### Linux desktop app
 
-```sh
-cmake --install build --prefix "$HOME/.local"
+Build and install the POSIX server, GUI wrapper, desktop entry, and icon into `./output`:
+
+```powershell
+pwsh ./build-output.ps1
 ```
 
 That puts these files in place:
+
+- `output/bin/dlna-server`
+- `output/bin/dlna-server-gui`
+- `output/share/applications/dlna-server.desktop`
+- `output/share/icons/hicolor/scalable/apps/dlna-server.svg`
+
+To install it into your desktop user profile instead, run CMake install with a user prefix after the build:
+
+```sh
+cmake --install build_output --prefix "$HOME/.local"
+```
+
+That user install writes:
 
 - `~/.local/bin/dlna-server`
 - `~/.local/bin/dlna-server-gui`
@@ -89,40 +97,39 @@ After install, open `DLNA Server` from your desktop app launcher. If it doesn't 
 
 ### macOS app bundle
 
-Build the POSIX server and app bundle:
+Build and install the POSIX server and app bundle into `./output`:
 
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+```powershell
+pwsh ./build-output.ps1
 ```
 
-CMake creates both outputs:
+The release outputs are:
 
-- `build/dlna-server`
-- `build/DLNA Server.app`
+- `output/bin/dlna-server`
+- `output/DLNA Server.app`
 
 Install the app for your user account:
 
 ```sh
 mkdir -p "$HOME/Applications"
-cp -R "build/DLNA Server.app" "$HOME/Applications/"
+cp -R "output/DLNA Server.app" "$HOME/Applications/"
 ```
 
 Open `DLNA Server` from Finder, Spotlight, or Launchpad. It's the same server binary, wrapped in a small app bundle.
 
 ### Headless Linux/macOS
 
-Use the same build command:
+If you only need a local build tree, you can still use CMake directly:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-Then run the server directly:
+The standardized release command writes the runnable binary to `output/bin/dlna-server`. Run it directly:
 
 ```sh
-./build/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
+./output/bin/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
 ```
 
 ## Usage
@@ -142,7 +149,7 @@ The GUI uses the same POSIX server binary and writes `config.ini` beside it, so 
 ### Headless Linux/macOS
 
 ```sh
-./build/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
+./output/bin/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
 ```
 
 Useful options:
@@ -159,7 +166,8 @@ Settings are stored in `config.ini` beside the executable:
 
 - Windows release output: `output/config.ini`
 - Windows CMake build output: `build/<Config>/config.ini`
-- POSIX build output: `build/config.ini`
+- POSIX release output: `output/bin/config.ini`
+- POSIX CMake build output: `build/config.ini`
 - Linux user install: `~/.local/bin/config.ini`
 
 If `config.ini` is missing, the app creates it on startup with default settings and a generated UUID. On later starts, the app reads the same file to restore previous settings.
