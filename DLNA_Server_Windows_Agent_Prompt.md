@@ -199,7 +199,7 @@ std::vector<MediaSource> g_sources;
 
 ### 5. Configuration / Persistence (`config.cpp / config.h`)
 
-Persist settings to `%APPDATA%\WinDLNAServer\config.ini` using `WritePrivateProfileStringW` / `GetPrivateProfileStringW`.
+Persist settings to `config.ini` beside `WinDLNAServer.exe`.
 
 **Settings stored:**
 
@@ -362,7 +362,7 @@ Thumbnail-related controls must be present but disabled (`EnableWindow(hCtl, FAL
 | FR-23 | Application minimizes to system tray on window close |
 | FR-24 | When launched with `--minimized`, starts hidden and auto-starts server |
 | FR-25 | Thumbnail UI controls present but disabled (deferred feature) |
-| FR-26 | Settings persist across sessions in `%APPDATA%\WinDLNAServer\config.ini` |
+| FR-26 | Settings persist across sessions in `config.ini` beside `WinDLNAServer.exe` |
 | FR-27 | A stable UUID is generated once and reused for SSDP device identity |
 
 ---
