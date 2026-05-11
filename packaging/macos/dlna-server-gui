@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+app_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+server_bin="$app_dir/Contents/MacOS/dlna-server"
+gui_script="$app_dir/Contents/Resources/posix_gui.py"
+
+export DLNA_SERVER_BIN="$server_bin"
+exec /usr/bin/env python3 "$gui_script" "$@"
