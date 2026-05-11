@@ -1,46 +1,127 @@
 # Contributing to WinDLNAServer
 
-Welcome to the project. We appreciate your interest in making this server better. WinDLNAServer is built as a clean, dependency-free Win32 application, and we want to keep that architecture intact. 
+WinDLNAServer has two supported build surfaces:
+
+- A native Win32 GUI application for Windows.
+- A headless POSIX `dlna-server` target for Linux, macOS, and Termux-style environments.
+
+Keep changes small, test the protocol behavior they affect, and avoid adding third-party dependencies unless the benefit is clear.
 
 ## Getting Started
 
 1. Fork the repository and create a branch from `main`.
-2. Keep your commits focused. If you fix a bug, just fix the bug. If you want to add a major feature, please open an issue first so we can talk about the design.
-3. Build the project locally and confirm it works before you submit a pull request.
+2. Keep each commit focused on one bug fix, feature, or documentation update.
+3. Build locally before opening a pull request.
+4. Run the smoke tests that match the files you changed.
 
-## Local Development Setup
+## Windows Development
 
-To compile the application, you need:
-- Windows 10 (version 1903 or newer)
-- Visual Studio 2022 (with the MSVC v143 C++ desktop toolchain installed)
+Requirements:
+
+- Windows 10 version 1903 or newer
+- Visual Studio 2022 with the MSVC v143 C++ desktop toolchain
 - CMake 3.20 or newer
 
-Open PowerShell or Command Prompt, and run:
+Build:
 
-```bash
-# Generate the solution
+```powershell
 cmake -B build
-
-# Compile a debug build
 cmake --build build --config Debug
 ```
 
-You will find `WinDLNAServer.exe` in the `build\Debug` directory. Run it from there to test your changes.
+Release build copied to `output/`:
+
+```powershell
+.\build-output.ps1
+```
+
+Run the main Windows protocol smoke test:
+
+```powershell
+.\verify-smoke.ps1
+```
+
+## POSIX Development
+
+Requirements:
+
+- CMake 3.20 or newer
+- A C++17 compiler such as `clang++` or `g++`
+- `make` or another CMake-supported build tool
+
+Build:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
+```
+
+Run:
+
+```sh
+./build/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
+```
+
+For Termux-based verification from Windows, put SSH credentials in `.env`:
+
+```ini
+username=u0_a120
+password=your-password
+```
+
+Then run:
+
+```powershell
+.\verify-posix-ssh.ps1
+```
+
+Use `-InstallTools` if the Termux environment still needs `clang`, `cmake`, `make`, or `python`.
+
+## Configuration
+
+The app stores settings in `config.ini` beside the executable. The file is created on startup when missing, then read on later launches.
+
+Do not add new settings without updating:
+
+- `src/config.cpp`
+- `src/posix_config.cpp`
+- `README.md`
+- Relevant smoke tests
 
 ## Reporting Bugs
 
-Check the existing GitHub issues to see if someone else already reported the problem. If they haven't, open a new bug report. 
+Check existing GitHub issues before opening a new one.
 
-Please tell us your Windows version and the exact device (like an LG TV or VLC on Android) that was trying to connect. Turn on "Debug mode" in the server settings, reproduce the crash or strange behavior, and attach the relevant lines from `%APPDATA%\WinDLNAServer\debug.log` to your report.
+For discovery or playback bugs, include:
 
-## Writing Your Code
+- Operating system and build target.
+- DLNA client name and version, such as VLC Android, Kodi, or a TV model.
+- Whether `description.xml` is reachable in a browser or with `curl`.
+- Relevant SSDP or HTTP log lines.
+- Exact media format when playback fails.
 
-Your code should blend in with the rest of the project. We rely exclusively on Win32 APIs and standard C++17. Do not drag in heavy third-party libraries. If a problem can be solved with a few lines of COM or MSXML, use the built-in Windows tools instead of adding a dependency.
+For Windows debug logs, enable debug mode and attach only the relevant lines from `%APPDATA%\WinDLNAServer\debug.log`.
 
-We also use raw WinSock2 for the networking layer. Always check your thread safety when passing state between the background HTTP workers and the GUI thread.
+## Coding Guidelines
+
+- Use C++17.
+- Keep shared UPnP and content logic platform-neutral where practical.
+- Keep Windows-specific code in the Win32 implementation files.
+- Keep POSIX socket and filesystem behavior in the `posix_*` files.
+- Preserve byte-range HTTP behavior and SSDP header compatibility.
+- Be careful with background threads and shared state.
 
 ## Pull Requests
 
-When you are ready, push your branch and open a pull request. Write a descriptive commit message that explains *why* you made a change, not just what files you edited. For example: `Fix: Handle long path names properly in the media scanner`.
+Before opening a pull request:
 
-If your PR modifies the UI, please include a quick screenshot.
+1. Rebuild the changed target.
+2. Run the matching smoke test.
+3. Update documentation when commands, config paths, or user-visible behavior change.
+4. Include screenshots for Windows UI changes.
+
+Use commit messages that explain the reason for the change, not only the files touched. Example:
+
+```text
+Fix config loading from executable directory
+```
