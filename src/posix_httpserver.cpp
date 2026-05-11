@@ -19,6 +19,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+// macOS lacks MSG_NOSIGNAL; use SO_NOSIGPIPE socket option instead
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+
 namespace {
 constexpr int kBufferSize = 8192;
 
@@ -125,7 +130,7 @@ void SendAll(int fd, const std::string& bytes) {
     const char* data = bytes.data();
     size_t remaining = bytes.size();
     while (remaining > 0) {
-        ssize_t sent = send(fd, data, remaining, 0);
+        ssize_t sent = send(fd, data, remaining, MSG_NOSIGNAL);
         if (sent <= 0) return;
         data += sent;
         remaining -= static_cast<size_t>(sent);
@@ -166,11 +171,14 @@ void HttpServer::AcceptLoop(int listenSocket) {
         socklen_t len = sizeof(remote);
         int client = accept(listenSocket, reinterpret_cast<sockaddr*>(&remote), &len);
         if (client < 0) continue;
+#ifdef SO_NOSIGPIPE
+        { int on = 1; setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on)); }
+#endif
         std::string clientIp = NormalizeIpLiteral(SockaddrToLiteral(reinterpret_cast<sockaddr*>(&remote)));
         if (!IPWhitelist::Get().IsAllowed(clientIp)) {
             LogPrint(L"Blocked connection from %hs", clientIp.c_str());
             static const char* forbidden = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-            send(client, forbidden, strlen(forbidden), 0);
+            send(client, forbidden, strlen(forbidden), MSG_NOSIGNAL);
             close(client);
             continue;
         }
@@ -261,7 +269,7 @@ void HttpServer::HandleClient(int clientSocket, const std::string&) {
                     while (remaining > 0) {
                         ssize_t chunk = read(fd.get(), buf, std::min<long long>(sizeof(buf), remaining));
                         if (chunk <= 0) break;
-                        if (send(clientSocket, buf, chunk, 0) <= 0) break;
+                        if (send(clientSocket, buf, chunk, MSG_NOSIGNAL) <= 0) break;
                         remaining -= chunk;
                     }
                 }
