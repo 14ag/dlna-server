@@ -32,7 +32,6 @@ void Server::RefreshEndpoints() {
 
 bool Server::Start() {
     if (m_running) return true;
-    AppConfig.Load();
     IPWhitelist::Get().Load(AppConfig.ipWhiteList);
     if (AppConfig.mediaSources.empty()) {
         AppConfig.mediaSources.push_back({L".", true});
