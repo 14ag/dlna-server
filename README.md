@@ -6,7 +6,7 @@
 
 WinDLNAServer streams local video, audio, and image files to DLNA and UPnP clients on the local network.
 
-The Windows build provides a native Win32 desktop app for managing folders and server settings. The POSIX build provides a headless `dlna-server` target plus a small desktop GUI launcher for Linux and macOS.
+On Windows, you get the native Win32 app. On Linux and macOS, you can run `dlna-server` from a terminal or launch a small GUI from the app list.
 
 ## Features
 
@@ -36,47 +36,94 @@ The Windows build provides a native Win32 desktop app for managing folders and s
 - `make` or another CMake-supported build tool
 - Python 3 with Tkinter for the optional desktop GUI
 
+On Debian or Ubuntu, the desktop GUI needs the `python3-tk` package in addition to the compiler and CMake packages.
+
 On Termux, the test setup uses:
 
 ```sh
 pkg install clang cmake make python
 ```
 
-## Build
+## Build and install
 
 ### Windows
+
+Build the desktop app from the repository root:
 
 ```cmd
 cmake -B build
 cmake --build build --config Release
 ```
 
-The Windows executable is written to `build/Release/WinDLNAServer.exe`.
+The executable lands at `build/Release/WinDLNAServer.exe`.
 
-To build and copy the release binary into `output/`, run:
+If you want the release binary copied into `output/`, run:
 
 ```powershell
 .\build-output.ps1
 ```
 
-### Linux
+### Linux desktop app
+
+Build the POSIX server first. This also prepares the files that the GUI launcher uses.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-The headless executable is written to `build/dlna-server`.
-
-On macOS, CMake also assembles `build/DLNA Server.app`. Copy that app bundle to `/Applications` or `~/Applications` to launch it from Launchpad or Finder.
-
-On Linux, install the app launcher and desktop entry with:
+Install everything into your user profile:
 
 ```sh
 cmake --install build --prefix "$HOME/.local"
 ```
 
-After install, `DLNA Server` appears in desktop app launchers that read `~/.local/share/applications`.
+That puts these files in place:
+
+- `~/.local/bin/dlna-server`
+- `~/.local/bin/dlna-server-gui`
+- `~/.local/share/applications/dlna-server.desktop`
+- `~/.local/share/icons/hicolor/scalable/apps/dlna-server.svg`
+
+After install, open `DLNA Server` from your desktop app launcher. If it doesn't show up right away, run `dlna-server-gui` from a terminal or sign out and back in.
+
+### macOS app bundle
+
+Build the POSIX server and app bundle:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+CMake creates both outputs:
+
+- `build/dlna-server`
+- `build/DLNA Server.app`
+
+Install the app for your user account:
+
+```sh
+mkdir -p "$HOME/Applications"
+cp -R "build/DLNA Server.app" "$HOME/Applications/"
+```
+
+Open `DLNA Server` from Finder, Spotlight, or Launchpad. It's the same server binary, wrapped in a small app bundle.
+
+### Headless Linux/macOS
+
+Use the same build command:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+Then run the server directly:
+
+```sh
+./build/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
+```
 
 ## Usage
 
@@ -90,7 +137,7 @@ When the main window closes, the app stays in the tray. Use the tray menu to sho
 
 Launch `DLNA Server` from the desktop app list on Linux, or open `DLNA Server.app` on macOS. Add one or more media folders, set the server name and port, then press Start.
 
-The GUI uses the same POSIX server binary and writes `config.ini` beside it, so command-line and desktop launches share settings.
+The GUI uses the same POSIX server binary and writes `config.ini` beside it, so command-line and desktop launches share settings. If startup fails, run `dlna-server-gui` from a terminal; Python or Tkinter errors can't hide there.
 
 ### Headless Linux/macOS
 
@@ -113,6 +160,7 @@ Settings are stored in `config.ini` beside the executable:
 - Windows release output: `output/config.ini`
 - Windows CMake build output: `build/<Config>/config.ini`
 - POSIX build output: `build/config.ini`
+- Linux user install: `~/.local/bin/config.ini`
 
 If `config.ini` is missing, the app creates it on startup with default settings and a generated UUID. On later starts, the app reads the same file to restore previous settings.
 
