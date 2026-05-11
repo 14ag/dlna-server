@@ -2,50 +2,156 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![C++17](https://img.shields.io/badge/C++-17-blue.svg)](https://isocpp.org/)
-[![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 
-WinDLNAServer is a native Windows desktop application that streams your local video, audio, and image files to DLNA-compatible clients on your network. 
+WinDLNAServer streams local video, audio, and image files to DLNA and UPnP clients on the local network.
 
-We built this project around C++17 and raw Win32 APIs to avoid heavy frameworks like Qt or Electron. The UPnP network layer runs entirely on background threads. When you want to add media folders or change settings, you do it all through a standard, lightweight Windows dialog box. 
+The Windows build provides a native Win32 desktop app for managing folders and server settings. The POSIX build provides a headless `dlna-server` target for Linux, macOS, and Termux-style environments.
 
 ## Features
 
-- Streams MP4, MKV, MP3, FLAC, and most standard image formats over HTTP.
-- Supports byte-range requests. This allows your TV or mobile player to scrub and seek through video files.
-- Advertises the server over the local network using SSDP multicast.
-- Ships with a native Windows UI to manage folders and server state.
-- Minimizes cleanly to the system tray and supports optional Windows autostart.
-- Implements IP whitelisting for basic device access control.
-- Requires zero third-party dependencies outside of the standard compiler toolchain.
+- Streams MP4, MKV, AVI, MOV, MP3, FLAC, JPEG, and PNG files over HTTP.
+- Supports byte-range requests so DLNA clients can seek within media files.
+- Advertises the server with SSDP multicast `NOTIFY` messages.
+- Handles UPnP `ContentDirectory:1` Browse SOAP requests.
+- Serves device, ContentDirectory, and ConnectionManager XML descriptions.
+- Provides a native Windows UI with tray behavior.
+- Provides a headless POSIX target for Linux/macOS testing and server use.
+- Supports optional IP whitelisting on Windows and POSIX builds.
+- Stores settings in `config.ini` beside the executable.
+- Includes smoke tests for Windows, Android VLC reachability, and POSIX-over-SSH detection.
 
-## Compiling
+## Prerequisites
 
-You need a Windows 10 machine (version 1903 or newer), Visual Studio 2022, and CMake to compile the source code.
+### Windows
 
-To build it from the command line:
+- Windows 10 version 1903 or newer
+- Visual Studio 2022 with the MSVC C++ desktop toolchain
+- CMake 3.20 or newer
 
-1. Clone or download this repository.
-2. Generate the build files:
-   ```cmd
-   cmake -B build
-   ```
-3. Build the executable:
-   ```cmd
-   cmake --build build --config Release
-   ```
+### Linux, macOS, or Termux
 
-You will find `WinDLNAServer.exe` sitting in the `build/Release` folder. 
+- CMake 3.20 or newer
+- A C++17 compiler such as `clang++` or `g++`
+- `make` or another CMake-supported build tool
+
+On Termux, the test setup uses:
+
+```sh
+pkg install clang cmake make python
+```
+
+## Build
+
+### Windows GUI
+
+```cmd
+cmake -B build
+cmake --build build --config Release
+```
+
+The Windows executable is written to `build/Release/WinDLNAServer.exe`.
+
+To build and copy the release binary into `output/`, run:
+
+```powershell
+.\build-output.ps1
+```
+
+### Headless Linux/macOS
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+The headless executable is written to `build/dlna-server`.
 
 ## Usage
 
-Launch the executable. The main window will open, and you can click the `+` button in the toolbar to add folders that contain your media. Once you have a folder added, click the Start button (▶). 
+### Windows
 
-Your smart TV or DLNA player should practically instantly see "WinDLNA Server" pop up on the local network. 
+Run `WinDLNAServer.exe`. Add one or more media folders with the `+` button, then start the server with the play button.
 
-If you close the main window, the server does not shut down. It retreats to the system tray and keeps running. Right-click the tray icon when you actually want to stop the server or exit the application. 
+When the main window closes, the app stays in the tray. Use the tray menu to show the window, stop the server, or exit.
 
-Server settings are saved locally to `%APPDATA%\WinDLNAServer\config.ini`. You can toggle flat-folder views, configure custom ports, or set up an IP whitelist directly through the application's settings dialog.
+### Headless Linux/macOS
+
+```sh
+./build/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
+```
+
+Useful options:
+
+- `--port <port>` sets the HTTP port.
+- `--name <name>` sets the friendly DLNA device name.
+- `--uuid <uuid>` sets a persistent device UUID.
+- `--debug` enables extra discovery logging.
+- `--source <path>` adds a media folder. You can pass it more than once.
+
+## Configuration
+
+Settings are stored in `config.ini` beside the executable:
+
+- Windows release output: `output/config.ini`
+- Windows CMake build output: `build/<Config>/config.ini`
+- POSIX build output: `build/config.ini`
+
+If `config.ini` is missing, the app creates it on startup with default settings and a generated UUID. On later starts, the app reads the same file to restore previous settings.
+
+Example:
+
+```ini
+[Settings]
+ServerName=WinDLNA Server
+Port=8200
+FileServerPort=8201
+DebugLog=0
+RunOnBoot=0
+IPWhiteList=
+DeviceUUID=11111111-2222-3333-4444-555555555555
+MediaSources=C:\Media|D:\Videos
+```
+
+## Testing
+
+Run the Windows build and protocol smoke test:
+
+```powershell
+.\build-output.ps1
+.\verify-smoke.ps1
+```
+
+Run Android reachability checks through ADB:
+
+```powershell
+.\verify-android-smoke.ps1
+```
+
+Run the POSIX headless build in Termux over SSH and detect it from the Windows computer:
+
+```powershell
+.\verify-posix-ssh.ps1
+```
+
+`verify-posix-ssh.ps1` reads SSH credentials from `.env`:
+
+```ini
+username=u0_a120
+password=your-password
+```
+
+The script builds `dlna-server` on the remote device, starts it headless, verifies SSDP `ssdp:alive` multicast from this computer, fetches `description.xml`, checks a unicast SSDP response, and stops the remote server.
+
+## Project Structure
+
+- `src/main.cpp`, `src/mainwindow.cpp`, `src/settingsdlg.cpp` - Windows UI entry points.
+- `src/server.cpp`, `src/httpserver.cpp`, `src/ssdp.cpp` - Windows server and discovery implementation.
+- `src/posix_main.cpp`, `src/posix_httpserver.cpp`, `src/posix_ssdp.cpp` - headless POSIX implementation.
+- `src/contentdirectory.cpp` - shared UPnP XML and Browse response generation.
+- `src/media_sources.cpp`, `src/posix_media_sources.cpp` - media indexing.
+- `verify-smoke.ps1`, `verify-android-smoke.ps1`, `verify-posix-ssh.ps1` - protocol and device smoke tests.
 
 ## Contributing
 
-We welcome patches and bug reports. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for instructions on setting up your local environment and submitting pull requests. If you find a security issue, refer to our [SECURITY.md](SECURITY.md) guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local development, testing, and pull request guidance.
