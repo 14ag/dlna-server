@@ -29,7 +29,7 @@ cmake -B build
 cmake --build build --config Debug
 ```
 
-Release build copied to `output/`:
+Release build installed to `output/`:
 
 ```powershell
 .\build-output.ps1
@@ -56,10 +56,16 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
+Release build installed to `output/`:
+
+```powershell
+pwsh ./build-output.ps1
+```
+
 Run:
 
 ```sh
-./build/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
+./output/bin/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
 ```
 
 For Termux-based verification from Windows, put SSH credentials in `.env`:

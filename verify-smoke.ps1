@@ -202,10 +202,29 @@ function Read-DebugLog {
     return ""
 }
 
+function Stop-RepoDlnaProcesses {
+    $repoFull = [System.IO.Path]::GetFullPath($repo)
+    Get-Process -Name "WinDLNAServer" -ErrorAction SilentlyContinue | ForEach-Object {
+        $path = $null
+        try {
+            $path = $_.Path
+        } catch {
+        }
+        if ($path) {
+            $fullPath = [System.IO.Path]::GetFullPath($path)
+            if ($fullPath.StartsWith($repoFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+                Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
 try {
     if (-not (Test-Path $exePath)) {
         throw "Missing built exe at $exePath"
     }
+
+    Stop-RepoDlnaProcesses
 
     New-Item -ItemType Directory -Path $appDataDir -Force | Out-Null
     if (Test-Path $configPath) {
@@ -249,8 +268,9 @@ try {
     for ($i = 0; $i -lt 40; $i++) {
         Start-Sleep -Milliseconds 500
         $serverProc.Refresh()
-        if ($serverProc.MainWindowHandle -ne 0) {
-            $windowHandle = [IntPtr]$serverProc.MainWindowHandle
+        $rawHandle = $serverProc.MainWindowHandle
+        if ($null -ne $rawHandle -and $rawHandle -ne 0) {
+            $windowHandle = [IntPtr]$rawHandle
             $windowReady = $true
             break
         }

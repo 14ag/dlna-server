@@ -1,7 +1,8 @@
 param(
     [string]$Config = "Release",
     [string]$BuildDir = "build_output",
-    [string]$OutputDir = "output"
+    [string]$OutputDir = "output",
+    [switch]$KeepOutput
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,40 +27,52 @@ function Assert-WorkspacePath {
 $buildPath = Assert-WorkspacePath $buildPath
 $outputPath = Assert-WorkspacePath $outputPath
 
+$isWindowsHost = $IsWindows -or $env:OS -eq "Windows_NT"
+
 Write-Host "Configuring build in $buildPath"
-cmake -S $repoRoot -B $buildPath | Write-Host
+$configureArgs = @("-S", $repoRoot, "-B", $buildPath, "-DCMAKE_INSTALL_PREFIX=$outputPath")
+if (-not $isWindowsHost) {
+    $configureArgs += "-DCMAKE_BUILD_TYPE=$Config"
+}
+& cmake @configureArgs
 if ($LASTEXITCODE -ne 0) {
     throw "CMake configure failed."
 }
 
 Write-Host "Building $Config"
-cmake --build $buildPath --config $Config | Write-Host
+& cmake --build $buildPath --config $Config
 if ($LASTEXITCODE -ne 0) {
     throw "CMake build failed."
-}
-
-$configOutputPath = Join-Path $buildPath $Config
-if (-not (Test-Path $configOutputPath)) {
-    throw "Expected build output folder missing: $configOutputPath"
 }
 
 if (-not (Test-Path $outputPath)) {
     New-Item -ItemType Directory -Path $outputPath | Out-Null
 }
 
-Get-ChildItem -LiteralPath $outputPath -Force | Remove-Item -Recurse -Force
-
-$builtItems = Get-ChildItem -LiteralPath $configOutputPath -File | Where-Object {
-    $_.BaseName -eq "WinDLNAServer" -or $_.Name -like "WinDLNAServer.*"
+if (-not $KeepOutput) {
+    Get-ChildItem -LiteralPath $outputPath -Force | Remove-Item -Recurse -Force
 }
 
-if (-not $builtItems) {
-    throw "No built WinDLNAServer items found in $configOutputPath"
+Write-Host "Installing artifacts to $outputPath"
+& cmake --install $buildPath --config $Config --prefix $outputPath
+if ($LASTEXITCODE -ne 0) {
+    throw "CMake install failed."
 }
 
-foreach ($item in $builtItems) {
-    Move-Item -LiteralPath $item.FullName -Destination (Join-Path $outputPath $item.Name) -Force
+if ($isWindowsHost) {
+    $expected = Join-Path $outputPath "WinDLNAServer.exe"
+} elseif ($IsMacOS) {
+    $expected = Join-Path $outputPath "DLNA Server.app"
+} else {
+    $expected = Join-Path $outputPath "bin/dlna-server"
 }
 
-Write-Host "Moved build output to $outputPath"
-Get-ChildItem -LiteralPath $outputPath | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize
+if (-not (Test-Path -LiteralPath $expected)) {
+    throw "Expected output artifact missing: $expected"
+}
+
+Write-Host "Build output ready in $outputPath"
+Get-ChildItem -LiteralPath $outputPath -Recurse -Force |
+    Where-Object { -not $_.PSIsContainer } |
+    Select-Object @{Name="Path"; Expression={ $_.FullName.Substring($outputPath.Length + 1) }}, Length, LastWriteTime |
+    Format-Table -AutoSize

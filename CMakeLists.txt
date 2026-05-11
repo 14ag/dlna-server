@@ -52,6 +52,8 @@ if(WIN32)
     set_property(TARGET WinDLNAServer PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     target_compile_definitions(WinDLNAServer PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN)
     target_include_directories(WinDLNAServer PRIVATE src)
+
+    install(TARGETS WinDLNAServer RUNTIME DESTINATION .)
 else()
     include(GNUInstallDirs)
 
