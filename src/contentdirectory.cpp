@@ -4,30 +4,39 @@
 #include "netutils.h"
 #include <sstream>
 
+namespace {
+bool ExtractTag(const std::string& req, const char* tag, std::string& value) {
+    const std::string open = std::string("<") + tag + ">";
+    const std::string close = std::string("</") + tag + ">";
+    const size_t pos = req.find(open);
+    if (pos == std::string::npos) return false;
+    const size_t valueStart = pos + open.size();
+    const size_t endPos = req.find(close, valueStart);
+    if (endPos == std::string::npos) return false;
+    value = req.substr(valueStart, endPos - valueStart);
+    return true;
+}
+
+bool TryParseInt(const std::string& text, int& value) {
+    try {
+        size_t used = 0;
+        int parsed = std::stoi(text, &used);
+        if (used != text.size()) return false;
+        value = parsed;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+}
+
 ContentDirectory& ContentDirectory::Get() {
     static ContentDirectory instance;
     return instance;
 }
 
 std::string ContentDirectory::XMLEscape(const std::wstring& wstr) {
-    std::string res;
-    int size = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, NULL, 0, NULL, NULL);
-    if (size > 0) {
-        std::string utf8(size - 1, '\0');
-        WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &utf8[0], size, NULL, NULL);
-
-        for (char c : utf8) {
-            switch (c) {
-                case '<': res += "&lt;"; break;
-                case '>': res += "&gt;"; break;
-                case '&': res += "&amp;"; break;
-                case '"': res += "&quot;"; break;
-                case '\'': res += "&apos;"; break;
-                default: res += c; break;
-            }
-        }
-    }
-    return res;
+    return XMLEscapeUtf8(WideToUtf8(wstr));
 }
 
 std::string ContentDirectory::GetDeviceDescriptionXML() {
@@ -86,23 +95,27 @@ std::string ContentDirectory::HandleBrowse(const std::string& req, const std::st
         return ss.str();
     }
 
-    size_t pos = req.find("<ObjectID>");
-    if (pos == std::string::npos) return "";
-    size_t endPos = req.find("</ObjectID>", pos);
-    std::string objIdStr = req.substr(pos + 10, endPos - (pos + 10));
-    int objId = std::stoi(objIdStr);
+    std::string objIdStr;
+    std::string browseFlag;
+    std::string startingIndexStr;
+    std::string requestedCountStr;
+    if (!ExtractTag(req, "ObjectID", objIdStr) ||
+        !ExtractTag(req, "BrowseFlag", browseFlag) ||
+        !ExtractTag(req, "StartingIndex", startingIndexStr) ||
+        !ExtractTag(req, "RequestedCount", requestedCountStr)) {
+        return "";
+    }
 
-    pos = req.find("<BrowseFlag>");
-    endPos = req.find("</BrowseFlag>", pos);
-    std::string browseFlag = req.substr(pos + 12, endPos - (pos + 12));
-
-    pos = req.find("<StartingIndex>");
-    endPos = req.find("</StartingIndex>", pos);
-    int startingIndex = std::stoi(req.substr(pos + 15, endPos - (pos + 15)));
-
-    pos = req.find("<RequestedCount>");
-    endPos = req.find("</RequestedCount>", pos);
-    int requestedCount = std::stoi(req.substr(pos + 16, endPos - (pos + 16)));
+    int objId = 0;
+    int startingIndex = 0;
+    int requestedCount = 0;
+    if (!TryParseInt(objIdStr, objId) ||
+        !TryParseInt(startingIndexStr, startingIndex) ||
+        !TryParseInt(requestedCountStr, requestedCount) ||
+        startingIndex < 0 ||
+        requestedCount < 0) {
+        return "";
+    }
 
     std::vector<MediaItem> results;
     if (browseFlag == "BrowseMetadata") {

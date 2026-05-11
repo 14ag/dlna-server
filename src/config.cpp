@@ -130,9 +130,9 @@ Config::Config() : port(8200), fileServerPort(8201), flatFolderStyle(false), sho
 
 std::wstring Config::GetConfigPath() {
     wchar_t szPath[MAX_PATH];
-    if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, szPath))) {
-        PathAppendW(szPath, L"WinDLNAServer");
-        CreateDirectoryW(szPath, NULL);
+    DWORD len = GetModuleFileNameW(NULL, szPath, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        PathRemoveFileSpecW(szPath);
         PathAppendW(szPath, L"config.ini");
         return std::wstring(szPath);
     }
