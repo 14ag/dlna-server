@@ -7,7 +7,7 @@ $outputDir = Join-Path $repo "output"
 $exePath = Join-Path $outputDir "WinDLNAServer.exe"
 $vlcPath = "C:\Program Files\VideoLAN\VLC\vlc.exe"
 $appDataDir = Join-Path $env:APPDATA "WinDLNAServer"
-$configPath = Join-Path $appDataDir "config.ini"
+$configPath = Join-Path $outputDir "config.ini"
 $debugLogPath = Join-Path $appDataDir "debug.log"
 $resultsPath = Join-Path $outputDir "verification-results.txt"
 $debugCopyPath = Join-Path $outputDir "verification-debug.log"
@@ -178,7 +178,28 @@ function Find-LogLines {
         return @()
     }
 
-    return Select-String -Path $debugLogPath -Pattern $pattern | ForEach-Object { $_.Line }
+    $text = Read-DebugLog
+    if (-not $text) {
+        return @()
+    }
+
+    return ($text -split "`r?`n") | Where-Object { $_ -match $pattern }
+}
+
+function Read-DebugLog {
+    if (-not (Test-Path $debugLogPath)) {
+        return ""
+    }
+
+    for ($i = 0; $i -lt 8; $i++) {
+        try {
+            return Get-Content -LiteralPath $debugLogPath -Raw -ErrorAction Stop
+        } catch {
+            Start-Sleep -Milliseconds 150
+        }
+    }
+
+    return ""
 }
 
 try {
@@ -386,7 +407,7 @@ try {
         Add-Result "WARN no active IPv6 interface found for probe"
     }
 
-    $preVlcLog = if (Test-Path $debugLogPath) { Get-Content -LiteralPath $debugLogPath -Raw } else { "" }
+    $preVlcLog = Read-DebugLog
     $vlcOut = Join-Path $env:TEMP ("vlc-out-" + [guid]::NewGuid().ToString() + ".log")
     $vlcErr = Join-Path $env:TEMP ("vlc-err-" + [guid]::NewGuid().ToString() + ".log")
     $vlcProc = Start-Process -FilePath $vlcPath -ArgumentList @("-I", "dummy", "upnp://") -RedirectStandardOutput $vlcOut -RedirectStandardError $vlcErr -WindowStyle Hidden -PassThru
@@ -395,7 +416,7 @@ try {
         Stop-Process -Id $vlcProc.Id -Force
     }
     Start-Sleep -Seconds 1
-    $postVlcLog = if (Test-Path $debugLogPath) { Get-Content -LiteralPath $debugLogPath -Raw } else { "" }
+    $postVlcLog = Read-DebugLog
     $newVlcLog = $postVlcLog.Substring([Math]::Min($preVlcLog.Length, $postVlcLog.Length))
     if ($newVlcLog -notmatch "SSDP search in:") {
         $preVlcLog = $postVlcLog
@@ -407,7 +428,7 @@ try {
             Stop-Process -Id $vlcProc.Id -Force
         }
         Start-Sleep -Seconds 1
-        $postVlcLog = if (Test-Path $debugLogPath) { Get-Content -LiteralPath $debugLogPath -Raw } else { "" }
+        $postVlcLog = Read-DebugLog
         $newVlcLog = $postVlcLog.Substring([Math]::Min($preVlcLog.Length, $postVlcLog.Length))
     }
     if ($newVlcLog -match "SSDP search in:") {
@@ -434,7 +455,11 @@ try {
     }
 
     if (Test-Path $debugLogPath) {
-        Copy-Item -LiteralPath $debugLogPath -Destination $debugCopyPath -Force
+        try {
+            Copy-Item -LiteralPath $debugLogPath -Destination $debugCopyPath -Force -ErrorAction Stop
+        } catch {
+            Set-Content -LiteralPath $debugCopyPath -Value (Read-DebugLog) -Encoding UTF8
+        }
     }
     Set-Content -LiteralPath $resultsPath -Value ($summary -join [Environment]::NewLine) -Encoding UTF8
 } finally {
