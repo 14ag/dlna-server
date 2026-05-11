@@ -3,7 +3,13 @@
 
 #include <string>
 #include <vector>
+#ifdef _WIN32
 #include <winsock2.h>
+#include <windows.h>
+#else
+#include <atomic>
+#include <thread>
+#endif
 #include "netutils.h"
 
 class SSDP {
@@ -18,6 +24,7 @@ private:
 
     void CloseSockets();
     void SendNotifyRound(const char* nts);
+#ifdef _WIN32
     void SendNotifyBurst(const char* nts, int rounds, DWORD delayMs);
     void HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int remoteLen, const std::string& request);
     static DWORD WINAPI ThreadWorker(LPVOID lpParam);
@@ -26,6 +33,16 @@ private:
     HANDLE m_hThread;
     SOCKET m_ipv4Socket;
     SOCKET m_ipv6Socket;
+#else
+    void SendNotifyBurst(const char* nts, int rounds, unsigned int delayMs);
+    void HandleSearchRequest(int socket, const SOCKADDR* remoteAddr, socklen_t remoteLen, const std::string& request);
+    void ThreadWorker();
+
+    std::atomic<bool> m_running;
+    std::thread m_thread;
+    int m_ipv4Socket;
+    int m_ipv6Socket;
+#endif
 
     std::vector<NetworkEndpoint> m_endpoints;
     int m_port;

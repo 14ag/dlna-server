@@ -3,7 +3,15 @@
 
 #include <string>
 #include <vector>
+#ifdef _WIN32
 #include <winsock2.h>
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+using ULONG = unsigned long;
+using SOCKADDR = sockaddr;
+using SOCKADDR_STORAGE = sockaddr_storage;
+#endif
 
 struct NetworkEndpoint {
     int family;
