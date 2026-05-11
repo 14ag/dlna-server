@@ -37,6 +37,7 @@ int main(int argc, char** argv) {
         PrintUsage(argv[0]);
         return 2;
     }
+    std::signal(SIGPIPE, SIG_IGN);
     std::signal(SIGINT, HandleSignal);
     std::signal(SIGTERM, HandleSignal);
     if (!DLNAServer.Start()) return 1;
