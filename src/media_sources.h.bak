@@ -15,9 +15,6 @@ struct MediaItem {
     std::wstring mimeType;
     std::wstring upnpClass;
     long long sizeBytes;
-    // full path to companion subtitle file if one exists in the same folder
-    // empty string means no subtitle was found
-    std::wstring subtitlePath;
 };
 
 class MediaSources {

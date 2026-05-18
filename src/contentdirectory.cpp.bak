@@ -126,7 +126,7 @@ std::string ContentDirectory::HandleBrowse(const std::string& req, const std::st
 
     int returnCount = 0;
     std::string didl;
-    didl += "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" xmlns:sec=\"http://www.sec.co.kr/dlna\">";
+    didl += "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\">";
     
     for (int i = startingIndex; i < results.size() && (requestedCount == 0 || returnCount < requestedCount); ++i) {
         const auto& it = results[i];
@@ -148,17 +148,8 @@ std::string ContentDirectory::HandleBrowse(const std::string& req, const std::st
                 << "<upnp:class>" << XMLEscape(it.upnpClass) << "</upnp:class>"
                 << "<res protocolInfo=\"http-get:*:" << mime << ":DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000\" size=\"" << it.sizeBytes << "\">"
                 << "http://" << hostUrl << "/media/" << it.id
-                << "</res>";
-            // emit subtitle reference if a companion file was found during scan
-            // vlc and samsung renderers read sec:CaptionInfoEx to locate external subs
-            if (!it.subtitlePath.empty()) {
-                std::wstring subExtW = it.subtitlePath.substr(it.subtitlePath.rfind(L'.') + 1);
-                std::string subExt = WideToUtf8(subExtW);
-                iss << "<sec:CaptionInfoEx sec:type=\"" << subExt << "\">"
-                    << "http://" << hostUrl << "/subtitle/" << it.id
-                    << "</sec:CaptionInfoEx>";
-            }
-            iss << "</item>";
+                << "</res>"
+                << "</item>";
             didl += iss.str();
         }
         returnCount++;
