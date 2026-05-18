@@ -7,6 +7,7 @@
 #include "netutils.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <shlwapi.h>
 #include <sstream>
 #include <algorithm>
 #include <cctype>
@@ -458,6 +459,69 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
             response = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
             SendAll(clientSocket, response);
+            return;
+        }
+
+        // serve subtitle file by video item id
+        // the subtitle path was stored during media scan
+        if (path.rfind("/subtitle/", 0) == 0) {
+            int fileId = -1;
+            if (!TryParseInt(path.substr(10), fileId)) {
+                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
+            MediaItem item = AppMedia.GetItem(fileId);
+            if (item.id != -1 && !item.subtitlePath.empty()) {
+                HANDLE hFile = CreateFileW(item.subtitlePath.c_str(), GENERIC_READ,
+                    FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+                if (hFile != INVALID_HANDLE_VALUE) {
+                    // pick mime type from extension
+                    // utf-8 charset helps renderers decode srt text correctly
+                    LPCWSTR subExtW = PathFindExtensionW(item.subtitlePath.c_str());
+                    std::string subMime = "text/plain; charset=utf-8";
+                    if (_wcsicmp(subExtW, L".srt") == 0)
+                        subMime = "text/srt; charset=utf-8";
+                    else if (_wcsicmp(subExtW, L".vtt") == 0)
+                        subMime = "text/vtt; charset=utf-8";
+                    else if (_wcsicmp(subExtW, L".ass") == 0 ||
+                             _wcsicmp(subExtW, L".ssa") == 0)
+                        subMime = "text/x-ssa; charset=utf-8";
+
+                    LARGE_INTEGER fileSize = {};
+                    GetFileSizeEx(hFile, &fileSize);
+                    long long totalBytes = fileSize.QuadPart;
+
+                    std::stringstream subHeaders;
+                    subHeaders << "HTTP/1.1 200 OK\r\n"
+                               << "Content-Type: " << subMime << "\r\n"
+                               << "Content-Length: " << totalBytes << "\r\n"
+                               << "Accept-Ranges: bytes\r\n"
+                               << "Connection: close\r\n"
+                               << "\r\n";
+                    SendAll(clientSocket, subHeaders.str());
+
+                    // stream subtitle bytes to client
+                    char subBuf[16384];
+                    DWORD subRead = 0;
+                    while (m_running) {
+                        if (!ReadFile(hFile, subBuf, sizeof(subBuf), &subRead, NULL) ||
+                            subRead == 0)
+                            break;
+                        const char* p = subBuf;
+                        DWORD toSend = subRead;
+                        while (toSend > 0) {
+                            int sent = send(clientSocket, p, toSend, 0);
+                            if (sent == SOCKET_ERROR || sent == 0) goto done_subtitle;
+                            p += sent;
+                            toSend -= sent;
+                        }
+                    }
+                    done_subtitle:
+                    CloseHandle(hFile);
+                    return;
+                }
+            }
+            SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
             return;
         }
 
