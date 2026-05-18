@@ -29,6 +29,21 @@ $outputPath = Assert-WorkspacePath $outputPath
 
 $isWindowsHost = $IsWindows -or $env:OS -eq "Windows_NT"
 
+$cachePath = Join-Path $buildPath "CMakeCache.txt"
+if (Test-Path -LiteralPath $cachePath) {
+    $expectedSource = [System.IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/')
+    $cachedSourceLine = Get-Content -LiteralPath $cachePath |
+        Where-Object { $_ -like "CMAKE_HOME_DIRECTORY:INTERNAL=*" } |
+        Select-Object -First 1
+    if ($cachedSourceLine) {
+        $cachedSource = [System.IO.Path]::GetFullPath(($cachedSourceLine -replace "^CMAKE_HOME_DIRECTORY:INTERNAL=", "")).TrimEnd('\', '/')
+        if (-not [string]::Equals($cachedSource, $expectedSource, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Host "Removing stale CMake cache from $buildPath"
+            Remove-Item -LiteralPath $buildPath -Recurse -Force
+        }
+    }
+}
+
 Write-Host "Configuring build in $buildPath"
 $configureArgs = @("-S", $repoRoot, "-B", $buildPath, "-DCMAKE_INSTALL_PREFIX=$outputPath")
 if (-not $isWindowsHost) {
