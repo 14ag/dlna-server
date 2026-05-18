@@ -1,6 +1,7 @@
 #include "httpserver.h"
 #include "config.h"
 #include "contentdirectory.h"
+#include "dlna_utils.h"
 #include "ipwhitelist.h"
 #include "log.h"
 #include "media_sources.h"
@@ -8,7 +9,6 @@
 
 #include <algorithm>
 #include <cerrno>
-#include <cctype>
 #include <cstring>
 #include <fcntl.h>
 #include <arpa/inet.h>
@@ -48,57 +48,6 @@ public:
 private:
     int m_fd;
 };
-
-std::string TrimAscii(const std::string& value) {
-    size_t start = 0;
-    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) ++start;
-    size_t end = value.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) --end;
-    return value.substr(start, end - start);
-}
-
-std::string ToLowerAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return value;
-}
-
-std::string HeaderValue(const std::string& request, const std::string& name) {
-    const std::string needle = ToLowerAscii(name) + ":";
-    size_t pos = request.find("\r\n");
-    while (pos != std::string::npos) {
-        pos += 2;
-        const size_t end = request.find("\r\n", pos);
-        if (end == std::string::npos || end == pos) break;
-        const std::string line = request.substr(pos, end - pos);
-        if (ToLowerAscii(line).rfind(needle, 0) == 0) return TrimAscii(line.substr(name.size() + 1));
-        pos = end;
-    }
-    return {};
-}
-
-bool TryParseInt(const std::string& text, int& value) {
-    try {
-        size_t used = 0;
-        int parsed = std::stoi(text, &used);
-        if (used != text.size()) return false;
-        value = parsed;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-bool TryParseLongLong(const std::string& text, long long& value) {
-    try {
-        size_t used = 0;
-        long long parsed = std::stoll(text, &used);
-        if (used != text.size()) return false;
-        value = parsed;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
 
 int CreateListenSocket(int family, int port) {
     int fd = socket(family, SOCK_STREAM, 0);
@@ -201,11 +150,14 @@ void HttpServer::HandleClient(int clientSocket, const std::string&) {
     if (space1 == std::string::npos || space2 <= space1) return;
     const std::string method = firstLine.substr(0, space1);
     const std::string path = firstLine.substr(space1 + 1, space2 - space1 - 1);
-    std::string hostUrl = HeaderValue(req, "Host");
+    std::string hostUrl = FindHeaderValueCaseInsensitive(req, "Host");
     if (hostUrl.empty()) hostUrl = "127.0.0.1:" + std::to_string(AppConfig.port);
 
+    const bool sendBody = method != "HEAD";
     auto sendText = [&](const std::string& status, const std::string& type, const std::string& body) {
-        SendAll(clientSocket, "HTTP/1.1 " + status + "\r\nContent-Type: " + type + "\r\nContent-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body);
+        std::string response = "HTTP/1.1 " + status + "\r\nContent-Type: " + type + "\r\nContent-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n";
+        if (sendBody) response += body;
+        SendAll(clientSocket, response);
     };
 
     if (method == "GET" || method == "HEAD") {
@@ -214,7 +166,7 @@ void HttpServer::HandleClient(int clientSocket, const std::string&) {
         else if (path == "/ConnectionManager.xml") sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetConnectionManagerXML());
         else if (path.rfind("/media/", 0) == 0) {
             int mediaId = -1;
-            if (!TryParseInt(path.substr(7), mediaId)) {
+            if (!TryParseIntStrict(path.substr(7), mediaId) || mediaId < 0) {
                 SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
@@ -228,32 +180,14 @@ void HttpServer::HandleClient(int clientSocket, const std::string&) {
                     SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }
-                long long start = 0;
-                long long end = st.st_size - 1;
-                bool partial = false;
-                const std::string range = HeaderValue(req, "Range");
-                if (range.rfind("bytes=", 0) == 0) {
-                    const size_t dash = range.find('-', 6);
-                    if (dash != std::string::npos) {
-                        std::string first = TrimAscii(range.substr(6, dash - 6));
-                        std::string last = TrimAscii(range.substr(dash + 1));
-                        if (!first.empty() && !TryParseLongLong(first, start)) {
-                            SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                            return;
-                        }
-                        if (!last.empty() && !TryParseLongLong(last, end)) {
-                            SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                            return;
-                        }
-                        partial = true;
-                    }
-                }
-                if (start < 0 || end < 0) {
-                    SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                HttpByteRange parsedRange = ParseHttpRangeHeader(FindHeaderValueCaseInsensitive(req, "Range"), static_cast<long long>(st.st_size));
+                if (!parsedRange.satisfiable) {
+                    SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(static_cast<long long>(st.st_size)) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }
-                if (end >= st.st_size) end = st.st_size - 1;
-                if (start > end) start = end;
+                long long start = parsedRange.start;
+                long long end = parsedRange.end;
+                bool partial = parsedRange.requested;
                 std::stringstream headers;
                 headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
                 if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << st.st_size << "\r\n";
@@ -274,16 +208,50 @@ void HttpServer::HandleClient(int clientSocket, const std::string&) {
                     }
                 }
             }
+        } else if (path.rfind("/subtitle/", 0) == 0) {
+            int mediaId = -1;
+            if (!TryParseIntStrict(path.substr(10), mediaId) || mediaId < 0) {
+                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
+            MediaItem item = AppMedia.GetItem(mediaId);
+            ScopedFd fd(item.id == -1 || item.subtitlePath.empty() ? -1 : open(WideToUtf8(item.subtitlePath).c_str(), O_RDONLY));
+            if (fd.get() < 0) {
+                SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
+            struct stat st{};
+            if (fstat(fd.get(), &st) != 0) {
+                SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
+            std::string pathText = WideToUtf8(item.subtitlePath);
+            std::string ext;
+            size_t dot = pathText.find_last_of('.');
+            if (dot != std::string::npos) ext = pathText.substr(dot);
+            std::stringstream headers;
+            headers << "HTTP/1.1 200 OK\r\n"
+                    << "Content-Type: " << SubtitleMimeForExtension(Utf8ToWide(ext)) << "\r\n"
+                    << "Content-Length: " << static_cast<long long>(st.st_size) << "\r\n"
+                    << "Accept-Ranges: bytes\r\nConnection: close\r\n\r\n";
+            SendAll(clientSocket, headers.str());
+            if (sendBody) {
+                while (true) {
+                    ssize_t chunk = read(fd.get(), buf, sizeof(buf));
+                    if (chunk <= 0) break;
+                    if (send(clientSocket, buf, chunk, MSG_NOSIGNAL) <= 0) break;
+                }
+            }
         } else {
             SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
         }
     } else if (method == "POST" && path == "/upnp/control/content_directory") {
         const size_t headersEnd = req.find("\r\n\r\n");
         std::string body = headersEnd == std::string::npos ? std::string() : req.substr(headersEnd + 4);
-        const std::string lengthText = HeaderValue(req, "Content-Length");
+        const std::string lengthText = FindHeaderValueCaseInsensitive(req, "Content-Length");
         if (!lengthText.empty()) {
             int contentLength = 0;
-            if (!TryParseInt(lengthText, contentLength) || contentLength < 0) {
+            if (!TryParseIntStrict(lengthText, contentLength) || contentLength < 0) {
                 SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
@@ -291,6 +259,10 @@ void HttpServer::HandleClient(int clientSocket, const std::string&) {
                 ssize_t r = recv(clientSocket, buf, sizeof(buf), 0);
                 if (r <= 0) break;
                 body.append(buf, static_cast<size_t>(r));
+            }
+            if (static_cast<int>(body.size()) < contentLength) {
+                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                return;
             }
         }
         sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.HandleBrowse(body, hostUrl));
