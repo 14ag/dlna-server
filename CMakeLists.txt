@@ -15,6 +15,7 @@ if(WIN32)
         src/netutils.cpp
         src/httpserver.cpp
         src/contentdirectory.cpp
+        src/dlna_utils.cpp
         src/media_sources.cpp
         src/config.cpp
         src/ipwhitelist.cpp
@@ -30,6 +31,7 @@ if(WIN32)
         src/netutils.h
         src/httpserver.h
         src/contentdirectory.h
+        src/dlna_utils.h
         src/media_sources.h
         src/config.h
         src/ipwhitelist.h
@@ -68,6 +70,7 @@ else()
         src/posix_log.cpp
         src/ipwhitelist.cpp
         src/contentdirectory.cpp
+        src/dlna_utils.cpp
     )
     target_include_directories(dlna-server PRIVATE src)
     target_compile_definitions(dlna-server PRIVATE DLNA_POSIX=1)
