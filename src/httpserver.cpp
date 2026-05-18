@@ -1,6 +1,7 @@
 #include "httpserver.h"
 #include "log.h"
 #include "config.h"
+#include "dlna_utils.h"
 #include "ipwhitelist.h"
 #include "contentdirectory.h"
 #include "media_sources.h"
@@ -9,36 +10,10 @@
 #include <ws2tcpip.h>
 #include <shlwapi.h>
 #include <sstream>
-#include <algorithm>
-#include <cctype>
 
 #define HTTP_BUF_SIZE 8192
 
 namespace {
-bool TryParseInt(const std::string& text, int& value) {
-    try {
-        size_t used = 0;
-        int parsed = std::stoi(text, &used);
-        if (used != text.size()) return false;
-        value = parsed;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-bool TryParseLongLong(const std::string& text, long long& value) {
-    try {
-        size_t used = 0;
-        long long parsed = std::stoll(text, &used);
-        if (used != text.size()) return false;
-        value = parsed;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
 void SendAll(SOCKET s, const char* data, int len) {
     while (len > 0) {
         int sent = send(s, data, len, 0);
@@ -60,50 +35,6 @@ struct WorkData {
 };
 
 namespace {
-std::string TrimAscii(const std::string& value) {
-    size_t start = 0;
-    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
-        ++start;
-    }
-
-    size_t end = value.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
-        --end;
-    }
-
-    return value.substr(start, end - start);
-}
-
-std::string ToLowerAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-}
-
-std::string FindHeaderValueCaseInsensitive(const std::string& request, const std::string& headerName) {
-    std::string needle = ToLowerAscii(headerName) + ":";
-    size_t lineStart = request.find("\r\n");
-
-    while (lineStart != std::string::npos) {
-        lineStart += 2;
-        size_t lineEnd = request.find("\r\n", lineStart);
-        if (lineEnd == std::string::npos || lineEnd == lineStart) {
-            break;
-        }
-
-        std::string line = request.substr(lineStart, lineEnd - lineStart);
-        std::string lowerLine = ToLowerAscii(line);
-        if (lowerLine.rfind(needle, 0) == 0) {
-            return TrimAscii(line.substr(headerName.size() + 1));
-        }
-
-        lineStart = lineEnd;
-    }
-
-    return std::string();
-}
-
 SOCKET CreateListenSocket(int family, int port) {
     SOCKET listenSocket = socket(family, SOCK_STREAM, IPPROTO_TCP);
     if (listenSocket == INVALID_SOCKET) {
@@ -336,32 +267,36 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
         }
     }
 
-    if (method == "GET") {
+    if (method == "GET" || method == "HEAD") {
+        const bool sendBody = method == "GET";
         std::string response;
         if (path == "/description.xml") {
             std::string body = AppContent.GetDeviceDescriptionXML();
-            response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n" + body;
+            response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n";
+            if (sendBody) response += body;
             SendAll(clientSocket, response);
             return;
         }
 
         if (path == "/ContentDirectory.xml") {
             std::string body = AppContent.GetContentDirectoryXML();
-            response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n" + body;
+            response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n";
+            if (sendBody) response += body;
             SendAll(clientSocket, response);
             return;
         }
 
         if (path == "/ConnectionManager.xml") {
             std::string body = AppContent.GetConnectionManagerXML();
-            response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n" + body;
+            response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n";
+            if (sendBody) response += body;
             SendAll(clientSocket, response);
             return;
         }
 
         if (path.rfind("/media/", 0) == 0) {
             int fileId = -1;
-            if (!TryParseInt(path.substr(7), fileId)) {
+            if (!TryParseIntStrict(path.substr(7), fileId) || fileId < 0) {
                 SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
@@ -372,36 +307,17 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     LARGE_INTEGER fileSize = {};
                     GetFileSizeEx(hFile, &fileSize);
 
-                    long long startByte = 0;
-                    long long endByte = fileSize.QuadPart - 1;
-                    bool isPartial = false;
-
-                    std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
-                    if (!rangeHeader.empty()) {
-                        std::string lowerRange = ToLowerAscii(rangeHeader);
-                        if (lowerRange.rfind("bytes=", 0) == 0) {
-                            std::string rangeStr = rangeHeader.substr(6);
-                            size_t dash = rangeStr.find('-');
-                            if (dash != std::string::npos) {
-                                std::string startStr = TrimAscii(rangeStr.substr(0, dash));
-                                std::string endStr = TrimAscii(rangeStr.substr(dash + 1));
-                                if (!startStr.empty() && !TryParseLongLong(startStr, startByte)) {
-                                    CloseHandle(hFile);
-                                    SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                                    return;
-                                }
-                                if (!endStr.empty() && !TryParseLongLong(endStr, endByte)) {
-                                    CloseHandle(hFile);
-                                    SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                                    return;
-                                }
-                                isPartial = true;
-                            }
-                        }
+                    HttpByteRange parsedRange = ParseHttpRangeHeader(FindHeaderValueCaseInsensitive(req, "Range"), fileSize.QuadPart);
+                    if (!parsedRange.satisfiable) {
+                        CloseHandle(hFile);
+                        std::string rangeResp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(fileSize.QuadPart) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+                        SendAll(clientSocket, rangeResp);
+                        return;
                     }
 
-                    if (endByte >= fileSize.QuadPart) endByte = fileSize.QuadPart - 1;
-                    if (startByte > endByte) startByte = endByte;
+                    long long startByte = parsedRange.start;
+                    long long endByte = parsedRange.end;
+                    bool isPartial = parsedRange.requested;
 
                     long long contentLength = endByte - startByte + 1;
                     std::string mime = WideToUtf8(item.mimeType);
@@ -424,6 +340,11 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
                     std::string headStr = headers.str();
                     SendAll(clientSocket, headStr);
+
+                    if (!sendBody) {
+                        CloseHandle(hFile);
+                        return;
+                    }
 
                     LARGE_INTEGER movePos = {};
                     movePos.QuadPart = startByte;
@@ -466,7 +387,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
         // the subtitle path was stored during media scan
         if (path.rfind("/subtitle/", 0) == 0) {
             int fileId = -1;
-            if (!TryParseInt(path.substr(10), fileId)) {
+            if (!TryParseIntStrict(path.substr(10), fileId) || fileId < 0) {
                 SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
@@ -475,17 +396,8 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                 HANDLE hFile = CreateFileW(item.subtitlePath.c_str(), GENERIC_READ,
                     FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
                 if (hFile != INVALID_HANDLE_VALUE) {
-                    // pick mime type from extension
-                    // utf-8 charset helps renderers decode srt text correctly
                     LPCWSTR subExtW = PathFindExtensionW(item.subtitlePath.c_str());
-                    std::string subMime = "text/plain; charset=utf-8";
-                    if (_wcsicmp(subExtW, L".srt") == 0)
-                        subMime = "text/srt; charset=utf-8";
-                    else if (_wcsicmp(subExtW, L".vtt") == 0)
-                        subMime = "text/vtt; charset=utf-8";
-                    else if (_wcsicmp(subExtW, L".ass") == 0 ||
-                             _wcsicmp(subExtW, L".ssa") == 0)
-                        subMime = "text/x-ssa; charset=utf-8";
+                    std::string subMime = SubtitleMimeForExtension(subExtW);
 
                     LARGE_INTEGER fileSize = {};
                     GetFileSizeEx(hFile, &fileSize);
@@ -499,6 +411,10 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                                << "Connection: close\r\n"
                                << "\r\n";
                     SendAll(clientSocket, subHeaders.str());
+                    if (!sendBody) {
+                        CloseHandle(hFile);
+                        return;
+                    }
 
                     // stream subtitle bytes to client
                     char subBuf[16384];
@@ -540,7 +456,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
             std::string contentLengthHeader = FindHeaderValueCaseInsensitive(req, "Content-Length");
             if (!contentLengthHeader.empty()) {
                 int contentLength = 0;
-                if (!TryParseInt(contentLengthHeader, contentLength) || contentLength < 0) {
+                if (!TryParseIntStrict(contentLengthHeader, contentLength) || contentLength < 0) {
                     SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }
@@ -548,6 +464,10 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     int r = recv(clientSocket, buf, HTTP_BUF_SIZE, 0);
                     if (r <= 0) break;
                     body.append(buf, r);
+                }
+                if (static_cast<int>(body.length()) < contentLength) {
+                    SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                    return;
                 }
             }
 

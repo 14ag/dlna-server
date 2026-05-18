@@ -1,5 +1,6 @@
 #include "media_sources.h"
 #include "config.h"
+#include "dlna_utils.h"
 #include "log.h"
 #include "netutils.h"
 
@@ -18,17 +19,11 @@ MediaSources::MediaSources() : m_nextId(1), m_systemUpdateId(1) {
 }
 
 bool MediaSources::IsAllowedExtension(const std::wstring& ext, std::wstring& mime, std::wstring& uclass) {
-    std::string value = WideToUtf8(ext);
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (value == ".mp4" || value == ".m4v") { mime = L"video/mp4"; uclass = L"object.item.videoItem"; return true; }
-    if (value == ".mkv") { mime = L"video/x-matroska"; uclass = L"object.item.videoItem"; return true; }
-    if (value == ".avi") { mime = L"video/x-msvideo"; uclass = L"object.item.videoItem"; return true; }
-    if (value == ".mov") { mime = L"video/quicktime"; uclass = L"object.item.videoItem"; return true; }
-    if (value == ".mp3") { mime = L"audio/mpeg"; uclass = L"object.item.audioItem.musicTrack"; return true; }
-    if (value == ".flac") { mime = L"audio/flac"; uclass = L"object.item.audioItem.musicTrack"; return true; }
-    if (value == ".jpg" || value == ".jpeg") { mime = L"image/jpeg"; uclass = L"object.item.imageItem.photo"; return true; }
-    if (value == ".png") { mime = L"image/png"; uclass = L"object.item.imageItem.photo"; return true; }
-    return false;
+    MediaFormatInfo info;
+    if (!GetMediaFormatForExtension(ext, info)) return false;
+    mime = info.mimeType;
+    uclass = info.upnpClass;
+    return true;
 }
 
 void MediaSources::Scan() {
@@ -60,6 +55,7 @@ void MediaSources::ScanFolder(const std::wstring& rootPath, int parentId) {
     for (const auto& entry : fs::directory_iterator(root, fs::directory_options::skip_permission_denied, ec)) {
         if (ec) break;
         const fs::path path = entry.path();
+        if (entry.is_symlink(ec)) continue;
         if (entry.is_directory(ec)) {
             MediaItem folder{};
             folder.id = m_nextId++;
@@ -82,6 +78,17 @@ void MediaSources::ScanFolder(const std::wstring& rootPath, int parentId) {
             file.upnpClass = uclass;
             file.sizeBytes = static_cast<long long>(entry.file_size(ec));
             file.title = AppConfig.showFileNamesInsteadOfTitles ? Utf8ToWide(path.filename().u8string()) : Utf8ToWide(path.stem().u8string());
+            if (uclass == L"object.item.videoItem") {
+                static const char* kSubExts[] = { ".srt", ".vtt", ".sub", ".ass", ".ssa", ".smi", ".txt" };
+                for (const char* subExt : kSubExts) {
+                    fs::path candidate = path.parent_path() / (path.stem().u8string() + subExt);
+                    std::error_code subEc;
+                    if (fs::is_regular_file(candidate, subEc)) {
+                        file.subtitlePath = Utf8ToWide(candidate.u8string());
+                        break;
+                    }
+                }
+            }
             m_items.push_back(file);
         }
     }
@@ -91,6 +98,10 @@ std::vector<MediaItem> MediaSources::GetChildren(int parentId) {
     std::lock_guard<std::mutex> lock(m_mutex);
     std::vector<MediaItem> result;
     for (const auto& item : m_items) if (item.parentId == parentId) result.push_back(item);
+    std::sort(result.begin(), result.end(), [](const MediaItem& a, const MediaItem& b) {
+        if (a.isFolder != b.isFolder) return a.isFolder && !b.isFolder;
+        return NaturalLessWide(a.title, b.title);
+    });
     return result;
 }
 

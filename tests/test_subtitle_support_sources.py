@@ -37,7 +37,7 @@ class SubtitleSupportSourceTests(unittest.TestCase):
         self.assertIn("#include <shlwapi.h>", source)
         self.assertIn('path.rfind("/subtitle/", 0) == 0', source)
         self.assertIn("item.subtitlePath.c_str()", source)
-        self.assertIn("text/srt; charset=utf-8", source)
+        self.assertIn("SubtitleMimeForExtension", source)
         self.assertIn("done_subtitle:", source)
 
 

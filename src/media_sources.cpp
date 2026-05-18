@@ -1,8 +1,10 @@
 #include "media_sources.h"
 #include "config.h"
+#include "dlna_utils.h"
 #include "log.h"
 #include <windows.h>
 #include <shlwapi.h>
+#include <algorithm>
 
 MediaSources& MediaSources::Get() {
     static MediaSources instance;
@@ -13,31 +15,11 @@ MediaSources::MediaSources() : m_nextId(1), m_systemUpdateId(1) {
 }
 
 bool MediaSources::IsAllowedExtension(const std::wstring& ext, std::wstring& mime, std::wstring& uclass) {
-    if (_wcsicmp(ext.c_str(), L".mp4") == 0 || _wcsicmp(ext.c_str(), L".m4v") == 0) {
-        mime = L"video/mp4"; uclass = L"object.item.videoItem"; return true;
-    }
-    if (_wcsicmp(ext.c_str(), L".mkv") == 0) {
-        mime = L"video/x-matroska"; uclass = L"object.item.videoItem"; return true;
-    }
-    if (_wcsicmp(ext.c_str(), L".avi") == 0) {
-        mime = L"video/x-msvideo"; uclass = L"object.item.videoItem"; return true;
-    }
-    if (_wcsicmp(ext.c_str(), L".mov") == 0) {
-        mime = L"video/quicktime"; uclass = L"object.item.videoItem"; return true;
-    }
-    if (_wcsicmp(ext.c_str(), L".mp3") == 0) {
-        mime = L"audio/mpeg"; uclass = L"object.item.audioItem.musicTrack"; return true;
-    }
-    if (_wcsicmp(ext.c_str(), L".flac") == 0) {
-        mime = L"audio/flac"; uclass = L"object.item.audioItem.musicTrack"; return true;
-    }
-    if (_wcsicmp(ext.c_str(), L".jpg") == 0 || _wcsicmp(ext.c_str(), L".jpeg") == 0) {
-        mime = L"image/jpeg"; uclass = L"object.item.imageItem.photo"; return true;
-    }
-    if (_wcsicmp(ext.c_str(), L".png") == 0) {
-        mime = L"image/png"; uclass = L"object.item.imageItem.photo"; return true;
-    }
-    return false;
+    MediaFormatInfo info;
+    if (!GetMediaFormatForExtension(ext, info)) return false;
+    mime = info.mimeType;
+    uclass = info.upnpClass;
+    return true;
 }
 
 void MediaSources::Scan() {
@@ -84,7 +66,7 @@ void MediaSources::ScanFolder(const std::wstring& rootPath, int parentId) {
 
     do {
         if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-        if (fd.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) continue;
+        if (fd.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_REPARSE_POINT)) continue;
 
         std::wstring fullPath = rootPath + L"\\" + fd.cFileName;
 
@@ -127,13 +109,7 @@ void MediaSources::ScanFolder(const std::wstring& rootPath, int parentId) {
                     wchar_t stemBuf[MAX_PATH];
                     wcscpy_s(stemBuf, fd.cFileName);
                     PathRemoveExtensionW(stemBuf);
-                    static const wchar_t* kSubExts[] = {
-                        L".srt",
-                        L".vtt",
-                        L".sub",
-                        L".ass",
-                        L".ssa"
-                    };
+                    static const wchar_t* kSubExts[] = { L".srt", L".vtt", L".sub", L".ass", L".ssa", L".smi", L".txt" };
                     for (const wchar_t* subExt : kSubExts) {
                         std::wstring candidate = rootPath + L"\\" + stemBuf + subExt;
                         DWORD attrs = GetFileAttributesW(candidate.c_str());
@@ -160,6 +136,10 @@ std::vector<MediaItem> MediaSources::GetChildren(int parentId) {
     for (const auto& it : m_items) {
         if (it.parentId == parentId) res.push_back(it);
     }
+    std::sort(res.begin(), res.end(), [](const MediaItem& a, const MediaItem& b) {
+        if (a.isFolder != b.isFolder) return a.isFolder && !b.isFolder;
+        return NaturalLessWide(a.title, b.title);
+    });
     return res;
 }
 
