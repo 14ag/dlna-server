@@ -47,6 +47,7 @@ class UmsHardeningSourceTests(unittest.TestCase):
 
         self.assertIn("GetSearchCapabilities", source)
         self.assertIn("GetSortCapabilities", source)
+        self.assertIn("SoapFault(401", source)
         self.assertIn("SoapFault(402", source)
         self.assertIn("SoapFault(701", source)
         self.assertIn("TryParseIntStrict", source)
@@ -58,9 +59,14 @@ class UmsHardeningSourceTests(unittest.TestCase):
             self.assertIn('method == "GET" || method == "HEAD"', source)
             self.assertIn("ParseHttpRangeHeader", source)
             self.assertIn("TryParseIntStrict", source)
+            self.assertIn("Content-Length", source)
+            self.assertIn("contentLength < 0", source)
             self.assertIn("416 Range Not Satisfiable", source)
             self.assertIn("Content-Range: bytes */", source)
             self.assertIn("SubtitleMimeForExtension", source)
+
+        utils = self.read("src/dlna_utils.cpp")
+        self.assertIn("fileSize <= 0", utils)
 
     def test_scanners_share_mime_table_and_subtitle_detection(self):
         for name in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
@@ -70,7 +76,10 @@ class UmsHardeningSourceTests(unittest.TestCase):
             self.assertIn('L".smi"', source) if name.endswith("media_sources.cpp") and not name.endswith("posix_media_sources.cpp") else self.assertIn('".smi"', source)
 
         self.assertIn("FILE_ATTRIBUTE_REPARSE_POINT", self.read("src/media_sources.cpp"))
-        self.assertIn("entry.is_symlink", self.read("src/posix_media_sources.cpp"))
+        posix_source = self.read("src/posix_media_sources.cpp")
+        self.assertIn("entry.is_symlink", posix_source)
+        self.assertIn("IsHiddenPath", posix_source)
+        self.assertIn("IsReadableEntry", posix_source)
 
 
 if __name__ == "__main__":
