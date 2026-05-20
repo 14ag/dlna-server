@@ -95,6 +95,16 @@ That user install writes:
 
 After install, open `DLNA Server` from your desktop app launcher. If it doesn't show up right away, run `dlna-server-gui` from a terminal or sign out and back in.
 
+### Linux AppImage
+
+Build the install tree, AppDir, and AppImage on Linux:
+
+```powershell
+pwsh ./build-linux-appimage.ps1
+```
+
+The script expects `linuxdeploy-x86_64.AppImage` or `linuxdeploy` on `PATH`, or a `LINUXDEPLOY_PATH` environment variable pointing at the tool. It writes the AppImage into `output/`.
+
 ### macOS app bundle
 
 Build and install the POSIX server and app bundle into `./output`:
