@@ -239,7 +239,13 @@ try {
         Remove-Item -LiteralPath $testMediaDir -Recurse -Force
     }
     New-Item -ItemType Directory -Path $testMediaDir | Out-Null
-    Set-Content -LiteralPath (Join-Path $testMediaDir "song.mp3") -Value "fake mp3 bytes" -Encoding ascii
+    Set-Content -LiteralPath (Join-Path $testMediaDir "movie.mp4") -Value "fake mp4 bytes" -Encoding ascii
+    Set-Content -LiteralPath (Join-Path $testMediaDir "movie.srt") -Value "1`r`n00:00:01,000 --> 00:00:02,000`r`nTest" -Encoding ascii
+    $emptyFilePath = Join-Path $testMediaDir "empty.mp3"
+    if (Test-Path -LiteralPath $emptyFilePath) {
+        Remove-Item -LiteralPath $emptyFilePath -Force
+    }
+    New-Item -ItemType File -Path $emptyFilePath | Out-Null
     Set-Content -LiteralPath (Join-Path $testMediaDir "cover.jpg") -Value "fake jpg bytes" -Encoding ascii
 
     if (Test-Path $configPath) {
@@ -396,8 +402,182 @@ try {
             if ($childId) {
                 $childBody = $soapBody -replace "<ObjectID>0</ObjectID>", "<ObjectID>$childId</ObjectID>"
                 $childBrowse = Invoke-WebRequest -Uri ($location -replace "/description.xml$", "/upnp/control/content_directory") -Method Post -ContentType 'text/xml; charset="utf-8"' -Headers @{ SOAPACTION = '"urn:schemas-upnp-org:service:ContentDirectory:1#Browse"' } -Body $childBody -UseBasicParsing -TimeoutSec 10
-                if ($childBrowse.Content -match "song" -or $childBrowse.Content -match "cover") {
+                if ($childBrowse.Content -match "movie" -or $childBrowse.Content -match "cover") {
                     Add-Result "PASS Browse SOAP returned media entries"
+
+                    $decodedDIDL = [System.Net.WebUtility]::HtmlDecode($childBrowse.Content)
+
+                    # Find movie.mp4 ID
+                    $movieMatch = [regex]::Match($decodedDIDL, '<item id="(\d+)"(?:(?!</item>)[\s\S])*?<dc:title>movie</dc:title>(?:(?!</item>)[\s\S])*?</item>')
+                    $movieId = $movieMatch.Groups[1].Value
+
+                    # Find empty.mp3 ID
+                    $emptyMatch = [regex]::Match($decodedDIDL, '<item id="(\d+)"(?:(?!</item>)[\s\S])*?<dc:title>empty</dc:title>(?:(?!</item>)[\s\S])*?</item>')
+                    $emptyId = $emptyMatch.Groups[1].Value
+
+                    # 1. Subtitle URL advertisement check
+                    if ($childBrowse.Content -match "CaptionInfoEx" -and $childBrowse.Content -match "/subtitle/") {
+                        Add-Result "PASS Browse SOAP advertised subtitle URL via sec:CaptionInfoEx"
+                    } else {
+                        Add-Result "FAIL Browse SOAP did not advertise subtitle URL"
+                    }
+
+                    # 2. HEAD request check
+                    $baseUrl = $location -replace "/description.xml$", ""
+                    $headResp = Invoke-WebRequest -Uri "$baseUrl/description.xml" -Method Head -UseBasicParsing -TimeoutSec 5
+                    if ($headResp.StatusCode -eq 200 -and -not $headResp.Content) {
+                        Add-Result "PASS HEAD request returned 200 OK with empty body"
+                    } else {
+                        Add-Result "FAIL HEAD request returned status $($headResp.StatusCode) or non-empty body"
+                    }
+
+                    # 3. Range 206 / 416 request check for movie using HttpClient
+                    if ($movieId) {
+                        Add-Type -AssemblyName System.Net.Http
+                        $client = New-Object System.Net.Http.HttpClient
+                        try {
+                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "$baseUrl/media/$movieId")
+                            $request.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(0, 4)
+                            $response = $client.SendAsync($request).GetAwaiter().GetResult()
+                            $statusCode = [int]$response.StatusCode
+                            if ($statusCode -eq 206) {
+                                $contentRange = $null
+                                if ($response.Content.Headers.Contains("Content-Range")) {
+                                    $contentRange = [System.Linq.Enumerable]::First($response.Content.Headers.GetValues("Content-Range"))
+                                }
+                                if ($contentRange -match "bytes 0-4/") {
+                                    Add-Result "PASS Range request returned 206 with correct Content-Range"
+                                } else {
+                                    Add-Result "FAIL Range request returned Content-Range: $contentRange"
+                                }
+                            } else {
+                                Add-Result "FAIL Range request returned status $statusCode"
+                            }
+                        } finally {
+                            $client.Dispose()
+                        }
+
+                        # Request Range 100- (unsatisfiable)
+                        $client = New-Object System.Net.Http.HttpClient
+                        try {
+                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "$baseUrl/media/$movieId")
+                            $request.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(100, $null)
+                            $response = $client.SendAsync($request).GetAwaiter().GetResult()
+                            $statusCode = [int]$response.StatusCode
+                            if ($statusCode -eq 416) {
+                                $contentRange = $null
+                                if ($response.Content.Headers.Contains("Content-Range")) {
+                                    $contentRange = [System.Linq.Enumerable]::First($response.Content.Headers.GetValues("Content-Range"))
+                                }
+                                if ($contentRange -match "bytes \*/") {
+                                    Add-Result "PASS unsatisfiable range request returned 416 with correct Content-Range"
+                                } else {
+                                    Add-Result "FAIL 416 response has Content-Range: $contentRange"
+                                }
+                            } else {
+                                Add-Result "FAIL unsatisfiable range request returned status $statusCode"
+                            }
+                        } finally {
+                            $client.Dispose()
+                        }
+                    } else {
+                        Add-Result "FAIL could not find movie item ID in Browse response"
+                    }
+
+                    # 4. Range request on empty file check
+                    if ($emptyId) {
+                        $client = New-Object System.Net.Http.HttpClient
+                        try {
+                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "$baseUrl/media/$emptyId")
+                            $request.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(0, $null)
+                            $response = $client.SendAsync($request).GetAwaiter().GetResult()
+                            $statusCode = [int]$response.StatusCode
+                            if ($statusCode -eq 416) {
+                                $contentRange = $null
+                                if ($response.Content.Headers.Contains("Content-Range")) {
+                                    $contentRange = [System.Linq.Enumerable]::First($response.Content.Headers.GetValues("Content-Range"))
+                                }
+                                if ($contentRange -eq "bytes */0") {
+                                    Add-Result "PASS empty file range request returned 416 with Content-Range: bytes */0"
+                                } else {
+                                    Add-Result "FAIL empty file 416 response has Content-Range: $contentRange"
+                                }
+                            } else {
+                                Add-Result "FAIL empty file range request returned status $statusCode"
+                            }
+                        } finally {
+                            $client.Dispose()
+                        }
+                    } else {
+                        Add-Result "FAIL could not find empty item ID in Browse response"
+                    }
+
+                    # 5. Subtitle serving check
+                    if ($movieId) {
+                        $subResp = Invoke-WebRequest -Uri "$baseUrl/subtitle/$movieId" -UseBasicParsing -TimeoutSec 5
+                        if ($subResp.StatusCode -eq 200 -and $subResp.Content -match "Test") {
+                            $subMime = $subResp.Headers["Content-Type"]
+                            if ($subMime -match "application/x-subrip" -or $subMime -match "text/vtt" -or $subMime -match "srt") {
+                                Add-Result "PASS subtitle served with correct MIME type ($subMime)"
+                            } else {
+                                Add-Result "FAIL subtitle MIME type is $subMime"
+                            }
+                        } else {
+                            Add-Result "FAIL subtitle request returned status $($subResp.StatusCode)"
+                        }
+                    }
+
+                    # 6. Malformed SOAP XML check (SOAP fault 401)
+                    $controlUrl = $location -replace "/description.xml$", "/upnp/control/content_directory"
+                    $malformedSoap = @"
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <u:Browse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
+      <ObjectID>0
+"@
+                    $faultResp = Invoke-WebRequest -Uri $controlUrl -Method Post -ContentType 'text/xml; charset="utf-8"' -Headers @{ SOAPACTION = '"urn:schemas-upnp-org:service:ContentDirectory:1#Browse"' } -Body $malformedSoap -UseBasicParsing -TimeoutSec 5
+                    if ($faultResp.Content -match "<errorCode>401</errorCode>" -and $faultResp.Content -match "Invalid XML") {
+                        Add-Result "PASS malformed SOAP XML request rejected with SOAP fault 401"
+                    } else {
+                        Add-Result "FAIL malformed SOAP XML request response: $($faultResp.Content)"
+                    }
+
+                    # 7. Invalid Content-Length check
+                    $tcpClient = New-Object System.Net.Sockets.TcpClient
+                    try {
+                        $tcpClient.Connect("127.0.0.1", 18200)
+                        $stream = $tcpClient.GetStream()
+                        $reqBytes = [System.Text.Encoding]::ASCII.GetBytes("POST /upnp/control/content_directory HTTP/1.1`r`nHost: 127.0.0.1:18200`r`nContent-Length: -10`r`n`r`n")
+                        $stream.Write($reqBytes, 0, $reqBytes.Length)
+                        $reader = New-Object System.IO.StreamReader($stream)
+                        $respLine = $reader.ReadLine()
+                        if ($respLine -match "400 Bad Request") {
+                            Add-Result "PASS invalid Content-Length (negative) rejected with 400 Bad Request"
+                        } else {
+                            Add-Result "FAIL invalid Content-Length negative returned: $respLine"
+                        }
+                    } finally {
+                        $tcpClient.Close()
+                    }
+
+                    $tcpClient2 = New-Object System.Net.Sockets.TcpClient
+                    try {
+                        $tcpClient2.Connect("127.0.0.1", 18200)
+                        $stream = $tcpClient2.GetStream()
+                        $reqBytes = [System.Text.Encoding]::ASCII.GetBytes("POST /upnp/control/content_directory HTTP/1.1`r`nHost: 127.0.0.1:18200`r`nContent-Length: abc`r`n`r`n")
+                        $stream.Write($reqBytes, 0, $reqBytes.Length)
+                        $reader = New-Object System.IO.StreamReader($stream)
+                        $respLine = $reader.ReadLine()
+                        if ($respLine -match "400 Bad Request") {
+                            Add-Result "PASS non-numeric Content-Length rejected with 400 Bad Request"
+                        } else {
+                            Add-Result "FAIL non-numeric Content-Length returned: $respLine"
+                        }
+                    } finally {
+                        $tcpClient2.Close()
+                    }
+
                 } else {
                     Add-Result "FAIL child Browse SOAP did not include expected media entries"
                 }

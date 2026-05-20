@@ -10,6 +10,24 @@
 
 namespace fs = std::filesystem;
 
+namespace {
+bool IsHiddenPath(const fs::path& path) {
+    const std::string name = path.filename().u8string();
+    return !name.empty() && name[0] == '.';
+}
+
+bool HasAnyReadBit(fs::perms permissions) {
+    using fs::perms;
+    return (permissions & (perms::owner_read | perms::group_read | perms::others_read)) != perms::none;
+}
+
+bool IsReadableEntry(const fs::directory_entry& entry) {
+    std::error_code ec;
+    const fs::file_status status = entry.status(ec);
+    return !ec && HasAnyReadBit(status.permissions());
+}
+}
+
 MediaSources& MediaSources::Get() {
     static MediaSources instance;
     return instance;
@@ -56,6 +74,7 @@ void MediaSources::ScanFolder(const std::wstring& rootPath, int parentId) {
         if (ec) break;
         const fs::path path = entry.path();
         if (entry.is_symlink(ec)) continue;
+        if (IsHiddenPath(path) || !IsReadableEntry(entry)) continue;
         if (entry.is_directory(ec)) {
             MediaItem folder{};
             folder.id = m_nextId++;
