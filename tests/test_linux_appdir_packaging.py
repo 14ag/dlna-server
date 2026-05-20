@@ -49,6 +49,16 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("--output appimage", script)
         self.assertIn("*.AppImage", script)
 
+    def test_fltk_gui_dependency_is_optional(self):
+        cmake = self.read("CMakeLists.txt")
+        gui_source = self.read("src/fltk_gui_main.cpp")
+
+        self.assertIn("DLNA_ENABLE_FLTK_GUI", cmake)
+        self.assertIn("find_package(FLTK REQUIRED)", cmake)
+        self.assertIn("dlna-server-gui-native", cmake)
+        self.assertIn("#include <FL/Fl_Window.H>", gui_source)
+        self.assertIn("DLNA Server is stopped", gui_source)
+
 
 if __name__ == "__main__":
     unittest.main()

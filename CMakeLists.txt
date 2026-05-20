@@ -58,6 +58,7 @@ if(WIN32)
     install(TARGETS WinDLNAServer RUNTIME DESTINATION .)
 else()
     include(GNUInstallDirs)
+    option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" OFF)
 
     add_executable(dlna-server
         src/posix_main.cpp
@@ -84,6 +85,16 @@ else()
 
     install(TARGETS dlna-server RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(PROGRAMS src/posix_gui.py DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server)
+
+    if(DLNA_ENABLE_FLTK_GUI)
+        find_package(FLTK REQUIRED)
+        add_executable(dlna-server-gui-native
+            src/fltk_gui_main.cpp
+        )
+        target_include_directories(dlna-server-gui-native PRIVATE src ${FLTK_INCLUDE_DIR})
+        target_link_libraries(dlna-server-gui-native PRIVATE ${FLTK_LIBRARIES})
+        install(TARGETS dlna-server-gui-native RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
 
     if(APPLE)
         set(DLNA_APP_BUNDLE "${CMAKE_BINARY_DIR}/DLNA Server.app")
