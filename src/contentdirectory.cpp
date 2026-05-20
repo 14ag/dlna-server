@@ -5,8 +5,62 @@
 #include "netutils.h"
 #include <algorithm>
 #include <sstream>
+#include <vector>
 
 namespace {
+bool IsValidXml(const std::string& xml) {
+    std::vector<std::string> tagStack;
+    size_t i = 0;
+    while (i < xml.size()) {
+        size_t openBracket = xml.find('<', i);
+        if (openBracket == std::string::npos) {
+            if (xml.find('>', i) != std::string::npos) return false;
+            break;
+        }
+        for (size_t check = i; check < openBracket; ++check) {
+            if (xml[check] == '>') return false;
+        }
+        
+        size_t closeBracket = xml.find('>', openBracket);
+        if (closeBracket == std::string::npos) return false;
+        
+        std::string tagContent = xml.substr(openBracket + 1, closeBracket - openBracket - 1);
+        i = closeBracket + 1;
+        
+        if (tagContent.empty()) return false;
+        
+        if (tagContent[0] == '?' || tagContent[0] == '!') {
+            if (tagContent[0] == '?' && tagContent.back() != '?') return false;
+            if (tagContent.rfind("!--", 0) == 0) {
+                if (tagContent.size() < 5 || tagContent.compare(tagContent.size() - 2, 2, "--") != 0) {
+                    size_t commentEnd = xml.find("-->", openBracket + 4);
+                    if (commentEnd == std::string::npos) return false;
+                    i = commentEnd + 3;
+                }
+            }
+            continue;
+        }
+        
+        if (tagContent.back() == '/') {
+            continue;
+        }
+        
+        if (tagContent[0] == '/') {
+            std::string tagName = tagContent.substr(1);
+            tagName.erase(tagName.find_last_not_of(" \t\r\n") + 1);
+            if (tagStack.empty() || tagStack.back() != tagName) return false;
+            tagStack.pop_back();
+            continue;
+        }
+        
+        size_t space = tagContent.find_first_of(" \t\r\n/");
+        std::string tagName = (space == std::string::npos) ? tagContent : tagContent.substr(0, space);
+        if (tagName.empty()) return false;
+        tagStack.push_back(tagName);
+    }
+    return tagStack.empty();
+}
+
 bool ExtractTag(const std::string& req, const char* tag, std::string& value) {
     const std::string open = std::string("<") + tag + ">";
     const std::string close = std::string("</") + tag + ">";
@@ -158,6 +212,10 @@ std::string ContentDirectory::GetConnectionManagerXML() {
 }
 
 std::string ContentDirectory::HandleBrowse(const std::string& req, const std::string& hostUrl) {
+    if (!IsValidXml(req)) {
+        return SoapFault(401, "Invalid XML");
+    }
+
     if (req.find("GetSystemUpdateID") != std::string::npos) {
         std::stringstream ss;
         ss << "    <u:GetSystemUpdateIDResponse xmlns:u=\"urn:schemas-upnp-org:service:ContentDirectory:1\">\n"
@@ -179,8 +237,10 @@ std::string ContentDirectory::HandleBrowse(const std::string& req, const std::st
     std::string startingIndexStr;
     std::string requestedCountStr;
     if (!ExtractTag(req, "ObjectID", objIdStr) ||
-        !ExtractTag(req, "BrowseFlag", browseFlag) ||
-        !ExtractTag(req, "StartingIndex", startingIndexStr) ||
+        !ExtractTag(req, "BrowseFlag", browseFlag)) {
+        return SoapFault(401, "Invalid XML");
+    }
+    if (!ExtractTag(req, "StartingIndex", startingIndexStr) ||
         !ExtractTag(req, "RequestedCount", requestedCountStr)) {
         return SoapFault(402, "Invalid Args");
     }
