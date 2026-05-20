@@ -59,6 +59,19 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("#include <FL/Fl_Window.H>", gui_source)
         self.assertIn("DLNA Server is stopped", gui_source)
 
+    def test_fltk_main_window_has_parity_controls(self):
+        gui_source = self.read("src/fltk_gui_main.cpp")
+
+        self.assertIn("class MainWindow", gui_source)
+        self.assertIn("Fl_Hold_Browser", gui_source)
+        self.assertIn("Add media folder", gui_source)
+        self.assertIn("Start server", gui_source)
+        self.assertIn("Stop server", gui_source)
+        self.assertIn("Settings", gui_source)
+        self.assertIn("Please add shared folders or files", gui_source)
+        self.assertIn("size_range(640, 460)", gui_source)
+        self.assertIn("void resize", gui_source)
+
 
 if __name__ == "__main__":
     unittest.main()
