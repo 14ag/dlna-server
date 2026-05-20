@@ -39,6 +39,16 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("Exec=dlna-server-gui", script)
         self.assertIn("Icon=dlna-server", script)
 
+    def test_appimage_script_uses_linuxdeploy(self):
+        script = self.read("build-linux-appimage.ps1")
+
+        self.assertIn("build-output.ps1", script)
+        self.assertIn("build-linux-appdir.ps1", script)
+        self.assertIn("Get-Command $name -ErrorAction SilentlyContinue", script)
+        self.assertIn("--appdir", script)
+        self.assertIn("--output appimage", script)
+        self.assertIn("*.AppImage", script)
+
 
 if __name__ == "__main__":
     unittest.main()
