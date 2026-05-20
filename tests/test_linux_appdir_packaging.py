@@ -56,6 +56,8 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("DLNA_ENABLE_FLTK_GUI", cmake)
         self.assertIn("find_package(FLTK REQUIRED)", cmake)
         self.assertIn("dlna-server-gui-native", cmake)
+        self.assertIn("OUTPUT_NAME dlna-server-gui", cmake)
+        self.assertIn("packaging/linux/dlna-server-gui", cmake)
         self.assertIn("#include <FL/Fl_Window.H>", gui_source)
         self.assertIn("DLNA Server is stopped", gui_source)
 
