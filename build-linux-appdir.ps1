@@ -53,7 +53,9 @@ New-Item -ItemType Directory -Path $appDirPath | Out-Null
 
 Copy-RequiredItem (Join-Path $installPath "bin/dlna-server") (Join-Path $appDirPath "usr/bin/dlna-server")
 Copy-RequiredItem (Join-Path $installPath "bin/dlna-server-gui") (Join-Path $appDirPath "usr/bin/dlna-server-gui")
-Copy-RequiredItem (Join-Path $installPath "share/dlna-server") (Join-Path $appDirPath "usr/share/dlna-server")
+if (Test-Path -LiteralPath (Join-Path $installPath "share/dlna-server")) {
+    Copy-RequiredItem (Join-Path $installPath "share/dlna-server") (Join-Path $appDirPath "usr/share/dlna-server")
+}
 Copy-RequiredItem (Join-Path $installPath "share/icons/hicolor/scalable/apps/dlna-server.svg") (Join-Path $appDirPath "usr/share/icons/hicolor/scalable/apps/dlna-server.svg")
 Copy-RequiredItem (Join-Path $repoRoot "packaging/linux/AppRun") (Join-Path $appDirPath "AppRun")
 Copy-RequiredItem (Join-Path $repoRoot "resources/dlna-server.svg") (Join-Path $appDirPath "dlna-server.svg")
@@ -84,7 +86,6 @@ $required = @(
     "dlna-server.svg",
     "usr/bin/dlna-server",
     "usr/bin/dlna-server-gui",
-    "usr/share/dlna-server/posix_gui.py",
     "usr/share/icons/hicolor/scalable/apps/dlna-server.svg"
 )
 

@@ -84,16 +84,19 @@ else()
     target_link_libraries(dlna-server PRIVATE Threads::Threads)
 
     install(TARGETS dlna-server RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-    install(PROGRAMS src/posix_gui.py DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server)
 
     if(DLNA_ENABLE_FLTK_GUI)
         find_package(FLTK REQUIRED)
         add_executable(dlna-server-gui-native
             src/fltk_gui_main.cpp
         )
+        set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui)
         target_include_directories(dlna-server-gui-native PRIVATE src ${FLTK_INCLUDE_DIR})
         target_link_libraries(dlna-server-gui-native PRIVATE ${FLTK_LIBRARIES})
         install(TARGETS dlna-server-gui-native RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    else()
+        install(PROGRAMS packaging/linux/dlna-server-gui DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(PROGRAMS src/posix_gui.py DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server)
     endif()
 
     if(APPLE)
@@ -124,7 +127,6 @@ else()
         install(DIRECTORY "${DLNA_APP_BUNDLE}" DESTINATION . USE_SOURCE_PERMISSIONS)
     else()
         configure_file(packaging/linux/install_desktop.cmake.in "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake" @ONLY)
-        install(PROGRAMS packaging/linux/dlna-server-gui DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(FILES resources/dlna-server.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
         install(SCRIPT "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake")
     endif()
