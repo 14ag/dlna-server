@@ -77,7 +77,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("src/posix_server.cpp", cmake)
         self.assertIn("Threads::Threads", cmake)
         self.assertIn("#include <FL/Fl_Window.H>", gui_source)
-        self.assertIn("DLNA Server is stopped", gui_source)
+        self.assertIn("dlna-server is stopped", gui_source)
 
     def test_fltk_main_window_has_parity_controls(self):
         gui_source = self.read("src/fltk_gui_main.cpp")
@@ -102,7 +102,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         gui_source = self.read("src/fltk_gui_main.cpp")
 
         for label in (
-            "DLNA Server Settings",
+            "dlna-server Settings",
             "Server Name:",
             "HTTP Port:",
             "File Port:",
@@ -123,7 +123,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
             "View log",
             "OK",
             "Cancel",
-            "DLNA Server Log",
+            "dlna-server Log",
             "Close",
         ):
             self.assertIn(label, gui_source)

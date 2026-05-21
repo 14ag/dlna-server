@@ -1,11 +1,20 @@
 # Changelog
 
-All notable changes to WinDLNAServer will be documented in this file.
+All notable changes to dlna-server will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+- Rebranded Windows and Linux release artifacts to `dlna-server`.
+- Standard CMake installs now default to `./output`, so Linux users can build without PowerShell.
+- Missing or empty server names now default to the computer hostname. Values already set in `config.ini` still win.
+- Linux desktop installs now include appstream metadata and a richer desktop entry.
+
+### Fixed
+- The Linux GUI launcher now runs the native FLTK binary through a wrapper and forces FLTK's X11 backend under WSLg when a Windows display is available.
 
 ## [1.2.0] - 2026-05-21
 
@@ -23,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - UMS-inspired hardening roadmap for future clean-room upgrades.
 
 ### Changed
-- Configuration now lives beside the executable as `config.ini` instead of under `%APPDATA%\WinDLNAServer`.
+- Configuration now lives beside the executable as `config.ini`.
 - The Windows app loads configuration at startup and creates `config.ini` if it is missing.
 - Smoke tests now seed and verify root-local configuration.
 - Malformed POSIX HTTP and SOAP numeric inputs now fail with error responses instead of escaping request handlers.
