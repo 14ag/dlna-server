@@ -1,6 +1,6 @@
-# Contributing to WinDLNAServer
+# Contributing to dlna-server
 
-WinDLNAServer has two supported build surfaces:
+dlna-server has two supported build surfaces:
 
 - A native Win32 GUI application for Windows.
 - A headless POSIX `dlna-server` target for Linux, macOS, and Termux-style environments.
@@ -32,7 +32,9 @@ cmake --build build --config Debug
 Release build installed to `output/`:
 
 ```powershell
-.\build-output.ps1
+cmake -S . -B build-windows
+cmake --build build-windows --config Release
+cmake --install build-windows --config Release
 ```
 
 Run the main Windows protocol smoke test:
@@ -58,8 +60,10 @@ cmake --build build
 
 Release build installed to `output/`:
 
-```powershell
-pwsh ./build-output.ps1
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+cmake --install build
 ```
 
 Run:
@@ -106,7 +110,7 @@ For discovery or playback bugs, include:
 - Relevant SSDP or HTTP log lines.
 - Exact media format when playback fails.
 
-For Windows debug logs, enable debug mode and attach only the relevant lines from `%APPDATA%\WinDLNAServer\debug.log`.
+For Windows debug logs, enable debug mode and attach only the relevant lines from `%APPDATA%\dlna-server\debug.log`.
 
 ## Coding Guidelines
 
