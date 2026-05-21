@@ -77,3 +77,4 @@ vlc-help.txt
 .antigravity/
 .gemini/
 scratch/
+tests/__pycache__/*

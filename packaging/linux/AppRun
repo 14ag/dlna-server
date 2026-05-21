@@ -4,5 +4,6 @@ set -eu
 appdir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 export DLNA_SERVER_BIN="$appdir/usr/bin/dlna-server"
 export DLNA_SERVER_GUI_DIR="$appdir/usr/share/dlna-server"
+export DLNA_SERVER_GUI_BIN="$appdir/usr/bin/dlna-server-gui-bin"
 
 exec "$appdir/usr/bin/dlna-server-gui" "$@"

@@ -2,6 +2,7 @@
 #include "netutils.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <limits.h>
 #include <random>
@@ -57,6 +58,18 @@ int ParseIntOrDefault(const std::string& value, int fallback) {
         return fallback;
     }
 }
+
+std::wstring DefaultServerName() {
+    char name[HOST_NAME_MAX + 1] = {};
+    if (gethostname(name, sizeof(name) - 1) == 0) {
+        name[sizeof(name) - 1] = '\0';
+        if (name[0] != '\0') return Utf8ToWide(name);
+    }
+    const char* envName = std::getenv("HOSTNAME");
+    if (envName && *envName) return Utf8ToWide(envName);
+    return L"dlna-server";
+}
+
 }
 
 Config& Config::Get() {
@@ -65,7 +78,7 @@ Config& Config::Get() {
 }
 
 Config::Config()
-    : serverName(L"DLNA Server"),
+    : serverName(DefaultServerName()),
       port(8200),
       fileServerPort(8201),
       flatFolderStyle(false),
@@ -146,7 +159,7 @@ void Config::Load() {
             }
         }
     }
-    if (serverName.empty()) serverName = L"DLNA Server";
+    if (serverName.empty()) serverName = DefaultServerName();
     if (deviceUUID.empty()) {
         deviceUUID = GenerateUUID();
         Save();
