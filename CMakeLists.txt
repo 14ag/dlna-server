@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(WinDLNAServer VERSION 1.0.0)
+project(WinDLNAServer VERSION 1.2.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -58,7 +58,9 @@ if(WIN32)
     install(TARGETS WinDLNAServer RUNTIME DESTINATION .)
 else()
     include(GNUInstallDirs)
+    include(FetchContent)
     option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" OFF)
+    set(DLNA_FLTK_VERSION "release-1.4.5" CACHE STRING "FLTK git tag used when system FLTK is unavailable")
 
     add_executable(dlna-server
         src/posix_main.cpp
@@ -86,13 +88,40 @@ else()
     install(TARGETS dlna-server RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
     if(DLNA_ENABLE_FLTK_GUI)
-        find_package(FLTK REQUIRED)
+        find_package(FLTK QUIET)
+        if(NOT FLTK_FOUND)
+            FetchContent_Declare(
+                fltk
+                GIT_REPOSITORY https://github.com/fltk/fltk.git
+                GIT_TAG ${DLNA_FLTK_VERSION}
+                GIT_SHALLOW TRUE
+            )
+            set(FLTK_BUILD_TEST OFF CACHE BOOL "" FORCE)
+            set(FLTK_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+            set(FLTK_BUILD_FLUID OFF CACHE BOOL "" FORCE)
+            set(FLTK_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+            FetchContent_MakeAvailable(fltk)
+            set(DLNA_FLTK_TARGET fltk)
+        else()
+            set(DLNA_FLTK_TARGET ${FLTK_LIBRARIES})
+        endif()
         add_executable(dlna-server-gui-native
             src/fltk_gui_main.cpp
+            src/posix_server.cpp
+            src/posix_ssdp.cpp
+            src/posix_httpserver.cpp
+            src/posix_netutils.cpp
+            src/posix_media_sources.cpp
+            src/posix_config.cpp
+            src/posix_log.cpp
+            src/ipwhitelist.cpp
+            src/contentdirectory.cpp
+            src/dlna_utils.cpp
         )
         set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui)
+        target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_POSIX=1 DLNA_PLATFORM_NAME=\"Linux\")
         target_include_directories(dlna-server-gui-native PRIVATE src ${FLTK_INCLUDE_DIR})
-        target_link_libraries(dlna-server-gui-native PRIVATE ${FLTK_LIBRARIES})
+        target_link_libraries(dlna-server-gui-native PRIVATE ${DLNA_FLTK_TARGET} Threads::Threads)
         install(TARGETS dlna-server-gui-native RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     else()
         install(PROGRAMS packaging/linux/dlna-server-gui DESTINATION ${CMAKE_INSTALL_BINDIR})

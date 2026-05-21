@@ -27,6 +27,13 @@ class UiSpecTests(unittest.TestCase):
         ):
             self.assertIn(text, spec)
 
+    def test_release_version_is_1_2_0(self):
+        cmake = self.read("CMakeLists.txt")
+        changelog = self.read("CHANGELOG.md")
+
+        self.assertIn("project(WinDLNAServer VERSION 1.2.0)", cmake)
+        self.assertIn("## [1.2.0] - 2026-05-21", changelog)
+
 
 if __name__ == "__main__":
     unittest.main()
