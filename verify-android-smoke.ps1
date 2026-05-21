@@ -5,14 +5,14 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = Split-Path -Parent $MyInvocation.MyCommand.Path
-$exePath = Join-Path $repo "output\WinDLNAServer.exe"
+$exePath = Join-Path $repo "output\dlna-server.exe"
 $outDir = Join-Path $repo "output"
-$appDataDir = Join-Path $env:APPDATA "WinDLNAServer"
+$appDataDir = Join-Path $env:APPDATA "dlna-server"
 $configPath = Join-Path $outDir "config.ini"
 $debugLogPath = Join-Path $appDataDir "debug.log"
 $resultsPath = Join-Path $outDir "android-verification-results.txt"
 $debugCopyPath = Join-Path $outDir "android-verification-debug.log"
-$testMediaDir = Join-Path $env:TEMP "WinDLNAServer-Android-TestMedia"
+$testMediaDir = Join-Path $env:TEMP "dlna-server-Android-TestMedia"
 $serverProc = $null
 $backupPath = $null
 $summary = New-Object System.Collections.Generic.List[string]
@@ -92,10 +92,10 @@ try {
     $pcIp = Get-PCAddressForAndroid $androidIp
     Add-Result "PASS Android wlan0=$androidIp Windows peer=$pcIp"
     try {
-        Get-NetFirewallRule -DisplayName "WinDLNAServer Android Smoke TCP 18200" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-        Get-NetFirewallRule -DisplayName "WinDLNAServer Android Smoke UDP 1900" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-        New-NetFirewallRule -DisplayName "WinDLNAServer Android Smoke TCP 18200" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 18200 -Profile Any -ErrorAction SilentlyContinue | Out-Null
-        New-NetFirewallRule -DisplayName "WinDLNAServer Android Smoke UDP 1900" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 1900 -Profile Any -ErrorAction SilentlyContinue | Out-Null
+        Get-NetFirewallRule -DisplayName "dlna-server Android Smoke TCP 18200" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        Get-NetFirewallRule -DisplayName "dlna-server Android Smoke UDP 1900" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        New-NetFirewallRule -DisplayName "dlna-server Android Smoke TCP 18200" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 18200 -Profile Any -ErrorAction SilentlyContinue | Out-Null
+        New-NetFirewallRule -DisplayName "dlna-server Android Smoke UDP 1900" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 1900 -Profile Any -ErrorAction SilentlyContinue | Out-Null
         Add-Result "PASS firewall allowances present for TCP 18200 and UDP 1900"
     } catch {
         Add-Result ("WARN firewall rule setup failed: " + $_.Exception.Message)
@@ -104,7 +104,7 @@ try {
     New-Item -ItemType Directory -Path $appDataDir -Force | Out-Null
     New-Item -ItemType Directory -Path $outDir -Force | Out-Null
     if (Test-Path $configPath) {
-        $backupPath = Join-Path $env:TEMP ("WinDLNAServer-config-backup-" + [guid]::NewGuid().ToString() + ".ini")
+        $backupPath = Join-Path $env:TEMP ("dlna-server-config-backup-" + [guid]::NewGuid().ToString() + ".ini")
         Copy-Item -LiteralPath $configPath -Destination $backupPath -Force
     }
     if (Test-Path $debugLogPath) {
@@ -207,7 +207,7 @@ try {
         Remove-Item -LiteralPath $configPath -Force
     }
     if (-not $KeepFirewallRules) {
-        Get-NetFirewallRule -DisplayName "WinDLNAServer Android Smoke TCP 18200" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-        Get-NetFirewallRule -DisplayName "WinDLNAServer Android Smoke UDP 1900" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        Get-NetFirewallRule -DisplayName "dlna-server Android Smoke TCP 18200" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        Get-NetFirewallRule -DisplayName "dlna-server Android Smoke UDP 1900" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     }
 }

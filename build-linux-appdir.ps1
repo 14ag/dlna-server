@@ -1,6 +1,6 @@
 param(
     [string]$InstallDir = "output",
-    [string]$AppDir = "output/DLNA_Server.AppDir"
+    [string]$AppDir = "output/dlna-server.AppDir"
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,22 +53,31 @@ New-Item -ItemType Directory -Path $appDirPath | Out-Null
 
 Copy-RequiredItem (Join-Path $installPath "bin/dlna-server") (Join-Path $appDirPath "usr/bin/dlna-server")
 Copy-RequiredItem (Join-Path $installPath "bin/dlna-server-gui") (Join-Path $appDirPath "usr/bin/dlna-server-gui")
+if (Test-Path -LiteralPath (Join-Path $installPath "bin/dlna-server-gui-bin")) {
+    Copy-RequiredItem (Join-Path $installPath "bin/dlna-server-gui-bin") (Join-Path $appDirPath "usr/bin/dlna-server-gui-bin")
+}
 if (Test-Path -LiteralPath (Join-Path $installPath "share/dlna-server")) {
     Copy-RequiredItem (Join-Path $installPath "share/dlna-server") (Join-Path $appDirPath "usr/share/dlna-server")
 }
 Copy-RequiredItem (Join-Path $installPath "share/icons/hicolor/scalable/apps/dlna-server.svg") (Join-Path $appDirPath "usr/share/icons/hicolor/scalable/apps/dlna-server.svg")
+if (Test-Path -LiteralPath (Join-Path $installPath "share/metainfo/dlna-server.appdata.xml")) {
+    Copy-RequiredItem (Join-Path $installPath "share/metainfo/dlna-server.appdata.xml") (Join-Path $appDirPath "usr/share/metainfo/dlna-server.appdata.xml")
+}
 Copy-RequiredItem (Join-Path $repoRoot "packaging/linux/AppRun") (Join-Path $appDirPath "AppRun")
 Copy-RequiredItem (Join-Path $repoRoot "resources/dlna-server.svg") (Join-Path $appDirPath "dlna-server.svg")
 
 $desktopText = @"
 [Desktop Entry]
 Type=Application
-Name=DLNA Server
+Name=dlna-server
+GenericName=DLNA media server
 Comment=Share local media with DLNA and UPnP clients
 Exec=dlna-server-gui
 Icon=dlna-server
 Terminal=false
-Categories=AudioVideo;Network;
+Categories=AudioVideo;Network;FileTransfer;
+Keywords=DLNA;UPnP;media;server;streaming;
+StartupWMClass=dlna-server
 StartupNotify=true
 "@
 
@@ -78,6 +87,9 @@ if ($IsLinux -or $IsMacOS) {
     chmod +x (Join-Path $appDirPath "AppRun")
     chmod +x (Join-Path $appDirPath "usr/bin/dlna-server")
     chmod +x (Join-Path $appDirPath "usr/bin/dlna-server-gui")
+    if (Test-Path -LiteralPath (Join-Path $appDirPath "usr/bin/dlna-server-gui-bin")) {
+        chmod +x (Join-Path $appDirPath "usr/bin/dlna-server-gui-bin")
+    }
 }
 
 $required = @(

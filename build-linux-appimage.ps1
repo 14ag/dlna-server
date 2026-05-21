@@ -2,7 +2,7 @@ param(
     [string]$Config = "Release",
     [string]$BuildDir = "build_output",
     [string]$OutputDir = "output",
-    [string]$AppDir = "output/DLNA_Server.AppDir",
+    [string]$AppDir = "output/dlna-server.AppDir",
     [string]$LinuxDeployPath = ""
 )
 

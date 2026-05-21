@@ -75,9 +75,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 if ($isWindowsHost) {
-    $expected = Join-Path $outputPath "WinDLNAServer.exe"
+    $expected = Join-Path $outputPath "dlna-server.exe"
 } elseif ($IsMacOS) {
-    $expected = Join-Path $outputPath "DLNA Server.app"
+    $expected = Join-Path $outputPath "dlna-server.app"
 } else {
     $expected = Join-Path $outputPath "bin/dlna-server"
 }
