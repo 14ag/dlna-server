@@ -67,6 +67,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("FetchContent_Declare", cmake)
         self.assertIn("release-1.4.5", cmake)
         self.assertIn("dlna-server-gui-native", cmake)
+        self.assertIn("if(FLTK_FOUND)", cmake)
         self.assertIn("OUTPUT_NAME dlna-server-gui", cmake)
         self.assertIn("src/posix_server.cpp", cmake)
         self.assertIn("Threads::Threads", cmake)
