@@ -116,6 +116,21 @@ int ParseIntOrDefault(const std::unordered_map<std::string, std::string>& values
         return defaultValue;
     }
 }
+
+std::wstring DefaultServerName() {
+    wchar_t name[MAX_COMPUTERNAME_LENGTH + 1] = {};
+    DWORD size = MAX_COMPUTERNAME_LENGTH + 1;
+    DWORD envLen = GetEnvironmentVariableW(L"COMPUTERNAME", name, size);
+    if (envLen > 0 && envLen < size) {
+        return name;
+    }
+    size = MAX_COMPUTERNAME_LENGTH + 1;
+    if (GetComputerNameW(name, &size) && size > 0) {
+        return name;
+    }
+    return L"dlna-server";
+}
+
 }
 
 Config& Config::Get() {
@@ -156,9 +171,9 @@ void Config::SetRunOnBoot(bool enable) {
             wchar_t exePath[MAX_PATH];
             GetModuleFileNameW(NULL, exePath, MAX_PATH);
             std::wstring val = std::wstring(L"\"") + exePath + L"\" --minimized";
-            RegSetValueExW(hKey, L"WinDLNAServer", 0, REG_SZ, (const BYTE*)val.c_str(), (DWORD)((val.length() + 1) * sizeof(wchar_t)));
+            RegSetValueExW(hKey, L"dlna-server", 0, REG_SZ, (const BYTE*)val.c_str(), (DWORD)((val.length() + 1) * sizeof(wchar_t)));
         } else {
-            RegDeleteValueW(hKey, L"WinDLNAServer");
+            RegDeleteValueW(hKey, L"dlna-server");
         }
         RegCloseKey(hKey);
     }
@@ -168,9 +183,14 @@ void Config::Load() {
     std::wstring path = GetConfigPath();
     auto values = ReadConfigFile(path);
 
-    serverName = Utf8ToWide(values.count("ServerName") ? values["ServerName"] : "WinDLNA Server");
+    auto serverNameIt = values.find("ServerName");
+    if (serverNameIt == values.end() || serverNameIt->second.empty()) {
+        serverName = DefaultServerName();
+    } else {
+        serverName = Utf8ToWide(serverNameIt->second);
+    }
     if (serverName.empty()) {
-        serverName = L"WinDLNA Server";
+        serverName = DefaultServerName();
     }
 
     port = ParseIntOrDefault(values, "Port", 8200);

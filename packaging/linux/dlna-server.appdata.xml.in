@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dlna-server</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>dlna-server</name>
+  <summary>Share local media with DLNA and UPnP clients</summary>
+  <description>
+    <p>dlna-server serves local video, audio, and image files to compatible devices on the local network.</p>
+  </description>
+  <launchable type="desktop-id">dlna-server.desktop</launchable>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Network</category>
+  </categories>
+  <url type="homepage">https://github.com/14ag/dlna-server</url>
+  <releases>
+    <release version="@PROJECT_VERSION@" date="2026-05-21"/>
+  </releases>
+</component>
