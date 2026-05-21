@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$repo = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $exePath = Join-Path $repo "output\dlna-server.exe"
 $outDir = Join-Path $repo "output"
 $appDataDir = Join-Path $env:APPDATA "dlna-server"

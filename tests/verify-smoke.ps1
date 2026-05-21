@@ -2,7 +2,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 
-$repo = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $outputDir = Join-Path $repo "output"
 $exePath = Join-Path $outputDir "dlna-server.exe"
 $vlcPath = "C:\Program Files\VideoLAN\VLC\vlc.exe"

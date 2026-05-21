@@ -8,7 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$repo = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $envFile = Join-Path $repo $EnvPath
 $plink = "C:\Program Files\PuTTY\plink.exe"
 $pscp = "C:\Program Files\PuTTY\pscp.exe"
