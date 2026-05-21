@@ -34,7 +34,7 @@ Release build installed to `output/`:
 ```powershell
 cmake -S . -B build-windows
 cmake --build build-windows --config Release
-cmake --install build-windows --config Release
+cmake --install build-windows --config Release --prefix output
 ```
 
 Run the main Windows protocol smoke test:
@@ -63,7 +63,7 @@ Release build installed to `output/`:
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-cmake --install build
+cmake --install build --prefix "$PWD/output"
 ```
 
 Run:
