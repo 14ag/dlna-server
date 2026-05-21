@@ -49,6 +49,15 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("--output appimage", script)
         self.assertIn("*.AppImage", script)
 
+    def test_wslg_gui_smoke_script_checks_native_deps(self):
+        script = self.read("verify-wslg-gui.ps1")
+
+        self.assertIn("DLNA_ENABLE_FLTK_GUI=ON", script)
+        self.assertIn("libx11-dev", script)
+        self.assertIn("WAYLAND_DISPLAY", script)
+        self.assertIn("dlna-server-gui", script)
+        self.assertIn("PASS WSLg native GUI launch smoke", script)
+
     def test_fltk_gui_dependency_is_optional(self):
         cmake = self.read("CMakeLists.txt")
         gui_source = self.read("src/fltk_gui_main.cpp")
