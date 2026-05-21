@@ -42,21 +42,34 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
     def test_appimage_script_uses_linuxdeploy(self):
         script = self.read("build-linux-appimage.ps1")
 
-        self.assertIn("build-output.ps1", script)
+        self.assertIn("-DDLNA_ENABLE_FLTK_GUI=ON", script)
         self.assertIn("build-linux-appdir.ps1", script)
         self.assertIn("Get-Command $name -ErrorAction SilentlyContinue", script)
         self.assertIn("--appdir", script)
         self.assertIn("--output appimage", script)
         self.assertIn("*.AppImage", script)
 
+    def test_wslg_gui_smoke_script_checks_native_deps(self):
+        script = self.read("verify-wslg-gui.ps1")
+
+        self.assertIn("DLNA_ENABLE_FLTK_GUI=ON", script)
+        self.assertIn("libx11-dev", script)
+        self.assertIn("WAYLAND_DISPLAY", script)
+        self.assertIn("dlna-server-gui", script)
+        self.assertIn("PASS WSLg native GUI launch smoke", script)
+
     def test_fltk_gui_dependency_is_optional(self):
         cmake = self.read("CMakeLists.txt")
         gui_source = self.read("src/fltk_gui_main.cpp")
 
         self.assertIn("DLNA_ENABLE_FLTK_GUI", cmake)
-        self.assertIn("find_package(FLTK REQUIRED)", cmake)
+        self.assertIn("find_package(FLTK QUIET)", cmake)
+        self.assertIn("FetchContent_Declare", cmake)
+        self.assertIn("release-1.4.5", cmake)
         self.assertIn("dlna-server-gui-native", cmake)
         self.assertIn("OUTPUT_NAME dlna-server-gui", cmake)
+        self.assertIn("src/posix_server.cpp", cmake)
+        self.assertIn("Threads::Threads", cmake)
         self.assertIn("packaging/linux/dlna-server-gui", cmake)
         self.assertIn("#include <FL/Fl_Window.H>", gui_source)
         self.assertIn("DLNA Server is stopped", gui_source)
@@ -66,13 +79,19 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
 
         self.assertIn("class MainWindow", gui_source)
         self.assertIn("Fl_Hold_Browser", gui_source)
+        self.assertIn("Fl_Native_File_Chooser", gui_source)
         self.assertIn("Add media folder", gui_source)
+        self.assertIn("Remove selected media folder", gui_source)
         self.assertIn("Start server", gui_source)
         self.assertIn("Stop server", gui_source)
         self.assertIn("Settings", gui_source)
         self.assertIn("Please add shared folders or files", gui_source)
         self.assertIn("size_range(640, 460)", gui_source)
         self.assertIn("void resize", gui_source)
+        self.assertIn("DLNAServer.Start()", gui_source)
+        self.assertIn("DLNAServer.Stop()", gui_source)
+        self.assertIn("AppConfig.Save()", gui_source)
+        self.assertIn("AppMedia.Scan()", gui_source)
 
     def test_fltk_settings_and_log_dialogs_have_parity_controls(self):
         gui_source = self.read("src/fltk_gui_main.cpp")
@@ -104,7 +123,8 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         ):
             self.assertIn(label, gui_source)
 
-        self.assertIn("Fl_Multiline_Output", gui_source)
+        self.assertIn("Fl_Text_Display", gui_source)
+        self.assertIn("GetSystemLog()", gui_source)
         self.assertIn("deactivate()", gui_source)
 
 
