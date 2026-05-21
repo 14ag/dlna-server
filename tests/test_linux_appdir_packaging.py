@@ -9,22 +9,18 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
     def read(self, path):
         return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_appdir_script_builds_expected_layout(self):
-        script = self.read("build-linux-appdir.ps1")
-
-        for required_path in (
-            "usr/bin/dlna-server",
-            "usr/bin/dlna-server-gui",
-            "usr/bin/dlna-server-gui-bin",
-            "usr/share/dlna-server",
-            "usr/share/icons/hicolor/scalable/apps/dlna-server.svg",
-            "AppRun",
-            "dlna-server.desktop",
+    def test_no_build_helper_scripts_are_required(self):
+        for helper in (
+            "build-output.ps1",
+            "build-linux-appdir.ps1",
+            "build-linux-appimage.ps1",
         ):
-            self.assertIn(required_path, script)
+            self.assertFalse((ROOT / helper).exists())
 
-        self.assertIn("Resolve-WorkspacePath", script)
-        self.assertIn("AppDir validation failed", script)
+        readme = self.read("README.md")
+        self.assertIn("There are no build helper scripts.", readme)
+        self.assertIn("cmake -S . -B build-linux", readme)
+
 
     def test_apprun_launches_gui_with_bundled_server(self):
         apprun = self.read("packaging/linux/AppRun")
@@ -35,25 +31,22 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn('exec "$appdir/usr/bin/dlna-server-gui"', apprun)
 
     def test_appdir_desktop_metadata_is_relative(self):
-        script = self.read("build-linux-appdir.ps1")
+        desktop = self.read("packaging/linux/install_desktop.cmake.in")
 
-        self.assertIn("Name=dlna-server", script)
-        self.assertIn("Exec=dlna-server-gui", script)
-        self.assertIn("Icon=dlna-server", script)
-        self.assertIn("StartupWMClass=dlna-server", script)
+        self.assertIn("Name=dlna-server", desktop)
+        self.assertIn("Exec=${exec_path}", desktop)
+        self.assertIn("Icon=${icon_path}", desktop)
+        self.assertIn("StartupWMClass=dlna-server", desktop)
 
-    def test_appimage_script_uses_linuxdeploy(self):
-        script = self.read("build-linux-appimage.ps1")
+    def test_readme_documents_manual_appimage_packaging(self):
+        readme = self.read("README.md")
 
-        self.assertIn("-DDLNA_ENABLE_FLTK_GUI=ON", script)
-        self.assertIn("build-linux-appdir.ps1", script)
-        self.assertIn("Get-Command $name -ErrorAction SilentlyContinue", script)
-        self.assertIn("--appdir", script)
-        self.assertIn("--output appimage", script)
-        self.assertIn("*.AppImage", script)
+        self.assertIn("-DDLNA_ENABLE_FLTK_GUI=ON", readme)
+        self.assertIn("output/dlna-server.AppDir", readme)
+        self.assertIn("linuxdeploy --appdir output/dlna-server.AppDir --output appimage", readme)
 
     def test_wslg_gui_smoke_script_checks_native_deps(self):
-        script = self.read("verify-wslg-gui.ps1")
+        script = self.read("tests/verify-wslg-gui.ps1")
 
         self.assertIn("DLNA_ENABLE_FLTK_GUI=ON", script)
         self.assertIn("libx11-dev", script)

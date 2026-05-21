@@ -29,18 +29,18 @@ cmake -B build
 cmake --build build --config Debug
 ```
 
-Release build installed to `output/`:
+Release build:
 
 ```powershell
 cmake -S . -B build-windows
 cmake --build build-windows --config Release
-cmake --install build-windows --config Release --prefix output
+cmake --install build-windows --config Release
 ```
 
 Run the main Windows protocol smoke test:
 
 ```powershell
-.\verify-smoke.ps1
+.\tests\verify-smoke.ps1
 ```
 
 ## POSIX Development
@@ -58,18 +58,18 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
-Release build installed to `output/`:
+Release build:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-cmake --install build --prefix "$PWD/output"
+cmake --install build
 ```
 
 Run:
 
 ```sh
-./output/bin/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
+./build/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
 ```
 
 For Termux-based verification from Windows, put SSH credentials in `.env`:
@@ -82,7 +82,7 @@ password=your-password
 Then run:
 
 ```powershell
-.\verify-posix-ssh.ps1
+.\tests\verify-posix-ssh.ps1
 ```
 
 Use `-InstallTools` if the Termux environment still needs `clang`, `cmake`, `make`, or `python`.

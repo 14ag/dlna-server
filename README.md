@@ -50,7 +50,7 @@ pkg install clang cmake make python
 
 ## Build and install
 
-Use normal CMake commands for local builds. The optional `build-output.ps1` helper is for Windows-style release packaging into `./output`; Linux and macOS users do not need PowerShell to build the project.
+Use normal CMake commands for local builds. There are no build helper scripts.
 
 ### Windows
 
@@ -59,27 +59,27 @@ Build the desktop app from the repository root:
 ```powershell
 cmake -S . -B build-windows
 cmake --build build-windows --config Release
-cmake --install build-windows --config Release --prefix output
+cmake --install build-windows --config Release
 ```
 
-The executable lands at `output/dlna-server.exe`.
+The installed executable lands under the active CMake install prefix. If you only build, run `build-windows/Release/dlna-server.exe`.
 
 For a debug build:
 
 ```powershell
 cmake -S . -B build-windows
 cmake --build build-windows --config Debug
-cmake --install build-windows --config Debug --prefix output
+cmake --install build-windows --config Debug
 ```
 
 ### Linux desktop app
 
-Build and install the POSIX server, GUI launcher, desktop entry, app metadata, and icon into `./output`:
+Build and install the POSIX server, GUI launcher, desktop entry, app metadata, and icon:
 
 ```sh
 cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release
 cmake --build build-linux
-cmake --install build-linux --prefix "$PWD/output"
+cmake --install build-linux
 ```
 
 By default this installs the headless server and compatibility Python/Tk launcher. Native desktop builds use `-DDLNA_ENABLE_FLTK_GUI=ON` and install the FLTK GUI through the `dlna-server-gui` launcher:
@@ -87,7 +87,7 @@ By default this installs the headless server and compatibility Python/Tk launche
 ```sh
 cmake -S . -B build-linux-native -DCMAKE_BUILD_TYPE=Release -DDLNA_ENABLE_FLTK_GUI=ON
 cmake --build build-linux-native
-cmake --install build-linux-native --prefix "$PWD/output"
+cmake --install build-linux-native
 ```
 
 To install it into your desktop user profile instead, run CMake install with a user prefix after the build:
@@ -118,7 +118,7 @@ cmake --build build-linux-native
 cmake --install build-linux-native --prefix "$PWD/output"
 ```
 
-Then create an AppDir and run `linuxdeploy`:
+For an AppImage release, install into a local staging directory, create an AppDir, and run `linuxdeploy`:
 
 ```sh
 mkdir -p output/dlna-server.AppDir/usr/bin
@@ -131,28 +131,28 @@ cp resources/dlna-server.svg output/dlna-server.AppDir/
 linuxdeploy --appdir output/dlna-server.AppDir --output appimage
 ```
 
-Maintainers can also use `build-linux-appimage.ps1` from PowerShell 7 on Linux. That script expects `linuxdeploy-x86_64.AppImage` or `linuxdeploy` on `PATH`, or `LINUXDEPLOY_PATH` pointing at the tool.
+This expects `linuxdeploy` on `PATH`.
 
 ### macOS app bundle
 
-Build and install the POSIX server and app bundle into `./output`:
+Build and install the POSIX server and app bundle:
 
 ```sh
 cmake -S . -B build-macos -DCMAKE_BUILD_TYPE=Release
 cmake --build build-macos
-cmake --install build-macos --prefix "$PWD/output"
+cmake --install build-macos
 ```
 
-The release outputs are:
+The CMake install step writes:
 
-- `output/bin/dlna-server`
-- `output/dlna-server.app`
+- `bin/dlna-server`
+- `dlna-server.app`
 
 Install the app for your user account:
 
 ```sh
 mkdir -p "$HOME/Applications"
-cp -R "output/dlna-server.app" "$HOME/Applications/"
+cp -R "dlna-server.app" "$HOME/Applications/"
 ```
 
 Open `dlna-server` from Finder, Spotlight, or Launchpad. It's the same server binary, wrapped in a small app bundle.
@@ -166,10 +166,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-The install step writes the runnable binary to `output/bin/dlna-server`. Run it directly:
+Run the build-tree binary directly:
 
 ```sh
-./output/bin/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
+./build/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
 ```
 
 ## Usage
@@ -198,7 +198,7 @@ Then run `wsl --shutdown` and launch the app again. This only hides the title wa
 ### Headless Linux/macOS
 
 ```sh
-./output/bin/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
+./build/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
 ```
 
 Useful options:
@@ -240,23 +240,25 @@ MediaSources=C:\Media|D:\Videos
 Run the Windows build and protocol smoke test:
 
 ```powershell
-.\build-output.ps1
-.\verify-smoke.ps1
+cmake -S . -B build-windows
+cmake --build build-windows --config Release
+cmake --install build-windows --config Release --prefix output
+.\tests\verify-smoke.ps1
 ```
 
 Run Android reachability checks through ADB:
 
 ```powershell
-.\verify-android-smoke.ps1
+.\tests\verify-android-smoke.ps1
 ```
 
 Run the POSIX headless build in Termux over SSH and detect it from the Windows computer:
 
 ```powershell
-.\verify-posix-ssh.ps1
+.\tests\verify-posix-ssh.ps1
 ```
 
-`verify-posix-ssh.ps1` reads SSH credentials from `.env`:
+`tests\verify-posix-ssh.ps1` reads SSH credentials from `.env`:
 
 ```ini
 username=your-username
@@ -270,11 +272,11 @@ The script builds `dlna-server` on the remote device, starts it headless, verifi
 - `src/main.cpp`, `src/mainwindow.cpp`, `src/settingsdlg.cpp` - Windows UI entry points.
 - `src/server.cpp`, `src/httpserver.cpp`, `src/ssdp.cpp` - Windows server and discovery implementation.
 - `src/posix_main.cpp`, `src/posix_httpserver.cpp`, `src/posix_ssdp.cpp` - headless POSIX implementation.
-- `src/fltk_gui_main.cpp`, `packaging/linux`, `build-linux-appimage.ps1` - native Linux GUI and AppImage packaging.
+- `src/fltk_gui_main.cpp`, `packaging/linux` - native Linux GUI and AppImage packaging inputs.
 - `src/posix_gui.py`, `packaging/macos` - compatibility POSIX GUI wrapper used by macOS and non-native fallback installs.
 - `src/contentdirectory.cpp` - shared UPnP XML and Browse response generation.
 - `src/media_sources.cpp`, `src/posix_media_sources.cpp` - media indexing.
-- `verify-smoke.ps1`, `verify-android-smoke.ps1`, `verify-posix-ssh.ps1` - protocol and device smoke tests.
+- `tests/verify-smoke.ps1`, `tests/verify-android-smoke.ps1`, `tests/verify-posix-ssh.ps1`, `tests/verify-wslg-gui.ps1` - protocol and device smoke tests.
 
 ## Contributing
 
