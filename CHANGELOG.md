@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Rebranded Windows and Linux release artifacts to `dlna-server`.
-- Standard CMake installs now default to `./output`, so Linux users can build without PowerShell.
+- Documentation now shows plain CMake build/install commands for Linux and macOS. `output/` is an explicit release prefix, not a default CMake install path.
 - Missing or empty server names now default to the computer hostname. Values already set in `config.ini` still win.
 - Linux desktop installs now include appstream metadata and a richer desktop entry.
 

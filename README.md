@@ -50,7 +50,7 @@ pkg install clang cmake make python
 
 ## Build and install
 
-Normal CMake builds install to `./output` by default. The PowerShell scripts are still available for maintainers, but Linux and macOS users do not need PowerShell to build or install the app.
+Use normal CMake commands for local builds. The optional `build-output.ps1` helper is for Windows-style release packaging into `./output`; Linux and macOS users do not need PowerShell to build the project.
 
 ### Windows
 
@@ -59,7 +59,7 @@ Build the desktop app from the repository root:
 ```powershell
 cmake -S . -B build-windows
 cmake --build build-windows --config Release
-cmake --install build-windows --config Release
+cmake --install build-windows --config Release --prefix output
 ```
 
 The executable lands at `output/dlna-server.exe`.
@@ -69,7 +69,7 @@ For a debug build:
 ```powershell
 cmake -S . -B build-windows
 cmake --build build-windows --config Debug
-cmake --install build-windows --config Debug
+cmake --install build-windows --config Debug --prefix output
 ```
 
 ### Linux desktop app
@@ -79,7 +79,7 @@ Build and install the POSIX server, GUI launcher, desktop entry, app metadata, a
 ```sh
 cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release
 cmake --build build-linux
-cmake --install build-linux
+cmake --install build-linux --prefix "$PWD/output"
 ```
 
 By default this installs the headless server and compatibility Python/Tk launcher. Native desktop builds use `-DDLNA_ENABLE_FLTK_GUI=ON` and install the FLTK GUI through the `dlna-server-gui` launcher:
@@ -87,7 +87,7 @@ By default this installs the headless server and compatibility Python/Tk launche
 ```sh
 cmake -S . -B build-linux-native -DCMAKE_BUILD_TYPE=Release -DDLNA_ENABLE_FLTK_GUI=ON
 cmake --build build-linux-native
-cmake --install build-linux-native
+cmake --install build-linux-native --prefix "$PWD/output"
 ```
 
 To install it into your desktop user profile instead, run CMake install with a user prefix after the build:
@@ -115,7 +115,7 @@ Build the native GUI install tree first:
 ```sh
 cmake -S . -B build-linux-native -DCMAKE_BUILD_TYPE=Release -DDLNA_ENABLE_FLTK_GUI=ON
 cmake --build build-linux-native
-cmake --install build-linux-native
+cmake --install build-linux-native --prefix "$PWD/output"
 ```
 
 Then create an AppDir and run `linuxdeploy`:
@@ -140,7 +140,7 @@ Build and install the POSIX server and app bundle into `./output`:
 ```sh
 cmake -S . -B build-macos -DCMAKE_BUILD_TYPE=Release
 cmake --build build-macos
-cmake --install build-macos
+cmake --install build-macos --prefix "$PWD/output"
 ```
 
 The release outputs are:
@@ -159,7 +159,7 @@ Open `dlna-server` from Finder, Spotlight, or Launchpad. It's the same server bi
 
 ### Headless Linux/macOS
 
-If you only need a local build tree, you can still use CMake directly:
+If you only need a local build tree, build without installing:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
