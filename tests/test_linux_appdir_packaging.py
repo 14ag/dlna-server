@@ -31,11 +31,11 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn('exec "$appdir/usr/bin/dlna-server-gui"', apprun)
 
     def test_appdir_desktop_metadata_is_relative(self):
-        desktop = self.read("packaging/linux/install_desktop.cmake.in")
+        desktop = self.read("packaging/linux/dlna-server.appimage.desktop")
 
         self.assertIn("Name=dlna-server", desktop)
-        self.assertIn("Exec=${exec_path}", desktop)
-        self.assertIn("Icon=${icon_path}", desktop)
+        self.assertIn("Exec=dlna-server-gui", desktop)
+        self.assertIn("Icon=dlna-server", desktop)
         self.assertIn("StartupWMClass=dlna-server", desktop)
 
     def test_readme_documents_manual_appimage_packaging(self):
