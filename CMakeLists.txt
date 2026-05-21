@@ -89,10 +89,21 @@ else()
         find_package(FLTK REQUIRED)
         add_executable(dlna-server-gui-native
             src/fltk_gui_main.cpp
+            src/posix_server.cpp
+            src/posix_ssdp.cpp
+            src/posix_httpserver.cpp
+            src/posix_netutils.cpp
+            src/posix_media_sources.cpp
+            src/posix_config.cpp
+            src/posix_log.cpp
+            src/ipwhitelist.cpp
+            src/contentdirectory.cpp
+            src/dlna_utils.cpp
         )
         set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui)
+        target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_POSIX=1 DLNA_PLATFORM_NAME=\"Linux\")
         target_include_directories(dlna-server-gui-native PRIVATE src ${FLTK_INCLUDE_DIR})
-        target_link_libraries(dlna-server-gui-native PRIVATE ${FLTK_LIBRARIES})
+        target_link_libraries(dlna-server-gui-native PRIVATE ${FLTK_LIBRARIES} Threads::Threads)
         install(TARGETS dlna-server-gui-native RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     else()
         install(PROGRAMS packaging/linux/dlna-server-gui DESTINATION ${CMAKE_INSTALL_BINDIR})

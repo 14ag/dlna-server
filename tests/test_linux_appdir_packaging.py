@@ -57,6 +57,8 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("find_package(FLTK REQUIRED)", cmake)
         self.assertIn("dlna-server-gui-native", cmake)
         self.assertIn("OUTPUT_NAME dlna-server-gui", cmake)
+        self.assertIn("src/posix_server.cpp", cmake)
+        self.assertIn("Threads::Threads", cmake)
         self.assertIn("packaging/linux/dlna-server-gui", cmake)
         self.assertIn("#include <FL/Fl_Window.H>", gui_source)
         self.assertIn("DLNA Server is stopped", gui_source)
@@ -66,13 +68,19 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
 
         self.assertIn("class MainWindow", gui_source)
         self.assertIn("Fl_Hold_Browser", gui_source)
+        self.assertIn("Fl_Native_File_Chooser", gui_source)
         self.assertIn("Add media folder", gui_source)
+        self.assertIn("Remove selected media folder", gui_source)
         self.assertIn("Start server", gui_source)
         self.assertIn("Stop server", gui_source)
         self.assertIn("Settings", gui_source)
         self.assertIn("Please add shared folders or files", gui_source)
         self.assertIn("size_range(640, 460)", gui_source)
         self.assertIn("void resize", gui_source)
+        self.assertIn("DLNAServer.Start()", gui_source)
+        self.assertIn("DLNAServer.Stop()", gui_source)
+        self.assertIn("AppConfig.Save()", gui_source)
+        self.assertIn("AppMedia.Scan()", gui_source)
 
     def test_fltk_settings_and_log_dialogs_have_parity_controls(self):
         gui_source = self.read("src/fltk_gui_main.cpp")
@@ -104,7 +112,8 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         ):
             self.assertIn(label, gui_source)
 
-        self.assertIn("Fl_Multiline_Output", gui_source)
+        self.assertIn("Fl_Text_Display", gui_source)
+        self.assertIn("GetSystemLog()", gui_source)
         self.assertIn("deactivate()", gui_source)
 
 
