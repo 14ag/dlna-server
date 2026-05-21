@@ -55,10 +55,27 @@ function Find-LinuxDeploy {
 
 $outputPath = Resolve-WorkspacePath $OutputDir
 $appDirPath = Resolve-WorkspacePath $AppDir
+$buildPath = Resolve-WorkspacePath $BuildDir
 
-& (Join-Path $repoRoot "build-output.ps1") -Config $Config -BuildDir $BuildDir -OutputDir $OutputDir
+& cmake -S $repoRoot -B $buildPath -DCMAKE_BUILD_TYPE=$Config -DCMAKE_INSTALL_PREFIX=$outputPath -DDLNA_ENABLE_FLTK_GUI=ON
 if ($LASTEXITCODE -ne 0) {
-    throw "build-output.ps1 failed."
+    throw "CMake configure failed."
+}
+
+& cmake --build $buildPath --config $Config
+if ($LASTEXITCODE -ne 0) {
+    throw "CMake build failed."
+}
+
+if (Test-Path -LiteralPath $outputPath) {
+    Get-ChildItem -LiteralPath $outputPath -Force | Remove-Item -Recurse -Force
+} else {
+    New-Item -ItemType Directory -Path $outputPath | Out-Null
+}
+
+& cmake --install $buildPath --config $Config --prefix $outputPath
+if ($LASTEXITCODE -ne 0) {
+    throw "CMake install failed."
 }
 
 & (Join-Path $repoRoot "build-linux-appdir.ps1") -InstallDir $OutputDir -AppDir $AppDir
