@@ -314,7 +314,11 @@ private:
         } else {
             m_emptyState.hide();
         }
-        m_removeButton.active(m_sources.size() > 0);
+        if (m_sources.size() > 0) {
+            m_removeButton.activate();
+        } else {
+            m_removeButton.deactivate();
+        }
     }
 
     void RefreshStatus() {
