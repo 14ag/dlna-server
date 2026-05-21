@@ -1,0 +1,53 @@
+name: Update Banner
+
+on:
+  schedule:
+    # runs every 12 hours
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      # ignore pushes that only change the banner asset
+      # prevents this workflow from triggering itself in a loop
+      - 'assets/**'
+
+permissions:
+  contents: write
+
+jobs:
+  update-banner:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v6
+
+      - name: Create assets folder if it does not exist
+        run: mkdir -p assets
+
+      - name: Fetch banner image from backend
+        # VERCEL_URL is a GitHub Actions Variable (not secret) - set it in
+        # Settings > Secrets and variables > Actions > Variables tab
+        # example value: https://readme-banner-abc123.vercel.app/
+        # BANNER_KEY is a GitHub Actions Secret - set it in the Secrets tab
+        # it must match the BANNER_KEY set in Vercel environment variables
+        env:
+          BANNER_KEY: ${{ secrets.BANNER_KEY }}
+        run: |
+          VERCEL_URL="${{ vars.VERCEL_URL }}"
+          VERCEL_URL="$(printf '%s' "$VERCEL_URL" | sed 's:/*$::')"
+          curl -sf \
+            -H "X-Banner-Key: ${BANNER_KEY}" \
+            "${VERCEL_URL}/banner" \
+            --output assets/banner.webp
+
+      - name: Commit and push if the image changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add assets/banner.webp
+          git diff --cached --quiet && echo "no change" && exit 0
+          git commit -m "chore: rotate banner"
+          git push

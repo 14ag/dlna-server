@@ -1,0 +1,19 @@
+name: Reset Banner Cycle
+
+on:
+  workflow_dispatch:
+
+jobs:
+  reset-banner:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Reset banner cycle
+        env:
+          BANNER_KEY: ${{ secrets.BANNER_KEY }}
+        run: |
+          VERCEL_URL="${{ vars.VERCEL_URL }}"
+          VERCEL_URL="$(printf '%s' "$VERCEL_URL" | sed 's:/*$::')"
+          curl -sf -X POST \
+            -H "X-Banner-Key: ${BANNER_KEY}" \
+            "${VERCEL_URL}/reset"
