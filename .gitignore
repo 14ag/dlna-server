@@ -77,8 +77,4 @@ vlc-help.txt
 .antigravity/
 .gemini/
 scratch/
-tests/__pycache__/test_linux_appdir_packaging.cpython-313-pytest-9.0.3.pyc
-tests/__pycache__/test_posix_gui.cpython-313-pytest-9.0.3.pyc
-tests/__pycache__/test_subtitle_support_sources.cpython-313-pytest-9.0.3.pyc
-tests/__pycache__/test_ui_spec_sources.cpython-313-pytest-9.0.3.pyc
-tests/__pycache__/test_ums_hardening_sources.cpython-313-pytest-9.0.3.pyc
+tests/__pycache__/*
