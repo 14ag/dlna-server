@@ -29,7 +29,7 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - Visual Studio 2022 with the MSVC C++ desktop toolchain
 - CMake 3.20 or newer
 
-### Linux, macOS, or Termux
+### Linux, macOS
 
 - CMake 3.20 or newer
 - A C++17 compiler such as `clang++` or `g++`
