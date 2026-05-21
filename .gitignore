@@ -50,6 +50,8 @@ build_output/
 build_plan/
 out/
 output/
+output-linux/
+output-wslg-gui/
 bin/
 
 # Visual Studio
@@ -77,4 +79,5 @@ vlc-help.txt
 .antigravity/
 .gemini/
 scratch/
+.pytest_cache/
 tests/__pycache__/*
