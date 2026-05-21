@@ -15,6 +15,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         for required_path in (
             "usr/bin/dlna-server",
             "usr/bin/dlna-server-gui",
+            "usr/bin/dlna-server-gui-bin",
             "usr/share/dlna-server",
             "usr/share/icons/hicolor/scalable/apps/dlna-server.svg",
             "AppRun",
@@ -30,14 +31,16 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
 
         self.assertIn('DLNA_SERVER_BIN="$appdir/usr/bin/dlna-server"', apprun)
         self.assertIn('DLNA_SERVER_GUI_DIR="$appdir/usr/share/dlna-server"', apprun)
+        self.assertIn('DLNA_SERVER_GUI_BIN="$appdir/usr/bin/dlna-server-gui-bin"', apprun)
         self.assertIn('exec "$appdir/usr/bin/dlna-server-gui"', apprun)
 
     def test_appdir_desktop_metadata_is_relative(self):
         script = self.read("build-linux-appdir.ps1")
 
-        self.assertIn("Name=DLNA Server", script)
+        self.assertIn("Name=dlna-server", script)
         self.assertIn("Exec=dlna-server-gui", script)
         self.assertIn("Icon=dlna-server", script)
+        self.assertIn("StartupWMClass=dlna-server", script)
 
     def test_appimage_script_uses_linuxdeploy(self):
         script = self.read("build-linux-appimage.ps1")
@@ -69,10 +72,10 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("release-1.4.5", cmake)
         self.assertIn("dlna-server-gui-native", cmake)
         self.assertIn("if(FLTK_FOUND)", cmake)
-        self.assertIn("OUTPUT_NAME dlna-server-gui", cmake)
+        self.assertIn("OUTPUT_NAME dlna-server-gui-bin", cmake)
+        self.assertIn("packaging/linux/dlna-server-gui", cmake)
         self.assertIn("src/posix_server.cpp", cmake)
         self.assertIn("Threads::Threads", cmake)
-        self.assertIn("packaging/linux/dlna-server-gui", cmake)
         self.assertIn("#include <FL/Fl_Window.H>", gui_source)
         self.assertIn("DLNA Server is stopped", gui_source)
 

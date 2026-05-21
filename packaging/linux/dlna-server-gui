@@ -4,6 +4,15 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 app_share=${DLNA_SERVER_GUI_DIR:-"$script_dir/../share/dlna-server"}
 server_bin=${DLNA_SERVER_BIN:-"$script_dir/dlna-server"}
+native_gui=${DLNA_SERVER_GUI_BIN:-"$script_dir/dlna-server-gui-bin"}
 
 export DLNA_SERVER_BIN="$server_bin"
+
+if [ -x "$native_gui" ]; then
+    if [ -z "${FLTK_BACKEND:-}" ] && [ -n "${DISPLAY:-}" ] && [ -r /proc/version ] && grep -qi microsoft /proc/version; then
+        export FLTK_BACKEND=x11
+    fi
+    exec "$native_gui" "$@"
+fi
+
 exec python3 "$app_share/posix_gui.py" "$@"

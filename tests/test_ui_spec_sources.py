@@ -31,7 +31,7 @@ class UiSpecTests(unittest.TestCase):
         cmake = self.read("CMakeLists.txt")
         changelog = self.read("CHANGELOG.md")
 
-        self.assertIn("project(WinDLNAServer VERSION 1.2.0)", cmake)
+        self.assertIn("project(dlna-server VERSION 1.2.0)", cmake)
         self.assertIn("## [1.2.0] - 2026-05-21", changelog)
 
 

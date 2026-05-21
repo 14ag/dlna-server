@@ -29,7 +29,7 @@ MainWindow::~MainWindow() {
 bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
     m_hInstance = hInstance;
 
-    const wchar_t CLASS_NAME[] = L"WinDLNAServerMain";
+    const wchar_t CLASS_NAME[] = L"dlna-server_Main";
 
     WNDCLASSW wc = {};
     wc.lpfnWndProc = MainWindow::WindowProc;
@@ -102,7 +102,7 @@ void MainWindow::AddTrayIcon() {
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = LoadIcon(m_hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
-    wcscpy_s(nid.szTip, L"WinDLNAServer");
+    wcscpy_s(nid.szTip, L"dlna-server");
 
     Shell_NotifyIconW(NIM_ADD, &nid);
 }

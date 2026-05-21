@@ -1,8 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
-project(WinDLNAServer VERSION 1.2.0)
+project(dlna-server VERSION 1.2.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/output" CACHE PATH "Install path" FORCE)
+endif()
 
 if(WIN32)
     set(SOURCES
@@ -39,8 +43,8 @@ if(WIN32)
         resources/resource.h
     )
 
-    add_executable(WinDLNAServer WIN32 ${SOURCES} ${HEADERS} resources/app.rc)
-    target_link_libraries(WinDLNAServer
+    add_executable(dlna-server WIN32 ${SOURCES} ${HEADERS} resources/app.rc)
+    target_link_libraries(dlna-server
         ws2_32
         shell32
         ole32
@@ -51,11 +55,11 @@ if(WIN32)
         rpcrt4
         iphlpapi
     )
-    set_property(TARGET WinDLNAServer PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_definitions(WinDLNAServer PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN)
-    target_include_directories(WinDLNAServer PRIVATE src)
+    set_property(TARGET dlna-server PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_definitions(dlna-server PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN)
+    target_include_directories(dlna-server PRIVATE src)
 
-    install(TARGETS WinDLNAServer RUNTIME DESTINATION .)
+    install(TARGETS dlna-server RUNTIME DESTINATION .)
 else()
     include(GNUInstallDirs)
     include(FetchContent)
@@ -122,7 +126,7 @@ else()
             src/contentdirectory.cpp
             src/dlna_utils.cpp
         )
-        set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui)
+        set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
         target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_POSIX=1 DLNA_PLATFORM_NAME=\"Linux\")
         target_include_directories(dlna-server-gui-native PRIVATE src)
         if(FLTK_FOUND)
@@ -130,13 +134,14 @@ else()
         endif()
         target_link_libraries(dlna-server-gui-native PRIVATE ${DLNA_FLTK_TARGET} Threads::Threads)
         install(TARGETS dlna-server-gui-native RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(PROGRAMS packaging/linux/dlna-server-gui DESTINATION ${CMAKE_INSTALL_BINDIR})
     else()
         install(PROGRAMS packaging/linux/dlna-server-gui DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(PROGRAMS src/posix_gui.py DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server)
     endif()
 
     if(APPLE)
-        set(DLNA_APP_BUNDLE "${CMAKE_BINARY_DIR}/DLNA Server.app")
+        set(DLNA_APP_BUNDLE "${CMAKE_BINARY_DIR}/dlna-server.app")
         configure_file(packaging/macos/Info.plist.in "${CMAKE_BINARY_DIR}/Info.plist" @ONLY)
         add_custom_target(DLNAServerApp ALL
             COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -158,12 +163,14 @@ else()
                     "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server"
                     "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui"
             DEPENDS dlna-server
-            COMMENT "Assembling DLNA Server.app"
+            COMMENT "Assembling dlna-server.app"
         )
         install(DIRECTORY "${DLNA_APP_BUNDLE}" DESTINATION . USE_SOURCE_PERMISSIONS)
     else()
         configure_file(packaging/linux/install_desktop.cmake.in "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake" @ONLY)
+        configure_file(packaging/linux/dlna-server.appdata.xml.in "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" @ONLY)
         install(FILES resources/dlna-server.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+        install(FILES "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
         install(SCRIPT "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake")
     endif()
 endif()

@@ -6,11 +6,14 @@ file(MAKE_DIRECTORY "${applications_dir}")
 file(WRITE "${applications_dir}/dlna-server.desktop"
 "[Desktop Entry]
 Type=Application
-Name=DLNA Server
+Name=dlna-server
+GenericName=DLNA media server
 Comment=Share local media with DLNA and UPnP clients
 Exec=${exec_path}
 Icon=${icon_path}
 Terminal=false
-Categories=AudioVideo;Network;
+Categories=AudioVideo;Network;FileTransfer;
+Keywords=DLNA;UPnP;media;server;streaming;
+StartupWMClass=dlna-server
 StartupNotify=true
 ")

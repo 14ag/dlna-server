@@ -6,10 +6,10 @@
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
     // Check for single instance
-    HANDLE hMutex = CreateMutexW(NULL, TRUE, L"WinDLNAServer_SingleInstance_Mutex");
+    HANDLE hMutex = CreateMutexW(NULL, TRUE, L"dlna-server_SingleInstance_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         // Find existing window and show it
-        HWND hwndExisting = FindWindowW(L"WinDLNAServerMain", NULL);
+        HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
         if (hwndExisting) {
             ShowWindow(hwndExisting, SW_RESTORE);
             SetForegroundWindow(hwndExisting);
