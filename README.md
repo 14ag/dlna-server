@@ -34,10 +34,14 @@ On Windows, you get the native Win32 app. On Linux and macOS, you can run `dlna-
 - CMake 3.20 or newer
 - A C++17 compiler such as `clang++` or `g++`
 - `make` or another CMake-supported build tool
-- Python 3 with Tkinter for the optional desktop GUI
+- X11 development headers for native FLTK GUI and AppImage builds
 - PowerShell 7 (`pwsh`) for the standardized `build-output.ps1` release command
 
-On Debian or Ubuntu, the desktop GUI needs the `python3-tk` package in addition to the compiler and CMake packages.
+On Debian or Ubuntu, native GUI and AppImage builds need:
+
+```sh
+sudo apt install build-essential cmake libx11-dev libxft-dev libxext-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpng-dev libjpeg-dev zlib1g-dev
+```
 
 On Termux, the test setup uses:
 
