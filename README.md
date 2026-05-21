@@ -6,7 +6,7 @@
 
 WinDLNAServer streams local video, audio, and image files to DLNA and UPnP clients on the local network.
 
-On Windows, you get the native Win32 app. On Linux and macOS, you can run `dlna-server` from a terminal or launch a small GUI from the app list.
+On Windows, you get the native Win32 app. On Linux, release builds ship a native FLTK GUI plus the headless `dlna-server` binary. On macOS, you can run the POSIX server or use the app-bundle wrapper.
 
 ## Features
 
@@ -16,7 +16,7 @@ On Windows, you get the native Win32 app. On Linux and macOS, you can run `dlna-
 - Handles UPnP `ContentDirectory:1` Browse SOAP requests.
 - Serves device, ContentDirectory, and ConnectionManager XML descriptions.
 - Provides a native Windows UI with tray behavior.
-- Provides Linux/macOS desktop launchers with a GUI for media folders, server name, port, start, stop, and logs.
+- Provides a native Linux FLTK GUI for media folders, server name, port, start, stop, settings, and logs.
 - Supports optional IP whitelisting on Windows and POSIX builds.
 - Stores settings in `config.ini` beside the executable.
 - Includes smoke tests for Windows, Android VLC reachability, and POSIX-over-SSH detection.
@@ -71,18 +71,19 @@ For a debug build:
 
 ### Linux desktop app
 
-Build and install the POSIX server, GUI wrapper, desktop entry, and icon into `./output`:
+Build and install the POSIX server, GUI launcher, desktop entry, and icon into `./output`:
 
 ```powershell
 pwsh ./build-output.ps1
 ```
 
-That puts these files in place:
+By default this installs the headless server and compatibility Python/Tk launcher. Native release/AppImage builds use `-DDLNA_ENABLE_FLTK_GUI=ON` and install the FLTK `dlna-server-gui` binary instead:
 
-- `output/bin/dlna-server`
-- `output/bin/dlna-server-gui`
-- `output/share/applications/dlna-server.desktop`
-- `output/share/icons/hicolor/scalable/apps/dlna-server.svg`
+```sh
+cmake -S . -B build-linux-native -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PWD/output" -DDLNA_ENABLE_FLTK_GUI=ON
+cmake --build build-linux-native
+cmake --install build-linux-native
+```
 
 To install it into your desktop user profile instead, run CMake install with a user prefix after the build:
 
@@ -158,7 +159,7 @@ When the main window closes, the app stays in the tray. Use the tray menu to sho
 
 Launch `DLNA Server` from the desktop app list on Linux, or open `DLNA Server.app` on macOS. Add one or more media folders, set the server name and port, then press Start.
 
-The GUI uses the same POSIX server binary and writes `config.ini` beside it, so command-line and desktop launches share settings. If startup fails, run `dlna-server-gui` from a terminal; Python or Tkinter errors can't hide there.
+The native Linux GUI uses the same config schema as the server and writes `config.ini` beside the installed executable, so command-line and desktop launches share settings. If startup fails, run `dlna-server-gui` from a terminal so display or dependency errors are visible.
 
 ### Headless Linux/macOS
 
@@ -235,7 +236,8 @@ The script builds `dlna-server` on the remote device, starts it headless, verifi
 - `src/main.cpp`, `src/mainwindow.cpp`, `src/settingsdlg.cpp` - Windows UI entry points.
 - `src/server.cpp`, `src/httpserver.cpp`, `src/ssdp.cpp` - Windows server and discovery implementation.
 - `src/posix_main.cpp`, `src/posix_httpserver.cpp`, `src/posix_ssdp.cpp` - headless POSIX implementation.
-- `src/posix_gui.py`, `packaging/linux`, `packaging/macos` - Linux/macOS GUI launcher and desktop packaging.
+- `src/fltk_gui_main.cpp`, `packaging/linux`, `build-linux-appimage.ps1` - native Linux GUI and AppImage packaging.
+- `src/posix_gui.py`, `packaging/macos` - compatibility POSIX GUI wrapper used by macOS and non-native fallback installs.
 - `src/contentdirectory.cpp` - shared UPnP XML and Browse response generation.
 - `src/media_sources.cpp`, `src/posix_media_sources.cpp` - media indexing.
 - `verify-smoke.ps1`, `verify-android-smoke.ps1`, `verify-posix-ssh.ps1` - protocol and device smoke tests.
