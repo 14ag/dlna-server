@@ -42,7 +42,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
     def test_appimage_script_uses_linuxdeploy(self):
         script = self.read("build-linux-appimage.ps1")
 
-        self.assertIn("build-output.ps1", script)
+        self.assertIn("-DDLNA_ENABLE_FLTK_GUI=ON", script)
         self.assertIn("build-linux-appdir.ps1", script)
         self.assertIn("Get-Command $name -ErrorAction SilentlyContinue", script)
         self.assertIn("--appdir", script)
@@ -54,7 +54,9 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         gui_source = self.read("src/fltk_gui_main.cpp")
 
         self.assertIn("DLNA_ENABLE_FLTK_GUI", cmake)
-        self.assertIn("find_package(FLTK REQUIRED)", cmake)
+        self.assertIn("find_package(FLTK QUIET)", cmake)
+        self.assertIn("FetchContent_Declare", cmake)
+        self.assertIn("release-1.4.5", cmake)
         self.assertIn("dlna-server-gui-native", cmake)
         self.assertIn("OUTPUT_NAME dlna-server-gui", cmake)
         self.assertIn("src/posix_server.cpp", cmake)
