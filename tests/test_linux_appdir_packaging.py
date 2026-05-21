@@ -9,48 +9,44 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
     def read(self, path):
         return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_appdir_script_builds_expected_layout(self):
-        script = self.read("build-linux-appdir.ps1")
-
-        for required_path in (
-            "usr/bin/dlna-server",
-            "usr/bin/dlna-server-gui",
-            "usr/share/dlna-server",
-            "usr/share/icons/hicolor/scalable/apps/dlna-server.svg",
-            "AppRun",
-            "dlna-server.desktop",
+    def test_no_build_helper_scripts_are_required(self):
+        for helper in (
+            "build-output.ps1",
+            "build-linux-appdir.ps1",
+            "build-linux-appimage.ps1",
         ):
-            self.assertIn(required_path, script)
+            self.assertFalse((ROOT / helper).exists())
 
-        self.assertIn("Resolve-WorkspacePath", script)
-        self.assertIn("AppDir validation failed", script)
+        readme = self.read("README.md")
+        self.assertIn("There are no build helper scripts.", readme)
+        self.assertIn("cmake -S . -B build-linux", readme)
+
 
     def test_apprun_launches_gui_with_bundled_server(self):
         apprun = self.read("packaging/linux/AppRun")
 
         self.assertIn('DLNA_SERVER_BIN="$appdir/usr/bin/dlna-server"', apprun)
         self.assertIn('DLNA_SERVER_GUI_DIR="$appdir/usr/share/dlna-server"', apprun)
+        self.assertIn('DLNA_SERVER_GUI_BIN="$appdir/usr/bin/dlna-server-gui-bin"', apprun)
         self.assertIn('exec "$appdir/usr/bin/dlna-server-gui"', apprun)
 
     def test_appdir_desktop_metadata_is_relative(self):
-        script = self.read("build-linux-appdir.ps1")
+        desktop = self.read("packaging/linux/dlna-server.appimage.desktop")
 
-        self.assertIn("Name=DLNA Server", script)
-        self.assertIn("Exec=dlna-server-gui", script)
-        self.assertIn("Icon=dlna-server", script)
+        self.assertIn("Name=dlna-server", desktop)
+        self.assertIn("Exec=dlna-server-gui", desktop)
+        self.assertIn("Icon=dlna-server", desktop)
+        self.assertIn("StartupWMClass=dlna-server", desktop)
 
-    def test_appimage_script_uses_linuxdeploy(self):
-        script = self.read("build-linux-appimage.ps1")
+    def test_readme_documents_manual_appimage_packaging(self):
+        readme = self.read("README.md")
 
-        self.assertIn("-DDLNA_ENABLE_FLTK_GUI=ON", script)
-        self.assertIn("build-linux-appdir.ps1", script)
-        self.assertIn("Get-Command $name -ErrorAction SilentlyContinue", script)
-        self.assertIn("--appdir", script)
-        self.assertIn("--output appimage", script)
-        self.assertIn("*.AppImage", script)
+        self.assertIn("-DDLNA_ENABLE_FLTK_GUI=ON", readme)
+        self.assertIn("output/dlna-server.AppDir", readme)
+        self.assertIn("linuxdeploy --appdir output/dlna-server.AppDir --output appimage", readme)
 
     def test_wslg_gui_smoke_script_checks_native_deps(self):
-        script = self.read("verify-wslg-gui.ps1")
+        script = self.read("tests/verify-wslg-gui.ps1")
 
         self.assertIn("DLNA_ENABLE_FLTK_GUI=ON", script)
         self.assertIn("libx11-dev", script)
@@ -69,12 +65,12 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("release-1.4.5", cmake)
         self.assertIn("dlna-server-gui-native", cmake)
         self.assertIn("if(FLTK_FOUND)", cmake)
-        self.assertIn("OUTPUT_NAME dlna-server-gui", cmake)
+        self.assertIn("OUTPUT_NAME dlna-server-gui-bin", cmake)
+        self.assertIn("packaging/linux/dlna-server-gui", cmake)
         self.assertIn("src/posix_server.cpp", cmake)
         self.assertIn("Threads::Threads", cmake)
-        self.assertIn("packaging/linux/dlna-server-gui", cmake)
         self.assertIn("#include <FL/Fl_Window.H>", gui_source)
-        self.assertIn("DLNA Server is stopped", gui_source)
+        self.assertIn("dlna-server is stopped", gui_source)
 
     def test_fltk_main_window_has_parity_controls(self):
         gui_source = self.read("src/fltk_gui_main.cpp")
@@ -99,7 +95,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         gui_source = self.read("src/fltk_gui_main.cpp")
 
         for label in (
-            "DLNA Server Settings",
+            "dlna-server Settings",
             "Server Name:",
             "HTTP Port:",
             "File Port:",
@@ -120,7 +116,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
             "View log",
             "OK",
             "Cancel",
-            "DLNA Server Log",
+            "dlna-server Log",
             "Close",
         ):
             self.assertIn(label, gui_source)
