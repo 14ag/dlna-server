@@ -1,10 +1,10 @@
-# WinDLNAServer
+# dlna-server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![C++17](https://img.shields.io/badge/C++-17-blue.svg)](https://isocpp.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 
-WinDLNAServer streams local video, audio, and image files to DLNA and UPnP clients on the local network.
+`dlna-server` streams local video, audio, and image files to DLNA and UPnP clients on the local network.
 
 On Windows, you get the native Win32 app. On Linux, release builds ship a native FLTK GUI plus the headless `dlna-server` binary. On macOS, you can run the POSIX server or use the app-bundle wrapper.
 
@@ -35,7 +35,6 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - A C++17 compiler such as `clang++` or `g++`
 - `make` or another CMake-supported build tool
 - X11 development headers for native FLTK GUI and AppImage builds
-- PowerShell 7 (`pwsh`) for the standardized `build-output.ps1` release command
 
 On Debian or Ubuntu, native GUI and AppImage builds need:
 
@@ -51,36 +50,42 @@ pkg install clang cmake make python
 
 ## Build and install
 
-Use `build-output.ps1` for release builds. It configures CMake, builds the selected target, clears `./output` by default, and installs the runnable artifacts there. Add `-KeepOutput` if you want to keep existing verification logs while rebuilding.
+Normal CMake builds install to `./output` by default. The PowerShell scripts are still available for maintainers, but Linux and macOS users do not need PowerShell to build or install the app.
 
 ### Windows
 
 Build the desktop app from the repository root:
 
 ```powershell
-.\build-output.ps1
+cmake -S . -B build-windows
+cmake --build build-windows --config Release
+cmake --install build-windows --config Release
 ```
 
-The executable lands at `output/WinDLNAServer.exe`.
+The executable lands at `output/dlna-server.exe`.
 
 For a debug build:
 
 ```powershell
-.\build-output.ps1 -Config Debug
+cmake -S . -B build-windows
+cmake --build build-windows --config Debug
+cmake --install build-windows --config Debug
 ```
 
 ### Linux desktop app
 
-Build and install the POSIX server, GUI launcher, desktop entry, and icon into `./output`:
-
-```powershell
-pwsh ./build-output.ps1
-```
-
-By default this installs the headless server and compatibility Python/Tk launcher. Native release/AppImage builds use `-DDLNA_ENABLE_FLTK_GUI=ON` and install the FLTK `dlna-server-gui` binary instead:
+Build and install the POSIX server, GUI launcher, desktop entry, app metadata, and icon into `./output`:
 
 ```sh
-cmake -S . -B build-linux-native -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PWD/output" -DDLNA_ENABLE_FLTK_GUI=ON
+cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release
+cmake --build build-linux
+cmake --install build-linux
+```
+
+By default this installs the headless server and compatibility Python/Tk launcher. Native desktop builds use `-DDLNA_ENABLE_FLTK_GUI=ON` and install the FLTK GUI through the `dlna-server-gui` launcher:
+
+```sh
+cmake -S . -B build-linux-native -DCMAKE_BUILD_TYPE=Release -DDLNA_ENABLE_FLTK_GUI=ON
 cmake --build build-linux-native
 cmake --install build-linux-native
 ```
@@ -97,40 +102,60 @@ That user install writes:
 - `~/.local/bin/dlna-server-gui`
 - `~/.local/share/applications/dlna-server.desktop`
 - `~/.local/share/icons/hicolor/scalable/apps/dlna-server.svg`
+- `~/.local/share/metainfo/dlna-server.appdata.xml`
 
-After install, open `DLNA Server` from your desktop app launcher. If it doesn't show up right away, run `dlna-server-gui` from a terminal or sign out and back in.
+After install, open `dlna-server` from your desktop app launcher. If it doesn't show up right away, run `dlna-server-gui` from a terminal or sign out and back in.
+
+On WSLg, `[WARN:COPY MODE]` in the Windows taskbar title is emitted by WSLg, not by this app. It means WSLg is warning about its RDP window transport. The app installs desktop metadata and uses the `dlna-server` launcher so WSLg can match the window to the right icon and command, but hiding that warning requires WSLg configuration or a WSL update.
 
 ### Linux AppImage
 
-Build the install tree, AppDir, and AppImage on Linux:
+Build the native GUI install tree first:
 
-```powershell
-pwsh ./build-linux-appimage.ps1
+```sh
+cmake -S . -B build-linux-native -DCMAKE_BUILD_TYPE=Release -DDLNA_ENABLE_FLTK_GUI=ON
+cmake --build build-linux-native
+cmake --install build-linux-native
 ```
 
-The script expects `linuxdeploy-x86_64.AppImage` or `linuxdeploy` on `PATH`, or a `LINUXDEPLOY_PATH` environment variable pointing at the tool. It writes the AppImage into `output/`.
+Then create an AppDir and run `linuxdeploy`:
+
+```sh
+mkdir -p output/dlna-server.AppDir/usr/bin
+cp output/bin/dlna-server output/dlna-server.AppDir/usr/bin/
+cp output/bin/dlna-server-gui output/dlna-server.AppDir/usr/bin/
+cp output/bin/dlna-server-gui-bin output/dlna-server.AppDir/usr/bin/
+cp packaging/linux/AppRun output/dlna-server.AppDir/
+cp output/share/applications/dlna-server.desktop output/dlna-server.AppDir/
+cp resources/dlna-server.svg output/dlna-server.AppDir/
+linuxdeploy --appdir output/dlna-server.AppDir --output appimage
+```
+
+Maintainers can also use `build-linux-appimage.ps1` from PowerShell 7 on Linux. That script expects `linuxdeploy-x86_64.AppImage` or `linuxdeploy` on `PATH`, or `LINUXDEPLOY_PATH` pointing at the tool.
 
 ### macOS app bundle
 
 Build and install the POSIX server and app bundle into `./output`:
 
-```powershell
-pwsh ./build-output.ps1
+```sh
+cmake -S . -B build-macos -DCMAKE_BUILD_TYPE=Release
+cmake --build build-macos
+cmake --install build-macos
 ```
 
 The release outputs are:
 
 - `output/bin/dlna-server`
-- `output/DLNA Server.app`
+- `output/dlna-server.app`
 
 Install the app for your user account:
 
 ```sh
 mkdir -p "$HOME/Applications"
-cp -R "output/DLNA Server.app" "$HOME/Applications/"
+cp -R "output/dlna-server.app" "$HOME/Applications/"
 ```
 
-Open `DLNA Server` from Finder, Spotlight, or Launchpad. It's the same server binary, wrapped in a small app bundle.
+Open `dlna-server` from Finder, Spotlight, or Launchpad. It's the same server binary, wrapped in a small app bundle.
 
 ### Headless Linux/macOS
 
@@ -141,7 +166,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-The standardized release command writes the runnable binary to `output/bin/dlna-server`. Run it directly:
+The install step writes the runnable binary to `output/bin/dlna-server`. Run it directly:
 
 ```sh
 ./output/bin/dlna-server --port 8200 --name "DLNA Server" --source /path/to/media
@@ -151,15 +176,24 @@ The standardized release command writes the runnable binary to `output/bin/dlna-
 
 ### Windows
 
-Run `WinDLNAServer.exe`. Add one or more media folders with the `+` button, then start the server with the play button.
+Run `dlna-server.exe`. Add one or more media folders with the `+` button, then start the server with the play button.
 
 When the main window closes, the app stays in the tray. Use the tray menu to show the window, stop the server, or exit.
 
 ### Linux/macOS GUI
 
-Launch `DLNA Server` from the desktop app list on Linux, or open `DLNA Server.app` on macOS. Add one or more media folders, set the server name and port, then press Start.
+Launch `dlna-server` from the desktop app list on Linux, or open `dlna-server.app` on macOS. Add one or more media folders, set the server name and port, then press Start.
 
-The native Linux GUI uses the same config schema as the server and writes `config.ini` beside the installed executable, so command-line and desktop launches share settings. If startup fails, run `dlna-server-gui` from a terminal so display or dependency errors are visible.
+The native Linux GUI uses the same config schema as the server and writes `config.ini` beside the installed executable, so command-line and desktop launches share settings. On WSLg, the launcher forces FLTK to use X11 when a Windows display is available; this avoids cases where the window appears in the taskbar but never paints. If startup fails, run `dlna-server-gui` from a terminal so display or dependency errors are visible.
+
+To hide the WSLg copy-mode warning title on systems where WSLg still adds it, create `%USERPROFILE%\.wslgconfig` with:
+
+```ini
+[system-distro-env]
+WESTON_RDP_COPY_WARNING_TITLE=false
+```
+
+Then run `wsl --shutdown` and launch the app again. This only hides the title warning; it does not change whether WSLg is using RAIL or VAIL internally.
 
 ### Headless Linux/macOS
 
@@ -185,13 +219,13 @@ Settings are stored in `config.ini` beside the executable:
 - POSIX CMake build output: `build/config.ini`
 - Linux user install: `~/.local/bin/config.ini`
 
-If `config.ini` is missing, the app creates it on startup with default settings and a generated UUID. On later starts, the app reads the same file to restore previous settings.
+If `config.ini` is missing, the app creates it on startup with default settings, the computer hostname as `ServerName`, and a generated UUID. On later starts, values from `config.ini` take precedence over defaults.
 
 Example:
 
 ```ini
 [Settings]
-ServerName=WinDLNA Server
+ServerName=my-computer-name
 Port=8200
 FileServerPort=8201
 DebugLog=0
