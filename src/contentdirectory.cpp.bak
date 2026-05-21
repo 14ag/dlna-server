@@ -52,7 +52,7 @@ std::string ContentDirectory::GetDeviceDescriptionXML() {
        << "    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>\n"
        << "    <friendlyName>" << serverName << "</friendlyName>\n"
        << "    <manufacturer>CustomDLNA</manufacturer>\n"
-       << "    <modelName>WinDLNAServer</modelName>\n"
+       << "    <modelName>dlna-server</modelName>\n"
        << "    <UDN>uuid:" << deviceUUID << "</UDN>\n"
        << "    <dlna:X_DLNADOC xmlns:dlna=\"urn:schemas-dlna-org:device-1-0\">DMS-1.50</dlna:X_DLNADOC>\n"
        << "    <serviceList>\n"

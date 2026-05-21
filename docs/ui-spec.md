@@ -4,7 +4,7 @@ Scope: Windows Win32 UI and Linux FLTK UI. Keep both quiet, compact, and utility
 
 ## Shell
 
-- Window title: `DLNA Server`
+- Window title: `dlna-server`
 - Minimum content size: 640 x 460
 - Default size: 800 x 600
 - Toolbar height: 48 px

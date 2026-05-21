@@ -6,12 +6,17 @@ from __future__ import annotations
 import os
 import queue
 import signal
+import socket
 import subprocess
 import sys
 import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+
+
+def default_server_name() -> str:
+    return socket.gethostname() or os.environ.get("HOSTNAME") or "dlna-server"
 
 
 def _split_sources(value: str) -> list[str]:
@@ -26,7 +31,7 @@ def _as_bool(value: str, fallback: bool = False) -> bool:
 
 @dataclass
 class ServerConfig:
-    server_name: str = "DLNA Server"
+    server_name: str = field(default_factory=default_server_name)
     port: int = 8200
     file_server_port: int = 8201
     flat_folder_style: bool = False
@@ -204,7 +209,7 @@ class DlnaGui:
 
     def _read_widgets(self) -> ServerConfig:
         config = self.config
-        config.server_name = self.name_var.get().strip() or "DLNA Server"
+        config.server_name = self.name_var.get().strip() or default_server_name()
         config.port = ConfigStore._parse_int(self.port_var.get(), 8200)
         config.debug_log = bool(self.debug_var.get())
         config.media_sources = [self.sources.get(i) for i in range(self.sources.size())]

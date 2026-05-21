@@ -2,16 +2,16 @@ param()
 
 $ErrorActionPreference = "Stop"
 
-$repo = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $outputDir = Join-Path $repo "output"
-$exePath = Join-Path $outputDir "WinDLNAServer.exe"
+$exePath = Join-Path $outputDir "dlna-server.exe"
 $vlcPath = "C:\Program Files\VideoLAN\VLC\vlc.exe"
-$appDataDir = Join-Path $env:APPDATA "WinDLNAServer"
+$appDataDir = Join-Path $env:APPDATA "dlna-server"
 $configPath = Join-Path $outputDir "config.ini"
 $debugLogPath = Join-Path $appDataDir "debug.log"
 $resultsPath = Join-Path $outputDir "verification-results.txt"
 $debugCopyPath = Join-Path $outputDir "verification-debug.log"
-$testMediaDir = Join-Path $env:TEMP "WinDLNAServer-TestMedia"
+$testMediaDir = Join-Path $env:TEMP "dlna-server-TestMedia"
 $backupPath = $null
 $serverProc = $null
 $vlcProc = $null
@@ -204,7 +204,7 @@ function Read-DebugLog {
 
 function Stop-RepoDlnaProcesses {
     $repoFull = [System.IO.Path]::GetFullPath($repo)
-    Get-Process -Name "WinDLNAServer" -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-Process -Name "dlna-server" -ErrorAction SilentlyContinue | ForEach-Object {
         $path = $null
         try {
             $path = $_.Path
@@ -228,7 +228,7 @@ try {
 
     New-Item -ItemType Directory -Path $appDataDir -Force | Out-Null
     if (Test-Path $configPath) {
-        $backupPath = Join-Path $env:TEMP ("WinDLNAServer-config-backup-" + [guid]::NewGuid().ToString() + ".ini")
+        $backupPath = Join-Path $env:TEMP ("dlna-server-config-backup-" + [guid]::NewGuid().ToString() + ".ini")
         Copy-Item -LiteralPath $configPath -Destination $backupPath -Force
     }
     if (Test-Path $debugLogPath) {
@@ -397,7 +397,7 @@ try {
 </s:Envelope>
 "@
         $browseResp = Invoke-WebRequest -Uri ($location -replace "/description.xml$", "/upnp/control/content_directory") -Method Post -ContentType 'text/xml; charset="utf-8"' -Headers @{ SOAPACTION = '"urn:schemas-upnp-org:service:ContentDirectory:1#Browse"' } -Body $soapBody -UseBasicParsing -TimeoutSec 10
-        if ($browseResp.Content -match "WinDLNAServer-TestMedia") {
+        if ($browseResp.Content -match "dlna-server-TestMedia") {
             $childId = [regex]::Match($browseResp.Content, 'container id=&quot;(\d+)&quot;').Groups[1].Value
             if ($childId) {
                 $childBody = $soapBody -replace "<ObjectID>0</ObjectID>", "<ObjectID>$childId</ObjectID>"

@@ -4,20 +4,20 @@ Native Linux GUI target: FLTK C++ app matching current Windows Win32 behavior. K
 
 ## Main Window Inventory
 
-- Window title: `DLNA Server`
+- Window title: `dlna-server`
 - Initial size: 800 x 600
 - Minimum supported size: 640 x 460
 - Background: dark shell, toolbar band, status band, source list
 - Toolbar height: 48 px
 - Status strip: y 48-72 px
 - Source list: y 72 to bottom, full width
-- Title text: `DLNA Server`, Segoe UI 24 px bold equivalent
+- Title text: `dlna-server`, Segoe UI 24 px bold equivalent
 - Add button: plus symbol, opens folder picker
 - Start/Stop button: play symbol when stopped, stop symbol when running
 - Settings button: gear symbol, opens settings dialog
 - Empty-state text: `Please add shared folders or files (button "+")`
-- Status stopped text: `DLNA Server is stopped`
-- Status running text: `DLNA Server is running on {endpoint}`
+- Status stopped text: `dlna-server is stopped`
+- Status running text: `dlna-server is running on {endpoint}`
 - Source list contents: one row per configured media source path
 - Close behavior: hide to tray/status notifier when available; graceful quit-visible fallback when not available
 - Tray/status notifier menu: `Show Window`, `Start Server` or `Stop Server`, `Exit`
@@ -25,7 +25,7 @@ Native Linux GUI target: FLTK C++ app matching current Windows Win32 behavior. K
 
 ## Settings Dialog Inventory
 
-- Dialog title: `DLNA Server Settings`
+- Dialog title: `dlna-server Settings`
 - Windows resource size: 320 x 280 dialog units
 - Bottom actions: `Restart`, `View log`, `Cancel`, `OK`
 - Text field: `Server Name:`
@@ -50,7 +50,7 @@ Settings load from `AppConfig` on dialog open. `OK` writes every enabled setting
 
 ## Log Dialog Inventory
 
-- Dialog title: `DLNA Server Log`
+- Dialog title: `dlna-server Log`
 - Size target: 400 x 300 dialog units or equivalent
 - Main control: read-only multi-line text view
 - Text source: `GetSystemLog()`

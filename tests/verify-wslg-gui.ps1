@@ -5,7 +5,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $repoWsl = "/mnt/c/" + ($repoRoot.Substring(3) -replace "\\", "/")
 
 function Invoke-Wsl {

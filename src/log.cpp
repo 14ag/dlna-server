@@ -37,7 +37,7 @@ void LogPrint(const wchar_t* fmt, ...) {
     if (AppConfig.debugLog) {
         wchar_t szPath[MAX_PATH];
         if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, szPath))) {
-            PathAppendW(szPath, L"WinDLNAServer");
+            PathAppendW(szPath, L"dlna-server");
             CreateDirectoryW(szPath, NULL);
             PathAppendW(szPath, L"debug.log");
             

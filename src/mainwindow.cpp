@@ -29,7 +29,7 @@ MainWindow::~MainWindow() {
 bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
     m_hInstance = hInstance;
 
-    const wchar_t CLASS_NAME[] = L"WinDLNAServerMain";
+    const wchar_t CLASS_NAME[] = L"dlna-server_Main";
 
     WNDCLASSW wc = {};
     wc.lpfnWndProc = MainWindow::WindowProc;
@@ -42,7 +42,7 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
     RegisterClassW(&wc);
 
     m_hwnd = CreateWindowExW(
-        0, CLASS_NAME, L"DLNA Server",
+        0, CLASS_NAME, L"dlna-server",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
         NULL, NULL, hInstance, this
@@ -102,7 +102,7 @@ void MainWindow::AddTrayIcon() {
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = LoadIcon(m_hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
-    wcscpy_s(nid.szTip, L"WinDLNAServer");
+    wcscpy_s(nid.szTip, L"dlna-server");
 
     Shell_NotifyIconW(NIM_ADD, &nid);
 }
@@ -213,7 +213,7 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         HGDIOBJ hOldFont = SelectObject(hdc, hTitleFont);
         
         RECT rcTitle = { 15, 10, 300, 48 };
-        DrawTextW(hdc, L"DLNA Server", -1, &rcTitle, DT_SINGLELINE | DT_VCENTER);
+        DrawTextW(hdc, L"dlna-server", -1, &rcTitle, DT_SINGLELINE | DT_VCENTER);
         SelectObject(hdc, hOldFont);
         DeleteObject(hTitleFont);
 
@@ -226,7 +226,7 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         hOldFont = SelectObject(hdc, hStatusFont);
 
         RECT rcStatusText = { 15, 48, rcClient.right, 72 };
-        std::wstring statusText = m_isRunning ? L"DLNA Server is running on " + m_statusEndpoint : L"DLNA Server is stopped";
+        std::wstring statusText = m_isRunning ? L"dlna-server is running on " + m_statusEndpoint : L"dlna-server is stopped";
         DrawTextW(hdc, statusText.c_str(), -1, &rcStatusText, DT_SINGLELINE | DT_VCENTER);
 
         // Subtitle if empty

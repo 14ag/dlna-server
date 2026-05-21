@@ -54,6 +54,10 @@ class ConfigStoreTests(unittest.TestCase):
             else:
                 os.environ["DLNA_SERVER_BIN"] = old_value
 
+    def test_default_server_name_uses_hostname(self):
+        self.assertNotEqual(ServerConfig().server_name, "DLNA Server")
+        self.assertTrue(ServerConfig().server_name)
+
 
 if __name__ == "__main__":
     unittest.main()
