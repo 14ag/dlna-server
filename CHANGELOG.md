@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Rebranded Windows and Linux release artifacts to `dlna-server`.
-- Documentation now shows plain CMake build/install commands for Linux and macOS. `output/` is an explicit release prefix, not a default CMake install path.
+- Documentation now shows plain CMake build/install commands for Linux and macOS. `output/` is only used where a command explicitly sets it as a staging prefix.
 - Missing or empty server names now default to the computer hostname. Values already set in `config.ini` still win.
 - Linux desktop installs now include appstream metadata and a richer desktop entry.
 
@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Shared DLNA utility layer for header parsing, byte ranges, MIME lookup, subtitle MIME lookup, and natural sorting.
 - Companion subtitle discovery and Samsung `sec:CaptionInfoEx` advertisement.
 - Native Linux FLTK GUI target with main window, settings dialog, log viewer, media-source management, and start/stop control.
-- Linux AppDir and AppImage build scripts with desktop metadata and icon validation.
+- Linux AppDir/AppImage packaging inputs with desktop metadata and icon validation.
 - WSLg GUI smoke script for native Linux GUI launch checks.
 - UMS-inspired hardening roadmap for future clean-room upgrades.
 
