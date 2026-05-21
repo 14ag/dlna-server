@@ -126,7 +126,7 @@ cp output/bin/dlna-server output/dlna-server.AppDir/usr/bin/
 cp output/bin/dlna-server-gui output/dlna-server.AppDir/usr/bin/
 cp output/bin/dlna-server-gui-bin output/dlna-server.AppDir/usr/bin/
 cp packaging/linux/AppRun output/dlna-server.AppDir/
-cp output/share/applications/dlna-server.desktop output/dlna-server.AppDir/
+cp packaging/linux/dlna-server.appimage.desktop output/dlna-server.AppDir/dlna-server.desktop
 cp resources/dlna-server.svg output/dlna-server.AppDir/
 linuxdeploy --appdir output/dlna-server.AppDir --output appimage
 ```
