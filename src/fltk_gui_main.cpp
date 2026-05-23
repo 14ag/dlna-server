@@ -1,4 +1,5 @@
 #include "config.h"
+#include "firewall_access.h"
 #include "log.h"
 #include "media_sources.h"
 #include "netutils.h"
@@ -340,6 +341,12 @@ private:
         SaveSourcesFromList();
         if (AppConfig.mediaSources.empty()) {
             fl_alert("Add at least one media folder.");
+            return;
+        }
+        std::wstring firewallMessage;
+        if (!EnsureFirewallAccess(AppConfig.port, FirewallAccessMode::Interactive, firewallMessage)) {
+            const std::string text = WideToUtf8(firewallMessage);
+            fl_alert("%s", text.c_str());
             return;
         }
         if (!DLNAServer.Start()) {

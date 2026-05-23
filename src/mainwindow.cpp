@@ -274,8 +274,20 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             OpenFolderPicker();
             break;
         case IDC_BTN_SETTINGS:
-            SettingsDialog::Show(hwnd);
+        {
+            int oldPort = AppConfig.port;
+            INT_PTR result = SettingsDialog::Show(hwnd);
+            if (result == IDOK && m_isRunning && AppConfig.port != oldPort) {
+                DLNAServer.Stop();
+                SetStatus(false);
+                if (DLNAServer.Start()) {
+                    SetStatus(true, DLNAServer.GetEndpoint());
+                } else {
+                    MessageBoxW(hwnd, L"Server stopped. Failed to restart on the new port.", L"Restart failed", MB_ICONWARNING | MB_OK);
+                }
+            }
             break;
+        }
         }
         return 0;
     }
