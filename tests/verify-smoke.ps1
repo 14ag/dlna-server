@@ -51,9 +51,84 @@ function Set-IniValue {
         [string]$value
     )
 
-    if (-not [Kernel32IniBridge]::WritePrivateProfileString($section, $key, $value, $configPath)) {
-        throw "Failed to write INI value $section/$key"
+    if (Test-Path $configPath) {
+        $lines = @(Get-Content -LiteralPath $configPath -Encoding UTF8)
+    } else {
+        $lines = @("[$section]")
     }
+
+    $sectionHeader = "[$section]"
+    $sectionIndex = [Array]::IndexOf([string[]]$lines, $sectionHeader)
+    if ($sectionIndex -lt 0) {
+        $lines += $sectionHeader
+        $sectionIndex = $lines.Count - 1
+    }
+
+    $keyPrefix = "$key="
+    $insertIndex = $lines.Count
+    for ($i = $sectionIndex + 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\[.+\]$') {
+            $insertIndex = $i
+            break
+        }
+        if ($lines[$i].StartsWith($keyPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $lines[$i] = "$key=$value"
+            Set-Content -LiteralPath $configPath -Value $lines -Encoding UTF8
+            return
+        }
+    }
+
+    $list = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $lines) {
+        $list.Add($line)
+    }
+    $list.Insert($insertIndex, "$key=$value")
+    Set-Content -LiteralPath $configPath -Value $list -Encoding UTF8
+}
+
+function Invoke-CurlText {
+    param([string[]]$curlArgs)
+
+    $output = & curl.exe @curlArgs 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw (($output | Out-String).Trim())
+    }
+    return (($output | Out-String).Trim())
+}
+
+function Invoke-SoapCurl {
+    param(
+        [string]$url,
+        [string]$body
+    )
+
+    $soapPath = Join-Path $env:TEMP ("dlna-smoke-soap-" + [guid]::NewGuid().ToString() + ".xml")
+    $utf8NoBom = New-Object Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($soapPath, $body, $utf8NoBom)
+    try {
+        return Invoke-CurlText @(
+            "-sS", "--max-time", "10",
+            "-H", "Content-Type: text/xml; charset=utf-8",
+            "-H", 'SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#Browse"',
+            "--data-binary", "@$soapPath",
+            $url
+        )
+    } finally {
+        Remove-Item -LiteralPath $soapPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-WebRequestUtf8 {
+    param([string]$url)
+
+    $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 10
+    $stream = $response.RawContentStream
+    if ($stream.CanSeek) {
+        $stream.Position = 0
+    }
+    $memory = New-Object IO.MemoryStream
+    $stream.CopyTo($memory)
+    return [Text.Encoding]::UTF8.GetString($memory.ToArray())
 }
 
 function Parse-SsdpResponse {
@@ -204,7 +279,7 @@ function Read-DebugLog {
 
 function Stop-RepoDlnaProcesses {
     $repoFull = [System.IO.Path]::GetFullPath($repo)
-    Get-Process -Name "dlna-server" -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-Process -Name "dlna-server", "WinDLNAServer" -ErrorAction SilentlyContinue | ForEach-Object {
         $path = $null
         try {
             $path = $_.Path
@@ -222,6 +297,9 @@ function Stop-RepoDlnaProcesses {
 try {
     if (-not (Test-Path $exePath)) {
         throw "Missing built exe at $exePath"
+    }
+    if (-not (powershell Get-Command curl.exe -ErrorAction SilentlyContinue)) {
+        throw "curl.exe missing"
     }
 
     Stop-RepoDlnaProcesses
@@ -266,7 +344,12 @@ try {
     Set-IniValue "Settings" "DeviceUUID" "11111111-2222-3333-4444-555555555555"
     Set-IniValue "Settings" "MediaSources" $testMediaDir
 
-    $serverProc = Start-Process -FilePath $exePath -PassThru
+    $env:DLNA_SERVER_SKIP_FIREWALL = "1"
+    try {
+        $serverProc = Start-Process -FilePath $exePath -PassThru
+    } finally {
+        Remove-Item Env:\DLNA_SERVER_SKIP_FIREWALL -ErrorAction SilentlyContinue
+    }
 
     $windowHandle = [IntPtr]::Zero
     $windowReady = $false
@@ -363,19 +446,36 @@ try {
         Add-Result ("FAIL ssdp:all missing ST values: " + ($missing -join ", "))
     }
 
-    $specificRoot = $ipv4Results["upnp:rootdevice"] | Select-Object -First 1
+    $specificRoot = $null
+    $location = $null
+    $usn = $null
+    $descContent = $null
+    foreach ($candidate in $ipv4Results["upnp:rootdevice"]) {
+        $candidateHeaders = Parse-SsdpResponse $candidate.Text
+        $candidateLocation = $candidateHeaders["LOCATION"]
+        if (-not $candidateLocation -or $candidateLocation -notmatch ":18200/description\.xml$") {
+            continue
+        }
+        try {
+            $candidateDesc = Invoke-WebRequestUtf8 $candidateLocation
+            if ($candidateDesc -match "ContentDirectory:1") {
+                $specificRoot = $candidate
+                $location = $candidateLocation
+                $usn = $candidateHeaders["USN"]
+                $descContent = $candidateDesc
+                break
+            }
+        } catch {
+        }
+    }
     if ($specificRoot) {
-        $rootHeaders = Parse-SsdpResponse $specificRoot.Text
-        $location = $rootHeaders["LOCATION"]
-        $usn = $rootHeaders["USN"]
         if ($location -and $usn) {
             Add-Result ("PASS rootdevice response has LOCATION + USN ($location)")
         } else {
             Add-Result "FAIL rootdevice response missing LOCATION or USN"
         }
 
-        $desc = Invoke-WebRequest -Uri $location -UseBasicParsing -TimeoutSec 10
-        if ($desc.Content -match "DLNA 测试" -and $desc.Content -match "ContentDirectory:1") {
+        if ($descContent -match "DLNA 测试" -and $descContent -match "ContentDirectory:1") {
             Add-Result "PASS description.xml served UTF-8 friendlyName and ContentDirectory service"
         } else {
             Add-Result "FAIL description.xml missing expected friendlyName or ContentDirectory service"
@@ -396,16 +496,16 @@ try {
   </s:Body>
 </s:Envelope>
 "@
-        $browseResp = Invoke-WebRequest -Uri ($location -replace "/description.xml$", "/upnp/control/content_directory") -Method Post -ContentType 'text/xml; charset="utf-8"' -Headers @{ SOAPACTION = '"urn:schemas-upnp-org:service:ContentDirectory:1#Browse"' } -Body $soapBody -UseBasicParsing -TimeoutSec 10
-        if ($browseResp.Content -match "dlna-server-TestMedia") {
-            $childId = [regex]::Match($browseResp.Content, 'container id=&quot;(\d+)&quot;').Groups[1].Value
+        $browseContent = Invoke-SoapCurl ($location -replace "/description.xml$", "/upnp/control/content_directory") $soapBody
+        if ($browseContent -match "dlna-server-TestMedia") {
+            $childId = [regex]::Match($browseContent, 'container id=&quot;(\d+)&quot;').Groups[1].Value
             if ($childId) {
                 $childBody = $soapBody -replace "<ObjectID>0</ObjectID>", "<ObjectID>$childId</ObjectID>"
-                $childBrowse = Invoke-WebRequest -Uri ($location -replace "/description.xml$", "/upnp/control/content_directory") -Method Post -ContentType 'text/xml; charset="utf-8"' -Headers @{ SOAPACTION = '"urn:schemas-upnp-org:service:ContentDirectory:1#Browse"' } -Body $childBody -UseBasicParsing -TimeoutSec 10
-                if ($childBrowse.Content -match "movie" -or $childBrowse.Content -match "cover") {
+                $childBrowseContent = Invoke-SoapCurl ($location -replace "/description.xml$", "/upnp/control/content_directory") $childBody
+                if ($childBrowseContent -match "movie" -or $childBrowseContent -match "cover") {
                     Add-Result "PASS Browse SOAP returned media entries"
 
-                    $decodedDIDL = [System.Net.WebUtility]::HtmlDecode($childBrowse.Content)
+                    $decodedDIDL = [System.Net.WebUtility]::HtmlDecode($childBrowseContent)
 
                     # Find movie.mp4 ID
                     $movieMatch = [regex]::Match($decodedDIDL, '<item id="(\d+)"(?:(?!</item>)[\s\S])*?<dc:title>movie</dc:title>(?:(?!</item>)[\s\S])*?</item>')
@@ -416,7 +516,7 @@ try {
                     $emptyId = $emptyMatch.Groups[1].Value
 
                     # 1. Subtitle URL advertisement check
-                    if ($childBrowse.Content -match "CaptionInfoEx" -and $childBrowse.Content -match "/subtitle/") {
+                    if ($childBrowseContent -match "CaptionInfoEx" -and $childBrowseContent -match "/subtitle/") {
                         Add-Result "PASS Browse SOAP advertised subtitle URL via sec:CaptionInfoEx"
                     } else {
                         Add-Result "FAIL Browse SOAP did not advertise subtitle URL"
@@ -536,11 +636,11 @@ try {
     <u:Browse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
       <ObjectID>0
 "@
-                    $faultResp = Invoke-WebRequest -Uri $controlUrl -Method Post -ContentType 'text/xml; charset="utf-8"' -Headers @{ SOAPACTION = '"urn:schemas-upnp-org:service:ContentDirectory:1#Browse"' } -Body $malformedSoap -UseBasicParsing -TimeoutSec 5
-                    if ($faultResp.Content -match "<errorCode>401</errorCode>" -and $faultResp.Content -match "Invalid XML") {
+                    $faultContent = Invoke-SoapCurl $controlUrl $malformedSoap
+                    if ($faultContent -match "<errorCode>401</errorCode>" -and $faultContent -match "Invalid XML") {
                         Add-Result "PASS malformed SOAP XML request rejected with SOAP fault 401"
                     } else {
-                        Add-Result "FAIL malformed SOAP XML request response: $($faultResp.Content)"
+                        Add-Result "FAIL malformed SOAP XML request response: $faultContent"
                     }
 
                     # 7. Invalid Content-Length check
