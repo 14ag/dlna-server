@@ -255,6 +255,9 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
     std::string method = firstLine.substr(0, space1);
     std::string path = firstLine.substr(space1 + 1, space2 - space1 - 1);
+    if (AppConfig.debugLog) {
+        LogPrint(L"HTTP request: src=%hs method=%hs path=%hs", clientIP.c_str(), method.c_str(), path.c_str());
+    }
 
     std::string hostUrl = FindHeaderValueCaseInsensitive(req, "Host");
     if (hostUrl.empty()) {
