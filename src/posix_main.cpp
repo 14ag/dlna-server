@@ -1,4 +1,5 @@
 #include "config.h"
+#include "firewall_access.h"
 #include "log.h"
 #include "netutils.h"
 #include "server.h"
@@ -40,6 +41,11 @@ int main(int argc, char** argv) {
     std::signal(SIGPIPE, SIG_IGN);
     std::signal(SIGINT, HandleSignal);
     std::signal(SIGTERM, HandleSignal);
+    std::wstring firewallMessage;
+    if (!EnsureFirewallAccess(AppConfig.port, FirewallAccessMode::NonInteractive, firewallMessage)) {
+        std::cerr << WideToUtf8(firewallMessage) << "\n";
+        return 1;
+    }
     if (!DLNAServer.Start()) return 1;
     while (!g_stop) std::this_thread::sleep_for(std::chrono::milliseconds(200));
     DLNAServer.Stop();
