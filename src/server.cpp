@@ -5,6 +5,7 @@
 #include "ssdp.h"
 #include "httpserver.h"
 #include "ipwhitelist.h"
+#include "firewall_access.h"
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -53,6 +54,19 @@ bool Server::Start() {
     if (!hasSource) {
         MessageBoxW(NULL, L"Please add at least one shared folder before starting the server.", L"No sources", MB_ICONWARNING | MB_OK);
         return false;
+    }
+
+    wchar_t skipFirewall[8] = {};
+    if (GetEnvironmentVariableW(L"DLNA_SERVER_SKIP_FIREWALL", skipFirewall, 8) == 0) {
+        std::wstring firewallMessage;
+        if (!EnsureFirewallAccess(AppConfig.port, FirewallAccessMode::Interactive, firewallMessage)) {
+            LogPrint(L"%ls", firewallMessage.c_str());
+            MessageBoxW(NULL, firewallMessage.c_str(), L"Firewall access required", MB_ICONWARNING | MB_OK);
+            return false;
+        }
+        if (!firewallMessage.empty()) {
+            LogPrint(L"%ls", firewallMessage.c_str());
+        }
     }
 
     AppMedia.Scan();

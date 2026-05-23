@@ -1,10 +1,51 @@
 #include <windows.h>
+#include <shellapi.h>
 #include "mainwindow.h"
 #include "config.h"
+#include "firewall_access.h"
 #include "../resources/resource.h"
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
+namespace {
+bool TryRunFirewallHelper(int& exitCode) {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) {
+        return false;
+    }
+
+    bool configureFirewall = false;
+    int port = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (wcscmp(argv[i], L"--configure-firewall") == 0) {
+            configureFirewall = true;
+        } else if (wcscmp(argv[i], L"--port") == 0 && i + 1 < argc) {
+            port = _wtoi(argv[++i]);
+        }
+    }
+
+    LocalFree(argv);
+    if (!configureFirewall) {
+        return false;
+    }
+
+    AppConfig.Load();
+    if (port <= 0) {
+        port = AppConfig.port;
+    }
+
+    std::wstring message;
+    exitCode = ConfigureFirewallAccessElevated(port, message) ? 0 : 1;
+    return true;
+}
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
+    int helperExitCode = 0;
+    if (TryRunFirewallHelper(helperExitCode)) {
+        return helperExitCode;
+    }
+
     // Check for single instance
     HANDLE hMutex = CreateMutexW(NULL, TRUE, L"dlna-server_SingleInstance_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {

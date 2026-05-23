@@ -19,6 +19,7 @@ if(WIN32)
         src/media_sources.cpp
         src/config.cpp
         src/ipwhitelist.cpp
+        src/firewall_access_win.cpp
         src/log.cpp
     )
 
@@ -35,6 +36,7 @@ if(WIN32)
         src/media_sources.h
         src/config.h
         src/ipwhitelist.h
+        src/firewall_access.h
         src/log.h
         resources/resource.h
     )
@@ -72,6 +74,7 @@ else()
         src/posix_config.cpp
         src/posix_log.cpp
         src/ipwhitelist.cpp
+        src/firewall_access_posix.cpp
         src/contentdirectory.cpp
         src/dlna_utils.cpp
     )
@@ -119,6 +122,7 @@ else()
             src/posix_config.cpp
             src/posix_log.cpp
             src/ipwhitelist.cpp
+            src/firewall_access_posix.cpp
             src/contentdirectory.cpp
             src/dlna_utils.cpp
         )
