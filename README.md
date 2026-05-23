@@ -181,6 +181,10 @@ Run the build-tree binary directly:
 
 Run `dlna-server.exe`. Add one or more media folders with the `+` button, then start the server with the play button.
 
+On first start, Windows may ask for firewall access. The app itself stays unelevated. If access is missing, it launches a short-lived elevated helper that creates two inbound rules for this executable: TCP from `LocalSubnet` on any local port, and UDP `1900` from `LocalSubnet` for SSDP discovery. Both rules apply to Domain, Private, and Public profiles.
+
+Changing the HTTP port while the server is running restarts the server so the old listener closes and the new port opens. The Windows TCP firewall rule does not need to change when the port changes.
+
 When the main window closes, the app stays in the tray. Use the tray menu to show the window, stop the server, or exit.
 
 ### Linux/macOS GUI
@@ -254,6 +258,20 @@ Run Android reachability checks through ADB:
 ```powershell
 .\tests\verify-android-smoke.ps1
 ```
+
+If more than one ADB device is connected, pass the phone serial:
+
+```powershell
+.\tests\verify-android-smoke.ps1 -DeviceSerial DKJ9X18709W05461
+```
+
+The Android smoke test requires Windows Firewall access for the built app. If the test reports missing firewall rules, run the helper once from an elevated PowerShell:
+
+```powershell
+.\output\dlna-server.exe --configure-firewall --port 18200
+```
+
+The `--port` value is kept for compatibility with the test command. On Windows, the TCP rule is app-wide and limited to `LocalSubnet`; UDP discovery remains limited to port `1900`. The normal Windows app also prompts to configure these rules the first time the server starts.
 
 Run the POSIX headless build in Termux over SSH and detect it from the Windows computer:
 
