@@ -4,8 +4,6 @@
 #include <commctrl.h>
 #include <string>
 
-extern HINSTANCE GetModuleHandleW(LPCWSTR lpModuleName);
-
 INT_PTR SettingsDialog::Show(HWND hParent) {
     return DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCE(IDD_SETTINGS), hParent, DialogProc, 0);
 }

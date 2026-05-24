@@ -15,6 +15,6 @@
   </categories>
   <url type="homepage">https://github.com/14ag/dlna-server</url>
   <releases>
-    <release version="@PROJECT_VERSION@" date="2026-05-21"/>
+    <release version="@PROJECT_VERSION@" date="2026-05-24"/>
   </releases>
 </component>
