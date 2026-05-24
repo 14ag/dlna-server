@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-05-24
+
 ### Changed
-- Rebranded Windows and Linux release artifacts to `dlna-server`.
+- Rebranded Windows and Linux desktop app names to **DLNA Server**.
 - Documentation now shows plain CMake build/install commands for Linux and macOS. `output/` is only used where a command explicitly sets it as a staging prefix.
 - Missing or empty server names now default to the computer hostname. Values already set in `config.ini` still win.
 - Linux desktop installs now include appstream metadata and a richer desktop entry.

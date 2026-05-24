@@ -2,8 +2,6 @@
 #include "log.h"
 #include "../resources/resource.h"
 
-extern HINSTANCE GetModuleHandleW(LPCWSTR lpModuleName);
-
 INT_PTR LogDialog::Show(HWND hParent) {
     return DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCE(IDD_LOG), hParent, DialogProc, 0);
 }

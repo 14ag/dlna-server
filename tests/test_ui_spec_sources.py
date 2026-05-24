@@ -32,12 +32,12 @@ class UiSpecTests(unittest.TestCase):
         ):
             self.assertIn(text, spec)
 
-    def test_release_version_is_1_2_0(self):
+    def test_release_version_is_1_3_0(self):
         cmake = self.read("CMakeLists.txt")
         changelog = self.read("CHANGELOG.md")
 
-        self.assertIn("project(dlna-server VERSION 1.2.0)", cmake)
-        self.assertIn("## [1.2.0] - 2026-05-21", changelog)
+        self.assertIn("project(dlna-server VERSION 1.3.0)", cmake)
+        self.assertIn("## [1.3.0] - 2026-05-24", changelog)
 
     def test_windows_ui_uses_winui_aligned_metrics_and_icon(self):
         main = self.read("src/mainwindow.cpp")
