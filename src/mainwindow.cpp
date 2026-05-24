@@ -5,6 +5,7 @@
 #include <shobjidl.h>
 #include <shellapi.h>
 #include <string>
+#include <cwctype>
 #include "config.h"
 #include "media_sources.h"
 #include "server.h"
@@ -22,6 +23,13 @@ const int kButtonSize = 40;
 const int kButtonGap = 8;
 const int kListTop = kToolbarHeight + kStatusHeight + 8;
 const int kCornerDiameter = 8;
+const int kSourcePromptWidth = 520;
+const int kSourcePromptHeight = 190;
+const int IDC_SOURCE_EDIT = 4101;
+const int IDC_SOURCE_BROWSE_FOLDER = 4102;
+const int IDC_SOURCE_BROWSE_PLAYLIST = 4103;
+const int IDC_SOURCE_ADD = 4104;
+const int IDC_SOURCE_CANCEL = 4105;
 
 COLORREF kPageColor = RGB(32, 32, 32);
 COLORREF kToolbarColor = RGB(40, 40, 40);
@@ -30,6 +38,189 @@ COLORREF kControlPressedColor = RGB(58, 58, 58);
 COLORREF kBorderColor = RGB(72, 72, 72);
 COLORREF kTextColor = RGB(244, 244, 244);
 COLORREF kSecondaryTextColor = RGB(190, 190, 190);
+
+std::wstring TrimWideInput(const std::wstring& value) {
+    size_t start = 0;
+    while (start < value.size() && iswspace(value[start])) ++start;
+    size_t end = value.size();
+    while (end > start && iswspace(value[end - 1])) --end;
+    return value.substr(start, end - start);
+}
+
+std::wstring BrowseFolder(HWND owner) {
+    IFileOpenDialog* pFileOpen = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
+    std::wstring result;
+    if (SUCCEEDED(hr)) {
+        DWORD dwOptions = 0;
+        if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
+            pFileOpen->SetOptions(dwOptions | FOS_PICKFOLDERS);
+        }
+        if (SUCCEEDED(pFileOpen->Show(owner))) {
+            IShellItem* pItem = nullptr;
+            if (SUCCEEDED(pFileOpen->GetResult(&pItem))) {
+                PWSTR pszFilePath = nullptr;
+                if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath))) {
+                    result = pszFilePath;
+                    CoTaskMemFree(pszFilePath);
+                }
+                pItem->Release();
+            }
+        }
+        pFileOpen->Release();
+    }
+    return result;
+}
+
+std::wstring BrowsePlaylist(HWND owner) {
+    IFileOpenDialog* pFileOpen = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
+    std::wstring result;
+    if (SUCCEEDED(hr)) {
+        COMDLG_FILTERSPEC filters[] = {
+            { L"Playlist files", L"*.m3u;*.m3u8;*.pls" },
+            { L"All files", L"*.*" },
+        };
+        pFileOpen->SetFileTypes(2, filters);
+        pFileOpen->SetTitle(L"Choose playlist file");
+        if (SUCCEEDED(pFileOpen->Show(owner))) {
+            IShellItem* pItem = nullptr;
+            if (SUCCEEDED(pFileOpen->GetResult(&pItem))) {
+                PWSTR pszFilePath = nullptr;
+                if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath))) {
+                    result = pszFilePath;
+                    CoTaskMemFree(pszFilePath);
+                }
+                pItem->Release();
+            }
+        }
+        pFileOpen->Release();
+    }
+    return result;
+}
+
+struct SourcePromptState {
+    HWND owner = NULL;
+    HWND edit = NULL;
+    bool done = false;
+    bool accepted = false;
+    std::wstring value;
+};
+
+void FinishSourcePrompt(HWND hwnd, SourcePromptState* state, bool accepted) {
+    if (accepted) {
+        int length = GetWindowTextLengthW(state->edit);
+        std::wstring text(length + 1, L'\0');
+        GetWindowTextW(state->edit, text.data(), length + 1);
+        text.resize(length);
+        state->value = TrimWideInput(text);
+        state->accepted = !state->value.empty();
+    }
+    state->done = true;
+    DestroyWindow(hwnd);
+}
+
+LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    SourcePromptState* state = reinterpret_cast<SourcePromptState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    switch (msg) {
+    case WM_CREATE: {
+        CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        state = reinterpret_cast<SourcePromptState*>(cs->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+
+        HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        HWND label = CreateWindowW(L"STATIC", L"Add a folder, playlist file, or network share URL:",
+            WS_VISIBLE | WS_CHILD, 16, 16, 470, 20, hwnd, NULL, NULL, NULL);
+        state->edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL,
+            16, 44, 470, 24, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_EDIT)), NULL, NULL);
+        HWND hint = CreateWindowW(L"STATIC", L"Example: smb://user:pass@server/share or ftp://user:pass@server:21/media",
+            WS_VISIBLE | WS_CHILD, 16, 74, 470, 20, hwnd, NULL, NULL, NULL);
+        HWND folder = CreateWindowW(L"BUTTON", L"Folder...",
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP, 16, 108, 96, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_FOLDER)), NULL, NULL);
+        HWND playlist = CreateWindowW(L"BUTTON", L"Playlist...",
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP, 120, 108, 96, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_PLAYLIST)), NULL, NULL);
+        HWND add = CreateWindowW(L"BUTTON", L"Add",
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, 326, 108, 76, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_ADD)), NULL, NULL);
+        HWND cancel = CreateWindowW(L"BUTTON", L"Cancel",
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP, 410, 108, 76, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_CANCEL)), NULL, NULL);
+        HWND controls[] = { label, state->edit, hint, folder, playlist, add, cancel };
+        for (HWND control : controls) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        SetFocus(state->edit);
+        return 0;
+    }
+    case WM_COMMAND: {
+        int id = LOWORD(wParam);
+        if (id == IDC_SOURCE_BROWSE_FOLDER) {
+            std::wstring selected = BrowseFolder(hwnd);
+            if (!selected.empty()) SetWindowTextW(state->edit, selected.c_str());
+            return 0;
+        }
+        if (id == IDC_SOURCE_BROWSE_PLAYLIST) {
+            std::wstring selected = BrowsePlaylist(hwnd);
+            if (!selected.empty()) SetWindowTextW(state->edit, selected.c_str());
+            return 0;
+        }
+        if (id == IDC_SOURCE_ADD) {
+            FinishSourcePrompt(hwnd, state, true);
+            return 0;
+        }
+        if (id == IDC_SOURCE_CANCEL) {
+            FinishSourcePrompt(hwnd, state, false);
+            return 0;
+        }
+        break;
+    }
+    case WM_CLOSE:
+        FinishSourcePrompt(hwnd, state, false);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
+    const wchar_t* className = L"dlna-server_SourcePrompt";
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc = SourcePromptProc;
+        wc.hInstance = instance;
+        wc.lpszClassName = className;
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_BTNFACE + 1);
+        RegisterClassW(&wc);
+        registered = true;
+    }
+
+    SourcePromptState state;
+    state.owner = owner;
+    RECT ownerRect = {};
+    GetWindowRect(owner, &ownerRect);
+    int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - kSourcePromptWidth) / 2;
+    int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top) - kSourcePromptHeight) / 2;
+
+    HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, className, L"Add media source",
+        WS_CAPTION | WS_SYSMENU | WS_POPUP,
+        x, y, kSourcePromptWidth, kSourcePromptHeight,
+        owner, NULL, instance, &state);
+    if (!hwnd) return L"";
+
+    EnableWindow(owner, FALSE);
+    ShowWindow(hwnd, SW_SHOW);
+    UpdateWindow(hwnd);
+
+    MSG msg;
+    while (!state.done && GetMessageW(&msg, NULL, 0, 0) > 0) {
+        if (!IsDialogMessageW(hwnd, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
+    EnableWindow(owner, TRUE);
+    SetForegroundWindow(owner);
+    return state.accepted ? state.value : L"";
+}
 }
 
 MainWindow::MainWindow() : m_hwnd(NULL), m_hInstance(NULL), m_isRunning(false),
@@ -221,32 +412,17 @@ void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
 }
 
 void MainWindow::OpenFolderPicker() {
-    IFileOpenDialog *pFileOpen;
-    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
-    if (SUCCEEDED(hr)) {
-        DWORD dwOptions;
-        if (SUCCEEDED(pFileOpen->GetOptions(&dwOptions))) {
-            pFileOpen->SetOptions(dwOptions | FOS_PICKFOLDERS);
-        }
-        hr = pFileOpen->Show(m_hwnd);
-        if (SUCCEEDED(hr)) {
-            IShellItem *pItem;
-            hr = pFileOpen->GetResult(&pItem);
-            if (SUCCEEDED(hr)) {
-                PWSTR pszFilePath;
-                hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
-                if (SUCCEEDED(hr)) {
-                    AppConfig.mediaSources.push_back({pszFilePath, true});
-                    AppConfig.Save();
-                    RefreshSourceList();
-                    AppMedia.Scan();
-                    CoTaskMemFree(pszFilePath);
-                }
-                pItem->Release();
-            }
-        }
-        pFileOpen->Release();
+    std::wstring selected = PromptForMediaSource(m_hwnd, m_hInstance);
+    if (selected.empty()) return;
+
+    for (const auto& source : AppConfig.mediaSources) {
+        if (source.path == selected) return;
     }
+
+    AppConfig.mediaSources.push_back({selected, true});
+    AppConfig.Save();
+    RefreshSourceList();
+    AppMedia.Scan();
 }
 
 LRESULT CALLBACK MainWindow::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {

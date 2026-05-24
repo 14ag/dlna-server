@@ -6,9 +6,11 @@
 #include "contentdirectory.h"
 #include "media_sources.h"
 #include "netutils.h"
+#include "network_sources.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <shlwapi.h>
+#include <climits>
 #include <sstream>
 
 #define HTTP_BUF_SIZE 8192
@@ -305,6 +307,64 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
             }
             MediaItem item = AppMedia.GetItem(fileId);
             if (item.id != -1) {
+                if (IsRemoteMediaUrl(item.path)) {
+                    long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
+                    std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
+                    bool hasKnownSize = fileSize > 0;
+                    HttpByteRange parsedRange;
+                    if (hasKnownSize) {
+                        parsedRange = ParseHttpRangeHeader(rangeHeader, fileSize);
+                        if (!parsedRange.satisfiable) {
+                            std::string rangeResp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(fileSize) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+                            SendAll(clientSocket, rangeResp);
+                            return;
+                        }
+                    } else if (!rangeHeader.empty()) {
+                        SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                        return;
+                    }
+
+                    bool isPartial = hasKnownSize && parsedRange.requested;
+                    long long startByte = hasKnownSize ? parsedRange.start : 0;
+                    long long endByte = hasKnownSize ? parsedRange.end : 0;
+                    long long contentLength = hasKnownSize ? (endByte - startByte + 1) : 0;
+                    std::string mime = WideToUtf8(item.mimeType);
+
+                    std::stringstream headers;
+                    headers << "HTTP/1.1 " << (isPartial ? "206 Partial Content" : "200 OK") << "\r\n";
+                    if (isPartial) {
+                        headers << "Content-Range: bytes " << startByte << "-" << endByte << "/" << fileSize << "\r\n";
+                    }
+                    headers << "Content-Type: " << mime << "\r\n";
+                    if (hasKnownSize) {
+                        headers << "Content-Length: " << contentLength << "\r\n"
+                                << "Accept-Ranges: bytes\r\n";
+                    } else {
+                        headers << "Accept-Ranges: none\r\n";
+                    }
+                    headers << "Connection: close\r\n"
+                            << "transferMode.dlna.org: Streaming\r\n"
+                            << "contentFeatures.dlna.org: DLNA.ORG_OP=" << (hasKnownSize ? "01" : "00") << ";DLNA.ORG_FLAGS=01700000000000000000000000000000\r\n"
+                            << "\r\n";
+
+                    SendAll(clientSocket, headers.str());
+                    if (!sendBody) return;
+
+                    StreamRemoteContent(item.path, isPartial, startByte, endByte, [&](const char* data, size_t length) {
+                        const char* p = data;
+                        size_t remaining = length;
+                        while (remaining > 0) {
+                            int chunk = remaining > static_cast<size_t>(INT_MAX) ? INT_MAX : static_cast<int>(remaining);
+                            int sent = send(clientSocket, p, chunk, 0);
+                            if (sent == SOCKET_ERROR || sent == 0) return false;
+                            p += sent;
+                            remaining -= static_cast<size_t>(sent);
+                        }
+                        return m_running;
+                    });
+                    return;
+                }
+
                 HANDLE hFile = CreateFileW(item.path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
                 if (hFile != INVALID_HANDLE_VALUE) {
                     LARGE_INTEGER fileSize = {};

@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Windows and Linux desktop menus now show the app as **DLNA Server**.
+- DLNA Server now accepts `.m3u`, `.m3u8`, and `.pls` playlist files as media sources.
+- DLNA Server can read media from SMB and FTP shares such as `smb://user:pass@server/share` and `ftp://user:pass@server:21/media`.
+- Windows, Linux, and macOS desktop screens now let you add folders, playlist files, and network shares as media sources.
 - Linux keeps the command names `dlna-server` and `dlna-server-gui`, so existing shortcuts and scripts keep working.
 - If the server name is blank, DLNA Server now uses the computer hostname. A name saved in `config.ini` still takes priority.
 - Linux desktop installs now include richer app details for desktop software centers and app launchers.

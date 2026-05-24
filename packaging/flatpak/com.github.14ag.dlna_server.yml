@@ -1,0 +1,25 @@
+app-id: com.github.14ag.dlna_server
+runtime: org.freedesktop.Platform
+runtime-version: "24.08"
+sdk: org.freedesktop.Sdk
+command: dlna-server-gui
+finish-args:
+  - --share=network
+  - --socket=x11
+  - --socket=wayland
+  - --filesystem=home
+modules:
+  - name: dlna-server
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_PREFIX=/app
+      - -DDLNA_ENABLE_FLTK_GUI=ON
+    sources:
+      - type: dir
+        path: ../..
+    post-install:
+      - install -Dm644 packaging/flatpak/com.github.14ag.dlna_server.desktop /app/share/applications/com.github.14ag.dlna_server.desktop
+      - install -Dm644 packaging/flatpak/com.github.14ag.dlna_server.metainfo.xml /app/share/metainfo/com.github.14ag.dlna_server.metainfo.xml
+      - install -Dm644 resources/dlna-server.svg /app/share/icons/hicolor/scalable/apps/com.github.14ag.dlna_server.svg
+      - rm -f /app/share/applications/dlna-server.desktop /app/share/metainfo/dlna-server.appdata.xml /app/share/icons/hicolor/scalable/apps/dlna-server.svg
