@@ -23,11 +23,17 @@ private:
     void ShowTrayMenu();
     void OpenFolderPicker();
     void RefreshSourceList();
+    HFONT CreateUiFont(int pixelSize, int weight, const wchar_t* faceName);
+    void DrawToolbarButton(const DRAWITEMSTRUCT* drawItem);
 
     HWND m_hwnd;
     HINSTANCE m_hInstance;
     HBRUSH m_hBgBrush;
     HBRUSH m_hDarkBrush;
+    HBRUSH m_hToolbarBrush;
+    HFONT m_hTitleFont;
+    HFONT m_hBodyFont;
+    HFONT m_hIconFont;
 
     HWND m_hBtnAdd;
     HWND m_hBtnStartStop;
