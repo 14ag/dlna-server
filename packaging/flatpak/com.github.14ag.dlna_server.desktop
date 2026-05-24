@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=DLNA Server
+GenericName=DLNA media server
+Comment=Share local media with DLNA and UPnP clients
+Exec=dlna-server-gui
+Icon=com.github.14ag.dlna_server
+Terminal=false
+Categories=AudioVideo;Network;FileTransfer;
+Keywords=DLNA;UPnP;media;server;streaming;
+StartupWMClass=dlna-server
+StartupNotify=true

@@ -7,12 +7,16 @@
   <string>en</string>
   <key>CFBundleExecutable</key>
   <string>dlna-server-gui</string>
+  <key>CFBundleDisplayName</key>
+  <string>DLNA Server</string>
   <key>CFBundleIdentifier</key>
   <string>com.14ag.dlna-server</string>
+  <key>CFBundleIconFile</key>
+  <string>app.ico</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>dlna-server</string>
+  <string>DLNA Server</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>

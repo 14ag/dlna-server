@@ -6,6 +6,7 @@
 #include "log.h"
 #include "media_sources.h"
 #include "netutils.h"
+#include "network_sources.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -171,6 +172,54 @@ void HttpServer::HandleClient(int clientSocket, const std::string&) {
                 return;
             }
             MediaItem item = AppMedia.GetItem(mediaId);
+            if (item.id != -1 && IsRemoteMediaUrl(item.path)) {
+                long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
+                std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
+                bool hasKnownSize = fileSize > 0;
+                HttpByteRange parsedRange;
+                if (hasKnownSize) {
+                    parsedRange = ParseHttpRangeHeader(rangeHeader, fileSize);
+                    if (!parsedRange.satisfiable) {
+                        SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(fileSize) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                        return;
+                    }
+                } else if (!rangeHeader.empty()) {
+                    SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                    return;
+                }
+
+                bool partial = hasKnownSize && parsedRange.requested;
+                long long start = hasKnownSize ? parsedRange.start : 0;
+                long long end = hasKnownSize ? parsedRange.end : 0;
+                std::stringstream headers;
+                headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
+                if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << fileSize << "\r\n";
+                headers << "Content-Type: " << WideToUtf8(item.mimeType) << "\r\n";
+                if (hasKnownSize) {
+                    headers << "Content-Length: " << (end - start + 1) << "\r\n"
+                            << "Accept-Ranges: bytes\r\n";
+                } else {
+                    headers << "Accept-Ranges: none\r\n";
+                }
+                headers << "Connection: close\r\n"
+                        << "transferMode.dlna.org: Streaming\r\n"
+                        << "contentFeatures.dlna.org: DLNA.ORG_OP=" << (hasKnownSize ? "01" : "00") << ";DLNA.ORG_FLAGS=01700000000000000000000000000000\r\n\r\n";
+                SendAll(clientSocket, headers.str());
+                if (method == "GET") {
+                    StreamRemoteContent(item.path, partial, start, end, [&](const char* data, size_t length) {
+                        const char* p = data;
+                        size_t remaining = length;
+                        while (remaining > 0) {
+                            ssize_t sent = send(clientSocket, p, remaining, MSG_NOSIGNAL);
+                            if (sent <= 0) return false;
+                            p += sent;
+                            remaining -= static_cast<size_t>(sent);
+                        }
+                        return m_running.load();
+                    });
+                }
+                return;
+            }
             ScopedFd fd(item.id == -1 ? -1 : open(WideToUtf8(item.path).c_str(), O_RDONLY));
             if (fd.get() < 0) {
                 SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");

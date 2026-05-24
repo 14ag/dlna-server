@@ -1,0 +1,58 @@
+name: Release assets
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++ git libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libgl1-mesa-dev libglu1-mesa-dev libpng-dev libjpeg-dev dpkg-dev desktop-file-utils curl
+      - name: Build Linux desktop assets
+        run: bash scripts/build-linux-desktop-assets.sh
+      - name: Upload Linux assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            output/*.deb
+            output/*.AppImage
+            output/*.flatpak
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-13
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build macOS DMG
+        env:
+          DLNA_MACOS_ARCH: ${{ matrix.arch }}
+          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/build-macos-dmg.sh
+      - name: Upload macOS asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: output/*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
