@@ -14,6 +14,8 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 ## Features
 
 - Streams MP4, MKV, AVI, MOV, MP3, FLAC, JPEG, and PNG files over HTTP.
+- Reads playlist files: `.m3u`, `.m3u8`, and `.pls`.
+- Reads media from SMB and FTP shares such as `smb://user:pass@server/share` and `ftp://user:pass@server:21/media`.
 - Supports byte-range requests so DLNA clients can seek within media files.
 - Advertises the server with SSDP multicast `NOTIFY` messages.
 - Handles UPnP `ContentDirectory:1` Browse SOAP requests.
@@ -37,6 +39,7 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - CMake 3.20 or newer
 - A C++17 compiler such as `clang++` or `g++`
 - `make` or another CMake-supported build tool
+- `curl` for SMB and FTP media sources
 - X11 development headers for native FLTK GUI and AppImage builds
 
 On Debian or Ubuntu, native GUI and AppImage builds need:
@@ -123,6 +126,22 @@ After install, open **DLNA Server** from your desktop app launcher. If it doesn'
 
 On WSLg, `[WARN:COPY MODE]` in the Windows taskbar title is emitted by WSLg, not by this app. It means WSLg is warning about its RDP window transport. The app installs desktop metadata and uses the `dlna-server` launcher so WSLg can match the window to the right icon and command, but hiding that warning requires WSLg configuration or a WSL update.
 
+### Linux desktop downloads
+
+Release builds provide three Linux GUI options:
+
+- `.deb` for Ubuntu and Debian desktops. Open it with your software installer, then launch **DLNA Server** from the app menu.
+- `.flatpak` for desktops with Flatpak enabled. Install it with your software app or `flatpak install`.
+- `.AppImage` for portable use. Mark it executable, then run it directly. AppImageLauncher can add it to your app menu.
+
+Build the Linux desktop release assets from WSL or Linux:
+
+```sh
+bash scripts/build-linux-desktop-assets.sh
+```
+
+This writes the `.deb`, AppImage when `linuxdeploy` is available, Flatpak when `flatpak-builder` is available, and the installed tree under `output/`.
+
 ### Linux AppImage
 
 Build the native GUI install tree first:
@@ -161,16 +180,24 @@ cmake --install build-macos
 The CMake install step writes:
 
 - `bin/dlna-server`
-- `dlna-server.app`
+- `DLNA Server.app`
 
 Install the app for your user account:
 
 ```sh
 mkdir -p "$HOME/Applications"
-cp -R "dlna-server.app" "$HOME/Applications/"
+cp -R "DLNA Server.app" "$HOME/Applications/"
 ```
 
-Open `dlna-server` from Finder, Spotlight, or Launchpad. It's the same server binary, wrapped in a small app bundle.
+Open **DLNA Server** from Finder, Spotlight, or Launchpad. It's the same server binary, wrapped in a small app bundle.
+
+For direct macOS downloads, build a DMG on macOS:
+
+```sh
+bash scripts/build-macos-dmg.sh
+```
+
+Set Apple Developer ID and notary environment variables before running the script to produce a Gatekeeper-friendly signed and notarized DMG.
 
 ### Headless Linux/macOS
 
@@ -191,7 +218,14 @@ Run the build-tree binary directly:
 
 ### Windows
 
-Run `DLNA Server.exe`. Add one or more media folders with the `+` button, then start the server with the play button.
+Run `DLNA Server.exe`. Add one or more media sources with the `+` button, then start the server with the play button.
+
+Sources can be folders, playlist files, or network shares. Playlist files can be `.m3u`, `.m3u8`, or `.pls`. Network shares use URL form:
+
+```text
+smb://user:pass@server/share
+ftp://user:pass@server:21/media
+```
 
 On first start, Windows may ask for firewall access. The app itself stays unelevated. If access is missing, it launches a short-lived elevated helper that creates two inbound rules for this executable: TCP from `LocalSubnet` on any local port, and UDP `1900` from `LocalSubnet` for SSDP discovery. Both rules apply to Domain, Private, and Public profiles.
 
@@ -201,7 +235,7 @@ When the main window closes, the app stays in the tray. Use the tray menu to sho
 
 ### Linux/macOS GUI
 
-Launch **DLNA Server** from the desktop app list on Linux, or open `dlna-server.app` on macOS. Add one or more media folders, set the server name and port, then press Start.
+Launch **DLNA Server** from the desktop app list on Linux, or open `dlna-server.app` on macOS. Add one or more media sources, set the server name and port, then press Start.
 
 The native Linux GUI uses the same config schema as the server and writes `config.ini` beside the installed executable, so command-line and desktop launches share settings. On WSLg, the launcher forces FLTK to use X11 when a Windows display is available; this avoids cases where the window appears in the taskbar but never paints. If startup fails, run `dlna-server-gui` from a terminal so display or dependency errors are visible.
 
@@ -226,7 +260,15 @@ Useful options:
 - `--name <name>` sets the friendly DLNA device name.
 - `--uuid <uuid>` sets a persistent device UUID.
 - `--debug` enables extra discovery logging.
-- `--source <path>` adds a media folder. You can pass it more than once.
+- `--source <path-or-url>` adds a folder, playlist file, SMB share, or FTP share. You can pass it more than once.
+
+Examples:
+
+```sh
+./build/dlna-server --source /srv/media --source /srv/playlists/radio.m3u
+./build/dlna-server --source 'smb://user:pass@server/share'
+./build/dlna-server --source 'ftp://user:pass@server:21/media'
+```
 
 ## Configuration
 
@@ -251,7 +293,7 @@ DebugLog=0
 RunOnBoot=0
 IPWhiteList=
 DeviceUUID=11111111-2222-3333-4444-555555555555
-MediaSources=C:\Media|D:\Videos
+MediaSources=C:\Media|D:\Videos|C:\Playlists\radio.m3u|smb://user:pass@server/share|ftp://user:pass@server:21/media
 ```
 
 ## Testing

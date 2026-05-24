@@ -3,7 +3,12 @@ set -eu
 
 app_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 server_bin="$app_dir/Contents/MacOS/dlna-server"
+native_gui="$app_dir/Contents/MacOS/dlna-server-gui-bin"
 gui_script="$app_dir/Contents/Resources/posix_gui.py"
 
 export DLNA_SERVER_BIN="$server_bin"
+if [ -x "$native_gui" ]; then
+    exec "$native_gui" "$@"
+fi
+
 exec /usr/bin/env python3 "$gui_script" "$@"

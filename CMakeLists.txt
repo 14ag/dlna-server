@@ -16,6 +16,7 @@ if(WIN32)
         src/httpserver.cpp
         src/contentdirectory.cpp
         src/dlna_utils.cpp
+        src/network_sources.cpp
         src/media_sources.cpp
         src/config.cpp
         src/ipwhitelist.cpp
@@ -33,6 +34,7 @@ if(WIN32)
         src/httpserver.h
         src/contentdirectory.h
         src/dlna_utils.h
+        src/network_sources.h
         src/media_sources.h
         src/config.h
         src/ipwhitelist.h
@@ -77,6 +79,7 @@ else()
         src/ipwhitelist.cpp
         src/contentdirectory.cpp
         src/dlna_utils.cpp
+        src/network_sources.cpp
     )
     target_include_directories(dlna-server PRIVATE src)
     target_compile_definitions(dlna-server PRIVATE DLNA_POSIX=1)
@@ -125,9 +128,15 @@ else()
             src/ipwhitelist.cpp
             src/contentdirectory.cpp
             src/dlna_utils.cpp
+            src/network_sources.cpp
         )
         set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
-        target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_POSIX=1 DLNA_PLATFORM_NAME=\"Linux\")
+        target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_POSIX=1)
+        if(APPLE)
+            target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_PLATFORM_NAME=\"macOS\")
+        else()
+            target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_PLATFORM_NAME=\"Linux\")
+        endif()
         target_include_directories(dlna-server-gui-native PRIVATE src)
         if(FLTK_FOUND)
             target_include_directories(dlna-server-gui-native PRIVATE ${FLTK_INCLUDE_DIR})
@@ -141,7 +150,7 @@ else()
     endif()
 
     if(APPLE)
-        set(DLNA_APP_BUNDLE "${CMAKE_BINARY_DIR}/dlna-server.app")
+        set(DLNA_APP_BUNDLE "${CMAKE_BINARY_DIR}/DLNA Server.app")
         configure_file(packaging/macos/Info.plist.in "${CMAKE_BINARY_DIR}/Info.plist" @ONLY)
         add_custom_target(DLNAServerApp ALL
             COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -154,16 +163,23 @@ else()
                     "${CMAKE_SOURCE_DIR}/packaging/macos/dlna-server-gui"
                     "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:dlna-server-gui-native>"
+                    "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui-bin"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${CMAKE_SOURCE_DIR}/src/posix_gui.py"
                     "${DLNA_APP_BUNDLE}/Contents/Resources/posix_gui.py"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${CMAKE_SOURCE_DIR}/resources/app.ico"
+                    "${DLNA_APP_BUNDLE}/Contents/Resources/app.ico"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${CMAKE_BINARY_DIR}/Info.plist"
                     "${DLNA_APP_BUNDLE}/Contents/Info.plist"
             COMMAND chmod +x
                     "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server"
                     "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui"
-            DEPENDS dlna-server
-            COMMENT "Assembling dlna-server.app"
+                    "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui-bin"
+            DEPENDS dlna-server dlna-server-gui-native
+            COMMENT "Assembling DLNA Server.app"
         )
         install(DIRECTORY "${DLNA_APP_BUNDLE}" DESTINATION . USE_SOURCE_PERMISSIONS)
     else()
@@ -173,4 +189,22 @@ else()
         install(FILES "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
         install(SCRIPT "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake")
     endif()
+endif()
+
+if(UNIX AND NOT APPLE)
+    set(CPACK_GENERATOR "DEB")
+    set(CPACK_PACKAGE_NAME "dlna-server")
+    set(CPACK_PACKAGE_VENDOR "dlna-server contributors")
+    set(CPACK_PACKAGE_CONTACT "https://github.com/14ag/dlna-server/issues")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "DLNA media server")
+    set(CPACK_PACKAGE_DESCRIPTION "DLNA Server shares local video, audio, and image files with DLNA and UPnP clients on the local network.")
+    set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+    set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "dlna-server contributors")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "net")
+    set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/14ag/dlna-server")
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "curl")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+    include(CPack)
 endif()

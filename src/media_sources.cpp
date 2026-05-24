@@ -2,6 +2,7 @@
 #include "config.h"
 #include "dlna_utils.h"
 #include "log.h"
+#include "network_sources.h"
 #include <windows.h>
 #include <shlwapi.h>
 #include <algorithm>
@@ -37,24 +38,132 @@ void MediaSources::Scan() {
 
     for (const auto& src : AppConfig.mediaSources) {
         if (!src.enabled) continue;
-        
-        wchar_t folderName[MAX_PATH];
-        wcscpy_s(folderName, src.path.c_str());
-        PathStripPathW(folderName);
 
         MediaItem folderInfo;
         folderInfo.id = m_nextId++;
         folderInfo.parentId = 0;
         folderInfo.path = src.path;
-        folderInfo.title = folderName;
+        folderInfo.title = SourceDisplayName(src.path);
         folderInfo.isFolder = true;
         folderInfo.upnpClass = L"object.container.storageFolder";
         m_items.push_back(folderInfo);
 
-        ScanFolder(src.path, folderInfo.id);
+        if (IsPlaylistSourcePath(src.path)) {
+            ScanPlaylist(src.path, folderInfo.id);
+        } else if (IsNetworkShareUrl(src.path)) {
+            ScanNetworkFolder(src.path, folderInfo.id, 0);
+        } else {
+            ScanFolder(src.path, folderInfo.id);
+        }
     }
     m_systemUpdateId++;
     LogPrint(L"Scanned %d media items.", (int)m_items.size());
+}
+
+void MediaSources::AddMediaFile(const std::wstring& path, int parentId, const std::wstring& titleOverride) {
+    std::wstring mime, uclass;
+    std::wstring ext = SourceExtension(path);
+    if (!IsAllowedExtension(ext, mime, uclass)) {
+        if (IsRemoteMediaUrl(path) && ext.empty()) {
+            mime = L"audio/mpeg";
+            uclass = L"object.item.audioItem.musicTrack";
+        } else {
+            return;
+        }
+    }
+
+    MediaItem fileInfo;
+    fileInfo.id = m_nextId++;
+    fileInfo.parentId = parentId;
+    fileInfo.path = path;
+    fileInfo.isFolder = false;
+    fileInfo.mimeType = mime;
+    fileInfo.upnpClass = uclass;
+
+    if (IsRemoteMediaUrl(path)) {
+        fileInfo.sizeBytes = ProbeRemoteContentLength(path);
+    } else {
+        WIN32_FILE_ATTRIBUTE_DATA data = {};
+        if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data) ||
+            (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            return;
+        }
+        fileInfo.sizeBytes = ((long long)data.nFileSizeHigh << 32) | data.nFileSizeLow;
+    }
+
+    if (!titleOverride.empty()) {
+        fileInfo.title = titleOverride;
+    } else if (AppConfig.showFileNamesInsteadOfTitles) {
+        fileInfo.title = SourceDisplayName(path);
+    } else {
+        fileInfo.title = SourceStemName(path);
+    }
+
+    if (!IsRemoteMediaUrl(path) && uclass == L"object.item.videoItem") {
+        std::wstring fileName = SourceDisplayName(path);
+        wchar_t stemBuf[MAX_PATH];
+        wcscpy_s(stemBuf, fileName.c_str());
+        PathRemoveExtensionW(stemBuf);
+
+        std::wstring folder = path;
+        size_t slash = folder.find_last_of(L"\\/");
+        folder = slash == std::wstring::npos ? L"." : folder.substr(0, slash);
+
+        static const wchar_t* kSubExts[] = { L".srt", L".vtt", L".sub", L".ass", L".ssa", L".smi", L".txt" };
+        for (const wchar_t* subExt : kSubExts) {
+            std::wstring candidate = folder + L"\\" + stemBuf + subExt;
+            DWORD attrs = GetFileAttributesW(candidate.c_str());
+            if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+                fileInfo.subtitlePath = candidate;
+                break;
+            }
+        }
+    }
+
+    m_items.push_back(fileInfo);
+}
+
+void MediaSources::ScanPlaylist(const std::wstring& playlistPath, int parentId) {
+    for (const auto& entry : LoadPlaylistEntries(playlistPath)) {
+        AddMediaFile(entry.location, parentId, entry.title);
+    }
+}
+
+void MediaSources::ScanNetworkFolder(const std::wstring& folderUrl, int parentId, int depth) {
+    if (depth > 8) return;
+
+    for (const auto& entry : ListRemoteDirectory(folderUrl)) {
+        if (IsPlaylistSourcePath(entry.url)) {
+            MediaItem playlistFolder;
+            playlistFolder.id = m_nextId++;
+            playlistFolder.parentId = parentId;
+            playlistFolder.path = entry.url;
+            playlistFolder.title = SourceStemName(entry.name);
+            playlistFolder.isFolder = true;
+            playlistFolder.upnpClass = L"object.container.storageFolder";
+            m_items.push_back(playlistFolder);
+            ScanPlaylist(entry.url, playlistFolder.id);
+            continue;
+        }
+
+        std::wstring mime, uclass;
+        if (IsAllowedExtension(SourceExtension(entry.url), mime, uclass)) {
+            AddMediaFile(entry.url, parentId);
+            continue;
+        }
+
+        if (entry.likelyDirectory) {
+            MediaItem folderInfo;
+            folderInfo.id = m_nextId++;
+            folderInfo.parentId = parentId;
+            folderInfo.path = entry.url;
+            folderInfo.title = SourceDisplayName(entry.name);
+            folderInfo.isFolder = true;
+            folderInfo.upnpClass = L"object.container.storageFolder";
+            m_items.push_back(folderInfo);
+            ScanNetworkFolder(entry.url, folderInfo.id, depth + 1);
+        }
+    }
 }
 
 void MediaSources::ScanFolder(const std::wstring& rootPath, int parentId) {
@@ -82,47 +191,18 @@ void MediaSources::ScanFolder(const std::wstring& rootPath, int parentId) {
 
             ScanFolder(fullPath, folderInfo.id);
         } else {
-            LPCWSTR ext = PathFindExtensionW(fd.cFileName);
-            std::wstring mime, uclass;
-            if (IsAllowedExtension(ext, mime, uclass)) {
-                MediaItem fileInfo;
-                fileInfo.id = m_nextId++;
-                fileInfo.parentId = parentId;
-                fileInfo.path = fullPath;
-                fileInfo.isFolder = false;
-                fileInfo.mimeType = mime;
-                fileInfo.upnpClass = uclass;
-                fileInfo.sizeBytes = ((long long)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
-
-                if (AppConfig.showFileNamesInsteadOfTitles) {
-                    fileInfo.title = fd.cFileName;
-                } else {
-                    wchar_t name[MAX_PATH];
-                    wcscpy_s(name, fd.cFileName);
-                    PathRemoveExtensionW(name);
-                    fileInfo.title = name;
-                }
-
-                // probe for companion subtitle file with matching stem
-                // supported formats ordered by preference
-                if (uclass == L"object.item.videoItem") {
-                    wchar_t stemBuf[MAX_PATH];
-                    wcscpy_s(stemBuf, fd.cFileName);
-                    PathRemoveExtensionW(stemBuf);
-                    static const wchar_t* kSubExts[] = { L".srt", L".vtt", L".sub", L".ass", L".ssa", L".smi", L".txt" };
-                    for (const wchar_t* subExt : kSubExts) {
-                        std::wstring candidate = rootPath + L"\\" + stemBuf + subExt;
-                        DWORD attrs = GetFileAttributesW(candidate.c_str());
-                        // check file exists and is not a directory
-                        if (attrs != INVALID_FILE_ATTRIBUTES &&
-                            !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-                            fileInfo.subtitlePath = candidate;
-                            break;
-                        }
-                    }
-                }
-
-                m_items.push_back(fileInfo);
+            if (IsPlaylistSourcePath(fullPath)) {
+                MediaItem playlistFolder;
+                playlistFolder.id = m_nextId++;
+                playlistFolder.parentId = parentId;
+                playlistFolder.path = fullPath;
+                playlistFolder.title = SourceStemName(fullPath);
+                playlistFolder.isFolder = true;
+                playlistFolder.upnpClass = L"object.container.storageFolder";
+                m_items.push_back(playlistFolder);
+                ScanPlaylist(fullPath, playlistFolder.id);
+            } else {
+                AddMediaFile(fullPath, parentId);
             }
         }
     } while (FindNextFileW(hFind, &fd));

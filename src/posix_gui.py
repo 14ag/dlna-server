@@ -175,16 +175,18 @@ class DlnaGui:
         self.debug_var = tk.BooleanVar()
         ttk.Checkbutton(main, text="Debug log", variable=self.debug_var).grid(row=2, column=1, sticky="w", pady=(0, 10))
 
-        ttk.Label(main, text="Media folders").grid(row=3, column=0, sticky="nw")
+        ttk.Label(main, text="Media sources").grid(row=3, column=0, sticky="nw")
         source_frame = ttk.Frame(main)
         source_frame.grid(row=3, column=1, rowspan=2, sticky="nsew")
         source_frame.columnconfigure(0, weight=1)
         source_frame.rowconfigure(0, weight=1)
         self.sources = tk.Listbox(source_frame, height=7)
         self.sources.grid(row=0, column=0, columnspan=3, sticky="nsew")
-        ttk.Button(source_frame, text="Add", command=self.add_source).grid(row=1, column=0, sticky="ew", pady=(6, 0), padx=(0, 4))
-        ttk.Button(source_frame, text="Remove", command=self.remove_source).grid(row=1, column=1, sticky="ew", pady=(6, 0), padx=4)
-        ttk.Button(source_frame, text="Save", command=self.save).grid(row=1, column=2, sticky="ew", pady=(6, 0), padx=(4, 0))
+        ttk.Button(source_frame, text="Folder", command=self.add_source).grid(row=1, column=0, sticky="ew", pady=(6, 0), padx=(0, 4))
+        ttk.Button(source_frame, text="Playlist", command=self.add_playlist).grid(row=1, column=1, sticky="ew", pady=(6, 0), padx=4)
+        ttk.Button(source_frame, text="Network", command=self.add_network_source).grid(row=1, column=2, sticky="ew", pady=(6, 0), padx=4)
+        ttk.Button(source_frame, text="Remove", command=self.remove_source).grid(row=2, column=0, sticky="ew", pady=(6, 0), padx=(0, 4))
+        ttk.Button(source_frame, text="Save", command=self.save).grid(row=2, column=1, columnspan=2, sticky="ew", pady=(6, 0), padx=(4, 0))
 
         controls = ttk.Frame(main)
         controls.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(12, 8))
@@ -219,6 +221,24 @@ class DlnaGui:
         from tkinter import filedialog
 
         path = filedialog.askdirectory(title="Choose media folder")
+        self._add_source_path(path)
+
+    def add_playlist(self) -> None:
+        from tkinter import filedialog
+
+        path = filedialog.askopenfilename(
+            title="Choose playlist file",
+            filetypes=[("Playlist files", "*.m3u *.m3u8 *.pls"), ("All files", "*.*")],
+        )
+        self._add_source_path(path)
+
+    def add_network_source(self) -> None:
+        from tkinter import simpledialog
+
+        path = simpledialog.askstring("Network share", "smb://user:pass@server/share or ftp://user:pass@server:port/ftpdir")
+        self._add_source_path(path or "")
+
+    def _add_source_path(self, path: str) -> None:
         if path and path not in [self.sources.get(i) for i in range(self.sources.size())]:
             self.sources.insert("end", path)
 

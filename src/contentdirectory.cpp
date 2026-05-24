@@ -3,6 +3,7 @@
 #include "dlna_utils.h"
 #include "log.h"
 #include "netutils.h"
+#include "network_sources.h"
 #include <algorithm>
 #include <sstream>
 #include <vector>
@@ -301,11 +302,16 @@ std::string ContentDirectory::HandleBrowse(const std::string& req, const std::st
             didl += css.str();
         } else {
             std::string mime = WideToUtf8(it.mimeType);
+            const bool hasKnownSize = it.sizeBytes > 0;
             std::stringstream iss;
             iss << "<item id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" restricted=\"1\">"
                 << "<dc:title>" << XMLEscape(it.title) << "</dc:title>"
                 << "<upnp:class>" << XMLEscape(it.upnpClass) << "</upnp:class>"
-                << "<res protocolInfo=\"http-get:*:" << mime << ":DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000\" size=\"" << it.sizeBytes << "\">"
+                << "<res protocolInfo=\"http-get:*:" << mime << ":DLNA.ORG_OP=" << (hasKnownSize ? "01" : "00") << ";DLNA.ORG_FLAGS=01700000000000000000000000000000\"";
+            if (hasKnownSize) {
+                iss << " size=\"" << it.sizeBytes << "\"";
+            }
+            iss << ">"
                 << "http://" << hostUrl << "/media/" << it.id
                 << "</res>";
             // emit subtitle reference if a companion file was found during scan

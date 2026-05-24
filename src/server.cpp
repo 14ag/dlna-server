@@ -52,7 +52,7 @@ bool Server::Start() {
         if (s.enabled) { hasSource = true; break; }
     }
     if (!hasSource) {
-        MessageBoxW(NULL, L"Please add at least one shared folder before starting the server.", L"No sources", MB_ICONWARNING | MB_OK);
+        MessageBoxW(NULL, L"Please add at least one media source before starting the server.", L"No sources", MB_ICONWARNING | MB_OK);
         return false;
     }
 

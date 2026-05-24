@@ -3,6 +3,7 @@
 #include "dlna_utils.h"
 #include "log.h"
 #include "netutils.h"
+#include "network_sources.h"
 
 #include <algorithm>
 #include <cctype>
@@ -51,20 +52,123 @@ void MediaSources::Scan() {
     m_items.push_back({0, -1, L"", L"Root", true, L"", L"object.container.storageFolder", 0});
     for (const auto& source : AppConfig.mediaSources) {
         if (!source.enabled) continue;
-        fs::path path(WideToUtf8(source.path));
-        if (!fs::exists(path)) continue;
+        if (!IsPlaylistSourcePath(source.path) && !IsNetworkShareUrl(source.path)) {
+            fs::path path(WideToUtf8(source.path));
+            if (!fs::exists(path)) continue;
+        }
         MediaItem folder{};
         folder.id = m_nextId++;
         folder.parentId = 0;
         folder.path = source.path;
-        folder.title = Utf8ToWide(path.filename().u8string());
+        folder.title = SourceDisplayName(source.path);
         folder.isFolder = true;
         folder.upnpClass = L"object.container.storageFolder";
         m_items.push_back(folder);
-        ScanFolder(source.path, folder.id);
+
+        if (IsPlaylistSourcePath(source.path)) {
+            ScanPlaylist(source.path, folder.id);
+        } else if (IsNetworkShareUrl(source.path)) {
+            ScanNetworkFolder(source.path, folder.id, 0);
+        } else {
+            ScanFolder(source.path, folder.id);
+        }
     }
     ++m_systemUpdateId;
     LogPrint(L"Scanned %d media items.", static_cast<int>(m_items.size()));
+}
+
+void MediaSources::AddMediaFile(const std::wstring& pathText, int parentId, const std::wstring& titleOverride) {
+    std::wstring mime, uclass;
+    std::wstring ext = SourceExtension(pathText);
+    if (!IsAllowedExtension(ext, mime, uclass)) {
+        if (IsRemoteMediaUrl(pathText) && ext.empty()) {
+            mime = L"audio/mpeg";
+            uclass = L"object.item.audioItem.musicTrack";
+        } else {
+            return;
+        }
+    }
+
+    MediaItem file{};
+    file.id = m_nextId++;
+    file.parentId = parentId;
+    file.path = pathText;
+    file.isFolder = false;
+    file.mimeType = mime;
+    file.upnpClass = uclass;
+
+    if (IsRemoteMediaUrl(pathText)) {
+        file.sizeBytes = ProbeRemoteContentLength(pathText);
+    } else {
+        fs::path path(WideToUtf8(pathText));
+        std::error_code ec;
+        if (!fs::is_regular_file(path, ec)) return;
+        file.sizeBytes = static_cast<long long>(fs::file_size(path, ec));
+    }
+
+    if (!titleOverride.empty()) {
+        file.title = titleOverride;
+    } else {
+        file.title = AppConfig.showFileNamesInsteadOfTitles ? SourceDisplayName(pathText) : SourceStemName(pathText);
+    }
+
+    if (!IsRemoteMediaUrl(pathText) && uclass == L"object.item.videoItem") {
+        fs::path path(WideToUtf8(pathText));
+        static const char* kSubExts[] = { ".srt", ".vtt", ".sub", ".ass", ".ssa", ".smi", ".txt" };
+        for (const char* subExt : kSubExts) {
+            fs::path candidate = path.parent_path() / (path.stem().u8string() + subExt);
+            std::error_code subEc;
+            if (fs::is_regular_file(candidate, subEc)) {
+                file.subtitlePath = Utf8ToWide(candidate.u8string());
+                break;
+            }
+        }
+    }
+
+    m_items.push_back(file);
+}
+
+void MediaSources::ScanPlaylist(const std::wstring& playlistPath, int parentId) {
+    for (const auto& entry : LoadPlaylistEntries(playlistPath)) {
+        AddMediaFile(entry.location, parentId, entry.title);
+    }
+}
+
+void MediaSources::ScanNetworkFolder(const std::wstring& folderUrl, int parentId, int depth) {
+    if (depth > 8) return;
+
+    for (const auto& entry : ListRemoteDirectory(folderUrl)) {
+        if (IsPlaylistSourcePath(entry.url)) {
+            MediaItem playlistFolder{};
+            playlistFolder.id = m_nextId++;
+            playlistFolder.parentId = parentId;
+            playlistFolder.path = entry.url;
+            playlistFolder.title = SourceStemName(entry.name);
+            playlistFolder.isFolder = true;
+            playlistFolder.upnpClass = L"object.container.storageFolder";
+            m_items.push_back(playlistFolder);
+            ScanPlaylist(entry.url, playlistFolder.id);
+            continue;
+        }
+
+        std::wstring mime, uclass;
+        if (IsAllowedExtension(SourceExtension(entry.url), mime, uclass)) {
+            AddMediaFile(entry.url, parentId);
+            continue;
+        }
+
+        if (entry.likelyDirectory) {
+            MediaItem folder{};
+            folder.id = m_nextId++;
+            folder.parentId = parentId;
+            folder.path = entry.url;
+            folder.title = SourceDisplayName(entry.name);
+            folder.isFolder = true;
+            folder.upnpClass = L"object.container.storageFolder";
+            m_items.push_back(folder);
+            ScanNetworkFolder(entry.url, folder.id, depth + 1);
+        }
+    }
 }
 
 void MediaSources::ScanFolder(const std::wstring& rootPath, int parentId) {
@@ -86,29 +190,20 @@ void MediaSources::ScanFolder(const std::wstring& rootPath, int parentId) {
             m_items.push_back(folder);
             ScanFolder(folder.path, folder.id);
         } else if (entry.is_regular_file(ec)) {
-            std::wstring mime, uclass;
-            if (!IsAllowedExtension(Utf8ToWide(path.extension().u8string()), mime, uclass)) continue;
-            MediaItem file{};
-            file.id = m_nextId++;
-            file.parentId = parentId;
-            file.path = Utf8ToWide(path.u8string());
-            file.isFolder = false;
-            file.mimeType = mime;
-            file.upnpClass = uclass;
-            file.sizeBytes = static_cast<long long>(entry.file_size(ec));
-            file.title = AppConfig.showFileNamesInsteadOfTitles ? Utf8ToWide(path.filename().u8string()) : Utf8ToWide(path.stem().u8string());
-            if (uclass == L"object.item.videoItem") {
-                static const char* kSubExts[] = { ".srt", ".vtt", ".sub", ".ass", ".ssa", ".smi", ".txt" };
-                for (const char* subExt : kSubExts) {
-                    fs::path candidate = path.parent_path() / (path.stem().u8string() + subExt);
-                    std::error_code subEc;
-                    if (fs::is_regular_file(candidate, subEc)) {
-                        file.subtitlePath = Utf8ToWide(candidate.u8string());
-                        break;
-                    }
-                }
+            std::wstring fullPath = Utf8ToWide(path.u8string());
+            if (IsPlaylistSourcePath(fullPath)) {
+                MediaItem playlistFolder{};
+                playlistFolder.id = m_nextId++;
+                playlistFolder.parentId = parentId;
+                playlistFolder.path = fullPath;
+                playlistFolder.title = SourceStemName(fullPath);
+                playlistFolder.isFolder = true;
+                playlistFolder.upnpClass = L"object.container.storageFolder";
+                m_items.push_back(playlistFolder);
+                ScanPlaylist(fullPath, playlistFolder.id);
+            } else {
+                AddMediaFile(fullPath, parentId);
             }
-            m_items.push_back(file);
         }
     }
 }

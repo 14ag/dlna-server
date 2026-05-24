@@ -61,6 +61,39 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("output/dlna-server.AppDir", readme)
         self.assertIn("linuxdeploy --appdir output/dlna-server.AppDir --output appimage", readme)
 
+    def test_linux_desktop_installers_are_scripted(self):
+        cmake = self.read("CMakeLists.txt")
+        script = self.read("scripts/build-linux-desktop-assets.sh")
+        flatpak = self.read("packaging/flatpak/com.github.14ag.dlna_server.yml")
+        desktop = self.read("packaging/flatpak/com.github.14ag.dlna_server.desktop")
+        workflow = self.read(".github/workflows/release-assets.yml")
+
+        self.assertIn('set(CPACK_GENERATOR "DEB")', cmake)
+        self.assertIn("CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON", cmake)
+        self.assertIn("cpack --config", script)
+        self.assertIn("linuxdeploy-x86_64.AppImage", script)
+        self.assertIn("build-bundle", script)
+        self.assertIn("app-id: com.github.14ag.dlna_server", flatpak)
+        self.assertIn("--share=network", flatpak)
+        self.assertIn("--filesystem=home", flatpak)
+        self.assertIn("Name=DLNA Server", desktop)
+        self.assertIn("Release assets", workflow)
+        self.assertIn("scripts/build-linux-desktop-assets.sh", workflow)
+
+    def test_macos_dmg_packaging_prefers_native_gui(self):
+        cmake = self.read("CMakeLists.txt")
+        plist = self.read("packaging/macos/Info.plist.in")
+        launcher = self.read("packaging/macos/dlna-server-gui")
+        script = self.read("scripts/build-macos-dmg.sh")
+
+        self.assertIn("DLNA Server.app", cmake)
+        self.assertIn("dlna-server-gui-bin", cmake)
+        self.assertIn("DLNA_PLATFORM_NAME=\\\"macOS\\\"", cmake)
+        self.assertIn("<string>DLNA Server</string>", plist)
+        self.assertIn('native_gui="$app_dir/Contents/MacOS/dlna-server-gui-bin"', launcher)
+        self.assertIn("hdiutil create", script)
+        self.assertIn("notarytool submit", script)
+
     def test_wslg_gui_smoke_script_checks_native_deps(self):
         script = self.read("tests/verify-wslg-gui.ps1")
 
@@ -102,8 +135,8 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("class MainWindow", gui_source)
         self.assertIn("Fl_Hold_Browser", gui_source)
         self.assertIn("Fl_Native_File_Chooser", gui_source)
-        self.assertIn("Add media folder", gui_source)
-        self.assertIn("Remove selected media folder", gui_source)
+        self.assertIn("Add media source", gui_source)
+        self.assertIn("Remove selected media source", gui_source)
         self.assertIn("Start server", gui_source)
         self.assertIn("Stop server", gui_source)
         self.assertIn("Settings", gui_source)

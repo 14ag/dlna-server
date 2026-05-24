@@ -249,8 +249,8 @@ public:
         m_title.labelcolor(fl_rgb_color(220, 220, 220));
         m_title.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
 
-        m_addButton.tooltip("Add media folder");
-        m_removeButton.tooltip("Remove selected media folder");
+        m_addButton.tooltip("Add media source");
+        m_removeButton.tooltip("Remove selected media source");
         m_startStopButton.tooltip("Start server");
         m_settingsButton.tooltip("Settings");
 
@@ -339,7 +339,7 @@ private:
     void StartServer() {
         SaveSourcesFromList();
         if (AppConfig.mediaSources.empty()) {
-            fl_alert("Add at least one media folder.");
+            fl_alert("Add at least one media source.");
             return;
         }
         if (!DLNAServer.Start()) {
@@ -361,11 +361,23 @@ private:
 
     static void AddSource(Fl_Widget*, void* data) {
         auto* self = static_cast<MainWindow*>(data);
-        Fl_Native_File_Chooser chooser;
-        chooser.title("Choose media folder");
-        chooser.type(Fl_Native_File_Chooser::BROWSE_DIRECTORY);
-        if (chooser.show() == 0 && chooser.filename()) {
-            const std::string selected = chooser.filename();
+        int choice = fl_choice("Add media source", "Folder", "Playlist", "Network URL");
+        std::string selected;
+
+        if (choice == 0 || choice == 1) {
+            Fl_Native_File_Chooser chooser;
+            chooser.title(choice == 0 ? "Choose media folder" : "Choose playlist file");
+            chooser.type(choice == 0 ? Fl_Native_File_Chooser::BROWSE_DIRECTORY : Fl_Native_File_Chooser::BROWSE_FILE);
+            if (choice == 1) chooser.filter("Playlists\t*.{m3u,m3u8,pls}\nAll files\t*");
+            if (chooser.show() == 0 && chooser.filename()) {
+                selected = chooser.filename();
+            }
+        } else if (choice == 2) {
+            const char* typed = fl_input("Network share URL", "smb://user:pass@server/share");
+            if (typed) selected = typed;
+        }
+
+        if (!selected.empty()) {
             for (int i = 1; i <= self->m_sources.size(); ++i) {
                 const char* existing = self->m_sources.text(i);
                 if (existing && selected == existing) return;
