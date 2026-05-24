@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$exePath = Join-Path $repo "output\dlna-server.exe"
+$exePath = Join-Path $repo "output\DLNA Server.exe"
 $outDir = Join-Path $repo "output"
 $appDataDir = Join-Path $env:APPDATA "dlna-server"
 $configPath = Join-Path $outDir "config.ini"
@@ -185,9 +185,9 @@ function Test-DlnaFirewallRule([string]$name, [string]$program, [string]$protoco
 }
 
 function Ensure-FirewallAccess {
-    $tcpOk = Test-DlnaFirewallRule "dlna-server HTTP TCP" $exePath "TCP" 0
+    $tcpOk = Test-DlnaFirewallRule "DLNA Server HTTP TCP" $exePath "TCP" 0
     $tcpReadDenied = $firewallReadDenied
-    $udpOk = Test-DlnaFirewallRule "dlna-server SSDP UDP" $exePath "UDP" $ssdpPort
+    $udpOk = Test-DlnaFirewallRule "DLNA Server SSDP UDP" $exePath "UDP" $ssdpPort
     $udpReadDenied = $firewallReadDenied
     if ($tcpReadDenied -or $udpReadDenied) {
         Add-Result "WARN firewall rules not readable by this PowerShell; Android HTTP reachability will verify access"
@@ -199,7 +199,7 @@ function Ensure-FirewallAccess {
     }
 
     if (-not (Test-IsAdmin)) {
-        throw "Firewall rules missing and PowerShell is not elevated. Run .\output\dlna-server.exe --configure-firewall --port $serverPort once as administrator, or rerun this script from an elevated PowerShell."
+        throw "Firewall rules missing and PowerShell is not elevated. Run '.\output\DLNA Server.exe' --configure-firewall --port $serverPort once as administrator, or rerun this script from an elevated PowerShell."
     }
 
     $proc = Start-Process -FilePath $exePath -ArgumentList @("--configure-firewall", "--port", "$serverPort") -Wait -PassThru -WindowStyle Hidden
@@ -207,8 +207,8 @@ function Ensure-FirewallAccess {
         throw "Elevated firewall helper failed with exit code $($proc.ExitCode)"
     }
 
-    $tcpOk = Test-DlnaFirewallRule "dlna-server HTTP TCP" $exePath "TCP" 0
-    $udpOk = Test-DlnaFirewallRule "dlna-server SSDP UDP" $exePath "UDP" $ssdpPort
+    $tcpOk = Test-DlnaFirewallRule "DLNA Server HTTP TCP" $exePath "TCP" 0
+    $udpOk = Test-DlnaFirewallRule "DLNA Server SSDP UDP" $exePath "UDP" $ssdpPort
     if (-not ($tcpOk -and $udpOk)) {
         throw "Firewall helper completed but required rules were not found"
     }

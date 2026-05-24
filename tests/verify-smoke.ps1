@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 
 $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $outputDir = Join-Path $repo "output"
-$exePath = Join-Path $outputDir "dlna-server.exe"
+$exePath = Join-Path $outputDir "DLNA Server.exe"
 $vlcPath = "C:\Program Files\VideoLAN\VLC\vlc.exe"
 $appDataDir = Join-Path $env:APPDATA "dlna-server"
 $configPath = Join-Path $outputDir "config.ini"
@@ -279,7 +279,7 @@ function Read-DebugLog {
 
 function Stop-RepoDlnaProcesses {
     $repoFull = [System.IO.Path]::GetFullPath($repo)
-    Get-Process -Name "dlna-server", "WinDLNAServer" -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-Process -Name "DLNA Server", "dlna-server", "WinDLNAServer" -ErrorAction SilentlyContinue | ForEach-Object {
         $path = $null
         try {
             $path = $_.Path

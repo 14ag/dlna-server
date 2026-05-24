@@ -1,5 +1,4 @@
 #include "config.h"
-#include "firewall_access.h"
 #include "log.h"
 #include "media_sources.h"
 #include "netutils.h"
@@ -55,7 +54,7 @@ void CloseWindow(Fl_Widget*, void* data) {
 class LogDialog : public Fl_Window {
 public:
     LogDialog()
-        : Fl_Window(500, 360, "dlna-server Log"),
+        : Fl_Window(500, 360, "DLNA Server Log"),
           m_logView(7, 7, 486, 318),
           m_closeButton(430, 333, 60, 22, "Close") {
         m_logView.buffer(&m_buffer);
@@ -92,7 +91,7 @@ private:
 class SettingsDialog : public Fl_Window {
 public:
     SettingsDialog()
-        : Fl_Window(430, 370, "dlna-server Settings"),
+        : Fl_Window(430, 370, "DLNA Server Settings"),
           m_serverName(120, 14, 190, 24, "Server Name:"),
           m_httpPort(120, 44, 70, 24, "HTTP Port:"),
           m_filePort(270, 44, 70, 24, "File Port:"),
@@ -228,14 +227,14 @@ private:
 class MainWindow : public Fl_Window {
 public:
     MainWindow()
-        : Fl_Window(kWindowWidth, kWindowHeight, "dlna-server"),
+        : Fl_Window(kWindowWidth, kWindowHeight, "DLNA Server"),
           m_toolbar(0, 0, kWindowWidth, kToolbarHeight),
-          m_title(15, 10, 240, 30, "dlna-server"),
+          m_title(15, 10, 240, 30, "DLNA Server"),
           m_addButton(kWindowWidth - 170, 10, kButtonSize, kButtonSize, "+"),
           m_removeButton(kWindowWidth - 130, 10, kButtonSize, kButtonSize, "-"),
           m_startStopButton(kWindowWidth - 90, 10, kButtonSize, kButtonSize, "@>"),
           m_settingsButton(kWindowWidth - 50, 10, kButtonSize, kButtonSize, "@settings"),
-          m_status(15, kToolbarHeight, kWindowWidth - 30, kStatusHeight, "dlna-server is stopped"),
+          m_status(15, kToolbarHeight, kWindowWidth - 30, kStatusHeight, "DLNA Server is stopped"),
           m_sources(0, kToolbarHeight + kStatusHeight, kWindowWidth, kWindowHeight - kToolbarHeight - kStatusHeight),
           m_emptyState(15, 80, kWindowWidth - 30, 24, "Please add shared folders or files (button \"+\")") {
         color(fl_rgb_color(30, 30, 30));
@@ -325,12 +324,12 @@ private:
     void RefreshStatus() {
         if (DLNAServer.IsRunning()) {
             const std::string endpoint = ToUtf8(DLNAServer.GetEndpoint());
-            const std::string label = "dlna-server is running on " + endpoint;
+            const std::string label = "DLNA Server is running on " + endpoint;
             m_status.copy_label(label.c_str());
             m_startStopButton.copy_label("@square");
             m_startStopButton.tooltip("Stop server");
         } else {
-            m_status.copy_label("dlna-server is stopped");
+            m_status.copy_label("DLNA Server is stopped");
             m_startStopButton.copy_label("@>");
             m_startStopButton.tooltip("Start server");
         }
@@ -341,12 +340,6 @@ private:
         SaveSourcesFromList();
         if (AppConfig.mediaSources.empty()) {
             fl_alert("Add at least one media folder.");
-            return;
-        }
-        std::wstring firewallMessage;
-        if (!EnsureFirewallAccess(AppConfig.port, FirewallAccessMode::Interactive, firewallMessage)) {
-            const std::string text = WideToUtf8(firewallMessage);
-            fl_alert("%s", text.c_str());
             return;
         }
         if (!DLNAServer.Start()) {

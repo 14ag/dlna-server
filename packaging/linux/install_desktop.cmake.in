@@ -6,7 +6,7 @@ file(MAKE_DIRECTORY "${applications_dir}")
 file(WRITE "${applications_dir}/dlna-server.desktop"
 "[Desktop Entry]
 Type=Application
-Name=dlna-server
+Name=DLNA Server
 GenericName=DLNA media server
 Comment=Share local media with DLNA and UPnP clients
 Exec=${exec_path}

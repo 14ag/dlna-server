@@ -42,6 +42,7 @@ if(WIN32)
     )
 
     add_executable(dlna-server WIN32 ${SOURCES} ${HEADERS} resources/app.rc)
+    set_target_properties(dlna-server PROPERTIES OUTPUT_NAME "DLNA Server")
     target_link_libraries(dlna-server
         ws2_32
         shell32
@@ -74,7 +75,6 @@ else()
         src/posix_config.cpp
         src/posix_log.cpp
         src/ipwhitelist.cpp
-        src/firewall_access_posix.cpp
         src/contentdirectory.cpp
         src/dlna_utils.cpp
     )
@@ -89,6 +89,7 @@ else()
     target_link_libraries(dlna-server PRIVATE Threads::Threads)
 
     install(TARGETS dlna-server RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    configure_file(packaging/linux/dlna-server-gui "${CMAKE_BINARY_DIR}/dlna-server-gui" @ONLY NEWLINE_STYLE UNIX)
 
     if(DLNA_ENABLE_FLTK_GUI)
         find_package(FLTK QUIET)
@@ -122,7 +123,6 @@ else()
             src/posix_config.cpp
             src/posix_log.cpp
             src/ipwhitelist.cpp
-            src/firewall_access_posix.cpp
             src/contentdirectory.cpp
             src/dlna_utils.cpp
         )
@@ -134,9 +134,9 @@ else()
         endif()
         target_link_libraries(dlna-server-gui-native PRIVATE ${DLNA_FLTK_TARGET} Threads::Threads)
         install(TARGETS dlna-server-gui-native RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-        install(PROGRAMS packaging/linux/dlna-server-gui DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
     else()
-        install(PROGRAMS packaging/linux/dlna-server-gui DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(PROGRAMS src/posix_gui.py DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server)
     endif()
 

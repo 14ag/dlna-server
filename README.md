@@ -53,7 +53,7 @@ pkg install clang cmake make python
 
 ## Build and install
 
-Use normal CMake commands for local builds. There are no build helper scripts.
+Use normal CMake commands for local builds. Windows users can also run `install-wsl.ps1` to build and install the native Linux GUI inside WSL.
 
 ### Windows
 
@@ -65,7 +65,7 @@ cmake --build build-windows --config Release
 cmake --install build-windows --config Release
 ```
 
-The installed executable lands under the active CMake install prefix. If you only build, run `build-windows/Release/dlna-server.exe`.
+The installed executable lands under the active CMake install prefix. If you only build, run `build-windows/Release/DLNA Server.exe`.
 
 For a debug build:
 
@@ -95,6 +95,14 @@ cmake --install build-linux-native
 
 To force the older compatibility Python/Tk launcher, configure with `-DDLNA_ENABLE_FLTK_GUI=OFF`.
 
+From Windows, install directly into WSL with:
+
+```powershell
+.\install-wsl.ps1
+```
+
+That builds the native Linux GUI in WSL, installs to `~/.local`, refreshes desktop/icon caches, and smoke-tests the launcher when WSLg is available. Use `-InstallPackages` to let the script install missing Ubuntu build dependencies with `sudo apt-get`.
+
 To install it into your desktop user profile instead, run CMake install with a user prefix after the build:
 
 ```sh
@@ -109,7 +117,9 @@ That user install writes:
 - `~/.local/share/icons/hicolor/scalable/apps/dlna-server.svg`
 - `~/.local/share/metainfo/dlna-server.appdata.xml`
 
-After install, open `dlna-server` from your desktop app launcher. If it doesn't show up right away, run `dlna-server-gui` from a terminal or sign out and back in.
+Linux desktop menus show the app as **DLNA Server**. The installed command names stay `dlna-server` and `dlna-server-gui` because shell scripts, desktop metadata, AppImage packaging, and automation expect stable no-space binary names.
+
+After install, open **DLNA Server** from your desktop app launcher. If it doesn't show up right away, run `dlna-server-gui` from a terminal or sign out and back in.
 
 On WSLg, `[WARN:COPY MODE]` in the Windows taskbar title is emitted by WSLg, not by this app. It means WSLg is warning about its RDP window transport. The app installs desktop metadata and uses the `dlna-server` launcher so WSLg can match the window to the right icon and command, but hiding that warning requires WSLg configuration or a WSL update.
 
@@ -181,7 +191,7 @@ Run the build-tree binary directly:
 
 ### Windows
 
-Run `dlna-server.exe`. Add one or more media folders with the `+` button, then start the server with the play button.
+Run `DLNA Server.exe`. Add one or more media folders with the `+` button, then start the server with the play button.
 
 On first start, Windows may ask for firewall access. The app itself stays unelevated. If access is missing, it launches a short-lived elevated helper that creates two inbound rules for this executable: TCP from `LocalSubnet` on any local port, and UDP `1900` from `LocalSubnet` for SSDP discovery. Both rules apply to Domain, Private, and Public profiles.
 
@@ -191,7 +201,7 @@ When the main window closes, the app stays in the tray. Use the tray menu to sho
 
 ### Linux/macOS GUI
 
-Launch `dlna-server` from the desktop app list on Linux, or open `dlna-server.app` on macOS. Add one or more media folders, set the server name and port, then press Start.
+Launch **DLNA Server** from the desktop app list on Linux, or open `dlna-server.app` on macOS. Add one or more media folders, set the server name and port, then press Start.
 
 The native Linux GUI uses the same config schema as the server and writes `config.ini` beside the installed executable, so command-line and desktop launches share settings. On WSLg, the launcher forces FLTK to use X11 when a Windows display is available; this avoids cases where the window appears in the taskbar but never paints. If startup fails, run `dlna-server-gui` from a terminal so display or dependency errors are visible.
 
@@ -270,7 +280,7 @@ If more than one ADB device is connected, pass the phone serial:
 The Android smoke test requires Windows Firewall access for the built app. If the test reports missing firewall rules, run the helper once from an elevated PowerShell:
 
 ```powershell
-.\output\dlna-server.exe --configure-firewall --port 18200
+.\output\DLNA Server.exe --configure-firewall --port 18200
 ```
 
 The `--port` value is kept for compatibility with the test command. On Windows, the TCP rule is app-wide and limited to `LocalSubnet`; UDP discovery remains limited to port `1900`. The normal Windows app also prompts to configure these rules the first time the server starts.
