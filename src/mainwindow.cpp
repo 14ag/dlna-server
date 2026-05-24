@@ -14,16 +14,42 @@
 #define WM_TRAYICON (WM_USER + 1)
 #define TRAY_ID 1
 
+namespace {
+const int kGutter = 24;
+const int kToolbarHeight = 56;
+const int kStatusHeight = 40;
+const int kButtonSize = 40;
+const int kButtonGap = 8;
+const int kListTop = kToolbarHeight + kStatusHeight + 8;
+const int kCornerDiameter = 8;
+
+COLORREF kPageColor = RGB(32, 32, 32);
+COLORREF kToolbarColor = RGB(40, 40, 40);
+COLORREF kControlColor = RGB(45, 45, 45);
+COLORREF kControlPressedColor = RGB(58, 58, 58);
+COLORREF kBorderColor = RGB(72, 72, 72);
+COLORREF kTextColor = RGB(244, 244, 244);
+COLORREF kSecondaryTextColor = RGB(190, 190, 190);
+}
+
 MainWindow::MainWindow() : m_hwnd(NULL), m_hInstance(NULL), m_isRunning(false),
 m_hBtnAdd(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL) {
-    m_hBgBrush = CreateSolidBrush(RGB(30, 30, 30));
-    m_hDarkBrush = CreateSolidBrush(RGB(45, 45, 48));
+    m_hBgBrush = CreateSolidBrush(kPageColor);
+    m_hDarkBrush = CreateSolidBrush(kControlColor);
+    m_hToolbarBrush = CreateSolidBrush(kToolbarColor);
+    m_hTitleFont = NULL;
+    m_hBodyFont = NULL;
+    m_hIconFont = NULL;
 }
 
 MainWindow::~MainWindow() {
     RemoveTrayIcon();
     if (m_hBgBrush) DeleteObject(m_hBgBrush);
     if (m_hDarkBrush) DeleteObject(m_hDarkBrush);
+    if (m_hToolbarBrush) DeleteObject(m_hToolbarBrush);
+    if (m_hTitleFont) DeleteObject(m_hTitleFont);
+    if (m_hBodyFont) DeleteObject(m_hBodyFont);
+    if (m_hIconFont) DeleteObject(m_hIconFont);
 }
 
 bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
@@ -50,32 +76,35 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
 
     if (m_hwnd == NULL) return false;
 
-    // Create toolbar buttons (flat style)
-    HFONT hFont = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-        CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Symbol");
+    m_hTitleFont = CreateUiFont(20, FW_SEMIBOLD, L"Segoe UI Variable");
+    m_hBodyFont = CreateUiFont(14, FW_NORMAL, L"Segoe UI Variable");
+    m_hIconFont = CreateUiFont(16, FW_NORMAL, L"Segoe MDL2 Assets");
 
-    m_hBtnAdd = CreateWindowExW(0, L"BUTTON", L"\x2795", // +
-        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_FLAT,
-        650, 10, 30, 30, m_hwnd, (HMENU)IDC_BTN_ADD, hInstance, NULL);
+    m_hBtnAdd = CreateWindowExW(0, L"BUTTON", L"\xE710",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+        0, 0, kButtonSize, kButtonSize, m_hwnd, (HMENU)IDC_BTN_ADD, hInstance, NULL);
 
-    m_hBtnStartStop = CreateWindowExW(0, L"BUTTON", L"\x25B6", // Play
-        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_FLAT,
-        690, 10, 30, 30, m_hwnd, (HMENU)IDC_BTN_STARTSTOP, hInstance, NULL);
+    m_hBtnStartStop = CreateWindowExW(0, L"BUTTON", L"\xE768",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+        0, 0, kButtonSize, kButtonSize, m_hwnd, (HMENU)IDC_BTN_STARTSTOP, hInstance, NULL);
 
-    m_hBtnSettings = CreateWindowExW(0, L"BUTTON", L"\x2699", // Gear
-        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_FLAT,
-        730, 10, 30, 30, m_hwnd, (HMENU)IDC_BTN_SETTINGS, hInstance, NULL);
+    m_hBtnSettings = CreateWindowExW(0, L"BUTTON", L"\xE713",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+        0, 0, kButtonSize, kButtonSize, m_hwnd, (HMENU)IDC_BTN_SETTINGS, hInstance, NULL);
 
-    if(hFont) {
-        SendMessage(m_hBtnAdd, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessage(m_hBtnStartStop, WM_SETFONT, (WPARAM)hFont, TRUE);
-        SendMessage(m_hBtnSettings, WM_SETFONT, (WPARAM)hFont, TRUE);
+    if(m_hIconFont) {
+        SendMessage(m_hBtnAdd, WM_SETFONT, (WPARAM)m_hIconFont, TRUE);
+        SendMessage(m_hBtnStartStop, WM_SETFONT, (WPARAM)m_hIconFont, TRUE);
+        SendMessage(m_hBtnSettings, WM_SETFONT, (WPARAM)m_hIconFont, TRUE);
     }
 
-    // Source ListBox
     m_hListSources = CreateWindowExW(0, L"LISTBOX", NULL,
-        WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT,
-        0, 72, 800, 528, m_hwnd, (HMENU)IDC_LIST_SOURCES, hInstance, NULL);
+        WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT,
+        kGutter, kListTop, 800 - (kGutter * 2), 600 - kListTop - kGutter,
+        m_hwnd, (HMENU)IDC_LIST_SOURCES, hInstance, NULL);
+    if (m_hBodyFont) {
+        SendMessage(m_hListSources, WM_SETFONT, (WPARAM)m_hBodyFont, TRUE);
+    }
 
     RefreshSourceList();
 
@@ -90,8 +119,21 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
 void MainWindow::SetStatus(bool running, const std::wstring& endpoint) {
     m_isRunning = running;
     m_statusEndpoint = endpoint;
-    SendMessage(m_hBtnStartStop, WM_SETTEXT, 0, (LPARAM)(running ? L"\x25A0" : L"\x25B6")); // Stop / Play
+    SendMessage(m_hBtnStartStop, WM_SETTEXT, 0, (LPARAM)(running ? L"\xE71A" : L"\xE768"));
     InvalidateRect(m_hwnd, NULL, TRUE);
+}
+
+HFONT MainWindow::CreateUiFont(int pixelSize, int weight, const wchar_t* faceName) {
+    HDC hdc = GetDC(m_hwnd);
+    int dpiY = hdc ? GetDeviceCaps(hdc, LOGPIXELSY) : 96;
+    if (hdc) {
+        ReleaseDC(m_hwnd, hdc);
+    }
+
+    int height = -MulDiv(pixelSize, dpiY, 96);
+    return CreateFontW(height, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                       DEFAULT_PITCH | FF_DONTCARE, faceName);
 }
 
 void MainWindow::AddTrayIcon() {
@@ -142,6 +184,40 @@ void MainWindow::RefreshSourceList() {
     for (const auto& src : AppConfig.mediaSources) {
         SendMessageW(m_hListSources, LB_ADDSTRING, 0, (LPARAM)src.path.c_str());
     }
+}
+
+void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
+    RECT rc = drawItem->rcItem;
+    bool pressed = (drawItem->itemState & ODS_SELECTED) != 0;
+    bool disabled = (drawItem->itemState & ODS_DISABLED) != 0;
+
+    COLORREF fillColor = pressed ? kControlPressedColor : kControlColor;
+    COLORREF textColor = disabled ? RGB(128, 128, 128) : kTextColor;
+    HBRUSH fillBrush = CreateSolidBrush(fillColor);
+    HPEN borderPen = CreatePen(PS_SOLID, 1, kBorderColor);
+    HGDIOBJ oldBrush = SelectObject(drawItem->hDC, fillBrush);
+    HGDIOBJ oldPen = SelectObject(drawItem->hDC, borderPen);
+
+    SetBkMode(drawItem->hDC, TRANSPARENT);
+    RoundRect(drawItem->hDC, rc.left, rc.top, rc.right, rc.bottom, kCornerDiameter, kCornerDiameter);
+
+    wchar_t text[8] = {};
+    GetWindowTextW(drawItem->hwndItem, text, 8);
+    HFONT oldFont = (HFONT)SelectObject(drawItem->hDC, m_hIconFont ? m_hIconFont : GetStockObject(DEFAULT_GUI_FONT));
+    SetTextColor(drawItem->hDC, textColor);
+    DrawTextW(drawItem->hDC, text, -1, &rc, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+
+    if (drawItem->itemState & ODS_FOCUS) {
+        RECT focus = rc;
+        InflateRect(&focus, -4, -4);
+        DrawFocusRect(drawItem->hDC, &focus);
+    }
+
+    SelectObject(drawItem->hDC, oldFont);
+    SelectObject(drawItem->hDC, oldPen);
+    SelectObject(drawItem->hDC, oldBrush);
+    DeleteObject(borderPen);
+    DeleteObject(fillBrush);
 }
 
 void MainWindow::OpenFolderPicker() {
@@ -201,43 +277,38 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         RECT rcClient;
         GetClientRect(hwnd, &rcClient);
 
-        // Toolbar Area (0 to 48)
-        RECT rcToolbar = { 0, 0, rcClient.right, 48 };
-        FillRect(hdc, &rcToolbar, m_hDarkBrush);
+        RECT rcToolbar = { 0, 0, rcClient.right, kToolbarHeight };
+        FillRect(hdc, &rcToolbar, m_hToolbarBrush);
         
         SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, RGB(220, 220, 220));
+        SetTextColor(hdc, kTextColor);
         
-        HFONT hTitleFont = CreateFontW(24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-        HGDIOBJ hOldFont = SelectObject(hdc, hTitleFont);
+        HGDIOBJ hOldFont = SelectObject(hdc, m_hTitleFont ? m_hTitleFont : GetStockObject(DEFAULT_GUI_FONT));
         
-        RECT rcTitle = { 15, 10, 300, 48 };
+        int titleRight = rcClient.right - 160;
+        if (titleRight < kGutter) {
+            titleRight = kGutter;
+        }
+        RECT rcTitle = { kGutter, 0, titleRight, kToolbarHeight };
         DrawTextW(hdc, L"dlna-server", -1, &rcTitle, DT_SINGLELINE | DT_VCENTER);
         SelectObject(hdc, hOldFont);
-        DeleteObject(hTitleFont);
 
-        // Status Area (48 to 72)
-        RECT rcStatus = { 0, 48, rcClient.right, 72 };
+        RECT rcStatus = { 0, kToolbarHeight, rcClient.right, kToolbarHeight + kStatusHeight };
         FillRect(hdc, &rcStatus, m_hBgBrush);
 
-        HFONT hStatusFont = CreateFontW(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-        hOldFont = SelectObject(hdc, hStatusFont);
+        hOldFont = SelectObject(hdc, m_hBodyFont ? m_hBodyFont : GetStockObject(DEFAULT_GUI_FONT));
 
-        RECT rcStatusText = { 15, 48, rcClient.right, 72 };
+        RECT rcStatusText = { kGutter, kToolbarHeight, rcClient.right - kGutter, kToolbarHeight + kStatusHeight };
         std::wstring statusText = m_isRunning ? L"dlna-server is running on " + m_statusEndpoint : L"dlna-server is stopped";
         DrawTextW(hdc, statusText.c_str(), -1, &rcStatusText, DT_SINGLELINE | DT_VCENTER);
 
-        // Subtitle if empty
         if (SendMessage(m_hListSources, LB_GETCOUNT, 0, 0) == 0) {
-            RECT rcSubtitle = { 15, 80, rcClient.right, 100 };
-            SetTextColor(hdc, RGB(150, 150, 150));
+            RECT rcSubtitle = { kGutter + 16, kListTop + 16, rcClient.right - kGutter - 16, kListTop + 40 };
+            SetTextColor(hdc, kSecondaryTextColor);
             DrawTextW(hdc, L"Please add shared folders or files (button \"+\")", -1, &rcSubtitle, DT_SINGLELINE | DT_TOP);
         }
 
         SelectObject(hdc, hOldFont);
-        DeleteObject(hStatusFont);
 
         EndPaint(hwnd, &ps);
         return 0;
@@ -246,13 +317,23 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         int width = LOWORD(lParam);
         int height = HIWORD(lParam);
 
-        // Move buttons to the right
-        SetWindowPos(m_hBtnAdd, NULL, width - 130, 10, 30, 30, SWP_NOZORDER);
-        SetWindowPos(m_hBtnStartStop, NULL, width - 90, 10, 30, 30, SWP_NOZORDER);
-        SetWindowPos(m_hBtnSettings, NULL, width - 50, 10, 30, 30, SWP_NOZORDER);
+        int buttonTop = 8;
+        int settingsLeft = width - kGutter - kButtonSize;
+        int startLeft = settingsLeft - kButtonGap - kButtonSize;
+        int addLeft = startLeft - kButtonGap - kButtonSize;
+        SetWindowPos(m_hBtnAdd, NULL, addLeft, buttonTop, kButtonSize, kButtonSize, SWP_NOZORDER);
+        SetWindowPos(m_hBtnStartStop, NULL, startLeft, buttonTop, kButtonSize, kButtonSize, SWP_NOZORDER);
+        SetWindowPos(m_hBtnSettings, NULL, settingsLeft, buttonTop, kButtonSize, kButtonSize, SWP_NOZORDER);
 
-        // Resize list
-        SetWindowPos(m_hListSources, NULL, 0, 72, width, height - 72, SWP_NOZORDER);
+        int listWidth = width - (kGutter * 2);
+        int listHeight = height - kListTop - kGutter;
+        if (listWidth < 0) {
+            listWidth = 0;
+        }
+        if (listHeight < 0) {
+            listHeight = 0;
+        }
+        SetWindowPos(m_hListSources, NULL, kGutter, kListTop, listWidth, listHeight, SWP_NOZORDER);
 
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
@@ -295,12 +376,16 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORLISTBOX: {
         HDC hdcStatic = (HDC)wParam;
-        SetTextColor(hdcStatic, RGB(220, 220, 220));
-        SetBkColor(hdcStatic, RGB(30, 30, 30));
+        SetTextColor(hdcStatic, kTextColor);
+        SetBkColor(hdcStatic, kPageColor);
         return (INT_PTR)m_hBgBrush;
     }
     case WM_DRAWITEM: {
-        // TODO: custom listbox draw
+        DRAWITEMSTRUCT* drawItem = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+        if (drawItem && drawItem->CtlType == ODT_BUTTON) {
+            DrawToolbarButton(drawItem);
+            return TRUE;
+        }
         return TRUE;
     }
     case WM_TRAYICON: {

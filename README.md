@@ -85,13 +85,15 @@ cmake --build build-linux
 cmake --install build-linux
 ```
 
-By default this installs the headless server and compatibility Python/Tk launcher. Native desktop builds use `-DDLNA_ENABLE_FLTK_GUI=ON` and install the FLTK GUI through the `dlna-server-gui` launcher:
+By default this installs the headless server and native FLTK GUI through the `dlna-server-gui` launcher:
 
 ```sh
 cmake -S . -B build-linux-native -DCMAKE_BUILD_TYPE=Release -DDLNA_ENABLE_FLTK_GUI=ON
 cmake --build build-linux-native
 cmake --install build-linux-native
 ```
+
+To force the older compatibility Python/Tk launcher, configure with `-DDLNA_ENABLE_FLTK_GUI=OFF`.
 
 To install it into your desktop user profile instead, run CMake install with a user prefix after the build:
 

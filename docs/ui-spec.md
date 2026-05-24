@@ -1,24 +1,28 @@
 # Desktop UI Spec
 
-Scope: Windows Win32 UI and Linux FLTK UI. Keep both quiet, compact, and utility-first.
+Scope: Windows Win32 UI and Linux FLTK UI. Keep both quiet, compact, and utility-first. Windows shell metrics should follow WinUI/Fluent guidance where practical in raw Win32.
 
 ## Shell
 
 - Window title: `dlna-server`
 - Minimum content size: 640 x 460
 - Default size: 800 x 600
-- Toolbar height: 48 px
-- Status strip height: 24 px
+- Toolbar height: 56 px
+- Status strip height: 40 px
 - Source list starts below status strip and fills remaining space
-- Main background: RGB 30, 30, 30
-- Toolbar background: RGB 45, 45, 48
-- Primary text: RGB 220, 220, 220
-- Secondary text: RGB 150, 150, 150
+- Main background: RGB 32, 32, 32
+- Toolbar background: RGB 40, 40, 40
+- Control background: RGB 45, 45, 45
+- Primary text: RGB 244, 244, 244
+- Secondary text: RGB 190, 190, 190
 - Selection color target: muted blue RGB 70, 90, 120
+- Windows UI font: Segoe UI Variable
 
 ## Controls
 
-- Toolbar buttons are 30 x 30 px, right-aligned, 10 px from top
+- Toolbar buttons are 40 x 40 px, right-aligned, 8 px from top
+- Toolbar button spacing is 8 px, with a 24 px right gutter
+- Toolbar buttons use a 1 px border and 4 px corner radius
 - Toolbar button order: Add, Start/Stop, Settings
 - Add button tooltip: `Add media folder`
 - Start button tooltip: `Start server`
@@ -38,12 +42,13 @@ Scope: Windows Win32 UI and Linux FLTK UI. Keep both quiet, compact, and utility
 
 ## Log Dialog
 
-- Log text is read-only, multi-line, monospace where available
+- Log text is read-only and multi-line
 - Dialog opens scrolled to bottom
 - `Close` is the only action
 
 ## Layout Rules
 
+- Fixed Windows dimensions, margins, and padding use 4 px increments
 - No clipped labels at 640 x 460
 - Long endpoint/status text clips instead of overlapping buttons
 - Toolbar button positions remain stable during resize

@@ -1,4 +1,5 @@
 import unittest
+import struct
 from pathlib import Path
 
 
@@ -15,8 +16,12 @@ class UiSpecTests(unittest.TestCase):
         for text in (
             "Windows Win32 UI and Linux FLTK UI",
             "Minimum content size: 640 x 460",
-            "Toolbar height: 48 px",
-            "Status strip height: 24 px",
+            "Toolbar height: 56 px",
+            "Status strip height: 40 px",
+            "Windows UI font: Segoe UI Variable",
+            "Toolbar buttons are 40 x 40 px",
+            "4 px corner radius",
+            "4 px increments",
             "Add media folder",
             "Start server",
             "Stop server",
@@ -33,6 +38,53 @@ class UiSpecTests(unittest.TestCase):
 
         self.assertIn("project(dlna-server VERSION 1.2.0)", cmake)
         self.assertIn("## [1.2.0] - 2026-05-21", changelog)
+
+    def test_windows_ui_uses_winui_aligned_metrics_and_icon(self):
+        main = self.read("src/mainwindow.cpp")
+        app_rc = self.read("resources/app.rc")
+        svg = self.read("resources/dlna-server.svg")
+
+        for token in (
+            "const int kGutter = 24",
+            "const int kToolbarHeight = 56",
+            "const int kStatusHeight = 40",
+            "const int kButtonSize = 40",
+            "const int kButtonGap = 8",
+            "const int kCornerDiameter = 8",
+            'CreateUiFont(20, FW_SEMIBOLD, L"Segoe UI Variable")',
+            'CreateUiFont(14, FW_NORMAL, L"Segoe UI Variable")',
+            'CreateUiFont(16, FW_NORMAL, L"Segoe MDL2 Assets")',
+            "BS_OWNERDRAW",
+            "RoundRect",
+            "WS_BORDER",
+        ):
+            self.assertIn(token, main)
+
+        self.assertIn('FONT 9, "Segoe UI Variable"', app_rc)
+        self.assertNotIn("DS_FIXEDSYS", app_rc)
+        for token in (
+            'VALUE "FileDescription", "dlna-server"',
+            'VALUE "InternalName", "dlna-server"',
+            'VALUE "OriginalFilename", "dlna-server.exe"',
+            'VALUE "ProductName", "dlna-server"',
+            'IDI_APP_ICON ICON "app.ico"',
+        ):
+            self.assertIn(token, app_rc)
+        self.assertIn('CreateWindowExW(\n        0, CLASS_NAME, L"dlna-server"', main)
+        self.assertIn('wcscpy_s(nid.szTip, L"dlna-server")', main)
+        self.assertIn('linearGradient id="plate"', svg)
+        self.assertIn('filter id="shadow"', svg)
+
+        data = (ROOT / "resources/app.ico").read_bytes()
+        self.assertEqual(data[:4], b"\x00\x00\x01\x00")
+        count = struct.unpack_from("<H", data, 4)[0]
+        entries = data[6:6 + count * 16]
+        sizes = set()
+        for offset in range(0, len(entries), 16):
+            width = entries[offset] or 256
+            height = entries[offset + 1] or 256
+            sizes.add((width, height))
+        self.assertTrue({(16, 16), (24, 24), (32, 32), (48, 48), (256, 256)}.issubset(sizes))
 
 
 if __name__ == "__main__":
