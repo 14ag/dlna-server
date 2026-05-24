@@ -3,7 +3,7 @@
   <id>dlna-server</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
-  <name>dlna-server</name>
+  <name>DLNA Server</name>
   <summary>Share local media with DLNA and UPnP clients</summary>
   <description>
     <p>dlna-server serves local video, audio, and image files to compatible devices on the local network.</p>

@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=dlna-server
+Name=DLNA Server
 GenericName=DLNA media server
 Comment=Share local media with DLNA and UPnP clients
 Exec=dlna-server-gui

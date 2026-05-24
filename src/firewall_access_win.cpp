@@ -11,9 +11,9 @@
 #include <vector>
 
 namespace {
-const wchar_t* kTcpRuleName = L"dlna-server HTTP TCP";
-const wchar_t* kUdpRuleName = L"dlna-server SSDP UDP";
-const wchar_t* kRuleGroup = L"dlna-server";
+const wchar_t* kTcpRuleName = L"DLNA Server HTTP TCP";
+const wchar_t* kUdpRuleName = L"DLNA Server SSDP UDP";
+const wchar_t* kRuleGroup = L"DLNA Server";
 const LONG kProfiles = NET_FW_PROFILE2_DOMAIN | NET_FW_PROFILE2_PRIVATE | NET_FW_PROFILE2_PUBLIC;
 const LONG kProtocolTcp = 6;
 const LONG kProtocolUdp = 17;
@@ -361,7 +361,7 @@ bool AddRule(INetFwRules* rules, const wchar_t* name, LONG protocol, int port, b
 
     bool ok =
         PutBstr(rule, &INetFwRule::put_Name, name) &&
-        PutBstr(rule, &INetFwRule::put_Description, L"Allow dlna-server on local subnet for DLNA/UPnP discovery and playback.") &&
+        PutBstr(rule, &INetFwRule::put_Description, L"Allow DLNA Server on local subnet for DLNA/UPnP discovery and playback.") &&
         PutBstr(rule, &INetFwRule::put_ApplicationName, exePath) &&
         PutBstr(rule, &INetFwRule::put_Grouping, kRuleGroup) &&
         PutBstr(rule, &INetFwRule::put_RemoteAddresses, L"LocalSubnet") &&
@@ -432,7 +432,7 @@ bool MessageIndicatesAccessDenied(const std::wstring& message) {
 
 std::wstring BuildFirewallAccessSummary(int port) {
     (void)port;
-    return L"dlna-server needs Windows Firewall access for this app on TCP and UDP 1900"
+    return L"DLNA Server needs Windows Firewall access for this app on TCP and UDP 1900"
            L" on Domain, Private, and Public profiles, restricted to LocalSubnet.";
 }
 
@@ -520,7 +520,7 @@ bool EnsureFirewallAccess(int port, FirewallAccessMode mode, std::wstring& messa
     }
 
     std::wstring prompt = BuildFirewallAccessSummary(port) + L"\n\nAllow access now?";
-    int answer = MessageBoxW(NULL, prompt.c_str(), L"dlna-server firewall access", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON1);
+    int answer = MessageBoxW(NULL, prompt.c_str(), L"DLNA Server firewall access", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON1);
     if (answer != IDYES) {
         message = L"Firewall access was declined.";
         return false;
