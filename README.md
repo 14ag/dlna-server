@@ -58,6 +58,30 @@ pkg install clang cmake make python
 
 Use normal CMake commands for local builds. Windows users can also run `install-wsl.ps1` to build and install the native Linux GUI inside WSL.
 
+### Release assets
+
+From Windows, build the release downloads into `output/`:
+
+```bat
+build-assets.bat
+```
+
+The script builds:
+
+- `dlna-server-<version>-windows-x86_64.zip`
+- `dlna-server-<version>-windows-x86.zip`
+- `dlna-server_<version>_amd64.deb`
+- `DLNA_Server-<version>-x86_64.AppImage`
+- `SHA256SUMS.txt`
+
+Pass a version or WSL distribution when needed:
+
+```bat
+build-assets.bat -Version 1.3.0 -WslDistro Ubuntu
+```
+
+The Windows builds use Visual Studio through CMake. The Linux builds run in WSL and write back to the same `output/` folder. The script downloads the FLTK and AppImage packaging inputs from Windows before handing work to WSL, so a WSL DNS problem does not stop the Linux package build.
+
 ### Windows
 
 Build the desktop app from the repository root:
@@ -134,13 +158,13 @@ Release builds provide three Linux GUI options:
 - `.flatpak` for desktops with Flatpak enabled. Install it with your software app or `flatpak install`.
 - `.AppImage` for portable use. Mark it executable, then run it directly. AppImageLauncher can add it to your app menu.
 
-Build the Linux desktop release assets from WSL or Linux:
+Build only the Linux desktop release assets from WSL or Linux:
 
 ```sh
 bash scripts/build-linux-desktop-assets.sh
 ```
 
-This writes the `.deb`, AppImage when `linuxdeploy` is available, Flatpak when `flatpak-builder` is available, and the installed tree under `output/`.
+This writes the `.deb`, AppImage when `linuxdeploy` is available, Flatpak when `flatpak-builder` is available, and the installed tree under `output/`. From Windows, prefer `build-assets.bat` when you want Windows and Linux downloads in one run.
 
 ### Linux AppImage
 
