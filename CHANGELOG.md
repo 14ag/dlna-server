@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to dlna-server will be documented in this file.
+All notable changes to DLNA Server will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -10,54 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.3.0] - 2026-05-24
 
 ### Changed
-- Rebranded Windows and Linux desktop app names to **DLNA Server**.
-- Documentation now shows plain CMake build/install commands for Linux and macOS. `output/` is only used where a command explicitly sets it as a staging prefix.
-- Missing or empty server names now default to the computer hostname. Values already set in `config.ini` still win.
-- Linux desktop installs now include appstream metadata and a richer desktop entry.
+- Windows and Linux desktop menus now show the app as **DLNA Server**.
+- Linux keeps the command names `dlna-server` and `dlna-server-gui`, so existing shortcuts and scripts keep working.
+- If the server name is blank, DLNA Server now uses the computer hostname. A name saved in `config.ini` still takes priority.
+- Linux desktop installs now include richer app details for desktop software centers and app launchers.
 
 ### Fixed
-- The Linux GUI launcher now runs the native FLTK binary through a wrapper and forces FLTK's X11 backend under WSLg when a Windows display is available.
+- The Linux desktop app opens more reliably under WSLg.
 
 ## [1.2.0] - 2026-05-21
 
 ### Added
-- Headless POSIX `dlna-server` target for Linux, macOS, and Termux-style testing.
-- POSIX implementations for config loading, logging, interface enumeration, HTTP serving, SSDP discovery, and media scanning.
-- SSH-based POSIX verification script that builds in Termux and verifies SSDP `ssdp:alive`, `description.xml`, and unicast SSDP response from Windows.
-- Android USB smoke test for ADB, VLC package presence, and phone-to-server HTTP reachability.
-- IP whitelist enforcement in the POSIX HTTP server.
-- Shared DLNA utility layer for header parsing, byte ranges, MIME lookup, subtitle MIME lookup, and natural sorting.
-- Companion subtitle discovery and Samsung `sec:CaptionInfoEx` advertisement.
-- Native Linux FLTK GUI target with main window, settings dialog, log viewer, media-source management, and start/stop control.
-- Linux AppDir/AppImage packaging inputs with desktop metadata and icon validation.
-- WSLg GUI smoke script for native Linux GUI launch checks.
-- UMS-inspired hardening roadmap for future clean-room upgrades.
+- Linux, macOS, and other POSIX systems can now run DLNA Server from the command line.
+- Linux now has a native desktop app with folder management, settings, logs, and start/stop controls.
+- DLNA Server can enforce an IP whitelist on POSIX systems.
+- Companion subtitle files are now discovered and advertised to compatible Samsung DLNA clients.
+- Media responses now include better byte-range support for seeking.
+- The server now handles more Browse requests through `ContentDirectory:1`.
 
 ### Changed
-- Configuration now lives beside the executable as `config.ini`.
-- The Windows app loads configuration at startup and creates `config.ini` if it is missing.
-- Smoke tests now seed and verify root-local configuration.
-- Malformed POSIX HTTP and SOAP numeric inputs now fail with error responses instead of escaping request handlers.
-- Windows and POSIX HTTP servers now share stricter range, `HEAD`, subtitle, and invalid `Content-Length` behavior.
-- Media scanners skip hidden/system/unreadable files and avoid reparse/symlink loops.
-- Linux AppImage builds now force the native FLTK GUI instead of the Python/Tk fallback.
+- Configuration now lives beside the app as `config.ini`.
+- Windows and POSIX builds now use the same behavior for byte ranges, `HEAD` requests, subtitles, and invalid request bodies.
+- Media scanning now skips hidden, system, and unreadable files. It also avoids symlink and reparse loops.
+- Linux AppImage downloads now use the native Linux desktop app.
 
 ### Fixed
-- Empty-file byte-range requests now return `416` with `Content-Range: bytes */0`.
-- Malformed SOAP XML and missing required Browse tags now return SOAP fault `401`.
-- Windows smoke tests now validate description XML, Browse, subtitles, `HEAD`, `206/416`, empty-file ranges, and bad `Content-Length`.
+- Empty-file byte-range requests now return the correct `416` response.
+- Malformed Browse requests now return a DLNA SOAP fault instead of breaking the request.
+- Bad `Content-Length` requests are now rejected more consistently.
 
 ## [1.0.0] - 2026-04-10
 
 ### Added
-- Native Windows UI to manage folders and server settings (no Electron or Qt overhead).
-- System tray integration with startup minimization support.
-- Media streaming over HTTP with full byte-range request support.
-- Multicast SSDP device discovery engine for local network broadcasting.
-- Support for `ContentDirectory:1` Browse SOAP actions.
-- Real-time directory traversal and flat-folder view generation.
-- Extensive media support (MP4, MKV, AVI, TS, MP3, FLAC, JPG, and more).
-- Device whitelist via IP checking.
-- User-configurable server properties.
-- Support for grouping audio files into Artist/Album virtual containers.
-- Start-on-boot configuration via standard Windows registry keys.
+- Native Windows app for managing media folders and server settings.
+- System tray support with startup minimization.
+- Media streaming over HTTP with byte-range seeking.
+- Multicast SSDP discovery for local DLNA and UPnP devices.
+- `ContentDirectory:1` Browse support.
+- Directory scanning with flat-folder browsing.
+- Support for common video, audio, and image files, including MP4, MKV, AVI, TS, MP3, FLAC, and JPG.
+- Device access control by IP address.
+- User-configurable server name, ports, and media settings.
+- Artist and album grouping for audio folders.
+- Optional start-on-boot support on Windows.
