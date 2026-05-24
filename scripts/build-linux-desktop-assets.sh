@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+repo_root=${DLNA_REPO_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
 version=${DLNA_SERVER_VERSION:-$(grep -E '^project\(dlna-server VERSION ' "$repo_root/CMakeLists.txt" | sed -E 's/.*VERSION ([0-9.]+).*/\1/')}
 build_dir=${DLNA_LINUX_BUILD_DIR:-"$repo_root/build-release-linux"}
 install_dir=${DLNA_LINUX_INSTALL_DIR:-"$repo_root/output/linux"}
@@ -24,7 +24,9 @@ cmake_args=(
     -DDLNA_ENABLE_FLTK_GUI=ON
 )
 
-if [ -d "$repo_root/build-wsl-native/_deps/fltk-src" ]; then
+if [ -n "${DLNA_FLTK_SOURCE_DIR:-}" ] && [ -d "$DLNA_FLTK_SOURCE_DIR" ]; then
+    cmake_args+=("-DFETCHCONTENT_SOURCE_DIR_FLTK=$DLNA_FLTK_SOURCE_DIR")
+elif [ -d "$repo_root/build-wsl-native/_deps/fltk-src" ]; then
     cmake_args+=("-DFETCHCONTENT_SOURCE_DIR_FLTK=$repo_root/build-wsl-native/_deps/fltk-src")
 fi
 
@@ -52,13 +54,14 @@ if [ -z "$linuxdeploy" ]; then
     linuxdeploy="$tools_dir/linuxdeploy-x86_64.AppImage"
     if [ ! -x "$linuxdeploy" ]; then
         if command -v curl >/dev/null 2>&1; then
-            curl -L -o "$linuxdeploy" "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+            curl -L -o "$linuxdeploy" "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" || true
         elif command -v wget >/dev/null 2>&1; then
-            wget -O "$linuxdeploy" "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
+            wget -O "$linuxdeploy" "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" || true
         fi
         chmod +x "$linuxdeploy" 2>/dev/null || true
     fi
 fi
+chmod +x "$linuxdeploy" 2>/dev/null || true
 
 if [ -x "$linuxdeploy" ]; then
     if ! (cd "$output_dir" && APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" --appdir "$appdir" --desktop-file "$appdir/dlna-server.desktop" --icon-file "$appdir/dlna-server.svg" --output appimage); then
