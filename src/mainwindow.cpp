@@ -68,7 +68,7 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
     RegisterClassW(&wc);
 
     m_hwnd = CreateWindowExW(
-        0, CLASS_NAME, L"dlna-server",
+        0, CLASS_NAME, L"DLNA Server",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
         NULL, NULL, hInstance, this
@@ -144,7 +144,7 @@ void MainWindow::AddTrayIcon() {
     nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     nid.uCallbackMessage = WM_TRAYICON;
     nid.hIcon = LoadIcon(m_hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
-    wcscpy_s(nid.szTip, L"dlna-server");
+    wcscpy_s(nid.szTip, L"DLNA Server");
 
     Shell_NotifyIconW(NIM_ADD, &nid);
 }
@@ -290,7 +290,7 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             titleRight = kGutter;
         }
         RECT rcTitle = { kGutter, 0, titleRight, kToolbarHeight };
-        DrawTextW(hdc, L"dlna-server", -1, &rcTitle, DT_SINGLELINE | DT_VCENTER);
+        DrawTextW(hdc, L"DLNA Server", -1, &rcTitle, DT_SINGLELINE | DT_VCENTER);
         SelectObject(hdc, hOldFont);
 
         RECT rcStatus = { 0, kToolbarHeight, rcClient.right, kToolbarHeight + kStatusHeight };
@@ -299,7 +299,7 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         hOldFont = SelectObject(hdc, m_hBodyFont ? m_hBodyFont : GetStockObject(DEFAULT_GUI_FONT));
 
         RECT rcStatusText = { kGutter, kToolbarHeight, rcClient.right - kGutter, kToolbarHeight + kStatusHeight };
-        std::wstring statusText = m_isRunning ? L"dlna-server is running on " + m_statusEndpoint : L"dlna-server is stopped";
+        std::wstring statusText = m_isRunning ? L"DLNA Server is running on " + m_statusEndpoint : L"DLNA Server is stopped";
         DrawTextW(hdc, statusText.c_str(), -1, &rcStatusText, DT_SINGLELINE | DT_VCENTER);
 
         if (SendMessage(m_hListSources, LB_GETCOUNT, 0, 0) == 0) {

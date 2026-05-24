@@ -9,7 +9,10 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
     def read(self, path):
         return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_no_build_helper_scripts_are_required(self):
+    def test_wsl_install_script_builds_native_gui(self):
+        script = self.read("install-wsl.ps1")
+        readme = self.read("README.md")
+
         for helper in (
             "build-output.ps1",
             "build-linux-appdir.ps1",
@@ -17,8 +20,21 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         ):
             self.assertFalse((ROOT / helper).exists())
 
-        readme = self.read("README.md")
-        self.assertIn("There are no build helper scripts.", readme)
+        for token in (
+            "wsl.exe -d $Distro bash",
+            "DLNA_ENABLE_FLTK_GUI=ON",
+            "cmake --build",
+            "cmake --install",
+            "update-desktop-database",
+            "gtk-update-icon-cache",
+            "PASS WSL GUI smoke",
+            "InstallPackages",
+            "Prefix must be a WSL path",
+        ):
+            self.assertIn(token, script)
+
+        self.assertIn(".\\install-wsl.ps1", readme)
+        self.assertIn("-InstallPackages", readme)
         self.assertIn("cmake -S . -B build-linux", readme)
 
 
@@ -33,7 +49,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
     def test_appdir_desktop_metadata_is_relative(self):
         desktop = self.read("packaging/linux/dlna-server.appimage.desktop")
 
-        self.assertIn("Name=dlna-server", desktop)
+        self.assertIn("Name=DLNA Server", desktop)
         self.assertIn("Exec=dlna-server-gui", desktop)
         self.assertIn("Icon=dlna-server", desktop)
         self.assertIn("StartupWMClass=dlna-server", desktop)
@@ -67,11 +83,12 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("dlna-server-gui-native", cmake)
         self.assertIn("if(FLTK_FOUND)", cmake)
         self.assertIn("OUTPUT_NAME dlna-server-gui-bin", cmake)
-        self.assertIn("packaging/linux/dlna-server-gui", cmake)
+        self.assertIn('configure_file(packaging/linux/dlna-server-gui "${CMAKE_BINARY_DIR}/dlna-server-gui" @ONLY NEWLINE_STYLE UNIX)', cmake)
+        self.assertIn('install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui"', cmake)
         self.assertIn("src/posix_server.cpp", cmake)
         self.assertIn("Threads::Threads", cmake)
         self.assertIn("#include <FL/Fl_Window.H>", gui_source)
-        self.assertIn("dlna-server is stopped", gui_source)
+        self.assertIn("DLNA Server is stopped", gui_source)
 
     def test_readme_says_native_gui_is_default(self):
         readme = self.read("README.md")
@@ -102,7 +119,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         gui_source = self.read("src/fltk_gui_main.cpp")
 
         for label in (
-            "dlna-server Settings",
+            "DLNA Server Settings",
             "Server Name:",
             "HTTP Port:",
             "File Port:",
@@ -123,7 +140,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
             "View log",
             "OK",
             "Cancel",
-            "dlna-server Log",
+            "DLNA Server Log",
             "Close",
         ):
             self.assertIn(label, gui_source)

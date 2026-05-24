@@ -27,8 +27,8 @@ class FirewallAccessSourceTests(unittest.TestCase):
             "ShellExecuteExW",
             'L"runas"',
             'L"--configure-firewall --port "',
-            "dlna-server HTTP TCP",
-            "dlna-server SSDP UDP",
+            "DLNA Server HTTP TCP",
+            "DLNA Server SSDP UDP",
         ):
             self.assertIn(token, source)
 
@@ -66,27 +66,17 @@ class FirewallAccessSourceTests(unittest.TestCase):
 
         self.assertNotIn("EnsureFirewallAccess(AppConfig.port", source)
 
-    def test_posix_firewall_helper_prefers_firewalld_then_ufw_with_pkexec(self):
-        source = self.read("src/firewall_access_posix.cpp")
+    def test_posix_build_has_no_firewall_helper(self):
         cmake = self.read("CMakeLists.txt")
         cli = self.read("src/posix_main.cpp")
         gui = self.read("src/fltk_gui_main.cpp")
 
-        for token in (
-            "firewall-cmd --state",
-            "--get-active-zones",
-            "--query-port=",
-            "--add-port=",
-            "1900/udp",
-            "ufw allow ",
-            "pkexec /bin/sh -c",
-            "sudo sh -c",
-        ):
-            self.assertIn(token, source)
-
-        self.assertIn("firewall_access_posix.cpp", cmake)
-        self.assertIn("FirewallAccessMode::NonInteractive", cli)
-        self.assertIn("FirewallAccessMode::Interactive", gui)
+        self.assertFalse((ROOT / "src/firewall_access_posix.cpp").exists())
+        self.assertNotIn("firewall_access_posix.cpp", cmake)
+        self.assertNotIn("firewall_access.h", cli)
+        self.assertNotIn("EnsureFirewallAccess", cli)
+        self.assertNotIn("firewall_access.h", gui)
+        self.assertNotIn("EnsureFirewallAccess", gui)
 
     def test_android_smoke_requires_firewall_rules_and_real_vlc_playback(self):
         script = self.read("tests/verify-android-smoke.ps1")

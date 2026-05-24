@@ -22,11 +22,11 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "dlna-server contributors"
-            VALUE "FileDescription", "dlna-server"
+            VALUE "FileDescription", "DLNA Server"
             VALUE "FileVersion", "1.2.0"
-            VALUE "InternalName", "dlna-server"
-            VALUE "OriginalFilename", "dlna-server.exe"
-            VALUE "ProductName", "dlna-server"
+            VALUE "InternalName", "DLNA Server"
+            VALUE "OriginalFilename", "DLNA Server.exe"
+            VALUE "ProductName", "DLNA Server"
             VALUE "ProductVersion", "1.2.0"
         END
     END
@@ -39,7 +39,7 @@ END
 // Settings Dialog
 IDD_SETTINGS DIALOGEX 0, 0, 360, 312
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "dlna-server Settings"
+CAPTION "DLNA Server Settings"
 FONT 9, "Segoe UI Variable", 400, 0, 0x1
 BEGIN
     DEFPUSHBUTTON   "OK",IDOK,288,288,56,18
@@ -81,7 +81,7 @@ END
 // Log Dialog
 IDD_LOG DIALOGEX 0, 0, 440, 320
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "dlna-server Log"
+CAPTION "DLNA Server Log"
 FONT 9, "Segoe UI Variable", 400, 0, 0x1
 BEGIN
     EDITTEXT        IDC_EDT_LOG_TEXT,16,16,408,272,ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL

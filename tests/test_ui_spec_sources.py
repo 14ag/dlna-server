@@ -43,6 +43,7 @@ class UiSpecTests(unittest.TestCase):
         main = self.read("src/mainwindow.cpp")
         app_rc = self.read("resources/app.rc")
         svg = self.read("resources/dlna-server.svg")
+        cmake = self.read("CMakeLists.txt")
 
         for token in (
             "const int kGutter = 24",
@@ -63,15 +64,16 @@ class UiSpecTests(unittest.TestCase):
         self.assertIn('FONT 9, "Segoe UI Variable"', app_rc)
         self.assertNotIn("DS_FIXEDSYS", app_rc)
         for token in (
-            'VALUE "FileDescription", "dlna-server"',
-            'VALUE "InternalName", "dlna-server"',
-            'VALUE "OriginalFilename", "dlna-server.exe"',
-            'VALUE "ProductName", "dlna-server"',
+            'VALUE "FileDescription", "DLNA Server"',
+            'VALUE "InternalName", "DLNA Server"',
+            'VALUE "OriginalFilename", "DLNA Server.exe"',
+            'VALUE "ProductName", "DLNA Server"',
             'IDI_APP_ICON ICON "app.ico"',
         ):
             self.assertIn(token, app_rc)
-        self.assertIn('CreateWindowExW(\n        0, CLASS_NAME, L"dlna-server"', main)
-        self.assertIn('wcscpy_s(nid.szTip, L"dlna-server")', main)
+        self.assertIn('set_target_properties(dlna-server PROPERTIES OUTPUT_NAME "DLNA Server")', cmake)
+        self.assertIn('CreateWindowExW(\n        0, CLASS_NAME, L"DLNA Server"', main)
+        self.assertIn('wcscpy_s(nid.szTip, L"DLNA Server")', main)
         self.assertIn('linearGradient id="plate"', svg)
         self.assertIn('filter id="shadow"', svg)
 
