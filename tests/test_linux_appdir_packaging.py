@@ -59,6 +59,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         gui_source = self.read("src/fltk_gui_main.cpp")
 
         self.assertIn("DLNA_ENABLE_FLTK_GUI", cmake)
+        self.assertIn('option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" ON)', cmake)
         self.assertIn("find_package(FLTK QUIET)", cmake)
         self.assertIn("FetchContent_Declare", cmake)
         self.assertIn("EXCLUDE_FROM_ALL", cmake)
@@ -71,6 +72,12 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("Threads::Threads", cmake)
         self.assertIn("#include <FL/Fl_Window.H>", gui_source)
         self.assertIn("dlna-server is stopped", gui_source)
+
+    def test_readme_says_native_gui_is_default(self):
+        readme = self.read("README.md")
+
+        self.assertIn("By default this installs the headless server and native FLTK GUI", readme)
+        self.assertIn("-DDLNA_ENABLE_FLTK_GUI=OFF", readme)
 
     def test_fltk_main_window_has_parity_controls(self):
         gui_source = self.read("src/fltk_gui_main.cpp")

@@ -61,7 +61,7 @@ if(WIN32)
 else()
     include(GNUInstallDirs)
     include(FetchContent)
-    option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" OFF)
+    option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" ON)
     set(DLNA_FLTK_VERSION "release-1.4.5" CACHE STRING "FLTK git tag used when system FLTK is unavailable")
 
     add_executable(dlna-server
