@@ -21,6 +21,7 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - Advertises the server with SSDP multicast `NOTIFY` messages.
 - Handles UPnP `ContentDirectory:1` Browse SOAP requests.
 - Serves device, ContentDirectory, and ConnectionManager XML descriptions.
+- Accepts GENA event subscribe/unsubscribe requests on advertised UPnP event URLs.
 - Provides a native Windows UI with tray behavior.
 - Provides a native Linux FLTK GUI for media folders, server name, port, start, stop, settings, and logs.
 - Shows start/stop busy status and keeps Windows awake while the server is active.
@@ -75,6 +76,7 @@ The script builds:
 - `dlna-server-<version>-windows-x86.zip`
 - `dlna-server_<version>_amd64.deb`
 - `DLNA_Server-<version>-x86_64.AppImage`
+- `dlna-server-<version>-linux-x86_64.flatpak` when Flatpak tooling is installed in WSL
 - `SHA256SUMS.txt`
 
 Pass a version or WSL distribution when needed:
@@ -83,7 +85,7 @@ Pass a version or WSL distribution when needed:
 build-assets.bat -Version 1.3.0 -WslDistro Ubuntu
 ```
 
-The Windows builds use Visual Studio through CMake. The Linux builds run in WSL and write back to the same `output/` folder. The script downloads the FLTK and AppImage packaging inputs from Windows before handing work to WSL, so a WSL DNS problem does not stop the Linux package build.
+The Windows builds use Visual Studio through CMake. The Linux builds run in WSL and write back to the same `output/` folder. The script downloads pinned FLTK and AppImage packaging inputs from Windows, verifies SHA256 hashes, and then hands work to WSL, so a WSL DNS problem does not stop the Linux package build.
 
 ### Windows
 
@@ -167,7 +169,7 @@ Build only the Linux desktop release assets from WSL or Linux:
 bash scripts/build-linux-desktop-assets.sh
 ```
 
-This writes the `.deb`, AppImage when `linuxdeploy` is available, Flatpak when `flatpak-builder` is available, and the installed tree under `output/`. From Windows, prefer `build-assets.bat` when you want Windows and Linux downloads in one run.
+This writes the `.deb`, AppImage when verified `linuxdeploy` is available, Flatpak when `flatpak-builder` and the Freedesktop runtime are available, and the installed tree under `output/`. The script clears old top-level AppImages before packaging so stale files cannot be renamed as the current release. From Windows, prefer `build-assets.bat` when you want Windows and Linux downloads in one run.
 
 ### Linux AppImage
 
@@ -268,7 +270,9 @@ The DLNA device description advertises bundled PNG icons at 48, 120, and 256 px.
 
 The server answers ContentDirectory `Browse` and `Search` probes plus ConnectionManager `GetProtocolInfo` requests. Browse, HTTP streaming, and ConnectionManager responses use the same DLNA protocol metadata table. Companion `folder.jpg`, `cover.jpg`, `album.jpg`, and same-stem JPG/PNG art is advertised as `upnp:albumArtURI` and served from `/albumart/{id}`.
 
-When the main window closes, the app stays in the tray. Use the tray menu to show the window, stop the server, or exit.
+The advertised ContentDirectory and ConnectionManager event URLs accept UPnP GENA `SUBSCRIBE` and `UNSUBSCRIBE` requests with stable `SID` and timeout headers. This keeps diagnosis tools from flagging dead event endpoints while deeper callback notification fan-out remains future work.
+
+When the main window closes, the Windows app stays in the tray. Use the tray menu to show the window, stop the server, or exit. Settings, log, add-source, and default-playlist windows are modal child windows: they stay above their owner, close back to that owner, and do not add separate taskbar buttons.
 
 ### Linux/macOS GUI
 
