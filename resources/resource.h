@@ -12,7 +12,8 @@
 #define IDC_BTN_ADD                     201
 #define IDC_BTN_STARTSTOP               202
 #define IDC_BTN_SETTINGS                203
-#define IDC_LIST_SOURCES                204
+#define IDC_BTN_DELETE                  204
+#define IDC_LIST_SOURCES                205
 
 // Dialogs
 #define IDD_SETTINGS                    301
