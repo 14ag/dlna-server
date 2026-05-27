@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Windows keeps the PC awake while the DLNA server is starting, running, or stopping.
+- Settings now include default playlist entry creation and a custom DLNA server icon path.
+- DLNA device descriptions now advertise a server icon at `/server-icon`.
+
+### Changed
+- Start, stop, and restart now run outside the UI thread and show busy status text.
+- Removed disabled thumbnail placeholder controls from desktop settings.
+
 ## [1.3.0] - 2026-05-24
 
 ### Changed

@@ -57,10 +57,11 @@ class FirewallAccessSourceTests(unittest.TestCase):
         for token in (
             "int oldPort = AppConfig.port",
             "SettingsDialog::Show(hwnd)",
-            "m_isRunning && AppConfig.port != oldPort",
+            "IsRunning() && (result == IDC_BTN_RESTART || (result == IDOK && AppConfig.port != oldPort))",
+            "BeginRestartServer()",
             "DLNAServer.Stop()",
             "DLNAServer.Start()",
-            "Restart failed",
+            "Server stopped. Failed to restart on the new port.",
         ):
             self.assertIn(token, source)
 

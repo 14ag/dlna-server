@@ -15,6 +15,7 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 
 - Streams MP4, MKV, AVI, MOV, MP3, FLAC, JPEG, and PNG files over HTTP.
 - Reads playlist files: `.m3u`, `.m3u8`, and `.pls`.
+- Can maintain a default `.m3u` playlist from the desktop settings dialog.
 - Reads media from SMB and FTP shares such as `smb://user:pass@server/share` and `ftp://user:pass@server:21/media`.
 - Supports byte-range requests so DLNA clients can seek within media files.
 - Advertises the server with SSDP multicast `NOTIFY` messages.
@@ -22,6 +23,8 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - Serves device, ContentDirectory, and ConnectionManager XML descriptions.
 - Provides a native Windows UI with tray behavior.
 - Provides a native Linux FLTK GUI for media folders, server name, port, start, stop, settings, and logs.
+- Shows start/stop busy status and keeps Windows awake while the server is active.
+- Advertises a DLNA server icon, using the app icon by default or a configured image path.
 - Supports optional IP whitelisting on Windows and POSIX builds.
 - Stores settings in `config.ini` beside the executable.
 - Includes smoke tests for Windows, Android VLC reachability, and POSIX-over-SSH detection.
@@ -255,6 +258,12 @@ On first start, Windows may ask for firewall access. The app itself stays unelev
 
 Changing the HTTP port while the server is running restarts the server so the old listener closes and the new port opens. The Windows TCP firewall rule does not need to change when the port changes.
 
+While the server is starting or stopping, the status line shows `starting server...` or `stopping server...` and toolbar controls are disabled until the operation completes. Windows is kept awake while the server is starting, running, or stopping.
+
+Settings can create a default playlist entry from a movie path and optional subtitle path. The app writes `default.m3u` beside `config.ini`, emits `#DLNA-SUBTITLE` and VLC-compatible subtitle metadata, and indexes it when **Default playlist** is enabled.
+
+The DLNA device icon defaults to the bundled app icon. Set **Server icon** to an `.ico`, `.png`, `.jpg`, or `.jpeg` file to advertise that image instead.
+
 When the main window closes, the app stays in the tray. Use the tray menu to show the window, stop the server, or exit.
 
 ### Linux/macOS GUI
@@ -315,6 +324,9 @@ Port=8200
 FileServerPort=8201
 DebugLog=0
 RunOnBoot=0
+DefaultPlaylistEnabled=0
+DefaultPlaylistPath=C:\Path\To\App\default.m3u
+ServerIconPath=
 IPWhiteList=
 DeviceUUID=11111111-2222-3333-4444-555555555555
 MediaSources=C:\Media|D:\Videos|C:\Playlists\radio.m3u|smb://user:pass@server/share|ftp://user:pass@server:21/media

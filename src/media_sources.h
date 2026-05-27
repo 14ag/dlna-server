@@ -31,7 +31,7 @@ public:
 
 private:
     MediaSources();
-    void AddMediaFile(const std::wstring& path, int parentId, const std::wstring& titleOverride = L"");
+    void AddMediaFile(const std::wstring& path, int parentId, const std::wstring& titleOverride = L"", const std::wstring& subtitleOverride = L"");
     void ScanPlaylist(const std::wstring& playlistPath, int parentId);
     void ScanNetworkFolder(const std::wstring& folderUrl, int parentId, int depth);
     void ScanFolder(const std::wstring& rootPath, int parentId);

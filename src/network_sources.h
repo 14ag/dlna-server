@@ -8,6 +8,7 @@
 struct PlaylistEntry {
     std::wstring location;
     std::wstring title;
+    std::wstring subtitlePath;
 };
 
 struct RemoteDirectoryEntry {

@@ -33,7 +33,7 @@ void Server::RefreshEndpoints() {
 bool Server::Start() {
     if (m_running) return true;
     IPWhitelist::Get().Load(AppConfig.ipWhiteList);
-    if (AppConfig.mediaSources.empty()) {
+    if (AppConfig.mediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
         AppConfig.mediaSources.push_back({L".", true});
     }
     AppMedia.Scan();

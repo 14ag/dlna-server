@@ -3,6 +3,14 @@
 
 #include <windows.h>
 #include <string>
+#include <thread>
+
+enum class ServerUiState {
+    Stopped,
+    Starting,
+    Running,
+    Stopping
+};
 
 class MainWindow {
 public:
@@ -10,7 +18,7 @@ public:
     ~MainWindow();
 
     bool Create(HINSTANCE hInstance, int nCmdShow);
-    void SetStatus(bool running, const std::wstring& endpoint = L"");
+    void SetStatus(ServerUiState state, const std::wstring& endpoint = L"");
     HWND GetHwnd() const { return m_hwnd; }
 
 private:
@@ -25,6 +33,14 @@ private:
     void RefreshSourceList();
     HFONT CreateUiFont(int pixelSize, int weight, const wchar_t* faceName);
     void DrawToolbarButton(const DRAWITEMSTRUCT* drawItem);
+    void BeginStartServer();
+    void BeginStopServer();
+    void BeginRestartServer();
+    void CompleteServerOperation(ServerUiState finalState, const std::wstring& endpoint, bool success, const std::wstring& message);
+    bool IsBusy() const;
+    bool IsRunning() const;
+    void UpdateWakeLock();
+    void SetControlsForState();
 
     HWND m_hwnd;
     HINSTANCE m_hInstance;
@@ -40,8 +56,9 @@ private:
     HWND m_hBtnSettings;
     HWND m_hListSources;
 
-    bool m_isRunning;
+    ServerUiState m_state;
     std::wstring m_statusEndpoint;
+    std::thread m_worker;
 };
 
 #endif // MAINWINDOW_H

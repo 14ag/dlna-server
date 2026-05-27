@@ -17,6 +17,8 @@
 namespace {
 constexpr int kMaxCurlOutputBytes = 4 * 1024 * 1024;
 
+std::wstring TrimWide(const std::wstring& value);
+
 std::string ToLowerCopy(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
@@ -116,6 +118,12 @@ std::wstring ResolvePlaylistEntry(const std::wstring& playlistPath, const std::w
     if (IsRemoteMediaUrl(entry) || IsAbsoluteLocalPath(entry)) return entry;
     if (IsRemoteMediaUrl(playlistPath)) return JoinUrl(playlistPath, entry);
     return JoinLocalPath(playlistPath, entry);
+}
+
+std::wstring ResolvePlaylistSidecar(const std::wstring& playlistPath, const std::wstring& entry) {
+    std::wstring trimmed = TrimWide(entry);
+    if (trimmed.empty()) return {};
+    return ResolvePlaylistEntry(playlistPath, trimmed);
 }
 
 #ifdef _WIN32
@@ -236,6 +244,7 @@ std::vector<PlaylistEntry> ParseM3u(const std::wstring& playlistPath, const std:
     std::istringstream stream(text);
     std::string line;
     std::wstring pendingTitle;
+    std::wstring pendingSubtitle;
     while (std::getline(stream, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         std::string trimmed = TrimAscii(line);
@@ -249,12 +258,23 @@ std::vector<PlaylistEntry> ParseM3u(const std::wstring& playlistPath, const std:
             continue;
         }
 
+        if (trimmed.rfind("#DLNA-SUBTITLE:", 0) == 0) {
+            pendingSubtitle = ResolvePlaylistSidecar(playlistPath, Utf8ToWide(trimmed.substr(15)));
+            continue;
+        }
+
+        if (trimmed.rfind("#EXTVLCOPT:sub-file=", 0) == 0) {
+            pendingSubtitle = ResolvePlaylistSidecar(playlistPath, Utf8ToWide(trimmed.substr(20)));
+            continue;
+        }
+
         if (trimmed[0] == '#') continue;
 
         std::wstring location = ResolvePlaylistEntry(playlistPath, Utf8ToWide(trimmed));
         std::wstring title = pendingTitle.empty() ? TitleFromEntry(location) : pendingTitle;
-        entries.push_back({ location, title });
+        entries.push_back({ location, title, pendingSubtitle });
         pendingTitle.clear();
+        pendingSubtitle.clear();
     }
     return entries;
 }
@@ -296,7 +316,7 @@ std::vector<PlaylistEntry> ParsePls(const std::wstring& playlistPath, const std:
     for (const auto& it : files) {
         std::wstring location = ResolvePlaylistEntry(playlistPath, it.second);
         std::wstring title = titles[it.first].empty() ? TitleFromEntry(location) : titles[it.first];
-        entries.push_back({ location, title });
+        entries.push_back({ location, title, L"" });
     }
     return entries;
 }
