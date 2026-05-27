@@ -18,7 +18,7 @@ class UiSpecTests(unittest.TestCase):
             "Minimum content size: 640 x 460",
             "Toolbar height: 56 px",
             "Status strip height: 40 px",
-            "Windows UI font: Segoe UI for controls/body/title",
+            "Windows UI font: Segoe UI Variable with Segoe UI fallback",
             "Windows dialog templates use 10 pt Segoe UI",
             "Parent surfaces own layout",
             "Toolbar buttons are 32 px tall",
@@ -56,8 +56,8 @@ class UiSpecTests(unittest.TestCase):
             "const int kButtonHeight = 32",
             "const int kButtonGap = 8",
             "const int kCornerDiameter = 8",
-            'CreateUiFont(20, FW_SEMIBOLD, L"Segoe UI")',
-            'CreateUiFont(14, FW_NORMAL, L"Segoe UI")',
+            'CreateUiFont(20, FW_SEMIBOLD, L"Segoe UI Variable Display")',
+            'CreateUiFont(14, FW_NORMAL, L"Segoe UI Variable Text")',
             "DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE",
             'CreateWindowExW(0, L"BUTTON", L"Add"',
             'CreateWindowExW(0, L"BUTTON", L"Delete"',
@@ -84,8 +84,12 @@ class UiSpecTests(unittest.TestCase):
         self.assertIn('FONT 10, "Segoe UI"', app_rc)
         self.assertIn("IDD_SETTINGS DIALOGEX 0, 0, 400, 326", app_rc)
         self.assertIn("EDITTEXT        IDC_EDT_SERVER_NAME,110,26,190,19", app_rc)
-        self.assertIn('CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI")', main)
-        self.assertIn('CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI")', settings)
+        self.assertIn('CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI Variable Text")', main)
+        self.assertIn('CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI Variable Text")', settings)
+        self.assertIn("PostQuitMessage(static_cast<int>(msg.wParam))", main)
+        self.assertIn("PostQuitMessage(static_cast<int>(msg.wParam))", settings)
+        self.assertIn("ApplyDarkFrame(hwndDlg)", settings)
+        self.assertIn("ApplyDarkFrame(hwndDlg)", logdlg)
         self.assertIn("ApplyDialogFont(hwndDlg)", settings)
         self.assertIn("EnumChildWindows(hwnd, SetChildFontProc", settings)
         for token in (

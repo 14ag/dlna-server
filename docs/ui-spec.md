@@ -13,12 +13,12 @@ Scope: Windows Win32 UI and Linux FLTK UI. Keep both quiet, compact, and utility
 - Shell is dark, and Windows enables the dark DWM title bar/frame
 - Windows settings, log, add-source, and default-playlist dialogs use normal system dialog controls
 - WinUI-style spacing uses 16 px outer margins, 12 px label-to-control gaps, and 8 px gaps between related controls
-- Windows dialog templates use 10 pt Segoe UI; dynamic Win32 dialog controls use 14 px Segoe UI
+- Windows dialog templates use 10 pt Segoe UI; dynamic Win32 dialog controls use 14 px Segoe UI Variable Text with system fallback
 - Parent surfaces own layout: shell/status/list areas stretch with the window; dialogs use fixed content surfaces sized to their controls
 - Avoid fixed text-field widths unless the surface itself is fixed; long text clips or scrolls inside the text field instead of resizing neighboring controls
 - Use semantic neutral colors, with accent color only for focus, selection, and primary action states
 - Do not hardcode a dark-only shell; all custom drawing must consume theme tokens
-- Windows UI font: Segoe UI for controls/body/title, with semibold weight for the shell title
+- Windows UI font: Segoe UI Variable with Segoe UI fallback, with semibold weight for the shell title
 
 ## Controls
 
@@ -62,3 +62,5 @@ Scope: Windows Win32 UI and Linux FLTK UI. Keep both quiet, compact, and utility
 - Toolbar button positions remain stable during resize
 - Dialog tab order follows visual reading order
 - Disabled controls have native disabled styling
+- Windows modal sub-windows are owned by their parent, do not create separate taskbar entries, return focus to their owner on close, and preserve app quit messages if exit occurs while a sub-window is open
+- Settings, log, add-source, and default-playlist windows opt into the same dark DWM frame as the main shell

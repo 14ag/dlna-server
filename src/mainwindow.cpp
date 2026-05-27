@@ -73,7 +73,7 @@ HFONT CreateScaledFont(HWND hwnd, int pixelSize, int weight, const wchar_t* face
 }
 
 HFONT SourcePromptFont(HWND hwnd) {
-    static HFONT font = CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI");
+    static HFONT font = CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI Variable Text");
     return font ? font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
 }
 
@@ -177,6 +177,7 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
         state = reinterpret_cast<SourcePromptState*>(cs->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+        ApplyDarkFrame(hwnd);
 
         HFONT font = SourcePromptFont(hwnd);
         HWND label = CreateWindowW(L"STATIC", L"Add a folder, playlist file, or network share URL:",
@@ -259,8 +260,9 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
 
-    MSG msg;
-    while (!state.done && GetMessageW(&msg, NULL, 0, 0) > 0) {
+    MSG msg = {};
+    BOOL getResult = 0;
+    while (!state.done && (getResult = GetMessageW(&msg, NULL, 0, 0)) > 0) {
         if (!IsDialogMessageW(hwnd, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -269,6 +271,9 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
 
     EnableWindow(owner, TRUE);
     SetForegroundWindow(owner);
+    if (getResult == 0) {
+        PostQuitMessage(static_cast<int>(msg.wParam));
+    }
     return state.accepted ? state.value : L"";
 }
 }
@@ -323,9 +328,9 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
     if (m_hwnd == NULL) return false;
     ApplyDarkFrame(m_hwnd);
 
-    m_hTitleFont = CreateUiFont(20, FW_SEMIBOLD, L"Segoe UI");
-    m_hBodyFont = CreateUiFont(14, FW_NORMAL, L"Segoe UI");
-    m_hButtonFont = CreateUiFont(14, FW_NORMAL, L"Segoe UI");
+    m_hTitleFont = CreateUiFont(20, FW_SEMIBOLD, L"Segoe UI Variable Display");
+    m_hBodyFont = CreateUiFont(14, FW_NORMAL, L"Segoe UI Variable Text");
+    m_hButtonFont = CreateUiFont(14, FW_NORMAL, L"Segoe UI Variable Text");
 
     m_hBtnAdd = CreateWindowExW(0, L"BUTTON", L"Add",
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,

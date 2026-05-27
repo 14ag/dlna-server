@@ -1,8 +1,15 @@
 #include "logdlg.h"
 #include "log.h"
 #include "../resources/resource.h"
+#include <dwmapi.h>
 
 namespace {
+
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+
+#pragma comment(lib, "dwmapi.lib")
 
 HFONT CreateLogFont(HWND hwnd) {
     HDC hdc = GetDC(hwnd);
@@ -12,7 +19,7 @@ HFONT CreateLogFont(HWND hwnd) {
     }
     return CreateFontW(-MulDiv(14, dpiY, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Variable Text");
 }
 
 HFONT LogFont(HWND hwnd) {
@@ -31,6 +38,11 @@ void ApplyDialogFont(HWND hwnd) {
     EnumChildWindows(hwnd, SetChildFontProc, reinterpret_cast<LPARAM>(font));
 }
 
+void ApplyDarkFrame(HWND hwnd) {
+    BOOL darkFrame = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkFrame, sizeof(darkFrame));
+}
+
 }
 
 INT_PTR LogDialog::Show(HWND hParent) {
@@ -40,6 +52,7 @@ INT_PTR LogDialog::Show(HWND hParent) {
 INT_PTR CALLBACK LogDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
     case WM_INITDIALOG: {
+        ApplyDarkFrame(hwndDlg);
         ApplyDialogFont(hwndDlg);
         std::wstring logText = GetSystemLog();
         SetDlgItemTextW(hwndDlg, IDC_EDT_LOG_TEXT, logText.c_str());
