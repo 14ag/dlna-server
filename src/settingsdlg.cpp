@@ -3,6 +3,7 @@
 #include "netutils.h"
 #include "../resources/resource.h"
 #include <commctrl.h>
+#include <dwmapi.h>
 #include <shobjidl.h>
 #include <shlwapi.h>
 #include <cwctype>
@@ -10,6 +11,12 @@
 #include <string>
 
 namespace {
+
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+
+#pragma comment(lib, "dwmapi.lib")
 const int IDC_PLAYLIST_MOVIE = 6101;
 const int IDC_PLAYLIST_SUBTITLE = 6102;
 const int IDC_PLAYLIST_ADD = 6103;
@@ -43,8 +50,13 @@ HFONT CreateScaledFont(HWND hwnd, int pixelSize, int weight, const wchar_t* face
 }
 
 HFONT DialogBodyFont(HWND hwnd) {
-    static HFONT font = CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI");
+    static HFONT font = CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI Variable Text");
     return font ? font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+}
+
+void ApplyDarkFrame(HWND hwnd) {
+    BOOL darkFrame = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkFrame, sizeof(darkFrame));
 }
 
 BOOL CALLBACK SetChildFontProc(HWND child, LPARAM fontParam) {
@@ -188,6 +200,7 @@ LRESULT CALLBACK PlaylistEntryProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
         state = reinterpret_cast<PlaylistEntryState*>(cs->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+        ApplyDarkFrame(hwnd);
         HFONT font = DialogBodyFont(hwnd);
         HWND movieLabel = CreateWindowW(L"STATIC", L"Movie path:", WS_VISIBLE | WS_CHILD, kDialogMargin, kPlaylistMovieTop + 8, kLabelWidth, 18, hwnd, NULL, NULL, NULL);
         state->movieEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, kPlaylistEditLeft, kPlaylistMovieTop, kPlaylistEditWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_MOVIE)), NULL, NULL);
@@ -307,8 +320,9 @@ void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
     EnableWindow(hwndDlg, FALSE);
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
-    MSG msg;
-    while (!state.done && GetMessageW(&msg, NULL, 0, 0) > 0) {
+    MSG msg = {};
+    BOOL getResult = 0;
+    while (!state.done && (getResult = GetMessageW(&msg, NULL, 0, 0)) > 0) {
         if (!IsDialogMessageW(hwnd, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -316,11 +330,15 @@ void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
     }
     EnableWindow(hwndDlg, TRUE);
     SetForegroundWindow(hwndDlg);
+    if (getResult == 0) {
+        PostQuitMessage(static_cast<int>(msg.wParam));
+    }
 }
 
 INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
     case WM_INITDIALOG:
+        ApplyDarkFrame(hwndDlg);
         OnInitDialog(hwndDlg);
         return (INT_PTR)TRUE;
         
