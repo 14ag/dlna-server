@@ -90,7 +90,10 @@ Config::Config()
       debugLog(false),
       ipWhiteList(L""),
       deviceUUID(L""),
-      runOnBoot(false) {
+      runOnBoot(false),
+      defaultPlaylistEnabled(false),
+      defaultPlaylistPath(L""),
+      serverIconPath(L"") {
 }
 
 std::wstring Config::GetConfigPath() {
@@ -112,6 +115,13 @@ std::wstring Config::GenerateUUID() {
     return Utf8ToWide(uuid);
 }
 
+std::wstring Config::GetDefaultPlaylistPath() {
+    std::string path = WideToUtf8(GetConfigPath());
+    const size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos) return L"default.m3u";
+    return Utf8ToWide(path.substr(0, slash + 1) + "default.m3u");
+}
+
 void Config::SetRunOnBoot(bool) {
 }
 
@@ -119,6 +129,7 @@ void Config::Load() {
     std::ifstream file(WideToUtf8(GetConfigPath()), std::ios::binary);
     if (!file) {
         if (deviceUUID.empty()) deviceUUID = GenerateUUID();
+        if (defaultPlaylistPath.empty()) defaultPlaylistPath = GetDefaultPlaylistPath();
         Save();
         return;
     }
@@ -148,6 +159,9 @@ void Config::Load() {
         else if (key == "AddArtistAlbumFolders") addArtistAlbumFolders = ParseIntOrDefault(value, 0) != 0;
         else if (key == "DebugLog") debugLog = ParseIntOrDefault(value, 0) != 0;
         else if (key == "RunOnBoot") runOnBoot = ParseIntOrDefault(value, 0) != 0;
+        else if (key == "DefaultPlaylistEnabled") defaultPlaylistEnabled = ParseIntOrDefault(value, 0) != 0;
+        else if (key == "DefaultPlaylistPath") defaultPlaylistPath = Utf8ToWide(value);
+        else if (key == "ServerIconPath") serverIconPath = Utf8ToWide(value);
         else if (key == "IPWhiteList") ipWhiteList = Utf8ToWide(value);
         else if (key == "DeviceUUID") deviceUUID = Utf8ToWide(value);
         else if (key == "MediaSources") {
@@ -160,6 +174,7 @@ void Config::Load() {
         }
     }
     if (serverName.empty()) serverName = DefaultServerName();
+    if (defaultPlaylistPath.empty()) defaultPlaylistPath = GetDefaultPlaylistPath();
     if (deviceUUID.empty()) {
         deviceUUID = GenerateUUID();
         Save();
@@ -189,6 +204,9 @@ void Config::Save() {
     file << "AddArtistAlbumFolders=" << (addArtistAlbumFolders ? 1 : 0) << "\n";
     file << "DebugLog=" << (debugLog ? 1 : 0) << "\n";
     file << "RunOnBoot=" << (runOnBoot ? 1 : 0) << "\n";
+    file << "DefaultPlaylistEnabled=" << (defaultPlaylistEnabled ? 1 : 0) << "\n";
+    file << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
+    file << "ServerIconPath=" << WideToUtf8(serverIconPath) << "\n";
     file << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
     file << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
     file << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";

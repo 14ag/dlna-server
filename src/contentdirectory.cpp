@@ -5,10 +5,30 @@
 #include "netutils.h"
 #include "network_sources.h"
 #include <algorithm>
+#include <cwctype>
 #include <sstream>
 #include <vector>
 
 namespace {
+std::wstring ToLowerWideLocal(std::wstring value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
+        return static_cast<wchar_t>(std::towlower(ch));
+    });
+    return value;
+}
+
+std::string ServerIconMimeType() {
+    std::wstring path = ToLowerWideLocal(AppConfig.serverIconPath);
+    if (path.size() >= 4 && path.substr(path.size() - 4) == L".png") return "image/png";
+    if ((path.size() >= 4 && path.substr(path.size() - 4) == L".jpg") ||
+        (path.size() >= 5 && path.substr(path.size() - 5) == L".jpeg")) return "image/jpeg";
+#ifdef _WIN32
+    return "image/vnd.microsoft.icon";
+#else
+    return "image/svg+xml";
+#endif
+}
+
 bool IsValidXml(const std::string& xml) {
     std::vector<std::string> tagStack;
     size_t i = 0;
@@ -151,6 +171,7 @@ std::string ContentDirectory::GetDeviceDescriptionXML() {
        << "    <modelName>dlna-server</modelName>\n"
        << "    <UDN>uuid:" << deviceUUID << "</UDN>\n"
        << "    <dlna:X_DLNADOC xmlns:dlna=\"urn:schemas-dlna-org:device-1-0\">DMS-1.50</dlna:X_DLNADOC>\n"
+       << "    <iconList><icon><mimetype>" << ServerIconMimeType() << "</mimetype><width>256</width><height>256</height><depth>32</depth><url>/server-icon</url></icon></iconList>\n"
        << "    <serviceList>\n"
        << "      <service>\n"
        << "        <serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType>\n"

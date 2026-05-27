@@ -6,6 +6,7 @@
 #include <shellapi.h>
 #include <string>
 #include <cwctype>
+#include <thread>
 #include "config.h"
 #include "media_sources.h"
 #include "server.h"
@@ -13,6 +14,8 @@
 #pragma comment(lib, "comctl32.lib")
 
 #define WM_TRAYICON (WM_USER + 1)
+#define WM_SERVER_OPERATION_DONE (WM_APP + 10)
+#define WM_SERVER_OPERATION_PROGRESS (WM_APP + 11)
 #define TRAY_ID 1
 
 namespace {
@@ -38,6 +41,13 @@ COLORREF kControlPressedColor = RGB(58, 58, 58);
 COLORREF kBorderColor = RGB(72, 72, 72);
 COLORREF kTextColor = RGB(244, 244, 244);
 COLORREF kSecondaryTextColor = RGB(190, 190, 190);
+
+struct ServerOperationResult {
+    ServerUiState finalState;
+    bool success;
+    std::wstring endpoint;
+    std::wstring message;
+};
 
 std::wstring TrimWideInput(const std::wstring& value) {
     size_t start = 0;
@@ -223,7 +233,7 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
 }
 }
 
-MainWindow::MainWindow() : m_hwnd(NULL), m_hInstance(NULL), m_isRunning(false),
+MainWindow::MainWindow() : m_hwnd(NULL), m_hInstance(NULL), m_state(ServerUiState::Stopped),
 m_hBtnAdd(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL) {
     m_hBgBrush = CreateSolidBrush(kPageColor);
     m_hDarkBrush = CreateSolidBrush(kControlColor);
@@ -234,6 +244,11 @@ m_hBtnAdd(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NUL
 }
 
 MainWindow::~MainWindow() {
+    if (m_worker.joinable()) {
+        m_worker.join();
+    }
+    DLNAServer.Stop();
+    SetThreadExecutionState(ES_CONTINUOUS);
     RemoveTrayIcon();
     if (m_hBgBrush) DeleteObject(m_hBgBrush);
     if (m_hDarkBrush) DeleteObject(m_hDarkBrush);
@@ -307,11 +322,94 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
     return true;
 }
 
-void MainWindow::SetStatus(bool running, const std::wstring& endpoint) {
-    m_isRunning = running;
+void MainWindow::SetStatus(ServerUiState state, const std::wstring& endpoint) {
+    m_state = state;
     m_statusEndpoint = endpoint;
-    SendMessage(m_hBtnStartStop, WM_SETTEXT, 0, (LPARAM)(running ? L"\xE71A" : L"\xE768"));
+    SendMessage(m_hBtnStartStop, WM_SETTEXT, 0, (LPARAM)(IsRunning() ? L"\xE71A" : L"\xE768"));
+    SetControlsForState();
+    UpdateWakeLock();
     InvalidateRect(m_hwnd, NULL, TRUE);
+}
+
+bool MainWindow::IsBusy() const {
+    return m_state == ServerUiState::Starting || m_state == ServerUiState::Stopping;
+}
+
+bool MainWindow::IsRunning() const {
+    return m_state == ServerUiState::Running;
+}
+
+void MainWindow::UpdateWakeLock() {
+    if (m_state == ServerUiState::Stopped) {
+        SetThreadExecutionState(ES_CONTINUOUS);
+    } else {
+        SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED);
+    }
+}
+
+void MainWindow::SetControlsForState() {
+    BOOL enabled = IsBusy() ? FALSE : TRUE;
+    EnableWindow(m_hBtnAdd, enabled);
+    EnableWindow(m_hBtnStartStop, enabled);
+    EnableWindow(m_hBtnSettings, enabled);
+}
+
+void MainWindow::BeginStartServer() {
+    if (IsBusy() || IsRunning()) return;
+    if (m_worker.joinable()) m_worker.join();
+    SetStatus(ServerUiState::Starting);
+    HWND target = m_hwnd;
+    m_worker = std::thread([target]() {
+        bool ok = DLNAServer.Start();
+        ServerOperationResult* result = new ServerOperationResult{
+            ok ? ServerUiState::Running : ServerUiState::Stopped,
+            ok,
+            ok ? DLNAServer.GetEndpoint() : L"",
+            ok ? L"" : L"Failed to start DLNA server. Open View log for details."
+        };
+        PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+    });
+}
+
+void MainWindow::BeginStopServer() {
+    if (IsBusy() || !IsRunning()) return;
+    if (m_worker.joinable()) m_worker.join();
+    SetStatus(ServerUiState::Stopping, m_statusEndpoint);
+    HWND target = m_hwnd;
+    m_worker = std::thread([target]() {
+        DLNAServer.Stop();
+        ServerOperationResult* result = new ServerOperationResult{ ServerUiState::Stopped, true, L"", L"" };
+        PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+    });
+}
+
+void MainWindow::BeginRestartServer() {
+    if (IsBusy()) return;
+    if (m_worker.joinable()) m_worker.join();
+    SetStatus(ServerUiState::Stopping, m_statusEndpoint);
+    HWND target = m_hwnd;
+    m_worker = std::thread([target]() {
+        DLNAServer.Stop();
+        PostMessageW(target, WM_SERVER_OPERATION_PROGRESS, static_cast<WPARAM>(ServerUiState::Starting), 0);
+        bool ok = DLNAServer.Start();
+        ServerOperationResult* result = new ServerOperationResult{
+            ok ? ServerUiState::Running : ServerUiState::Stopped,
+            ok,
+            ok ? DLNAServer.GetEndpoint() : L"",
+            ok ? L"" : L"Server stopped. Failed to restart on the new port."
+        };
+        PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+    });
+}
+
+void MainWindow::CompleteServerOperation(ServerUiState finalState, const std::wstring& endpoint, bool success, const std::wstring& message) {
+    if (m_worker.joinable()) {
+        m_worker.join();
+    }
+    SetStatus(finalState, endpoint);
+    if (!success && !message.empty()) {
+        MessageBoxW(m_hwnd, message.c_str(), L"DLNA Server", MB_ICONWARNING | MB_OK);
+    }
 }
 
 HFONT MainWindow::CreateUiFont(int pixelSize, int weight, const wchar_t* faceName) {
@@ -353,7 +451,7 @@ void MainWindow::ShowTrayMenu() {
     GetCursorPos(&pt);
     HMENU hMenu = CreatePopupMenu();
     InsertMenuW(hMenu, -1, MF_BYPOSITION | MF_STRING, 1, L"Show Window");
-    InsertMenuW(hMenu, -1, MF_BYPOSITION | MF_STRING, 2, m_isRunning ? L"Stop Server" : L"Start Server");
+    InsertMenuW(hMenu, -1, MF_BYPOSITION | MF_STRING | (IsBusy() ? MF_GRAYED : 0), 2, IsRunning() ? L"Stop Server" : L"Start Server");
     InsertMenuW(hMenu, -1, MF_BYPOSITION | MF_STRING, 3, L"Exit");
 
     SetForegroundWindow(m_hwnd);
@@ -363,7 +461,7 @@ void MainWindow::ShowTrayMenu() {
     if (cmd == 1) {
         ShowWindow(m_hwnd, SW_RESTORE);
         SetForegroundWindow(m_hwnd);
-    } else if (cmd == 2) {
+    } else if (cmd == 2 && !IsBusy()) {
         PostMessage(m_hwnd, WM_COMMAND, IDC_BTN_STARTSTOP, 0);
     } else if (cmd == 3) {
         PostQuitMessage(0);
@@ -475,7 +573,14 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         hOldFont = SelectObject(hdc, m_hBodyFont ? m_hBodyFont : GetStockObject(DEFAULT_GUI_FONT));
 
         RECT rcStatusText = { kGutter, kToolbarHeight, rcClient.right - kGutter, kToolbarHeight + kStatusHeight };
-        std::wstring statusText = m_isRunning ? L"DLNA Server is running on " + m_statusEndpoint : L"DLNA Server is stopped";
+        std::wstring statusText = L"DLNA Server is stopped";
+        if (m_state == ServerUiState::Starting) {
+            statusText = L"starting server...";
+        } else if (m_state == ServerUiState::Stopping) {
+            statusText = L"stopping server...";
+        } else if (m_state == ServerUiState::Running) {
+            statusText = L"DLNA Server is running on " + m_statusEndpoint;
+        }
         DrawTextW(hdc, statusText.c_str(), -1, &rcStatusText, DT_SINGLELINE | DT_VCENTER);
 
         if (SendMessage(m_hListSources, LB_GETCOUNT, 0, 0) == 0) {
@@ -518,13 +623,10 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         int wmId = LOWORD(wParam);
         switch (wmId) {
         case IDC_BTN_STARTSTOP:
-            if (m_isRunning) {
-                DLNAServer.Stop();
-                SetStatus(false);
+            if (IsRunning()) {
+                BeginStopServer();
             } else {
-                if (DLNAServer.Start()) {
-                    SetStatus(true, DLNAServer.GetEndpoint());
-                }
+                BeginStartServer();
             }
             break;
         case IDC_BTN_ADD:
@@ -534,17 +636,23 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         {
             int oldPort = AppConfig.port;
             INT_PTR result = SettingsDialog::Show(hwnd);
-            if (result == IDOK && m_isRunning && AppConfig.port != oldPort) {
-                DLNAServer.Stop();
-                SetStatus(false);
-                if (DLNAServer.Start()) {
-                    SetStatus(true, DLNAServer.GetEndpoint());
-                } else {
-                    MessageBoxW(hwnd, L"Server stopped. Failed to restart on the new port.", L"Restart failed", MB_ICONWARNING | MB_OK);
-                }
+            if (IsRunning() && (result == IDC_BTN_RESTART || (result == IDOK && AppConfig.port != oldPort))) {
+                BeginRestartServer();
             }
             break;
         }
+        }
+        return 0;
+    }
+    case WM_SERVER_OPERATION_PROGRESS: {
+        SetStatus(static_cast<ServerUiState>(wParam), m_statusEndpoint);
+        return 0;
+    }
+    case WM_SERVER_OPERATION_DONE: {
+        ServerOperationResult* result = reinterpret_cast<ServerOperationResult*>(lParam);
+        if (result) {
+            CompleteServerOperation(result->finalState, result->endpoint, result->success, result->message);
+            delete result;
         }
         return 0;
     }
@@ -578,7 +686,11 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         return 0;
     }
     case WM_DESTROY: {
+        if (m_worker.joinable()) {
+            m_worker.join();
+        }
         DLNAServer.Stop();
+        SetThreadExecutionState(ES_CONTINUOUS);
         PostQuitMessage(0);
         return 0;
     }

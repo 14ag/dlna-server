@@ -47,7 +47,7 @@ bool Server::Start() {
     IPWhitelist::Get().Load(AppConfig.ipWhiteList);
 
     // Validate we have at least one source
-    bool hasSource = false;
+    bool hasSource = AppConfig.defaultPlaylistEnabled && !AppConfig.defaultPlaylistPath.empty();
     for (const auto& s : AppConfig.mediaSources) {
         if (s.enabled) { hasSource = true; break; }
     }
