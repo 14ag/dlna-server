@@ -24,7 +24,7 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - Provides a native Windows UI with tray behavior.
 - Provides a native Linux FLTK GUI for media folders, server name, port, start, stop, settings, and logs.
 - Shows start/stop busy status and keeps Windows awake while the server is active.
-- Advertises a DLNA server icon, using the app icon by default or a configured image path.
+- Advertises bundled DLNA server icons at 48, 120, and 256 px.
 - Supports optional IP whitelisting on Windows and POSIX builds.
 - Stores settings in `config.ini` beside the executable.
 - Includes smoke tests for Windows, Android VLC reachability, and POSIX-over-SSH detection.
@@ -262,7 +262,7 @@ While the server is starting or stopping, the status line shows `starting server
 
 Settings can create a default playlist entry from a movie path and optional subtitle path. The app writes `default.m3u` beside `config.ini`, emits `#DLNA-SUBTITLE` and VLC-compatible subtitle metadata, and indexes it when **Default playlist** is enabled.
 
-The DLNA device icon defaults to the bundled app icon. Set **Server icon** to an `.ico`, `.png`, `.jpg`, or `.jpeg` file to advertise that image instead.
+The DLNA device description advertises bundled PNG icons at 48, 120, and 256 px. Clients choose the best `/icons/server_icon_*.png` image from the UPnP `iconList`.
 
 When the main window closes, the app stays in the tray. Use the tray menu to show the window, stop the server, or exit.
 
@@ -326,7 +326,6 @@ DebugLog=0
 RunOnBoot=0
 DefaultPlaylistEnabled=0
 DefaultPlaylistPath=C:\Path\To\App\default.m3u
-ServerIconPath=
 IPWhiteList=
 DeviceUUID=11111111-2222-3333-4444-555555555555
 MediaSources=C:\Media|D:\Videos|C:\Playlists\radio.m3u|smb://user:pass@server/share|ftp://user:pass@server:21/media

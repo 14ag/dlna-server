@@ -220,7 +220,6 @@ void Config::Load() {
     if (defaultPlaylistPath.empty()) {
         defaultPlaylistPath = GetDefaultPlaylistPath();
     }
-    serverIconPath = Utf8ToWide(values.count("ServerIconPath") ? values["ServerIconPath"] : "");
     if (deviceUUID.empty()) {
         deviceUUID = GenerateUUID();
         Save();
@@ -261,7 +260,6 @@ void Config::Save() {
     ss << "RunOnBoot=" << (runOnBoot ? 1 : 0) << "\n";
     ss << "DefaultPlaylistEnabled=" << (defaultPlaylistEnabled ? 1 : 0) << "\n";
     ss << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
-    ss << "ServerIconPath=" << WideToUtf8(serverIconPath) << "\n";
     ss << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
     ss << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
     ss << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";

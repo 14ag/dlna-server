@@ -12,7 +12,6 @@
 #include <ws2tcpip.h>
 #include <shlwapi.h>
 #include <climits>
-#include <cstdio>
 #include <sstream>
 
 #define HTTP_BUF_SIZE 8192
@@ -31,40 +30,15 @@ void SendAll(SOCKET s, const std::string& str) {
     SendAll(s, str.c_str(), static_cast<int>(str.size()));
 }
 
-bool IsSupportedServerIconPath(const std::wstring& path, std::string& mime) {
-    std::wstring ext = SourceExtension(path);
-    if (ext == L".ico") { mime = "image/vnd.microsoft.icon"; return true; }
-    if (ext == L".png") { mime = "image/png"; return true; }
-    if (ext == L".jpg" || ext == L".jpeg") { mime = "image/jpeg"; return true; }
-    return false;
+int IconResourceForPath(const std::string& path) {
+    if (path == "/icons/server_icon_48.png") return IDR_SERVER_ICON_48;
+    if (path == "/icons/server_icon_120.png") return IDR_SERVER_ICON_120;
+    if (path == "/icons/server_icon_256.png") return IDR_SERVER_ICON_256;
+    return 0;
 }
 
-bool ReadFileBytes(const std::wstring& path, std::string& bytes) {
-    FILE* fp = nullptr;
-    if (_wfopen_s(&fp, path.c_str(), L"rb") != 0 || !fp) return false;
-    fseek(fp, 0, SEEK_END);
-    long size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    if (size <= 0) {
-        fclose(fp);
-        return false;
-    }
-    bytes.resize(static_cast<size_t>(size));
-    size_t read = fread(bytes.data(), 1, bytes.size(), fp);
-    fclose(fp);
-    return read == bytes.size();
-}
-
-bool LoadServerIcon(std::string& bytes, std::string& mime) {
-    if (!AppConfig.serverIconPath.empty() && IsSupportedServerIconPath(AppConfig.serverIconPath, mime) &&
-        ReadFileBytes(AppConfig.serverIconPath, bytes)) {
-        return true;
-    }
-    if (!AppConfig.serverIconPath.empty()) {
-        LogPrint(L"Server icon path is not usable; falling back to app icon: %ls", AppConfig.serverIconPath.c_str());
-    }
-
-    HRSRC res = FindResourceW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDR_APP_ICON_BYTES), RT_RCDATA);
+bool LoadServerIconPng(int resourceId, std::string& bytes) {
+    HRSRC res = FindResourceW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(resourceId), RT_RCDATA);
     if (!res) return false;
     HGLOBAL loaded = LoadResource(GetModuleHandleW(NULL), res);
     if (!loaded) return false;
@@ -72,7 +46,6 @@ bool LoadServerIcon(std::string& bytes, std::string& mime) {
     void* data = LockResource(loaded);
     if (!data || size == 0) return false;
     bytes.assign(static_cast<const char*>(data), static_cast<size_t>(size));
-    mime = "image/vnd.microsoft.icon";
     return true;
 }
 } // namespace
@@ -346,14 +319,14 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
             return;
         }
 
-        if (path == "/server-icon") {
+        int iconResourceId = IconResourceForPath(path);
+        if (iconResourceId != 0) {
             std::string body;
-            std::string mime;
-            if (!LoadServerIcon(body, mime)) {
+            if (!LoadServerIconPng(iconResourceId, body)) {
                 SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
-            response = "HTTP/1.1 200 OK\r\nContent-Type: " + mime + "\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n";
+            response = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n";
             if (sendBody) response += body;
             SendAll(clientSocket, response);
             return;
