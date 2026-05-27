@@ -33,6 +33,9 @@ class UmsHardeningSourceTests(unittest.TestCase):
             "FindHeaderValueCaseInsensitive",
             "ParseHttpRangeHeader",
             "GetMediaFormatForExtension",
+            "BuildProtocolInfo",
+            "BuildContentFeatures",
+            "BuildSourceProtocolInfoList",
             "SubtitleMimeForExtension",
             "NaturalLessWide",
         ):
@@ -41,17 +44,31 @@ class UmsHardeningSourceTests(unittest.TestCase):
         self.assertIn('L".webm"', source)
         self.assertIn('L".m2ts"', source)
         self.assertIn('L".opus"', source)
+        self.assertIn('L".dts"', source)
+        self.assertIn("DLNA.ORG_PN", source)
 
     def test_content_directory_exposes_capabilities_and_faults(self):
         source = self.read("src/contentdirectory.cpp")
+        header = self.read("src/contentdirectory.h")
 
         self.assertIn("GetSearchCapabilities", source)
         self.assertIn("GetSortCapabilities", source)
+        self.assertIn("<action><name>Search</name>", source)
+        self.assertIn("MatchesSearchCriteria", source)
+        self.assertIn("BrowseSearchResponse", source)
+        self.assertIn("BuildDIDL", source)
+        self.assertIn("upnp:albumArtURI", source)
+        self.assertIn("/albumart/", source)
         self.assertIn("SoapFault(401", source)
         self.assertIn("SoapFault(402", source)
         self.assertIn("SoapFault(701", source)
         self.assertIn("TryParseIntStrict", source)
         self.assertIn("NaturalLessWide", source)
+        self.assertIn("HandleContentDirectoryControl", header + source)
+        self.assertIn("HandleConnectionManagerControl", header + source)
+        self.assertIn("BuildSourceProtocolInfoList", source)
+        self.assertIn("<Source>", source)
+        self.assertIn("<Sink></Sink>", source)
 
     def test_windows_and_posix_http_use_shared_range_and_head_logic(self):
         for name in ("src/httpserver.cpp", "src/posix_httpserver.cpp"):
@@ -64,6 +81,11 @@ class UmsHardeningSourceTests(unittest.TestCase):
             self.assertIn("416 Range Not Satisfiable", source)
             self.assertIn("Content-Range: bytes */", source)
             self.assertIn("SubtitleMimeForExtension", source)
+            self.assertIn("BuildContentFeaturesForExtension", source)
+            self.assertIn('path.rfind("/albumart/", 0) == 0', source)
+            self.assertIn("albumArtPath", source)
+            self.assertIn("/upnp/control/connection_manager", source)
+            self.assertIn("HandleConnectionManagerControl", source)
 
         utils = self.read("src/dlna_utils.cpp")
         self.assertIn("fileSize <= 0", utils)
@@ -73,8 +95,14 @@ class UmsHardeningSourceTests(unittest.TestCase):
             source = self.read(name)
             self.assertIn("GetMediaFormatForExtension", source)
             self.assertIn("NaturalLessWide", source)
+            self.assertIn("HasDuplicateMediaPath", source)
+            self.assertIn("SetAlbumArtIfExists", source)
+            self.assertIn("albumArtPath", source)
             self.assertIn('L".smi"', source) if name.endswith("media_sources.cpp") and not name.endswith("posix_media_sources.cpp") else self.assertIn('".smi"', source)
 
+        header = self.read("src/media_sources.h")
+        self.assertIn("albumArtPath", header)
+        self.assertIn("albumArtMime", header)
         self.assertIn("FILE_ATTRIBUTE_REPARSE_POINT", self.read("src/media_sources.cpp"))
         posix_source = self.read("src/posix_media_sources.cpp")
         self.assertIn("entry.is_symlink", posix_source)

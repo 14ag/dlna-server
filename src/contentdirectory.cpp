@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <sstream>
 #include <vector>
+#include <cwctype>
 
 namespace {
 bool IsValidXml(const std::string& xml) {
@@ -124,6 +125,130 @@ bool IsClassSort(const std::string& criteria) {
 bool IsDescendingSort(const std::string& criteria) {
     return TrimAscii(criteria).rfind("-", 0) == 0;
 }
+
+std::string EscapeWide(const std::wstring& value) {
+    return XMLEscapeUtf8(WideToUtf8(value));
+}
+
+std::string ItemProtocolInfo(const MediaItem& item) {
+    return BuildProtocolInfoForExtension(SourceExtension(item.path), item.mimeType, item.sizeBytes > 0);
+}
+
+void SortItems(std::vector<MediaItem>& items, const std::string& sortCriteria) {
+    if (IsTitleSort(sortCriteria) || IsClassSort(sortCriteria)) {
+        const bool desc = IsDescendingSort(sortCriteria);
+        const bool classSort = IsClassSort(sortCriteria);
+        std::sort(items.begin(), items.end(), [desc, classSort](const MediaItem& a, const MediaItem& b) {
+            const std::wstring& left = classSort ? a.upnpClass : a.title;
+            const std::wstring& right = classSort ? b.upnpClass : b.title;
+            if (left == right) return NaturalLessWide(a.title, b.title);
+            bool less = NaturalLessWide(left, right);
+            return desc ? !less : less;
+        });
+    }
+}
+
+bool ContainsNoCase(const std::wstring& haystack, const std::wstring& needle) {
+    std::wstring h = haystack;
+    std::wstring n = needle;
+    std::transform(h.begin(), h.end(), h.begin(), [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+    std::transform(n.begin(), n.end(), n.begin(), [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+    return h.find(n) != std::wstring::npos;
+}
+
+bool StartsWithNoCase(const std::wstring& value, const std::wstring& prefix) {
+    if (value.size() < prefix.size()) return false;
+    return ContainsNoCase(value.substr(0, prefix.size()), prefix);
+}
+
+std::string ExtractQuotedCriteriaValue(const std::string& criteria) {
+    size_t first = criteria.find('"');
+    size_t last = criteria.rfind('"');
+    if (first == std::string::npos || last == first) {
+        first = criteria.find('\'');
+        last = criteria.rfind('\'');
+    }
+    if (first == std::string::npos || last == first) return {};
+    return criteria.substr(first + 1, last - first - 1);
+}
+
+bool MatchesSearchCriteria(const MediaItem& item, const std::string& criteria) {
+    const std::string normalized = ToLowerAscii(TrimAscii(criteria));
+    if (normalized.empty() || normalized == "*" || normalized == "true") return true;
+    if (normalized.find("dc:title") != std::string::npos && normalized.find("contains") != std::string::npos) {
+        std::string needle = ExtractQuotedCriteriaValue(criteria);
+        return needle.empty() ? true : ContainsNoCase(item.title, Utf8ToWide(needle));
+    }
+    if (normalized.find("upnp:class") != std::string::npos && normalized.find("derivedfrom") != std::string::npos) {
+        std::string value = ExtractQuotedCriteriaValue(criteria);
+        return value.empty() ? true : StartsWithNoCase(item.upnpClass, Utf8ToWide(value));
+    }
+    return false;
+}
+
+void CollectDescendants(int parentId, std::vector<MediaItem>& out) {
+    for (const auto& child : AppMedia.GetChildren(parentId)) {
+        out.push_back(child);
+        if (child.isFolder) CollectDescendants(child.id, out);
+    }
+}
+
+std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, int requestedCount, const std::string& hostUrl, int& returnCount) {
+    returnCount = 0;
+    std::string didl = "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" xmlns:dlna=\"urn:schemas-dlna-org:metadata-1-0/\" xmlns:sec=\"http://www.sec.co.kr/dlna\">";
+    for (int i = startingIndex; i < static_cast<int>(items.size()) && (requestedCount == 0 || returnCount < requestedCount); ++i) {
+        const auto& it = items[i];
+        if (it.id == -1) continue;
+        if (it.isFolder) {
+            std::stringstream css;
+            int childCount = AppMedia.GetChildren(it.id).size();
+            css << "<container id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" childCount=\"" << childCount << "\" restricted=\"1\">"
+                << "<dc:title>" << EscapeWide(it.title) << "</dc:title>"
+                << "<upnp:class>" << EscapeWide(it.upnpClass) << "</upnp:class>"
+                << "</container>";
+            didl += css.str();
+        } else {
+            const bool hasKnownSize = it.sizeBytes > 0;
+            std::stringstream iss;
+            iss << "<item id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" restricted=\"1\">"
+                << "<dc:title>" << EscapeWide(it.title) << "</dc:title>"
+                << "<upnp:class>" << EscapeWide(it.upnpClass) << "</upnp:class>";
+            if (!it.albumArtPath.empty()) {
+                iss << "<upnp:albumArtURI dlna:profileID=\"JPEG_TN\">http://" << hostUrl << "/albumart/" << it.id << "</upnp:albumArtURI>";
+            }
+            iss << "<res protocolInfo=\"" << ItemProtocolInfo(it) << "\"";
+            if (hasKnownSize) {
+                iss << " size=\"" << it.sizeBytes << "\"";
+            }
+            iss << ">http://" << hostUrl << "/media/" << it.id << "</res>";
+            if (!it.subtitlePath.empty()) {
+                std::wstring subExtW = it.subtitlePath.substr(it.subtitlePath.rfind(L'.') + 1);
+                std::string subExt = WideToUtf8(subExtW);
+                iss << "<sec:CaptionInfoEx sec:type=\"" << subExt << "\">"
+                    << "http://" << hostUrl << "/subtitle/" << it.id
+                    << "</sec:CaptionInfoEx>";
+            }
+            iss << "</item>";
+            didl += iss.str();
+        }
+        returnCount++;
+    }
+    didl += "</DIDL-Lite>";
+    return didl;
+}
+
+std::string BrowseSearchResponse(const std::string& actionName, const std::vector<MediaItem>& items, int startingIndex, int requestedCount, const std::string& hostUrl, int totalMatches) {
+    int returnCount = 0;
+    std::string didl = BuildDIDL(items, startingIndex, requestedCount, hostUrl, returnCount);
+    std::stringstream ss;
+    ss << "    <u:" << actionName << "Response xmlns:u=\"urn:schemas-upnp-org:service:ContentDirectory:1\">\n"
+       << "      <Result>" << XMLEscapeUtf8(didl) << "</Result>\n"
+       << "      <NumberReturned>" << returnCount << "</NumberReturned>\n"
+       << "      <TotalMatches>" << totalMatches << "</TotalMatches>\n"
+       << "      <UpdateID>" << AppMedia.GetSystemUpdateID() << "</UpdateID>\n"
+       << "    </u:" << actionName << "Response>";
+    return SoapEnvelope(ss.str());
+}
 }
 
 ContentDirectory& ContentDirectory::Get() {
@@ -185,6 +310,18 @@ std::string ContentDirectory::GetContentDirectoryXML() {
            "<action><name>GetSystemUpdateID</name><argumentList><argument><name>Id</name><direction>out</direction><relatedStateVariable>SystemUpdateID</relatedStateVariable></argument></argumentList></action>\n"
            "<action><name>GetSearchCapabilities</name><argumentList><argument><name>SearchCaps</name><direction>out</direction><relatedStateVariable>SearchCapabilities</relatedStateVariable></argument></argumentList></action>\n"
            "<action><name>GetSortCapabilities</name><argumentList><argument><name>SortCaps</name><direction>out</direction><relatedStateVariable>SortCapabilities</relatedStateVariable></argument></argumentList></action>\n"
+           "<action><name>Search</name><argumentList>\n"
+           "<argument><name>ContainerID</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_ObjectID</relatedStateVariable></argument>\n"
+           "<argument><name>SearchCriteria</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_SearchCriteria</relatedStateVariable></argument>\n"
+           "<argument><name>Filter</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_Filter</relatedStateVariable></argument>\n"
+           "<argument><name>StartingIndex</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_Index</relatedStateVariable></argument>\n"
+           "<argument><name>RequestedCount</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_Count</relatedStateVariable></argument>\n"
+           "<argument><name>SortCriteria</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_SortCriteria</relatedStateVariable></argument>\n"
+           "<argument><name>Result</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_Result</relatedStateVariable></argument>\n"
+           "<argument><name>NumberReturned</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_Count</relatedStateVariable></argument>\n"
+           "<argument><name>TotalMatches</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_Count</relatedStateVariable></argument>\n"
+           "<argument><name>UpdateID</name><direction>out</direction><relatedStateVariable>A_ARG_TYPE_UpdateID</relatedStateVariable></argument>\n"
+           "</argumentList></action>\n"
            "<action><name>Browse</name><argumentList>\n"
            "<argument><name>ObjectID</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_ObjectID</relatedStateVariable></argument>\n"
            "<argument><name>BrowseFlag</name><direction>in</direction><relatedStateVariable>A_ARG_TYPE_BrowseFlag</relatedStateVariable></argument>\n"
@@ -206,6 +343,7 @@ std::string ContentDirectory::GetContentDirectoryXML() {
            "<stateVariable sendEvents=\"no\"><name>A_ARG_TYPE_BrowseFlag</name><dataType>string</dataType><allowedValueList><allowedValue>BrowseMetadata</allowedValue><allowedValue>BrowseDirectChildren</allowedValue></allowedValueList></stateVariable>\n"
            "<stateVariable sendEvents=\"no\"><name>A_ARG_TYPE_Filter</name><dataType>string</dataType></stateVariable>\n"
            "<stateVariable sendEvents=\"no\"><name>A_ARG_TYPE_SortCriteria</name><dataType>string</dataType></stateVariable>\n"
+           "<stateVariable sendEvents=\"no\"><name>A_ARG_TYPE_SearchCriteria</name><dataType>string</dataType></stateVariable>\n"
            "<stateVariable sendEvents=\"no\"><name>A_ARG_TYPE_Index</name><dataType>ui4</dataType></stateVariable>\n"
            "<stateVariable sendEvents=\"no\"><name>A_ARG_TYPE_Count</name><dataType>ui4</dataType></stateVariable>\n"
            "<stateVariable sendEvents=\"no\"><name>A_ARG_TYPE_UpdateID</name><dataType>ui4</dataType></stateVariable>\n"
@@ -217,7 +355,46 @@ std::string ContentDirectory::GetConnectionManagerXML() {
     return "<?xml version=\"1.0\"?>\n<scpd xmlns=\"urn:schemas-upnp-org:service-1-0\">\n<specVersion><major>1</major><minor>0</minor></specVersion>\n<actionList>\n<action>\n<name>GetProtocolInfo</name>\n<argumentList>\n<argument>\n<name>Source</name>\n<direction>out</direction>\n<relatedStateVariable>SourceProtocolInfo</relatedStateVariable>\n</argument>\n<argument>\n<name>Sink</name>\n<direction>out</direction>\n<relatedStateVariable>SinkProtocolInfo</relatedStateVariable>\n</argument>\n</argumentList>\n</action>\n<action>\n<name>GetCurrentConnectionIDs</name>\n<argumentList>\n<argument>\n<name>ConnectionIDs</name>\n<direction>out</direction>\n<relatedStateVariable>CurrentConnectionIDs</relatedStateVariable>\n</argument>\n</argumentList>\n</action>\n<action>\n<name>GetCurrentConnectionInfo</name>\n<argumentList>\n<argument>\n<name>ConnectionID</name>\n<direction>in</direction>\n<relatedStateVariable>A_ARG_TYPE_ConnectionID</relatedStateVariable>\n</argument>\n<argument>\n<name>RcsID</name>\n<direction>out</direction>\n<relatedStateVariable>A_ARG_TYPE_RcsID</relatedStateVariable>\n</argument>\n<argument>\n<name>AVTransportID</name>\n<direction>out</direction>\n<relatedStateVariable>A_ARG_TYPE_AVTransportID</relatedStateVariable>\n</argument>\n<argument>\n<name>ProtocolInfo</name>\n<direction>out</direction>\n<relatedStateVariable>A_ARG_TYPE_ProtocolInfo</relatedStateVariable>\n</argument>\n<argument>\n<name>PeerConnectionManager</name>\n<direction>out</direction>\n<relatedStateVariable>A_ARG_TYPE_ConnectionManager</relatedStateVariable>\n</argument>\n<argument>\n<name>PeerConnectionID</name>\n<direction>out</direction>\n<relatedStateVariable>A_ARG_TYPE_ConnectionID</relatedStateVariable>\n</argument>\n<argument>\n<name>Direction</name>\n<direction>out</direction>\n<relatedStateVariable>A_ARG_TYPE_Direction</relatedStateVariable>\n</argument>\n<argument>\n<name>Status</name>\n<direction>out</direction>\n<relatedStateVariable>A_ARG_TYPE_ConnectionStatus</relatedStateVariable>\n</argument>\n</argumentList>\n</action>\n</actionList>\n<serviceStateTable>\n<stateVariable sendEvents=\"yes\">\n<name>SourceProtocolInfo</name>\n<dataType>string</dataType>\n</stateVariable>\n<stateVariable sendEvents=\"yes\">\n<name>SinkProtocolInfo</name>\n<dataType>string</dataType>\n</stateVariable>\n<stateVariable sendEvents=\"yes\">\n<name>CurrentConnectionIDs</name>\n<dataType>string</dataType>\n</stateVariable>\n<stateVariable sendEvents=\"no\">\n<name>A_ARG_TYPE_ConnectionStatus</name>\n<dataType>string</dataType>\n<allowedValueList>\n<allowedValue>OK</allowedValue>\n<allowedValue>ContentFormatMismatch</allowedValue>\n<allowedValue>InsufficientBandwidth</allowedValue>\n<allowedValue>UnreliableChannel</allowedValue>\n<allowedValue>Unknown</allowedValue>\n</allowedValueList>\n</stateVariable>\n<stateVariable sendEvents=\"no\">\n<name>A_ARG_TYPE_ConnectionManager</name>\n<dataType>string</dataType>\n</stateVariable>\n<stateVariable sendEvents=\"no\">\n<name>A_ARG_TYPE_Direction</name>\n<dataType>string</dataType>\n<allowedValueList>\n<allowedValue>Input</allowedValue>\n<allowedValue>Output</allowedValue>\n</allowedValueList>\n</stateVariable>\n<stateVariable sendEvents=\"no\">\n<name>A_ARG_TYPE_ProtocolInfo</name>\n<dataType>string</dataType>\n</stateVariable>\n<stateVariable sendEvents=\"no\">\n<name>A_ARG_TYPE_ConnectionID</name>\n<dataType>i4</dataType>\n</stateVariable>\n<stateVariable sendEvents=\"no\">\n<name>A_ARG_TYPE_AVTransportID</name>\n<dataType>i4</dataType>\n</stateVariable>\n<stateVariable sendEvents=\"no\">\n<name>A_ARG_TYPE_RcsID</name>\n<dataType>i4</dataType>\n</stateVariable>\n</serviceStateTable>\n</scpd>";
 }
 
-std::string ContentDirectory::HandleBrowse(const std::string& req, const std::string& hostUrl) {
+std::string ContentDirectory::HandleConnectionManagerControl(const std::string& req) {
+    if (!IsValidXml(req)) {
+        return SoapFault(401, "Invalid XML");
+    }
+
+    if (req.find("GetProtocolInfo") != std::string::npos) {
+        std::stringstream ss;
+        ss << "    <u:GetProtocolInfoResponse xmlns:u=\"urn:schemas-upnp-org:service:ConnectionManager:1\">"
+           << "<Source>" << XMLEscapeUtf8(BuildSourceProtocolInfoList()) << "</Source>"
+           << "<Sink></Sink>"
+           << "</u:GetProtocolInfoResponse>";
+        return SoapEnvelope(ss.str());
+    }
+
+    if (req.find("GetCurrentConnectionIDs") != std::string::npos) {
+        return SoapEnvelope("    <u:GetCurrentConnectionIDsResponse xmlns:u=\"urn:schemas-upnp-org:service:ConnectionManager:1\"><ConnectionIDs>0</ConnectionIDs></u:GetCurrentConnectionIDsResponse>");
+    }
+
+    if (req.find("GetCurrentConnectionInfo") != std::string::npos) {
+        std::string idText;
+        if (!ExtractTag(req, "ConnectionID", idText)) {
+            return SoapFault(402, "Invalid Args");
+        }
+        int connectionId = 0;
+        if (!TryParseIntStrict(idText, connectionId) || connectionId != 0) {
+            return SoapFault(706, "No such connection");
+        }
+        std::stringstream ss;
+        ss << "    <u:GetCurrentConnectionInfoResponse xmlns:u=\"urn:schemas-upnp-org:service:ConnectionManager:1\">"
+           << "<RcsID>-1</RcsID><AVTransportID>-1</AVTransportID><ProtocolInfo></ProtocolInfo>"
+           << "<PeerConnectionManager></PeerConnectionManager><PeerConnectionID>-1</PeerConnectionID>"
+           << "<Direction>Output</Direction><Status>OK</Status>"
+           << "</u:GetCurrentConnectionInfoResponse>";
+        return SoapEnvelope(ss.str());
+    }
+
+    return SoapFault(401, "Invalid Action");
+}
+
+std::string ContentDirectory::HandleContentDirectoryControl(const std::string& req, const std::string& hostUrl) {
     if (!IsValidXml(req)) {
         return SoapFault(401, "Invalid XML");
     }
@@ -231,11 +408,53 @@ std::string ContentDirectory::HandleBrowse(const std::string& req, const std::st
     }
 
     if (req.find("GetSearchCapabilities") != std::string::npos) {
-        return SoapEnvelope("    <u:GetSearchCapabilitiesResponse xmlns:u=\"urn:schemas-upnp-org:service:ContentDirectory:1\"><SearchCaps></SearchCaps></u:GetSearchCapabilitiesResponse>");
+        return SoapEnvelope("    <u:GetSearchCapabilitiesResponse xmlns:u=\"urn:schemas-upnp-org:service:ContentDirectory:1\"><SearchCaps>dc:title,upnp:class</SearchCaps></u:GetSearchCapabilitiesResponse>");
     }
 
     if (req.find("GetSortCapabilities") != std::string::npos) {
         return SoapEnvelope("    <u:GetSortCapabilitiesResponse xmlns:u=\"urn:schemas-upnp-org:service:ContentDirectory:1\"><SortCaps>dc:title,upnp:class</SortCaps></u:GetSortCapabilitiesResponse>");
+    }
+
+    if (req.find("Search") != std::string::npos) {
+        std::string containerIdStr;
+        std::string searchCriteria;
+        std::string startingIndexStr;
+        std::string requestedCountStr;
+        if (!ExtractTag(req, "ContainerID", containerIdStr) ||
+            !ExtractTag(req, "SearchCriteria", searchCriteria) ||
+            !ExtractTag(req, "StartingIndex", startingIndexStr) ||
+            !ExtractTag(req, "RequestedCount", requestedCountStr)) {
+            return SoapFault(402, "Invalid Args");
+        }
+
+        int containerId = 0;
+        int startingIndex = 0;
+        int requestedCount = 0;
+        if (!TryParseIntStrict(containerIdStr, containerId) ||
+            !TryParseIntStrict(startingIndexStr, startingIndex) ||
+            !TryParseIntStrict(requestedCountStr, requestedCount) ||
+            startingIndex < 0 ||
+            requestedCount < 0) {
+            return SoapFault(402, "Invalid Args");
+        }
+        if (AppMedia.GetItem(containerId).id == -1) return SoapFault(701, "No such object");
+
+        std::vector<MediaItem> descendants;
+        CollectDescendants(containerId, descendants);
+        std::vector<MediaItem> results;
+        for (const auto& item : descendants) {
+            if (MatchesSearchCriteria(item, searchCriteria)) {
+                results.push_back(item);
+            }
+        }
+        std::string sortCriteria;
+        ExtractTag(req, "SortCriteria", sortCriteria);
+        SortItems(results, sortCriteria);
+        return BrowseSearchResponse("Search", results, startingIndex, requestedCount, hostUrl, static_cast<int>(results.size()));
+    }
+
+    if (req.find("Browse") == std::string::npos) {
+        return SoapFault(401, "Invalid Action");
     }
 
     std::string objIdStr;
@@ -276,76 +495,11 @@ std::string ContentDirectory::HandleBrowse(const std::string& req, const std::st
 
     std::string sortCriteria;
     ExtractTag(req, "SortCriteria", sortCriteria);
-    if (IsTitleSort(sortCriteria) || IsClassSort(sortCriteria)) {
-        const bool desc = IsDescendingSort(sortCriteria);
-        const bool classSort = IsClassSort(sortCriteria);
-        std::sort(results.begin(), results.end(), [desc, classSort](const MediaItem& a, const MediaItem& b) {
-            const std::wstring& left = classSort ? a.upnpClass : a.title;
-            const std::wstring& right = classSort ? b.upnpClass : b.title;
-            if (left == right) return NaturalLessWide(a.title, b.title);
-            bool less = NaturalLessWide(left, right);
-            return desc ? !less : less;
-        });
-    }
+    SortItems(results, sortCriteria);
+    int totalMatches = browseFlag == "BrowseMetadata" ? 1 : static_cast<int>(results.size());
+    return BrowseSearchResponse("Browse", results, startingIndex, requestedCount, hostUrl, totalMatches);
+}
 
-    int returnCount = 0;
-    int totalMatches = static_cast<int>(results.size());
-    std::string didl;
-    didl += "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" xmlns:sec=\"http://www.sec.co.kr/dlna\">";
-    
-    for (int i = startingIndex; i < static_cast<int>(results.size()) && (requestedCount == 0 || returnCount < requestedCount); ++i) {
-        const auto& it = results[i];
-        if (it.id == -1) continue;
-        
-        if (it.isFolder) {
-            std::stringstream css;
-            int childCount = AppMedia.GetChildren(it.id).size();
-            css << "<container id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" childCount=\"" << childCount << "\" restricted=\"1\">"
-                << "<dc:title>" << XMLEscape(it.title) << "</dc:title>"
-                << "<upnp:class>" << XMLEscape(it.upnpClass) << "</upnp:class>"
-                << "</container>";
-            didl += css.str();
-        } else {
-            std::string mime = WideToUtf8(it.mimeType);
-            const bool hasKnownSize = it.sizeBytes > 0;
-            std::stringstream iss;
-            iss << "<item id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" restricted=\"1\">"
-                << "<dc:title>" << XMLEscape(it.title) << "</dc:title>"
-                << "<upnp:class>" << XMLEscape(it.upnpClass) << "</upnp:class>"
-                << "<res protocolInfo=\"http-get:*:" << mime << ":DLNA.ORG_OP=" << (hasKnownSize ? "01" : "00") << ";DLNA.ORG_FLAGS=01700000000000000000000000000000\"";
-            if (hasKnownSize) {
-                iss << " size=\"" << it.sizeBytes << "\"";
-            }
-            iss << ">"
-                << "http://" << hostUrl << "/media/" << it.id
-                << "</res>";
-            // emit subtitle reference if a companion file was found during scan
-            // vlc and samsung renderers read sec:CaptionInfoEx to locate external subs
-            if (!it.subtitlePath.empty()) {
-                std::wstring subExtW = it.subtitlePath.substr(it.subtitlePath.rfind(L'.') + 1);
-                std::string subExt = WideToUtf8(subExtW);
-                iss << "<sec:CaptionInfoEx sec:type=\"" << subExt << "\">"
-                    << "http://" << hostUrl << "/subtitle/" << it.id
-                    << "</sec:CaptionInfoEx>";
-            }
-            iss << "</item>";
-            didl += iss.str();
-        }
-        returnCount++;
-    }
-    didl += "</DIDL-Lite>";
-
-    std::string escapedDidl = XMLEscapeUtf8(didl);
-
-    std::stringstream ss;
-    ss << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
-       << "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\n"
-       << "  <s:Body>\n    <u:BrowseResponse xmlns:u=\"urn:schemas-upnp-org:service:ContentDirectory:1\">\n"
-       << "      <Result>" << escapedDidl << "</Result>\n"
-       << "      <NumberReturned>" << returnCount << "</NumberReturned>\n"
-       << "      <TotalMatches>" << (browseFlag == "BrowseMetadata" ? 1 : totalMatches) << "</TotalMatches>\n"
-       << "      <UpdateID>" << AppMedia.GetSystemUpdateID() << "</UpdateID>\n"
-       << "    </u:BrowseResponse>\n  </s:Body>\n</s:Envelope>";
-
-    return ss.str();
+std::string ContentDirectory::HandleBrowse(const std::string& req, const std::string& hostUrl) {
+    return HandleContentDirectoryControl(req, hostUrl);
 }

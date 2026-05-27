@@ -377,7 +377,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     }
                     headers << "Connection: close\r\n"
                             << "transferMode.dlna.org: Streaming\r\n"
-                            << "contentFeatures.dlna.org: DLNA.ORG_OP=" << (hasKnownSize ? "01" : "00") << ";DLNA.ORG_FLAGS=01700000000000000000000000000000\r\n"
+                            << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize) << "\r\n"
                             << "\r\n";
 
                     SendAll(clientSocket, headers.str());
@@ -431,7 +431,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             << "Accept-Ranges: bytes\r\n"
                             << "Connection: close\r\n"
                             << "transferMode.dlna.org: Streaming\r\n"
-                            << "contentFeatures.dlna.org: DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000\r\n"
+                            << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n"
                             << "\r\n";
 
                     std::string headStr = headers.str();
@@ -537,12 +537,58 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
             return;
         }
 
+        if (path.rfind("/albumart/", 0) == 0) {
+            int fileId = -1;
+            if (!TryParseIntStrict(path.substr(10), fileId) || fileId < 0) {
+                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
+            MediaItem item = AppMedia.GetItem(fileId);
+            if (item.id != -1 && !item.albumArtPath.empty()) {
+                HANDLE hFile = CreateFileW(item.albumArtPath.c_str(), GENERIC_READ,
+                    FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+                if (hFile != INVALID_HANDLE_VALUE) {
+                    LARGE_INTEGER fileSize = {};
+                    GetFileSizeEx(hFile, &fileSize);
+                    std::stringstream artHeaders;
+                    artHeaders << "HTTP/1.1 200 OK\r\n"
+                               << "Content-Type: " << WideToUtf8(item.albumArtMime.empty() ? L"image/jpeg" : item.albumArtMime) << "\r\n"
+                               << "Content-Length: " << fileSize.QuadPart << "\r\n"
+                               << "Connection: close\r\n\r\n";
+                    SendAll(clientSocket, artHeaders.str());
+                    if (!sendBody) {
+                        CloseHandle(hFile);
+                        return;
+                    }
+
+                    char artBuf[16384];
+                    DWORD artRead = 0;
+                    while (m_running) {
+                        if (!ReadFile(hFile, artBuf, sizeof(artBuf), &artRead, NULL) || artRead == 0) break;
+                        const char* p = artBuf;
+                        DWORD toSend = artRead;
+                        while (toSend > 0) {
+                            int sent = send(clientSocket, p, toSend, 0);
+                            if (sent == SOCKET_ERROR || sent == 0) goto done_album_art;
+                            p += sent;
+                            toSend -= sent;
+                        }
+                    }
+                    done_album_art:
+                    CloseHandle(hFile);
+                    return;
+                }
+            }
+            SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+            return;
+        }
+
         response = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
         SendAll(clientSocket, response);
         return;
     }
 
-    if (method == "POST" && path == "/upnp/control/content_directory") {
+    if (method == "POST" && (path == "/upnp/control/content_directory" || path == "/upnp/control/connection_manager")) {
         size_t headersEnd = req.find("\r\n\r\n");
         std::string body;
         if (headersEnd != std::string::npos) {
@@ -567,7 +613,9 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                 }
             }
 
-            std::string browseResp = AppContent.HandleBrowse(body, hostUrl);
+            std::string browseResp = path == "/upnp/control/connection_manager"
+                ? AppContent.HandleConnectionManagerControl(body)
+                : AppContent.HandleContentDirectoryControl(body, hostUrl);
             std::string fullResp = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(browseResp.length()) + "\r\nConnection: close\r\n\r\n" + browseResp;
             SendAll(clientSocket, fullResp);
             return;

@@ -6,6 +6,9 @@
 struct MediaFormatInfo {
     std::wstring mimeType;
     std::wstring upnpClass;
+    std::string dlnaProfile;
+    bool byteSeek = true;
+    std::string dlnaFlags = "01700000000000000000000000000000";
 };
 
 struct HttpByteRange {
@@ -22,6 +25,11 @@ bool TryParseIntStrict(const std::string& text, int& value);
 bool TryParseNonNegativeLongLong(const std::string& text, long long& value);
 HttpByteRange ParseHttpRangeHeader(const std::string& rangeHeader, long long fileSize);
 bool GetMediaFormatForExtension(const std::wstring& ext, MediaFormatInfo& info);
+std::string BuildProtocolInfo(const MediaFormatInfo& info, bool hasKnownSize);
+std::string BuildProtocolInfoForExtension(const std::wstring& ext, const std::wstring& mimeType, bool hasKnownSize);
+std::string BuildContentFeatures(const MediaFormatInfo& info, bool hasKnownSize);
+std::string BuildContentFeaturesForExtension(const std::wstring& ext, const std::wstring& mimeType, bool hasKnownSize);
+std::string BuildSourceProtocolInfoList();
 bool IsSubtitleExtension(const std::wstring& ext);
 std::string SubtitleMimeForExtension(const std::wstring& ext);
 bool NaturalLessWide(const std::wstring& left, const std::wstring& right);

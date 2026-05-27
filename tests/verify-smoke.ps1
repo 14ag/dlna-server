@@ -510,6 +510,21 @@ try {
             Add-Result ("FAIL server icon PNG check: " + ($iconFailures -join "; "))
         }
 
+        $connectionManagerBody = @"
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <u:GetProtocolInfo xmlns:u="urn:schemas-upnp-org:service:ConnectionManager:1" />
+  </s:Body>
+</s:Envelope>
+"@
+        $connectionManagerContent = Invoke-SoapCurl ($location -replace "/description.xml$", "/upnp/control/connection_manager") $connectionManagerBody
+        if ($connectionManagerContent -match "<Source>" -and $connectionManagerContent -match "http-get:\*:" -and $connectionManagerContent -match "<Sink></Sink>") {
+            Add-Result "PASS ConnectionManager GetProtocolInfo returned source protocol info"
+        } else {
+            Add-Result "FAIL ConnectionManager GetProtocolInfo response missing protocol info"
+        }
+
         $soapBody = @"
 <?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
@@ -549,6 +564,34 @@ try {
                         Add-Result "PASS Browse SOAP advertised subtitle URL via sec:CaptionInfoEx"
                     } else {
                         Add-Result "FAIL Browse SOAP did not advertise subtitle URL"
+                    }
+
+                    if ($childBrowseContent -match "albumArtURI" -and $childBrowseContent -match "/albumart/") {
+                        Add-Result "PASS Browse SOAP advertised album art URL"
+                    } else {
+                        Add-Result "FAIL Browse SOAP did not advertise album art URL"
+                    }
+
+                    $searchBody = @"
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:Search xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
+      <ContainerID>$childId</ContainerID>
+      <SearchCriteria>dc:title contains "movie"</SearchCriteria>
+      <Filter>*</Filter>
+      <StartingIndex>0</StartingIndex>
+      <RequestedCount>0</RequestedCount>
+      <SortCriteria></SortCriteria>
+    </u:Search>
+  </s:Body>
+</s:Envelope>
+"@
+                    $searchContent = Invoke-SoapCurl ($location -replace "/description.xml$", "/upnp/control/content_directory") $searchBody
+                    if ($searchContent -match "SearchResponse" -and $searchContent -match "movie" -and $searchContent -match "<TotalMatches>1</TotalMatches>") {
+                        Add-Result "PASS Search SOAP returned matching media entry"
+                    } else {
+                        Add-Result "FAIL Search SOAP did not return expected media entry"
                     }
 
                     # 2. HEAD request check
@@ -653,6 +696,15 @@ try {
                             }
                         } else {
                             Add-Result "FAIL subtitle request returned status $($subResp.StatusCode)"
+                        }
+                    }
+
+                    if ($movieId) {
+                        $artResp = Invoke-WebRequest -Uri "$baseUrl/albumart/$movieId" -UseBasicParsing -TimeoutSec 5
+                        if ($artResp.StatusCode -eq 200 -and $artResp.Headers["Content-Type"] -match "image/jpeg") {
+                            Add-Result "PASS album art served with image MIME type"
+                        } else {
+                            Add-Result "FAIL album art request returned status $($artResp.StatusCode)"
                         }
                     }
 
