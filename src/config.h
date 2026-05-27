@@ -33,8 +33,12 @@ public:
     std::wstring ipWhiteList;
     std::wstring deviceUUID;
     bool runOnBoot;
+    bool defaultPlaylistEnabled;
+    std::wstring defaultPlaylistPath;
+    std::wstring serverIconPath;
     
     std::vector<MediaSource> mediaSources;
+    std::wstring GetDefaultPlaylistPath();
 
 private:
     Config();

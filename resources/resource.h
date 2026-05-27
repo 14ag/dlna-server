@@ -3,6 +3,7 @@
 
 // Icons
 #define IDI_APP_ICON                    101
+#define IDR_APP_ICON_BYTES              102
 #define IDC_STATIC                      -1
 
 // Main Window Toolbar & UI
@@ -17,10 +18,10 @@
 
 // Settings Dialog Controls
 #define IDC_CHK_RUN_ON_BOOT             401
-#define IDC_CHK_THUMB_VIDEO             402
-#define IDC_CHK_THUMB_AUDIO             403
-#define IDC_CHK_THUMB_IMAGE             404
-#define IDC_CMB_THUMB_QUALITY           405
+#define IDC_CHK_DEFAULT_PLAYLIST        402
+#define IDC_BTN_DEFAULT_PLAYLIST_ADD    403
+#define IDC_EDT_SERVER_ICON             404
+#define IDC_BTN_SERVER_ICON_BROWSE      405
 #define IDC_CHK_ADD_ARTIST_ALBUM        406
 #define IDC_CHK_HIDE_ALL_MEDIA          407
 #define IDC_CHK_FLAT_FOLDERS            408

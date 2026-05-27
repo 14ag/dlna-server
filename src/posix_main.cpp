@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
         else if (arg == "--help") { PrintUsage(argv[0]); return 0; }
         else AppConfig.mediaSources.push_back({Utf8ToWide(arg), true});
     }
-    if (AppConfig.mediaSources.empty()) {
+    if (AppConfig.mediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
         PrintUsage(argv[0]);
         return 2;
     }

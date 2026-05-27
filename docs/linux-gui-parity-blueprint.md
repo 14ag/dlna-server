@@ -18,6 +18,7 @@ Native Linux GUI target: FLTK C++ app matching current Windows Win32 behavior. K
 - Empty-state text: `Please add shared folders or files (button "+")`
 - Status stopped text: `dlna-server is stopped`
 - Status running text: `dlna-server is running on {endpoint}`
+- Status busy text: `starting server...` or `stopping server...`
 - Source list contents: one row per configured media source path
 - Close behavior: hide to tray/status notifier when available; graceful quit-visible fallback when not available
 - Tray/status notifier menu: `Show Window`, `Start Server` or `Stop Server`, `Exit`
@@ -34,19 +35,19 @@ Native Linux GUI target: FLTK C++ app matching current Windows Win32 behavior. K
 - Text field: `IP Whitelist:`
 - Checkbox: `Run on Windows Startup`
 - Checkbox: `Debug Log (Write to file)`
+- Checkbox: `Default playlist`
+- Button: `Add...`
+- Text field: `Server icon:`
+- Button: `...`
 - Checkbox: `Add Artist/Album folders to audio`
 - Checkbox: `Do not show 'All Media' folders`
 - Checkbox: `Flat folders style`
 - Checkbox: `Show file names instead of titles`
 - Checkbox: `Sort by title instead of file name`
 - Checkbox: `Proxy streams`
-- Disabled checkbox: `Show video thumbnails`
-- Disabled checkbox: `Show audio album art`
-- Disabled checkbox: `Show image thumbnails`
-- Disabled combo: `Thumbnail quality:`
 - Footer text: `* Server restart needed`
 
-Settings load from `AppConfig` on dialog open. `OK` writes every enabled setting and calls `AppConfig.Save()`. `Cancel` closes without saving. `View log` opens the log dialog. `Restart` remains wired as a visible control; implementation can restart server once FLTK server orchestration is connected.
+Settings load from `AppConfig` on dialog open. `OK` writes every enabled setting and calls `AppConfig.Save()`. `Cancel` closes without saving. `View log` opens the log dialog. `Restart` saves settings and restarts the server when it is running.
 
 ## Log Dialog Inventory
 
@@ -60,8 +61,8 @@ Settings load from `AppConfig` on dialog open. `OK` writes every enabled setting
 ## Behavior Checklist
 
 - Adding a folder appends an enabled media source, saves config, refreshes list, and rescans media.
-- Starting server calls existing server start path and updates status/control state on success.
-- Stopping server calls existing server stop path and updates status/control state.
+- Starting and stopping server run in a worker thread, show busy text immediately, and disable source/settings controls until complete.
+- Default playlist entry form writes or appends `default.m3u` beside `config.ini`.
 - Settings `OK` round-trips all current config fields.
 - Log dialog displays current in-memory/file-backed log text and remains read-only.
 - Close/hide behavior does not stop server unless user chooses `Exit`.
@@ -74,6 +75,5 @@ Settings load from `AppConfig` on dialog open. `OK` writes every enabled setting
 - Toolbar buttons keep stable square dimensions and right alignment.
 - Status text truncates gracefully if endpoint is long.
 - Source list stays readable with long paths.
-- Disabled thumbnail controls remain visible but unmistakably disabled.
 - Keyboard tab order follows visible order.
-- Tooltips exist for plus, start/stop, settings, restart, view log, and disabled thumbnail controls.
+- Tooltips exist for plus, start/stop, settings, restart, view log, and default playlist add.

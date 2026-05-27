@@ -56,11 +56,25 @@ void MediaSources::Scan() {
             ScanFolder(src.path, folderInfo.id);
         }
     }
+    if (AppConfig.defaultPlaylistEnabled && !AppConfig.defaultPlaylistPath.empty()) {
+        DWORD attrs = GetFileAttributesW(AppConfig.defaultPlaylistPath.c_str());
+        if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+            MediaItem playlistFolder;
+            playlistFolder.id = m_nextId++;
+            playlistFolder.parentId = 0;
+            playlistFolder.path = AppConfig.defaultPlaylistPath;
+            playlistFolder.title = L"Default playlist";
+            playlistFolder.isFolder = true;
+            playlistFolder.upnpClass = L"object.container.storageFolder";
+            m_items.push_back(playlistFolder);
+            ScanPlaylist(AppConfig.defaultPlaylistPath, playlistFolder.id);
+        }
+    }
     m_systemUpdateId++;
     LogPrint(L"Scanned %d media items.", (int)m_items.size());
 }
 
-void MediaSources::AddMediaFile(const std::wstring& path, int parentId, const std::wstring& titleOverride) {
+void MediaSources::AddMediaFile(const std::wstring& path, int parentId, const std::wstring& titleOverride, const std::wstring& subtitleOverride) {
     std::wstring mime, uclass;
     std::wstring ext = SourceExtension(path);
     if (!IsAllowedExtension(ext, mime, uclass)) {
@@ -99,7 +113,9 @@ void MediaSources::AddMediaFile(const std::wstring& path, int parentId, const st
         fileInfo.title = SourceStemName(path);
     }
 
-    if (!IsRemoteMediaUrl(path) && uclass == L"object.item.videoItem") {
+    if (!subtitleOverride.empty()) {
+        fileInfo.subtitlePath = subtitleOverride;
+    } else if (!IsRemoteMediaUrl(path) && uclass == L"object.item.videoItem") {
         std::wstring fileName = SourceDisplayName(path);
         wchar_t stemBuf[MAX_PATH];
         wcscpy_s(stemBuf, fileName.c_str());
@@ -125,7 +141,7 @@ void MediaSources::AddMediaFile(const std::wstring& path, int parentId, const st
 
 void MediaSources::ScanPlaylist(const std::wstring& playlistPath, int parentId) {
     for (const auto& entry : LoadPlaylistEntries(playlistPath)) {
-        AddMediaFile(entry.location, parentId, entry.title);
+        AddMediaFile(entry.location, parentId, entry.title, entry.subtitlePath);
     }
 }
 

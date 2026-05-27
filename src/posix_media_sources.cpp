@@ -73,11 +73,26 @@ void MediaSources::Scan() {
             ScanFolder(source.path, folder.id);
         }
     }
+    if (AppConfig.defaultPlaylistEnabled && !AppConfig.defaultPlaylistPath.empty()) {
+        fs::path path(WideToUtf8(AppConfig.defaultPlaylistPath));
+        std::error_code ec;
+        if (fs::is_regular_file(path, ec)) {
+            MediaItem playlistFolder{};
+            playlistFolder.id = m_nextId++;
+            playlistFolder.parentId = 0;
+            playlistFolder.path = AppConfig.defaultPlaylistPath;
+            playlistFolder.title = L"Default playlist";
+            playlistFolder.isFolder = true;
+            playlistFolder.upnpClass = L"object.container.storageFolder";
+            m_items.push_back(playlistFolder);
+            ScanPlaylist(AppConfig.defaultPlaylistPath, playlistFolder.id);
+        }
+    }
     ++m_systemUpdateId;
     LogPrint(L"Scanned %d media items.", static_cast<int>(m_items.size()));
 }
 
-void MediaSources::AddMediaFile(const std::wstring& pathText, int parentId, const std::wstring& titleOverride) {
+void MediaSources::AddMediaFile(const std::wstring& pathText, int parentId, const std::wstring& titleOverride, const std::wstring& subtitleOverride) {
     std::wstring mime, uclass;
     std::wstring ext = SourceExtension(pathText);
     if (!IsAllowedExtension(ext, mime, uclass)) {
@@ -112,7 +127,9 @@ void MediaSources::AddMediaFile(const std::wstring& pathText, int parentId, cons
         file.title = AppConfig.showFileNamesInsteadOfTitles ? SourceDisplayName(pathText) : SourceStemName(pathText);
     }
 
-    if (!IsRemoteMediaUrl(pathText) && uclass == L"object.item.videoItem") {
+    if (!subtitleOverride.empty()) {
+        file.subtitlePath = subtitleOverride;
+    } else if (!IsRemoteMediaUrl(pathText) && uclass == L"object.item.videoItem") {
         fs::path path(WideToUtf8(pathText));
         static const char* kSubExts[] = { ".srt", ".vtt", ".sub", ".ass", ".ssa", ".smi", ".txt" };
         for (const char* subExt : kSubExts) {
@@ -130,7 +147,7 @@ void MediaSources::AddMediaFile(const std::wstring& pathText, int parentId, cons
 
 void MediaSources::ScanPlaylist(const std::wstring& playlistPath, int parentId) {
     for (const auto& entry : LoadPlaylistEntries(playlistPath)) {
-        AddMediaFile(entry.location, parentId, entry.title);
+        AddMediaFile(entry.location, parentId, entry.title, entry.subtitlePath);
     }
 }
 

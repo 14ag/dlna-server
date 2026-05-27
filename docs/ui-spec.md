@@ -22,7 +22,7 @@ Scope: Windows Win32 UI and Linux FLTK UI. Keep both quiet, compact, and utility
 
 - Toolbar buttons are 40 x 40 px, right-aligned, 8 px from top
 - Toolbar button spacing is 8 px, with a 24 px right gutter
-- Toolbar buttons use a 1 px border and 4 px corner radius
+- Toolbar buttons use a 1 px border and 8 px corner radius
 - Toolbar button order: Add, Start/Stop, Settings
 - Add button tooltip: `Add media folder`
 - Start button tooltip: `Start server`
@@ -34,8 +34,9 @@ Scope: Windows Win32 UI and Linux FLTK UI. Keep both quiet, compact, and utility
 
 ## Settings Dialog
 
-- Controls follow Windows order exactly: identity, ports, whitelist, toggles, thumbnail placeholders, actions
-- Thumbnail controls remain visible but disabled until implemented
+- Controls follow Windows order exactly: identity, ports, whitelist, default playlist, server icon, toggles, actions
+- Default playlist has a checkbox plus an `Add...` button that is enabled only while checked
+- Server icon accepts `.ico`, `.png`, `.jpg`, and `.jpeg`
 - `Restart`, `View log`, `Cancel`, and `OK` stay pinned to dialog bottom
 - Numeric fields accept only integer ports
 - `OK` saves, `Cancel` discards, `View log` opens current log
@@ -51,6 +52,7 @@ Scope: Windows Win32 UI and Linux FLTK UI. Keep both quiet, compact, and utility
 - Fixed Windows dimensions, margins, and padding use 4 px increments
 - No clipped labels at 640 x 460
 - Long endpoint/status text clips instead of overlapping buttons
+- Start/stop busy text is `starting server...` or `stopping server...`
 - Toolbar button positions remain stable during resize
 - Dialog tab order follows visual reading order
-- Disabled controls have native disabled styling and useful tooltips
+- Disabled controls have native disabled styling

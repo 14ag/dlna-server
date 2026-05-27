@@ -20,7 +20,10 @@
 #include <algorithm>
 #include <csignal>
 #include <cstdlib>
+#include <fstream>
+#include <mutex>
 #include <string>
+#include <thread>
 
 namespace {
 constexpr int kWindowWidth = 800;
@@ -28,6 +31,13 @@ constexpr int kWindowHeight = 600;
 constexpr int kToolbarHeight = 48;
 constexpr int kStatusHeight = 24;
 constexpr int kButtonSize = 30;
+
+enum class ServerUiState {
+    Stopped,
+    Starting,
+    Running,
+    Stopping
+};
 
 std::string ToUtf8(const std::wstring& value) {
     return WideToUtf8(value);
@@ -44,6 +54,58 @@ int ParsePort(const char* value, int fallback) {
         return (port > 0 && port <= 65535) ? port : fallback;
     } catch (...) {
         return fallback;
+    }
+}
+
+std::string TitleFromPath(const std::string& moviePath) {
+    size_t slash = moviePath.find_last_of("/\\");
+    std::string name = slash == std::string::npos ? moviePath : moviePath.substr(slash + 1);
+    size_t dot = name.find_last_of('.');
+    if (dot != std::string::npos && dot > 0) name = name.substr(0, dot);
+    return name.empty() ? "Media item" : name;
+}
+
+bool AppendDefaultPlaylistEntry(const std::string& moviePath, const std::string& subtitlePath) {
+    if (moviePath.empty()) return false;
+    if (AppConfig.defaultPlaylistPath.empty()) AppConfig.defaultPlaylistPath = AppConfig.GetDefaultPlaylistPath();
+    std::ifstream existing(WideToUtf8(AppConfig.defaultPlaylistPath), std::ios::binary);
+    bool hasContent = existing.good() && existing.peek() != std::ifstream::traits_type::eof();
+    existing.close();
+
+    std::ofstream file(WideToUtf8(AppConfig.defaultPlaylistPath), std::ios::binary | std::ios::app);
+    if (!file) return false;
+    if (!hasContent) file << "#EXTM3U\n";
+    file << "#EXTINF:-1," << TitleFromPath(moviePath) << "\n";
+    if (!subtitlePath.empty()) {
+        file << "#DLNA-SUBTITLE:" << subtitlePath << "\n";
+        file << "#EXTVLCOPT:sub-file=" << subtitlePath << "\n";
+    }
+    file << moviePath << "\n";
+    return true;
+}
+
+void ShowPlaylistEntryDialog() {
+    Fl_Window dialog(460, 150, "Default playlist entry");
+    Fl_Input movie(110, 18, 330, 24, "Movie path:");
+    Fl_Input subtitle(110, 54, 330, 24, "Subtitle path:");
+    Fl_Button add(365, 102, 75, 26, "Add");
+    struct AddState { Fl_Window* window; bool done; } state{ &dialog, false };
+    add.callback([](Fl_Widget*, void* data) {
+        auto* state = static_cast<AddState*>(data);
+        state->done = true;
+        state->window->hide();
+    }, &state);
+    dialog.set_modal();
+    dialog.end();
+    dialog.show();
+    while (dialog.shown()) Fl::wait();
+    if (state.done) {
+        if (!AppendDefaultPlaylistEntry(movie.value(), subtitle.value())) {
+            fl_alert("Could not write default playlist.");
+            return;
+        }
+        AppConfig.defaultPlaylistEnabled = true;
+        AppConfig.Save();
     }
 }
 
@@ -91,49 +153,43 @@ private:
 class SettingsDialog : public Fl_Window {
 public:
     SettingsDialog()
-        : Fl_Window(430, 370, "DLNA Server Settings"),
+        : Fl_Window(500, 370, "DLNA Server Settings"),
           m_serverName(120, 14, 190, 24, "Server Name:"),
           m_httpPort(120, 44, 70, 24, "HTTP Port:"),
           m_filePort(270, 44, 70, 24, "File Port:"),
-          m_ipWhitelist(120, 74, 290, 24, "IP Whitelist:"),
+          m_ipWhitelist(120, 74, 350, 24, "IP Whitelist:"),
           m_runOnStartup(16, 112, 190, 24, "Run on Windows Startup"),
           m_debugLog(16, 138, 190, 24, "Debug Log (Write to file)"),
+          m_defaultPlaylist(260, 112, 130, 24, "Default playlist"),
+          m_defaultPlaylistAdd(400, 112, 70, 24, "Add..."),
+          m_serverIcon(300, 148, 120, 24, "Server icon:"),
+          m_serverIconBrowse(430, 148, 50, 24, "..."),
           m_artistAlbum(16, 164, 230, 24, "Add Artist/Album folders to audio"),
           m_hideAllMedia(16, 190, 230, 24, "Do not show 'All Media' folders"),
           m_flatFolders(16, 216, 190, 24, "Flat folders style"),
           m_showFileNames(16, 242, 230, 24, "Show file names instead of titles"),
           m_sortByTitle(16, 268, 230, 24, "Sort by title instead of file name"),
           m_proxyStreams(16, 294, 190, 24, "Proxy streams"),
-          m_thumbVideo(260, 112, 150, 24, "Show video thumbnails"),
-          m_thumbAudio(260, 138, 150, 24, "Show audio album art"),
-          m_thumbImage(260, 164, 150, 24, "Show image thumbnails"),
-          m_thumbQuality(340, 194, 70, 24, "Thumbnail quality:"),
           m_restartButton(7, 340, 70, 24, "Restart"),
           m_viewLogButton(84, 340, 70, 24, "View log"),
-          m_cancelButton(270, 340, 70, 24, "Cancel"),
-          m_okButton(347, 340, 70, 24, "OK"),
+          m_cancelButton(340, 340, 70, 24, "Cancel"),
+          m_okButton(417, 340, 70, 24, "OK"),
           m_saved(false),
           m_restartRequested(false) {
         LoadFromConfig();
 
-        m_thumbQuality.add("Low");
-        m_thumbQuality.add("Medium");
-        m_thumbQuality.add("High");
-        m_thumbQuality.deactivate();
-        m_thumbVideo.deactivate();
-        m_thumbAudio.deactivate();
-        m_thumbImage.deactivate();
-
         m_restartButton.tooltip("Restart server");
         m_viewLogButton.tooltip("View log");
-        m_thumbVideo.tooltip("Thumbnail support is disabled");
-        m_thumbAudio.tooltip("Thumbnail support is disabled");
-        m_thumbImage.tooltip("Thumbnail support is disabled");
+        m_defaultPlaylistAdd.tooltip("Add default playlist entry");
 
         m_restartButton.callback(RestartClicked, this);
         m_viewLogButton.callback(ShowLog, nullptr);
+        m_defaultPlaylist.callback(DefaultPlaylistToggled, this);
+        m_defaultPlaylistAdd.callback(AddDefaultPlaylistEntry, this);
+        m_serverIconBrowse.callback(BrowseServerIcon, this);
         m_cancelButton.callback(CloseWindow, this);
         m_okButton.callback(OkClicked, this);
+        RefreshDefaultPlaylistControls();
         end();
     }
 
@@ -156,6 +212,8 @@ private:
         m_ipWhitelist.value(ToUtf8(AppConfig.ipWhiteList).c_str());
         m_runOnStartup.value(AppConfig.runOnBoot ? 1 : 0);
         m_debugLog.value(AppConfig.debugLog ? 1 : 0);
+        m_defaultPlaylist.value(AppConfig.defaultPlaylistEnabled ? 1 : 0);
+        m_serverIcon.value(ToUtf8(AppConfig.serverIconPath).c_str());
         m_artistAlbum.value(AppConfig.addArtistAlbumFolders ? 1 : 0);
         m_hideAllMedia.value(AppConfig.doNotShowAllMediaFolders ? 1 : 0);
         m_flatFolders.value(AppConfig.flatFolderStyle ? 1 : 0);
@@ -171,6 +229,9 @@ private:
         AppConfig.ipWhiteList = ToWide(m_ipWhitelist.value());
         AppConfig.runOnBoot = m_runOnStartup.value() != 0;
         AppConfig.debugLog = m_debugLog.value() != 0;
+        AppConfig.defaultPlaylistEnabled = m_defaultPlaylist.value() != 0;
+        if (AppConfig.defaultPlaylistPath.empty()) AppConfig.defaultPlaylistPath = AppConfig.GetDefaultPlaylistPath();
+        AppConfig.serverIconPath = ToWide(m_serverIcon.value());
         AppConfig.addArtistAlbumFolders = m_artistAlbum.value() != 0;
         AppConfig.doNotShowAllMediaFolders = m_hideAllMedia.value() != 0;
         AppConfig.flatFolderStyle = m_flatFolders.value() != 0;
@@ -200,22 +261,49 @@ private:
         LogDialog::ShowModal();
     }
 
+    void RefreshDefaultPlaylistControls() {
+        if (m_defaultPlaylist.value()) m_defaultPlaylistAdd.activate();
+        else m_defaultPlaylistAdd.deactivate();
+    }
+
+    static void DefaultPlaylistToggled(Fl_Widget*, void* data) {
+        static_cast<SettingsDialog*>(data)->RefreshDefaultPlaylistControls();
+    }
+
+    static void AddDefaultPlaylistEntry(Fl_Widget*, void* data) {
+        auto* self = static_cast<SettingsDialog*>(data);
+        ShowPlaylistEntryDialog();
+        self->m_defaultPlaylist.value(1);
+        self->RefreshDefaultPlaylistControls();
+    }
+
+    static void BrowseServerIcon(Fl_Widget*, void* data) {
+        auto* self = static_cast<SettingsDialog*>(data);
+        Fl_Native_File_Chooser chooser;
+        chooser.title("Choose server icon");
+        chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
+        chooser.filter("Icon and image files\t*.{ico,png,jpg,jpeg}\nAll files\t*");
+        if (chooser.show() == 0 && chooser.filename()) {
+            self->m_serverIcon.value(chooser.filename());
+        }
+    }
+
     Fl_Input m_serverName;
     Fl_Int_Input m_httpPort;
     Fl_Int_Input m_filePort;
     Fl_Input m_ipWhitelist;
     Fl_Check_Button m_runOnStartup;
     Fl_Check_Button m_debugLog;
+    Fl_Check_Button m_defaultPlaylist;
+    Fl_Button m_defaultPlaylistAdd;
+    Fl_Input m_serverIcon;
+    Fl_Button m_serverIconBrowse;
     Fl_Check_Button m_artistAlbum;
     Fl_Check_Button m_hideAllMedia;
     Fl_Check_Button m_flatFolders;
     Fl_Check_Button m_showFileNames;
     Fl_Check_Button m_sortByTitle;
     Fl_Check_Button m_proxyStreams;
-    Fl_Check_Button m_thumbVideo;
-    Fl_Check_Button m_thumbAudio;
-    Fl_Check_Button m_thumbImage;
-    Fl_Choice m_thumbQuality;
     Fl_Button m_restartButton;
     Fl_Button m_viewLogButton;
     Fl_Button m_cancelButton;
@@ -236,7 +324,11 @@ public:
           m_settingsButton(kWindowWidth - 50, 10, kButtonSize, kButtonSize, "@settings"),
           m_status(15, kToolbarHeight, kWindowWidth - 30, kStatusHeight, "DLNA Server is stopped"),
           m_sources(0, kToolbarHeight + kStatusHeight, kWindowWidth, kWindowHeight - kToolbarHeight - kStatusHeight),
-          m_emptyState(15, 80, kWindowWidth - 30, 24, "Please add shared folders or files (button \"+\")") {
+          m_emptyState(15, 80, kWindowWidth - 30, 24, "Please add shared folders or files (button \"+\")"),
+          m_state(ServerUiState::Stopped),
+          m_hasPendingResult(false),
+          m_pendingSuccess(false),
+          m_pendingState(ServerUiState::Stopped) {
         color(fl_rgb_color(30, 30, 30));
         size_range(640, 460);
         callback(CloseRequested, this);
@@ -278,6 +370,7 @@ public:
 
     ~MainWindow() override {
         Fl::remove_timeout(PollLog, this);
+        if (m_worker.joinable()) m_worker.join();
         DLNAServer.Stop();
     }
 
@@ -322,41 +415,118 @@ private:
     }
 
     void RefreshStatus() {
-        if (DLNAServer.IsRunning()) {
+        if (m_state == ServerUiState::Starting) {
+            m_status.copy_label("starting server...");
+            m_startStopButton.deactivate();
+        } else if (m_state == ServerUiState::Stopping) {
+            m_status.copy_label("stopping server...");
+            m_startStopButton.deactivate();
+        } else if (m_state == ServerUiState::Running) {
             const std::string endpoint = ToUtf8(DLNAServer.GetEndpoint());
             const std::string label = "DLNA Server is running on " + endpoint;
             m_status.copy_label(label.c_str());
             m_startStopButton.copy_label("@square");
             m_startStopButton.tooltip("Stop server");
+            m_startStopButton.activate();
         } else {
             m_status.copy_label("DLNA Server is stopped");
             m_startStopButton.copy_label("@>");
             m_startStopButton.tooltip("Start server");
+            m_startStopButton.activate();
+        }
+        if (IsBusy()) {
+            m_addButton.deactivate();
+            m_removeButton.deactivate();
+            m_settingsButton.deactivate();
+        } else {
+            m_addButton.activate();
+            m_settingsButton.activate();
+            RefreshEmptyState();
         }
         redraw();
     }
 
+    bool IsBusy() const {
+        return m_state == ServerUiState::Starting || m_state == ServerUiState::Stopping;
+    }
+
     void StartServer() {
-        SaveSourcesFromList();
-        if (AppConfig.mediaSources.empty()) {
+        if (IsBusy() || m_state == ServerUiState::Running) return;
+        if (AppConfig.mediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
             fl_alert("Add at least one media source.");
             return;
         }
-        if (!DLNAServer.Start()) {
-            fl_alert("Failed to start DLNA server. Open View log for details.");
-        }
+        if (m_worker.joinable()) m_worker.join();
+        m_state = ServerUiState::Starting;
         RefreshStatus();
+        m_worker = std::thread([this]() {
+            bool ok = DLNAServer.Start();
+            SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, ok ? "" : "Failed to start DLNA server. Open View log for details.");
+        });
     }
 
     void StopServer() {
-        DLNAServer.Stop();
+        if (IsBusy() || m_state != ServerUiState::Running) return;
+        if (m_worker.joinable()) m_worker.join();
+        m_state = ServerUiState::Stopping;
         RefreshStatus();
+        m_worker = std::thread([this]() {
+            DLNAServer.Stop();
+            SetPendingResult(ServerUiState::Stopped, true, "");
+        });
     }
 
     void RestartServer() {
-        const bool wasRunning = DLNAServer.IsRunning();
-        StopServer();
-        if (wasRunning) StartServer();
+        if (IsBusy()) return;
+        const bool wasRunning = m_state == ServerUiState::Running;
+        if (!wasRunning) return;
+        if (m_worker.joinable()) m_worker.join();
+        m_state = ServerUiState::Stopping;
+        RefreshStatus();
+        m_worker = std::thread([this]() {
+            DLNAServer.Stop();
+            {
+                std::lock_guard<std::mutex> lock(m_pendingMutex);
+                m_pendingState = ServerUiState::Starting;
+                m_hasPendingResult = true;
+                m_pendingSuccess = true;
+                m_pendingMessage.clear();
+            }
+            bool ok = DLNAServer.Start();
+            SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, ok ? "" : "Server stopped. Failed to restart on the new port.");
+        });
+    }
+
+    void SetPendingResult(ServerUiState state, bool success, const std::string& message) {
+        std::lock_guard<std::mutex> lock(m_pendingMutex);
+        m_pendingState = state;
+        m_pendingSuccess = success;
+        m_pendingMessage = message;
+        m_hasPendingResult = true;
+    }
+
+    void ApplyPendingResult() {
+        bool hasResult = false;
+        ServerUiState state = ServerUiState::Stopped;
+        bool success = false;
+        std::string message;
+        {
+            std::lock_guard<std::mutex> lock(m_pendingMutex);
+            hasResult = m_hasPendingResult;
+            if (hasResult) {
+                state = m_pendingState;
+                success = m_pendingSuccess;
+                message = m_pendingMessage;
+                m_hasPendingResult = false;
+            }
+        }
+        if (!hasResult) return;
+        if (m_worker.joinable() && (state != ServerUiState::Starting || !message.empty())) {
+            m_worker.join();
+        }
+        m_state = state;
+        RefreshStatus();
+        if (!success && !message.empty()) fl_alert("%s", message.c_str());
     }
 
     static void AddSource(Fl_Widget*, void* data) {
@@ -428,6 +598,7 @@ private:
 
     static void PollLog(void* data) {
         auto* self = static_cast<MainWindow*>(data);
+        self->ApplyPendingResult();
         self->RefreshStatus();
         Fl::repeat_timeout(0.5, PollLog, data);
     }
@@ -453,6 +624,13 @@ private:
     Fl_Box m_status;
     Fl_Hold_Browser m_sources;
     Fl_Box m_emptyState;
+    ServerUiState m_state;
+    std::thread m_worker;
+    std::mutex m_pendingMutex;
+    bool m_hasPendingResult;
+    bool m_pendingSuccess;
+    ServerUiState m_pendingState;
+    std::string m_pendingMessage;
 };
 } // namespace
 

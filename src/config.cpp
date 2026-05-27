@@ -140,7 +140,7 @@ Config& Config::Get() {
 
 Config::Config() : port(8200), fileServerPort(8201), flatFolderStyle(false), showFileNamesInsteadOfTitles(false),
     proxyStreams(false), sortByTitle(false), doNotShowAllMediaFolders(false), addArtistAlbumFolders(false),
-    debugLog(false), runOnBoot(false) {
+    debugLog(false), runOnBoot(false), defaultPlaylistEnabled(false) {
 }
 
 std::wstring Config::GetConfigPath() {
@@ -162,6 +162,15 @@ std::wstring Config::GenerateUUID() {
     std::wstring res((wchar_t*)str);
     RpcStringFreeW(&str);
     return res;
+}
+
+std::wstring Config::GetDefaultPlaylistPath() {
+    std::wstring path = GetConfigPath();
+    wchar_t buffer[MAX_PATH] = {};
+    wcscpy_s(buffer, path.c_str());
+    PathRemoveFileSpecW(buffer);
+    PathAppendW(buffer, L"default.m3u");
+    return buffer;
 }
 
 void Config::SetRunOnBoot(bool enable) {
@@ -203,9 +212,15 @@ void Config::Load() {
     addArtistAlbumFolders = ParseIntOrDefault(values, "AddArtistAlbumFolders", 0) != 0;
     debugLog = ParseIntOrDefault(values, "DebugLog", 0) != 0;
     runOnBoot = ParseIntOrDefault(values, "RunOnBoot", 0) != 0;
+    defaultPlaylistEnabled = ParseIntOrDefault(values, "DefaultPlaylistEnabled", 0) != 0;
 
     ipWhiteList = Utf8ToWide(values.count("IPWhiteList") ? values["IPWhiteList"] : "");
     deviceUUID = Utf8ToWide(values.count("DeviceUUID") ? values["DeviceUUID"] : "");
+    defaultPlaylistPath = Utf8ToWide(values.count("DefaultPlaylistPath") ? values["DefaultPlaylistPath"] : "");
+    if (defaultPlaylistPath.empty()) {
+        defaultPlaylistPath = GetDefaultPlaylistPath();
+    }
+    serverIconPath = Utf8ToWide(values.count("ServerIconPath") ? values["ServerIconPath"] : "");
     if (deviceUUID.empty()) {
         deviceUUID = GenerateUUID();
         Save();
@@ -244,6 +259,9 @@ void Config::Save() {
     ss << "AddArtistAlbumFolders=" << (addArtistAlbumFolders ? 1 : 0) << "\n";
     ss << "DebugLog=" << (debugLog ? 1 : 0) << "\n";
     ss << "RunOnBoot=" << (runOnBoot ? 1 : 0) << "\n";
+    ss << "DefaultPlaylistEnabled=" << (defaultPlaylistEnabled ? 1 : 0) << "\n";
+    ss << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
+    ss << "ServerIconPath=" << WideToUtf8(serverIconPath) << "\n";
     ss << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
     ss << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
     ss << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";
