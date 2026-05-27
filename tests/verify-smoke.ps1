@@ -118,6 +118,16 @@ function Invoke-SoapCurl {
     }
 }
 
+function Invoke-CurlRaw {
+    param([string[]]$curlArgs)
+
+    $output = & curl.exe @curlArgs 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw (($output | Out-String).Trim())
+    }
+    return ($output | Out-String)
+}
+
 function Invoke-WebRequestUtf8 {
     param([string]$url)
 
@@ -523,6 +533,34 @@ try {
             Add-Result "PASS ConnectionManager GetProtocolInfo returned source protocol info"
         } else {
             Add-Result "FAIL ConnectionManager GetProtocolInfo response missing protocol info"
+        }
+
+        $eventUrl = $location -replace "/description.xml$", "/upnp/event/content_directory"
+        $subscribeRaw = Invoke-CurlRaw @(
+            "-sS", "-i", "--max-time", "10",
+            "-X", "SUBSCRIBE",
+            "-H", "CALLBACK: <http://127.0.0.1:9/dlna-event>",
+            "-H", "NT: upnp:event",
+            "-H", "TIMEOUT: Second-1800",
+            $eventUrl
+        )
+        $sidMatch = [regex]::Match($subscribeRaw, "(?im)^SID:\s*(.+?)\s*$")
+        if ($subscribeRaw -match "HTTP/1\.1 200 OK" -and $sidMatch.Success -and $subscribeRaw -match "(?im)^TIMEOUT:\s*Second-1800\s*$") {
+            Add-Result "PASS ContentDirectory event SUBSCRIBE returned SID and timeout"
+            $sid = $sidMatch.Groups[1].Value.Trim()
+            $unsubscribeRaw = Invoke-CurlRaw @(
+                "-sS", "-i", "--max-time", "10",
+                "-X", "UNSUBSCRIBE",
+                "-H", "SID: $sid",
+                $eventUrl
+            )
+            if ($unsubscribeRaw -match "HTTP/1\.1 200 OK") {
+                Add-Result "PASS ContentDirectory event UNSUBSCRIBE accepted SID"
+            } else {
+                Add-Result "FAIL ContentDirectory event UNSUBSCRIBE response: $unsubscribeRaw"
+            }
+        } else {
+            Add-Result "FAIL ContentDirectory event SUBSCRIBE response: $subscribeRaw"
         }
 
         $soapBody = @"
