@@ -10,6 +10,32 @@ permissions:
   contents: write
 
 jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows release zips
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cmake = Get-Content -LiteralPath CMakeLists.txt -Raw
+          if ($cmake -notmatch "project\(dlna-server VERSION ([0-9.]+)\)") {
+            throw "Could not read project version from CMakeLists.txt"
+          }
+          $version = $Matches[1]
+          cmake -S . -B build-release-windows -A x64 -DCMAKE_INSTALL_PREFIX="$PWD/output/windows"
+          cmake --build build-release-windows --config Release --target install -- /m
+          cmake -S . -B build-release-windows-x86 -A Win32 -DCMAKE_INSTALL_PREFIX="$PWD/output/windows-x86"
+          cmake --build build-release-windows-x86 --config Release --target install -- /m
+          Compress-Archive -LiteralPath "output/windows/DLNA Server.exe" -DestinationPath "output/dlna-server-$version-windows-x86_64.zip" -Force
+          Compress-Archive -LiteralPath "output/windows-x86/DLNA Server.exe" -DestinationPath "output/dlna-server-$version-windows-x86.zip" -Force
+      - name: Upload Windows assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: output/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   linux:
     runs-on: ubuntu-22.04
     steps:
@@ -17,7 +43,9 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake g++ git libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libgl1-mesa-dev libglu1-mesa-dev libpng-dev libjpeg-dev dpkg-dev desktop-file-utils curl
+          sudo apt-get install -y cmake g++ git libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libgl1-mesa-dev libglu1-mesa-dev libpng-dev libjpeg-dev dpkg-dev desktop-file-utils curl flatpak flatpak-builder
+          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
       - name: Build Linux desktop assets
         run: bash scripts/build-linux-desktop-assets.sh
       - name: Upload Linux assets
