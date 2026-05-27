@@ -245,7 +245,7 @@ Run the build-tree binary directly:
 
 ### Windows
 
-Run `DLNA Server.exe`. Add one or more media sources with the `+` button, then start the server with the play button.
+Run `DLNA Server.exe`. Add one or more media sources with **Add**, remove selected source entries with **Delete**, then start the server with **Start**.
 
 Sources can be folders, playlist files, or network shares. Playlist files can be `.m3u`, `.m3u8`, or `.pls`. Network shares use URL form:
 
@@ -259,6 +259,8 @@ On first start, Windows may ask for firewall access. The app itself stays unelev
 Changing the HTTP port while the server is running restarts the server so the old listener closes and the new port opens. The Windows TCP firewall rule does not need to change when the port changes.
 
 While the server is starting or stopping, the status line shows `starting server...` or `stopping server...` and toolbar controls are disabled until the operation completes. Windows is kept awake while the server is starting, running, or stopping.
+
+**Delete** removes the selected source from the app only. It never deletes media files, folders, playlists, or network locations from disk.
 
 Settings can create a default playlist entry from a movie path and optional subtitle path. The app writes `default.m3u` beside `config.ini`, emits `#DLNA-SUBTITLE` and VLC-compatible subtitle metadata, and indexes it when **Default playlist** is enabled.
 

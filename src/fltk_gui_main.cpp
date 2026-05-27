@@ -30,7 +30,13 @@ constexpr int kWindowWidth = 800;
 constexpr int kWindowHeight = 600;
 constexpr int kToolbarHeight = 48;
 constexpr int kStatusHeight = 24;
-constexpr int kButtonSize = 30;
+constexpr int kButtonHeight = 32;
+constexpr int kAddButtonWidth = 56;
+constexpr int kDeleteButtonWidth = 72;
+constexpr int kStartStopButtonWidth = 72;
+constexpr int kSettingsButtonWidth = 82;
+constexpr int kButtonGap = 8;
+constexpr int kRightGutter = 16;
 
 enum class ServerUiState {
     Stopped,
@@ -318,13 +324,13 @@ public:
         : Fl_Window(kWindowWidth, kWindowHeight, "DLNA Server"),
           m_toolbar(0, 0, kWindowWidth, kToolbarHeight),
           m_title(15, 10, 240, 30, "DLNA Server"),
-          m_addButton(kWindowWidth - 170, 10, kButtonSize, kButtonSize, "+"),
-          m_removeButton(kWindowWidth - 130, 10, kButtonSize, kButtonSize, "-"),
-          m_startStopButton(kWindowWidth - 90, 10, kButtonSize, kButtonSize, "@>"),
-          m_settingsButton(kWindowWidth - 50, 10, kButtonSize, kButtonSize, "@settings"),
+          m_addButton(0, 8, kAddButtonWidth, kButtonHeight, "Add"),
+          m_removeButton(0, 8, kDeleteButtonWidth, kButtonHeight, "Delete"),
+          m_startStopButton(0, 8, kStartStopButtonWidth, kButtonHeight, "Start"),
+          m_settingsButton(0, 8, kSettingsButtonWidth, kButtonHeight, "Settings"),
           m_status(15, kToolbarHeight, kWindowWidth - 30, kStatusHeight, "DLNA Server is stopped"),
           m_sources(0, kToolbarHeight + kStatusHeight, kWindowWidth, kWindowHeight - kToolbarHeight - kStatusHeight),
-          m_emptyState(15, 80, kWindowWidth - 30, 24, "Please add shared folders or files (button \"+\")"),
+          m_emptyState(15, 80, kWindowWidth - 30, 24, "Please add shared folders or files with Add."),
           m_state(ServerUiState::Stopped),
           m_hasPendingResult(false),
           m_pendingSuccess(false),
@@ -342,7 +348,7 @@ public:
         m_title.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
 
         m_addButton.tooltip("Add media source");
-        m_removeButton.tooltip("Remove selected media source");
+        m_removeButton.tooltip("Delete selected source");
         m_startStopButton.tooltip("Start server");
         m_settingsButton.tooltip("Settings");
 
@@ -361,8 +367,10 @@ public:
         m_removeButton.callback(RemoveSource, this);
         m_startStopButton.callback(ToggleServer, this);
         m_settingsButton.callback(ShowSettings, this);
+        m_sources.callback(SourceSelectionChanged, this);
         end();
         resizable(m_sources);
+        Layout(kWindowWidth, kWindowHeight);
         RefreshSourceList();
         RefreshStatus();
         Fl::add_timeout(0.5, PollLog, this);
@@ -377,6 +385,14 @@ public:
     void resize(int x, int y, int width, int height) override {
         Fl_Window::resize(x, y, width, height);
         Layout(width, height);
+    }
+
+    int handle(int event) override {
+        if (event == FL_KEYDOWN && Fl::event_key() == FL_Delete && Fl::focus() == &m_sources) {
+            RemoveSelectedSource();
+            return 1;
+        }
+        return Fl_Window::handle(event);
     }
 
 private:
@@ -407,7 +423,7 @@ private:
         } else {
             m_emptyState.hide();
         }
-        if (m_sources.size() > 0) {
+        if (!IsBusy() && m_sources.value() > 0) {
             m_removeButton.activate();
         } else {
             m_removeButton.deactivate();
@@ -425,12 +441,12 @@ private:
             const std::string endpoint = ToUtf8(DLNAServer.GetEndpoint());
             const std::string label = "DLNA Server is running on " + endpoint;
             m_status.copy_label(label.c_str());
-            m_startStopButton.copy_label("@square");
+            m_startStopButton.copy_label("Stop");
             m_startStopButton.tooltip("Stop server");
             m_startStopButton.activate();
         } else {
             m_status.copy_label("DLNA Server is stopped");
-            m_startStopButton.copy_label("@>");
+            m_startStopButton.copy_label("Start");
             m_startStopButton.tooltip("Start server");
             m_startStopButton.activate();
         }
@@ -560,12 +576,23 @@ private:
 
     static void RemoveSource(Fl_Widget*, void* data) {
         auto* self = static_cast<MainWindow*>(data);
-        const int selected = self->m_sources.value();
+        self->RemoveSelectedSource();
+    }
+
+    void RemoveSelectedSource() {
+        if (IsBusy()) return;
+        const int selected = m_sources.value();
         if (selected > 0) {
-            self->m_sources.remove(selected);
-            self->SaveSourcesFromList();
-            self->RefreshEmptyState();
+            m_sources.remove(selected);
+            const int count = m_sources.size();
+            if (count > 0) m_sources.value(selected <= count ? selected : count);
+            SaveSourcesFromList();
+            RefreshEmptyState();
         }
+    }
+
+    static void SourceSelectionChanged(Fl_Widget*, void* data) {
+        static_cast<MainWindow*>(data)->RefreshEmptyState();
     }
 
     static void ToggleServer(Fl_Widget*, void* data) {
@@ -605,11 +632,16 @@ private:
 
     void Layout(int width, int height) {
         m_toolbar.resize(0, 0, width, kToolbarHeight);
-        m_title.resize(15, 10, width - 220, 30);
-        m_addButton.resize(width - 170, 10, kButtonSize, kButtonSize);
-        m_removeButton.resize(width - 130, 10, kButtonSize, kButtonSize);
-        m_startStopButton.resize(width - 90, 10, kButtonSize, kButtonSize);
-        m_settingsButton.resize(width - 50, 10, kButtonSize, kButtonSize);
+        const int buttonTop = (kToolbarHeight - kButtonHeight) / 2;
+        const int settingsLeft = width - kRightGutter - kSettingsButtonWidth;
+        const int startLeft = settingsLeft - kButtonGap - kStartStopButtonWidth;
+        const int deleteLeft = startLeft - kButtonGap - kDeleteButtonWidth;
+        const int addLeft = deleteLeft - kButtonGap - kAddButtonWidth;
+        m_title.resize(15, 10, addLeft - 30, 30);
+        m_addButton.resize(addLeft, buttonTop, kAddButtonWidth, kButtonHeight);
+        m_removeButton.resize(deleteLeft, buttonTop, kDeleteButtonWidth, kButtonHeight);
+        m_startStopButton.resize(startLeft, buttonTop, kStartStopButtonWidth, kButtonHeight);
+        m_settingsButton.resize(settingsLeft, buttonTop, kSettingsButtonWidth, kButtonHeight);
         m_status.resize(15, kToolbarHeight, width - 30, kStatusHeight);
         m_sources.resize(0, kToolbarHeight + kStatusHeight, width, height - kToolbarHeight - kStatusHeight);
         m_emptyState.resize(15, 80, width - 30, 24);

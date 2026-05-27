@@ -23,6 +23,7 @@ public:
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     LRESULT HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
     void RenderToolbar(HDC hdc, RECT& rect);
@@ -30,7 +31,10 @@ private:
     void RemoveTrayIcon();
     void ShowTrayMenu();
     void OpenFolderPicker();
+    void RemoveSelectedSource();
     void RefreshSourceList();
+    void UpdateDeleteButton();
+    int SelectedSourceIndex() const;
     HFONT CreateUiFont(int pixelSize, int weight, const wchar_t* faceName);
     void DrawToolbarButton(const DRAWITEMSTRUCT* drawItem);
     void BeginStartServer();
@@ -49,12 +53,14 @@ private:
     HBRUSH m_hToolbarBrush;
     HFONT m_hTitleFont;
     HFONT m_hBodyFont;
-    HFONT m_hIconFont;
+    HFONT m_hButtonFont;
 
     HWND m_hBtnAdd;
+    HWND m_hBtnDelete;
     HWND m_hBtnStartStop;
     HWND m_hBtnSettings;
     HWND m_hListSources;
+    WNDPROC m_listOldProc;
 
     ServerUiState m_state;
     std::wstring m_statusEndpoint;

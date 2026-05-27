@@ -18,11 +18,14 @@ class UiSpecTests(unittest.TestCase):
             "Minimum content size: 640 x 460",
             "Toolbar height: 56 px",
             "Status strip height: 40 px",
-            "Windows UI font: Segoe UI Variable",
-            "Toolbar buttons are 40 x 40 px",
+            "Windows UI font: Segoe UI for controls/body/title",
+            "Windows dialog templates use 10 pt Segoe UI",
+            "Parent surfaces own layout",
+            "Toolbar buttons are 32 px tall",
             "8 px corner radius",
             "4 px increments",
             "Add media folder",
+            "Delete selected source",
             "Start server",
             "Stop server",
             "Settings",
@@ -47,22 +50,56 @@ class UiSpecTests(unittest.TestCase):
         cmake = self.read("CMakeLists.txt")
 
         for token in (
-            "const int kGutter = 24",
+            "const int kGutter = 16",
             "const int kToolbarHeight = 56",
             "const int kStatusHeight = 40",
-            "const int kButtonSize = 40",
+            "const int kButtonHeight = 32",
             "const int kButtonGap = 8",
             "const int kCornerDiameter = 8",
-            'CreateUiFont(20, FW_SEMIBOLD, L"Segoe UI Variable")',
-            'CreateUiFont(14, FW_NORMAL, L"Segoe UI Variable")',
-            'CreateUiFont(16, FW_NORMAL, L"Segoe MDL2 Assets")',
+            'CreateUiFont(20, FW_SEMIBOLD, L"Segoe UI")',
+            'CreateUiFont(14, FW_NORMAL, L"Segoe UI")',
+            "DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE",
+            'CreateWindowExW(0, L"BUTTON", L"Add"',
+            'CreateWindowExW(0, L"BUTTON", L"Delete"',
+            'CreateWindowExW(0, L"BUTTON", L"Start"',
+            'CreateWindowExW(0, L"BUTTON", L"Settings"',
+            "IDC_BTN_DELETE",
+            "RemoveSelectedSource",
+            "VK_DELETE",
+            "LBN_SELCHANGE",
             "BS_OWNERDRAW",
             "RoundRect",
             "WS_BORDER",
         ):
             self.assertIn(token, main)
 
-        self.assertIn('FONT 9, "Segoe UI Variable"', app_rc)
+        self.assertIn("dwmapi", cmake)
+        settings = self.read("src/settingsdlg.cpp")
+        logdlg = self.read("src/logdlg.cpp")
+        self.assertNotIn("SetWindowTheme", settings)
+        self.assertNotIn("WM_CTLCOLORDLG", settings + logdlg)
+        self.assertNotIn("BS_OWNERDRAW", settings + logdlg)
+        self.assertIn("PlaylistEntryProc", settings)
+
+        self.assertIn('FONT 10, "Segoe UI"', app_rc)
+        self.assertIn("IDD_SETTINGS DIALOGEX 0, 0, 400, 326", app_rc)
+        self.assertIn("EDITTEXT        IDC_EDT_SERVER_NAME,110,26,190,19", app_rc)
+        self.assertIn('CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI")', main)
+        self.assertIn('CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI")', settings)
+        self.assertIn("ApplyDialogFont(hwndDlg)", settings)
+        self.assertIn("EnumChildWindows(hwnd, SetChildFontProc", settings)
+        for token in (
+            "const int kLabelToControlGap = 12",
+            "const int kRelatedControlGap = 8",
+            "const int kControlHeight = 32",
+            "kPlaylistEditWidth = kPlaylistDialogWidth",
+        ):
+            self.assertIn(token, settings)
+        for token in (
+            "const int kSourcePromptContentWidth = kSourcePromptWidth - (kGutter * 2)",
+            "const int kSourcePromptEditTop = kGutter + kSourcePromptLabelHeight + 12",
+        ):
+            self.assertIn(token, main)
         self.assertNotIn("DS_FIXEDSYS", app_rc)
         for token in (
             'VALUE "FileDescription", "DLNA Server"',

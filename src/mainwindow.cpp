@@ -2,6 +2,7 @@
 #include "../resources/resource.h"
 #include "settingsdlg.h"
 #include <commctrl.h>
+#include <dwmapi.h>
 #include <shobjidl.h>
 #include <shellapi.h>
 #include <string>
@@ -12,6 +13,11 @@
 #include "server.h"
 
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "dwmapi.lib")
+
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
 
 #define WM_TRAYICON (WM_USER + 1)
 #define WM_SERVER_OPERATION_DONE (WM_APP + 10)
@@ -19,28 +25,62 @@
 #define TRAY_ID 1
 
 namespace {
-const int kGutter = 24;
+const int kGutter = 16;
 const int kToolbarHeight = 56;
 const int kStatusHeight = 40;
-const int kButtonSize = 40;
+const int kButtonHeight = 32;
 const int kButtonGap = 8;
 const int kListTop = kToolbarHeight + kStatusHeight + 8;
 const int kCornerDiameter = 8;
-const int kSourcePromptWidth = 520;
-const int kSourcePromptHeight = 190;
+const int kAddButtonWidth = 56;
+const int kDeleteButtonWidth = 72;
+const int kStartStopButtonWidth = 72;
+const int kSettingsButtonWidth = 82;
+const int kSourcePromptWidth = 552;
+const int kSourcePromptHeight = 216;
+const int kSourcePromptContentWidth = kSourcePromptWidth - (kGutter * 2);
+const int kSourcePromptLabelHeight = 20;
+const int kSourcePromptEditTop = kGutter + kSourcePromptLabelHeight + 12;
+const int kSourcePromptHintTop = kSourcePromptEditTop + kButtonHeight + kButtonGap;
+const int kSourcePromptButtonTop = kSourcePromptHintTop + kSourcePromptLabelHeight + 20;
 const int IDC_SOURCE_EDIT = 4101;
 const int IDC_SOURCE_BROWSE_FOLDER = 4102;
 const int IDC_SOURCE_BROWSE_PLAYLIST = 4103;
 const int IDC_SOURCE_ADD = 4104;
 const int IDC_SOURCE_CANCEL = 4105;
 
-COLORREF kPageColor = RGB(32, 32, 32);
-COLORREF kToolbarColor = RGB(40, 40, 40);
-COLORREF kControlColor = RGB(45, 45, 45);
-COLORREF kControlPressedColor = RGB(58, 58, 58);
-COLORREF kBorderColor = RGB(72, 72, 72);
-COLORREF kTextColor = RGB(244, 244, 244);
-COLORREF kSecondaryTextColor = RGB(190, 190, 190);
+COLORREF kPageColor = RGB(31, 31, 31);
+COLORREF kToolbarColor = RGB(37, 37, 37);
+COLORREF kControlColor = RGB(51, 51, 51);
+COLORREF kControlHoverColor = RGB(62, 62, 62);
+COLORREF kControlPressedColor = RGB(74, 74, 74);
+COLORREF kBorderColor = RGB(88, 88, 88);
+COLORREF kFocusColor = RGB(96, 165, 250);
+COLORREF kTextColor = RGB(255, 255, 255);
+COLORREF kDisabledTextColor = RGB(132, 132, 132);
+COLORREF kSecondaryTextColor = RGB(200, 200, 200);
+
+HFONT CreateScaledFont(HWND hwnd, int pixelSize, int weight, const wchar_t* faceName) {
+    HDC hdc = GetDC(hwnd);
+    int dpiY = hdc ? GetDeviceCaps(hdc, LOGPIXELSY) : 96;
+    if (hdc) {
+        ReleaseDC(hwnd, hdc);
+    }
+
+    return CreateFontW(-MulDiv(pixelSize, dpiY, 96), 0, 0, 0, weight, FALSE, FALSE, FALSE,
+                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, faceName);
+}
+
+HFONT SourcePromptFont(HWND hwnd) {
+    static HFONT font = CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI");
+    return font ? font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+}
+
+void ApplyDarkFrame(HWND hwnd) {
+    BOOL darkFrame = TRUE;
+    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkFrame, sizeof(darkFrame));
+}
 
 struct ServerOperationResult {
     ServerUiState finalState;
@@ -138,22 +178,22 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         state = reinterpret_cast<SourcePromptState*>(cs->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
 
-        HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        HFONT font = SourcePromptFont(hwnd);
         HWND label = CreateWindowW(L"STATIC", L"Add a folder, playlist file, or network share URL:",
-            WS_VISIBLE | WS_CHILD, 16, 16, 470, 20, hwnd, NULL, NULL, NULL);
+            WS_VISIBLE | WS_CHILD, kGutter, kGutter, kSourcePromptContentWidth, kSourcePromptLabelHeight, hwnd, NULL, NULL, NULL);
         state->edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
             WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL,
-            16, 44, 470, 24, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_EDIT)), NULL, NULL);
+            kGutter, kSourcePromptEditTop, kSourcePromptContentWidth, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_EDIT)), NULL, NULL);
         HWND hint = CreateWindowW(L"STATIC", L"Example: smb://user:pass@server/share or ftp://user:pass@server:21/media",
-            WS_VISIBLE | WS_CHILD, 16, 74, 470, 20, hwnd, NULL, NULL, NULL);
+            WS_VISIBLE | WS_CHILD, kGutter, kSourcePromptHintTop, kSourcePromptContentWidth, kSourcePromptLabelHeight, hwnd, NULL, NULL, NULL);
         HWND folder = CreateWindowW(L"BUTTON", L"Folder...",
-            WS_VISIBLE | WS_CHILD | WS_TABSTOP, 16, 108, 96, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_FOLDER)), NULL, NULL);
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_FOLDER)), NULL, NULL);
         HWND playlist = CreateWindowW(L"BUTTON", L"Playlist...",
-            WS_VISIBLE | WS_CHILD | WS_TABSTOP, 120, 108, 96, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_PLAYLIST)), NULL, NULL);
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter + 96 + kButtonGap, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_PLAYLIST)), NULL, NULL);
         HWND add = CreateWindowW(L"BUTTON", L"Add",
-            WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, 326, 108, 76, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_ADD)), NULL, NULL);
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, kSourcePromptWidth - kGutter - 78 - kButtonGap - 78, kSourcePromptButtonTop, 78, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_ADD)), NULL, NULL);
         HWND cancel = CreateWindowW(L"BUTTON", L"Cancel",
-            WS_VISIBLE | WS_CHILD | WS_TABSTOP, 410, 108, 76, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_CANCEL)), NULL, NULL);
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP, kSourcePromptWidth - kGutter - 78, kSourcePromptButtonTop, 78, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_CANCEL)), NULL, NULL);
         HWND controls[] = { label, state->edit, hint, folder, playlist, add, cancel };
         for (HWND control : controls) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SetFocus(state->edit);
@@ -234,13 +274,13 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
 }
 
 MainWindow::MainWindow() : m_hwnd(NULL), m_hInstance(NULL), m_state(ServerUiState::Stopped),
-m_hBtnAdd(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL) {
+m_hBtnAdd(NULL), m_hBtnDelete(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL), m_listOldProc(NULL) {
     m_hBgBrush = CreateSolidBrush(kPageColor);
     m_hDarkBrush = CreateSolidBrush(kControlColor);
     m_hToolbarBrush = CreateSolidBrush(kToolbarColor);
     m_hTitleFont = NULL;
     m_hBodyFont = NULL;
-    m_hIconFont = NULL;
+    m_hButtonFont = NULL;
 }
 
 MainWindow::~MainWindow() {
@@ -255,7 +295,7 @@ MainWindow::~MainWindow() {
     if (m_hToolbarBrush) DeleteObject(m_hToolbarBrush);
     if (m_hTitleFont) DeleteObject(m_hTitleFont);
     if (m_hBodyFont) DeleteObject(m_hBodyFont);
-    if (m_hIconFont) DeleteObject(m_hIconFont);
+    if (m_hButtonFont) DeleteObject(m_hButtonFont);
 }
 
 bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
@@ -281,38 +321,47 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
     );
 
     if (m_hwnd == NULL) return false;
+    ApplyDarkFrame(m_hwnd);
 
-    m_hTitleFont = CreateUiFont(20, FW_SEMIBOLD, L"Segoe UI Variable");
-    m_hBodyFont = CreateUiFont(14, FW_NORMAL, L"Segoe UI Variable");
-    m_hIconFont = CreateUiFont(16, FW_NORMAL, L"Segoe MDL2 Assets");
+    m_hTitleFont = CreateUiFont(20, FW_SEMIBOLD, L"Segoe UI");
+    m_hBodyFont = CreateUiFont(14, FW_NORMAL, L"Segoe UI");
+    m_hButtonFont = CreateUiFont(14, FW_NORMAL, L"Segoe UI");
 
-    m_hBtnAdd = CreateWindowExW(0, L"BUTTON", L"\xE710",
+    m_hBtnAdd = CreateWindowExW(0, L"BUTTON", L"Add",
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
-        0, 0, kButtonSize, kButtonSize, m_hwnd, (HMENU)IDC_BTN_ADD, hInstance, NULL);
+        0, 0, kAddButtonWidth, kButtonHeight, m_hwnd, (HMENU)IDC_BTN_ADD, hInstance, NULL);
 
-    m_hBtnStartStop = CreateWindowExW(0, L"BUTTON", L"\xE768",
+    m_hBtnDelete = CreateWindowExW(0, L"BUTTON", L"Delete",
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
-        0, 0, kButtonSize, kButtonSize, m_hwnd, (HMENU)IDC_BTN_STARTSTOP, hInstance, NULL);
+        0, 0, kDeleteButtonWidth, kButtonHeight, m_hwnd, (HMENU)IDC_BTN_DELETE, hInstance, NULL);
 
-    m_hBtnSettings = CreateWindowExW(0, L"BUTTON", L"\xE713",
+    m_hBtnStartStop = CreateWindowExW(0, L"BUTTON", L"Start",
         WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
-        0, 0, kButtonSize, kButtonSize, m_hwnd, (HMENU)IDC_BTN_SETTINGS, hInstance, NULL);
+        0, 0, kStartStopButtonWidth, kButtonHeight, m_hwnd, (HMENU)IDC_BTN_STARTSTOP, hInstance, NULL);
 
-    if(m_hIconFont) {
-        SendMessage(m_hBtnAdd, WM_SETFONT, (WPARAM)m_hIconFont, TRUE);
-        SendMessage(m_hBtnStartStop, WM_SETFONT, (WPARAM)m_hIconFont, TRUE);
-        SendMessage(m_hBtnSettings, WM_SETFONT, (WPARAM)m_hIconFont, TRUE);
+    m_hBtnSettings = CreateWindowExW(0, L"BUTTON", L"Settings",
+        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+        0, 0, kSettingsButtonWidth, kButtonHeight, m_hwnd, (HMENU)IDC_BTN_SETTINGS, hInstance, NULL);
+
+    if(m_hButtonFont) {
+        SendMessage(m_hBtnAdd, WM_SETFONT, (WPARAM)m_hButtonFont, TRUE);
+        SendMessage(m_hBtnDelete, WM_SETFONT, (WPARAM)m_hButtonFont, TRUE);
+        SendMessage(m_hBtnStartStop, WM_SETFONT, (WPARAM)m_hButtonFont, TRUE);
+        SendMessage(m_hBtnSettings, WM_SETFONT, (WPARAM)m_hButtonFont, TRUE);
     }
 
     m_hListSources = CreateWindowExW(0, L"LISTBOX", NULL,
-        WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER | LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT,
+        WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER | LBS_HASSTRINGS | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
         kGutter, kListTop, 800 - (kGutter * 2), 600 - kListTop - kGutter,
         m_hwnd, (HMENU)IDC_LIST_SOURCES, hInstance, NULL);
     if (m_hBodyFont) {
         SendMessage(m_hListSources, WM_SETFONT, (WPARAM)m_hBodyFont, TRUE);
     }
+    SetWindowLongPtrW(m_hListSources, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+    m_listOldProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(m_hListSources, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(ListBoxProc)));
 
     RefreshSourceList();
+    UpdateDeleteButton();
 
     AddTrayIcon();
 
@@ -325,7 +374,7 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
 void MainWindow::SetStatus(ServerUiState state, const std::wstring& endpoint) {
     m_state = state;
     m_statusEndpoint = endpoint;
-    SendMessage(m_hBtnStartStop, WM_SETTEXT, 0, (LPARAM)(IsRunning() ? L"\xE71A" : L"\xE768"));
+    SendMessage(m_hBtnStartStop, WM_SETTEXT, 0, (LPARAM)(IsRunning() ? L"Stop" : L"Start"));
     SetControlsForState();
     UpdateWakeLock();
     InvalidateRect(m_hwnd, NULL, TRUE);
@@ -352,6 +401,7 @@ void MainWindow::SetControlsForState() {
     EnableWindow(m_hBtnAdd, enabled);
     EnableWindow(m_hBtnStartStop, enabled);
     EnableWindow(m_hBtnSettings, enabled);
+    UpdateDeleteButton();
 }
 
 void MainWindow::BeginStartServer() {
@@ -473,15 +523,50 @@ void MainWindow::RefreshSourceList() {
     for (const auto& src : AppConfig.mediaSources) {
         SendMessageW(m_hListSources, LB_ADDSTRING, 0, (LPARAM)src.path.c_str());
     }
+    UpdateDeleteButton();
+}
+
+int MainWindow::SelectedSourceIndex() const {
+    if (!m_hListSources) return -1;
+    LRESULT selected = SendMessage(m_hListSources, LB_GETCURSEL, 0, 0);
+    return selected == LB_ERR ? -1 : static_cast<int>(selected);
+}
+
+void MainWindow::UpdateDeleteButton() {
+    if (!m_hBtnDelete) return;
+    EnableWindow(m_hBtnDelete, (!IsBusy() && SelectedSourceIndex() >= 0) ? TRUE : FALSE);
+}
+
+void MainWindow::RemoveSelectedSource() {
+    if (IsBusy()) return;
+    int selected = SelectedSourceIndex();
+    if (selected < 0 || selected >= static_cast<int>(AppConfig.mediaSources.size())) {
+        UpdateDeleteButton();
+        return;
+    }
+
+    AppConfig.mediaSources.erase(AppConfig.mediaSources.begin() + selected);
+    AppConfig.Save();
+    AppMedia.Scan();
+    RefreshSourceList();
+
+    int count = static_cast<int>(SendMessage(m_hListSources, LB_GETCOUNT, 0, 0));
+    if (count > 0) {
+        int nextSelection = selected < count ? selected : count - 1;
+        SendMessage(m_hListSources, LB_SETCURSEL, nextSelection, 0);
+    }
+    UpdateDeleteButton();
+    InvalidateRect(m_hwnd, NULL, TRUE);
 }
 
 void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
     RECT rc = drawItem->rcItem;
     bool pressed = (drawItem->itemState & ODS_SELECTED) != 0;
     bool disabled = (drawItem->itemState & ODS_DISABLED) != 0;
+    bool hot = (drawItem->itemState & ODS_HOTLIGHT) != 0;
 
-    COLORREF fillColor = pressed ? kControlPressedColor : kControlColor;
-    COLORREF textColor = disabled ? RGB(128, 128, 128) : kTextColor;
+    COLORREF fillColor = pressed ? kControlPressedColor : (hot ? kControlHoverColor : kControlColor);
+    COLORREF textColor = disabled ? kDisabledTextColor : kTextColor;
     HBRUSH fillBrush = CreateSolidBrush(fillColor);
     HPEN borderPen = CreatePen(PS_SOLID, 1, kBorderColor);
     HGDIOBJ oldBrush = SelectObject(drawItem->hDC, fillBrush);
@@ -490,16 +575,22 @@ void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
     SetBkMode(drawItem->hDC, TRANSPARENT);
     RoundRect(drawItem->hDC, rc.left, rc.top, rc.right, rc.bottom, kCornerDiameter, kCornerDiameter);
 
-    wchar_t text[8] = {};
-    GetWindowTextW(drawItem->hwndItem, text, 8);
-    HFONT oldFont = (HFONT)SelectObject(drawItem->hDC, m_hIconFont ? m_hIconFont : GetStockObject(DEFAULT_GUI_FONT));
+    wchar_t text[32] = {};
+    GetWindowTextW(drawItem->hwndItem, text, 32);
+    HFONT oldFont = (HFONT)SelectObject(drawItem->hDC, m_hButtonFont ? m_hButtonFont : GetStockObject(DEFAULT_GUI_FONT));
     SetTextColor(drawItem->hDC, textColor);
-    DrawTextW(drawItem->hDC, text, -1, &rc, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+    DrawTextW(drawItem->hDC, text, -1, &rc, DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS);
 
     if (drawItem->itemState & ODS_FOCUS) {
         RECT focus = rc;
         InflateRect(&focus, -4, -4);
-        DrawFocusRect(drawItem->hDC, &focus);
+        HPEN focusPen = CreatePen(PS_SOLID, 1, kFocusColor);
+        HGDIOBJ oldFocusPen = SelectObject(drawItem->hDC, focusPen);
+        HGDIOBJ oldFocusBrush = SelectObject(drawItem->hDC, GetStockObject(NULL_BRUSH));
+        Rectangle(drawItem->hDC, focus.left, focus.top, focus.right, focus.bottom);
+        SelectObject(drawItem->hDC, oldFocusBrush);
+        SelectObject(drawItem->hDC, oldFocusPen);
+        DeleteObject(focusPen);
     }
 
     SelectObject(drawItem->hDC, oldFont);
@@ -521,6 +612,18 @@ void MainWindow::OpenFolderPicker() {
     AppConfig.Save();
     RefreshSourceList();
     AppMedia.Scan();
+}
+
+LRESULT CALLBACK MainWindow::ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    MainWindow* pThis = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (pThis && uMsg == WM_KEYDOWN && wParam == VK_DELETE) {
+        pThis->RemoveSelectedSource();
+        return 0;
+    }
+    if (pThis && pThis->m_listOldProc) {
+        return CallWindowProcW(pThis->m_listOldProc, hwnd, uMsg, wParam, lParam);
+    }
+    return DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
 
 LRESULT CALLBACK MainWindow::WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -559,7 +662,7 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         
         HGDIOBJ hOldFont = SelectObject(hdc, m_hTitleFont ? m_hTitleFont : GetStockObject(DEFAULT_GUI_FONT));
         
-        int titleRight = rcClient.right - 160;
+        int titleRight = rcClient.right - (kAddButtonWidth + kDeleteButtonWidth + kStartStopButtonWidth + kSettingsButtonWidth + kButtonGap * 4 + kGutter);
         if (titleRight < kGutter) {
             titleRight = kGutter;
         }
@@ -581,12 +684,12 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         } else if (m_state == ServerUiState::Running) {
             statusText = L"DLNA Server is running on " + m_statusEndpoint;
         }
-        DrawTextW(hdc, statusText.c_str(), -1, &rcStatusText, DT_SINGLELINE | DT_VCENTER);
+        DrawTextW(hdc, statusText.c_str(), -1, &rcStatusText, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
         if (SendMessage(m_hListSources, LB_GETCOUNT, 0, 0) == 0) {
             RECT rcSubtitle = { kGutter + 16, kListTop + 16, rcClient.right - kGutter - 16, kListTop + 40 };
             SetTextColor(hdc, kSecondaryTextColor);
-            DrawTextW(hdc, L"Please add shared folders or files (button \"+\")", -1, &rcSubtitle, DT_SINGLELINE | DT_TOP);
+            DrawTextW(hdc, L"Please add shared folders or files with Add.", -1, &rcSubtitle, DT_SINGLELINE | DT_TOP);
         }
 
         SelectObject(hdc, hOldFont);
@@ -598,13 +701,15 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         int width = LOWORD(lParam);
         int height = HIWORD(lParam);
 
-        int buttonTop = 8;
-        int settingsLeft = width - kGutter - kButtonSize;
-        int startLeft = settingsLeft - kButtonGap - kButtonSize;
-        int addLeft = startLeft - kButtonGap - kButtonSize;
-        SetWindowPos(m_hBtnAdd, NULL, addLeft, buttonTop, kButtonSize, kButtonSize, SWP_NOZORDER);
-        SetWindowPos(m_hBtnStartStop, NULL, startLeft, buttonTop, kButtonSize, kButtonSize, SWP_NOZORDER);
-        SetWindowPos(m_hBtnSettings, NULL, settingsLeft, buttonTop, kButtonSize, kButtonSize, SWP_NOZORDER);
+        int buttonTop = (kToolbarHeight - kButtonHeight) / 2;
+        int settingsLeft = width - kGutter - kSettingsButtonWidth;
+        int startLeft = settingsLeft - kButtonGap - kStartStopButtonWidth;
+        int deleteLeft = startLeft - kButtonGap - kDeleteButtonWidth;
+        int addLeft = deleteLeft - kButtonGap - kAddButtonWidth;
+        SetWindowPos(m_hBtnAdd, NULL, addLeft, buttonTop, kAddButtonWidth, kButtonHeight, SWP_NOZORDER);
+        SetWindowPos(m_hBtnDelete, NULL, deleteLeft, buttonTop, kDeleteButtonWidth, kButtonHeight, SWP_NOZORDER);
+        SetWindowPos(m_hBtnStartStop, NULL, startLeft, buttonTop, kStartStopButtonWidth, kButtonHeight, SWP_NOZORDER);
+        SetWindowPos(m_hBtnSettings, NULL, settingsLeft, buttonTop, kSettingsButtonWidth, kButtonHeight, SWP_NOZORDER);
 
         int listWidth = width - (kGutter * 2);
         int listHeight = height - kListTop - kGutter;
@@ -632,6 +737,9 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         case IDC_BTN_ADD:
             OpenFolderPicker();
             break;
+        case IDC_BTN_DELETE:
+            RemoveSelectedSource();
+            break;
         case IDC_BTN_SETTINGS:
         {
             int oldPort = AppConfig.port;
@@ -641,6 +749,9 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             }
             break;
         }
+        }
+        if (wmId == IDC_LIST_SOURCES && HIWORD(wParam) == LBN_SELCHANGE) {
+            UpdateDeleteButton();
         }
         return 0;
     }

@@ -53,6 +53,7 @@ if(WIN32)
         uuid
         comctl32
         shlwapi
+        dwmapi
         rpcrt4
         iphlpapi
     )
