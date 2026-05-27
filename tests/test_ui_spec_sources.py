@@ -27,7 +27,7 @@ class UiSpecTests(unittest.TestCase):
             "Stop server",
             "Settings",
             "Default playlist",
-            "Server icon",
+            "UPnP device icons",
             "Log text is read-only",
             "No clipped labels",
         ):

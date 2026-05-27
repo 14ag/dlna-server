@@ -34,7 +34,7 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
     def test_default_playlist_config_and_parser_include_subtitles(self):
         for path in ("src/config.cpp", "src/posix_config.cpp"):
             source = self.read(path)
-            for token in ("DefaultPlaylistEnabled", "DefaultPlaylistPath", "ServerIconPath", "GetDefaultPlaylistPath"):
+            for token in ("DefaultPlaylistEnabled", "DefaultPlaylistPath", "GetDefaultPlaylistPath"):
                 self.assertIn(token, source)
 
         network_header = self.read("src/network_sources.h")
@@ -50,7 +50,7 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
             self.assertIn("Default playlist", source)
             self.assertIn("entry.subtitlePath", source)
 
-    def test_settings_generate_m3u_and_server_icon_controls(self):
+    def test_settings_generate_m3u_and_playlist_browse_controls(self):
         for path in ("src/settingsdlg.cpp", "src/fltk_gui_main.cpp"):
             source = self.read(path)
             for token in (
@@ -59,26 +59,40 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
                 "#DLNA-SUBTITLE:",
                 "#EXTVLCOPT:sub-file=",
                 "Default playlist",
-                "server icon",
+                "Browse...",
             ):
                 self.assertIn(token, source)
+
+        windows_settings = self.read("src/settingsdlg.cpp")
+        self.assertIn("IDC_PLAYLIST_MOVIE_BROWSE", windows_settings)
+        self.assertIn("IDC_PLAYLIST_SUBTITLE_BROWSE", windows_settings)
+        self.assertIn("IFileOpenDialog", windows_settings)
+
+        fltk_settings = self.read("src/fltk_gui_main.cpp")
+        self.assertIn("Fl_Native_File_Chooser", fltk_settings)
 
     def test_device_description_and_http_servers_expose_icon(self):
         content = self.read("src/contentdirectory.cpp")
         self.assertIn("<iconList>", content)
-        self.assertIn("/server-icon", content)
+        for size in ("48", "120", "256"):
+            self.assertIn(f"<width>{size}</width>", content)
+            self.assertIn(f"<height>{size}</height>", content)
+            self.assertIn(f"/icons/server_icon_{size}.png", content)
+        self.assertIn("<depth>24</depth>", content)
 
         for path in ("src/httpserver.cpp", "src/posix_httpserver.cpp"):
             source = self.read(path)
-            self.assertIn('path == "/server-icon"', source)
-            self.assertIn("LoadServerIcon", source)
+            self.assertIn('"/icons/server_icon_48.png"', source)
+            self.assertIn('"/icons/server_icon_120.png"', source)
+            self.assertIn('"/icons/server_icon_256.png"', source)
+            self.assertIn("LoadServerIconPng", source)
             self.assertIn("image/png", source)
-            self.assertIn("image/jpeg", source)
 
         resources = self.read("resources/resource.h")
         app_rc = self.read("resources/app.rc")
-        self.assertIn("IDR_APP_ICON_BYTES", resources)
-        self.assertIn('IDR_APP_ICON_BYTES RCDATA "app.ico"', app_rc)
+        for size in ("48", "120", "256"):
+            self.assertIn(f"IDR_SERVER_ICON_{size}", resources)
+            self.assertIn(f'IDR_SERVER_ICON_{size} RCDATA "server_icon_{size}.png"', app_rc)
 
 
 if __name__ == "__main__":

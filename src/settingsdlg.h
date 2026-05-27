@@ -13,7 +13,6 @@ private:
     static void OnInitDialog(HWND hwndDlg);
     static void OnOK(HWND hwndDlg);
     static void UpdateDefaultPlaylistButton(HWND hwndDlg);
-    static void BrowseServerIcon(HWND hwndDlg);
     static void ShowPlaylistEntryForm(HWND hwndDlg);
 };
 

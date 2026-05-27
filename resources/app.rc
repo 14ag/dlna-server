@@ -3,7 +3,9 @@
 
 // Icon
 IDI_APP_ICON ICON "app.ico"
-IDR_APP_ICON_BYTES RCDATA "app.ico"
+IDR_SERVER_ICON_48 RCDATA "server_icon_48.png"
+IDR_SERVER_ICON_120 RCDATA "server_icon_120.png"
+IDR_SERVER_ICON_256 RCDATA "server_icon_256.png"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION 1,3,0,0
@@ -71,10 +73,6 @@ BEGIN
     CONTROL         "Show file names instead of titles",IDC_CHK_SHOW_FILE_NAMES,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,184,160,12
     CONTROL         "Sort by title instead of file name",IDC_CHK_SORT_BY_TITLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,200,168,12
     CONTROL         "Proxy streams",IDC_CHK_PROXY_STREAMS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,16,216,152,12
-    
-    LTEXT           "Server icon:",IDC_STATIC,200,137,72,8
-    EDITTEXT        IDC_EDT_SERVER_ICON,200,152,128,16,ES_AUTOHSCROLL
-    PUSHBUTTON      "Browse...",IDC_BTN_SERVER_ICON_BROWSE,336,150,48,18
     
     LTEXT           "* Server restart needed",IDC_STATIC,16,264,160,8,WS_DISABLED
 END

@@ -481,6 +481,35 @@ try {
             Add-Result "FAIL description.xml missing expected friendlyName or ContentDirectory service"
         }
 
+        $baseUrl = $location -replace "/description.xml$", ""
+        $iconFailures = @()
+        foreach ($size in @("48", "120", "256")) {
+            if ($descContent -notmatch "/icons/server_icon_$size\.png") {
+                $iconFailures += "description missing $size"
+                continue
+            }
+            try {
+                $iconResp = Invoke-WebRequest -Uri "$baseUrl/icons/server_icon_$size.png" -UseBasicParsing -TimeoutSec 5
+                $contentType = [string]$iconResp.Headers["Content-Type"]
+                $contentLength = 0
+                if ($null -ne $iconResp.RawContentLength) {
+                    $contentLength = [int64]$iconResp.RawContentLength
+                } elseif ($null -ne $iconResp.Content) {
+                    $contentLength = $iconResp.Content.Length
+                }
+                if ($iconResp.StatusCode -ne 200 -or $contentType -notmatch "image/png" -or $contentLength -le 0) {
+                    $iconFailures += "$size returned status=$($iconResp.StatusCode) type=$contentType length=$contentLength"
+                }
+            } catch {
+                $iconFailures += "$size request failed: $($_.Exception.Message)"
+            }
+        }
+        if ($iconFailures.Count -eq 0) {
+            Add-Result "PASS description.xml advertised and served server icon PNGs"
+        } else {
+            Add-Result ("FAIL server icon PNG check: " + ($iconFailures -join "; "))
+        }
+
         $soapBody = @"
 <?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">

@@ -92,8 +92,7 @@ Config::Config()
       deviceUUID(L""),
       runOnBoot(false),
       defaultPlaylistEnabled(false),
-      defaultPlaylistPath(L""),
-      serverIconPath(L"") {
+      defaultPlaylistPath(L"") {
 }
 
 std::wstring Config::GetConfigPath() {
@@ -161,7 +160,6 @@ void Config::Load() {
         else if (key == "RunOnBoot") runOnBoot = ParseIntOrDefault(value, 0) != 0;
         else if (key == "DefaultPlaylistEnabled") defaultPlaylistEnabled = ParseIntOrDefault(value, 0) != 0;
         else if (key == "DefaultPlaylistPath") defaultPlaylistPath = Utf8ToWide(value);
-        else if (key == "ServerIconPath") serverIconPath = Utf8ToWide(value);
         else if (key == "IPWhiteList") ipWhiteList = Utf8ToWide(value);
         else if (key == "DeviceUUID") deviceUUID = Utf8ToWide(value);
         else if (key == "MediaSources") {
@@ -206,7 +204,6 @@ void Config::Save() {
     file << "RunOnBoot=" << (runOnBoot ? 1 : 0) << "\n";
     file << "DefaultPlaylistEnabled=" << (defaultPlaylistEnabled ? 1 : 0) << "\n";
     file << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
-    file << "ServerIconPath=" << WideToUtf8(serverIconPath) << "\n";
     file << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
     file << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
     file << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";

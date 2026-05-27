@@ -166,7 +166,6 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
             "Sort by title instead of file name",
             "Proxy streams",
             "Default playlist",
-            "Server icon:",
             "Default playlist entry",
             "Restart",
             "View log",

@@ -3,7 +3,9 @@
 
 // Icons
 #define IDI_APP_ICON                    101
-#define IDR_APP_ICON_BYTES              102
+#define IDR_SERVER_ICON_48              102
+#define IDR_SERVER_ICON_120             103
+#define IDR_SERVER_ICON_256             104
 #define IDC_STATIC                      -1
 
 // Main Window Toolbar & UI
@@ -20,8 +22,6 @@
 #define IDC_CHK_RUN_ON_BOOT             401
 #define IDC_CHK_DEFAULT_PLAYLIST        402
 #define IDC_BTN_DEFAULT_PLAYLIST_ADD    403
-#define IDC_EDT_SERVER_ICON             404
-#define IDC_BTN_SERVER_ICON_BROWSE      405
 #define IDC_CHK_ADD_ARTIST_ALBUM        406
 #define IDC_CHK_HIDE_ALL_MEDIA          407
 #define IDC_CHK_FLAT_FOLDERS            408

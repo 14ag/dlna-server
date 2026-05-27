@@ -10,12 +10,9 @@ Scope: Windows Win32 UI and Linux FLTK UI. Keep both quiet, compact, and utility
 - Toolbar height: 56 px
 - Status strip height: 40 px
 - Source list starts below status strip and fills remaining space
-- Main background: RGB 32, 32, 32
-- Toolbar background: RGB 40, 40, 40
-- Control background: RGB 45, 45, 45
-- Primary text: RGB 244, 244, 244
-- Secondary text: RGB 190, 190, 190
-- Selection color target: muted blue RGB 70, 90, 120
+- Theme adapts to Windows light/dark app mode where platform APIs allow it
+- Use semantic neutral colors, with accent color only for focus, selection, and primary action states
+- Do not hardcode a dark-only shell; all custom drawing must consume theme tokens
 - Windows UI font: Segoe UI Variable
 
 ## Controls
@@ -34,9 +31,10 @@ Scope: Windows Win32 UI and Linux FLTK UI. Keep both quiet, compact, and utility
 
 ## Settings Dialog
 
-- Controls follow Windows order exactly: identity, ports, whitelist, default playlist, server icon, toggles, actions
+- Controls follow Windows order exactly: identity, ports, whitelist, default playlist, toggles, actions
 - Default playlist has a checkbox plus an `Add...` button that is enabled only while checked
-- Server icon accepts `.ico`, `.png`, `.jpg`, and `.jpeg`
+- Default playlist entry form has `Movie path` and `Subtitle path` fields, each with a browse button, plus one `Add` button
+- UPnP device icons are bundled PNG files at 48, 120, and 256 px and are advertised through `iconList`
 - `Restart`, `View log`, `Cancel`, and `OK` stay pinned to dialog bottom
 - Numeric fields accept only integer ports
 - `OK` saves, `Cancel` discards, `View log` opens current log

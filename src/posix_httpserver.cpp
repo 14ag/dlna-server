@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 #include <fstream>
 #include <sstream>
+#include <vector>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -88,16 +89,15 @@ void SendAll(int fd, const std::string& bytes) {
     }
 }
 
-bool IsSupportedServerIconPath(const std::wstring& path, std::string& mime) {
-    std::wstring ext = SourceExtension(path);
-    if (ext == L".ico") { mime = "image/vnd.microsoft.icon"; return true; }
-    if (ext == L".png") { mime = "image/png"; return true; }
-    if (ext == L".jpg" || ext == L".jpeg") { mime = "image/jpeg"; return true; }
-    return false;
+std::string IconFileNameForPath(const std::string& path) {
+    if (path == "/icons/server_icon_48.png") return "server_icon_48.png";
+    if (path == "/icons/server_icon_120.png") return "server_icon_120.png";
+    if (path == "/icons/server_icon_256.png") return "server_icon_256.png";
+    return {};
 }
 
-bool ReadFileBytes(const std::wstring& path, std::string& bytes) {
-    std::ifstream file(WideToUtf8(path), std::ios::binary);
+bool ReadIconFile(const std::string& path, std::string& bytes) {
+    std::ifstream file(path, std::ios::binary);
     if (!file) return false;
     std::ostringstream ss;
     ss << file.rdbuf();
@@ -105,17 +105,21 @@ bool ReadFileBytes(const std::wstring& path, std::string& bytes) {
     return !bytes.empty();
 }
 
-bool LoadServerIcon(std::string& bytes, std::string& mime) {
-    if (!AppConfig.serverIconPath.empty() && IsSupportedServerIconPath(AppConfig.serverIconPath, mime) &&
-        ReadFileBytes(AppConfig.serverIconPath, bytes)) {
-        return true;
+bool LoadServerIconPng(const std::string& fileName, std::string& bytes) {
+    if (fileName.empty()) return false;
+    const std::string configPath = WideToUtf8(AppConfig.GetConfigPath());
+    const size_t slash = configPath.find_last_of('/');
+    std::string exeDir = slash == std::string::npos ? "." : configPath.substr(0, slash);
+    std::vector<std::string> candidates = {
+        "resources/" + fileName,
+        exeDir + "/" + fileName,
+        exeDir + "/../share/dlna-server/icons/" + fileName,
+        exeDir + "/../Resources/" + fileName,
+    };
+    for (const auto& candidate : candidates) {
+        if (ReadIconFile(candidate, bytes)) return true;
     }
-    if (!AppConfig.serverIconPath.empty()) {
-        LogPrint(L"Server icon path is not usable; falling back to app icon: %ls", AppConfig.serverIconPath.c_str());
-    }
-    mime = "image/svg+xml";
-    bytes = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"256\" height=\"256\" viewBox=\"0 0 256 256\"><rect width=\"256\" height=\"256\" rx=\"40\" fill=\"#202020\"/><path d=\"M64 78h128v100H64z\" fill=\"#466a8f\"/><path d=\"M88 104h80v16H88zm0 32h80v16H88z\" fill=\"#f4f4f4\"/></svg>";
-    return true;
+    return false;
 }
 }
 
@@ -196,14 +200,13 @@ void HttpServer::HandleClient(int clientSocket, const std::string&) {
         if (path == "/description.xml") sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetDeviceDescriptionXML());
         else if (path == "/ContentDirectory.xml") sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetContentDirectoryXML());
         else if (path == "/ConnectionManager.xml") sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetConnectionManagerXML());
-        else if (path == "/server-icon") {
+        else if (!IconFileNameForPath(path).empty()) {
             std::string body;
-            std::string mime;
-            if (!LoadServerIcon(body, mime)) {
+            if (!LoadServerIconPng(IconFileNameForPath(path), body)) {
                 SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
-            sendText("200 OK", mime, body);
+            sendText("200 OK", "image/png", body);
         }
         else if (path.rfind("/media/", 0) == 0) {
             int mediaId = -1;

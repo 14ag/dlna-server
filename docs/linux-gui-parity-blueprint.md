@@ -37,8 +37,6 @@ Native Linux GUI target: FLTK C++ app matching current Windows Win32 behavior. K
 - Checkbox: `Debug Log (Write to file)`
 - Checkbox: `Default playlist`
 - Button: `Add...`
-- Text field: `Server icon:`
-- Button: `...`
 - Checkbox: `Add Artist/Album folders to audio`
 - Checkbox: `Do not show 'All Media' folders`
 - Checkbox: `Flat folders style`
@@ -63,6 +61,8 @@ Settings load from `AppConfig` on dialog open. `OK` writes every enabled setting
 - Adding a folder appends an enabled media source, saves config, refreshes list, and rescans media.
 - Starting and stopping server run in a worker thread, show busy text immediately, and disable source/settings controls until complete.
 - Default playlist entry form writes or appends `default.m3u` beside `config.ini`.
+- Default playlist entry form has browse buttons for movie and subtitle paths.
+- UPnP device description advertises bundled 48, 120, and 256 px PNG icons.
 - Settings `OK` round-trips all current config fields.
 - Log dialog displays current in-memory/file-backed log text and remains read-only.
 - Close/hide behavior does not stop server unless user chooses `Exit`.
