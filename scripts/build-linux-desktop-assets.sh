@@ -8,12 +8,52 @@ install_dir=${DLNA_LINUX_INSTALL_DIR:-"$repo_root/output/linux"}
 output_dir=${DLNA_OUTPUT_DIR:-"$repo_root/output"}
 appdir="$output_dir/dlna-server.AppDir"
 tools_dir="$output_dir/tools"
+linuxdeploy_version="1-alpha-20251107-1"
+linuxdeploy_sha256="c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
+runtime_sha256="a2419dce47568395ae79c01ffa9a5a341dd339581352ff104d073527543177e5"
+
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        echo "sha256sum or shasum is required to verify downloaded packaging tools" >&2
+        return 1
+    fi
+}
+
+download_verified() {
+    local url=$1
+    local path=$2
+    local expected=$3
+
+    if [ -s "$path" ] && [ "$(sha256_file "$path")" = "$expected" ]; then
+        return 0
+    fi
+
+    rm -f "$path"
+    if command -v curl >/dev/null 2>&1; then
+        curl -L -o "$path" "$url" || return 1
+    elif command -v wget >/dev/null 2>&1; then
+        wget -O "$path" "$url" || return 1
+    else
+        return 1
+    fi
+
+    if [ "$(sha256_file "$path")" != "$expected" ]; then
+        rm -f "$path"
+        echo "Checksum mismatch for $path" >&2
+        return 1
+    fi
+}
 
 mkdir -p "$output_dir" "$tools_dir"
 find "$output_dir" -maxdepth 1 -type f \( \
     -name "dlna-server_${version}_*.deb" -o \
     -name "dlna-server-${version}-linux-*" -o \
-    -name "DLNA_Server-${version}-x86_64.AppImage" \
+    -name "DLNA_Server-${version}-x86_64.AppImage" -o \
+    -name "*.AppImage" \
     \) -delete
 
 cmake_args=(
@@ -52,14 +92,8 @@ chmod +x "$appdir/AppRun" "$appdir/usr/bin/dlna-server" "$appdir/usr/bin/dlna-se
 linuxdeploy=${LINUXDEPLOY:-}
 if [ -z "$linuxdeploy" ]; then
     linuxdeploy="$tools_dir/linuxdeploy-x86_64.AppImage"
-    if [ ! -x "$linuxdeploy" ]; then
-        if command -v curl >/dev/null 2>&1; then
-            curl -L -o "$linuxdeploy" "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" || true
-        elif command -v wget >/dev/null 2>&1; then
-            wget -O "$linuxdeploy" "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" || true
-        fi
-        chmod +x "$linuxdeploy" 2>/dev/null || true
-    fi
+    download_verified "https://github.com/linuxdeploy/linuxdeploy/releases/download/$linuxdeploy_version/linuxdeploy-x86_64.AppImage" "$linuxdeploy" "$linuxdeploy_sha256" || true
+    chmod +x "$linuxdeploy" 2>/dev/null || true
 fi
 chmod +x "$linuxdeploy" 2>/dev/null || true
 
@@ -74,8 +108,8 @@ if [ -x "$linuxdeploy" ]; then
 
     if [ ! -f "$output_dir/DLNA_Server-${version}-x86_64.AppImage" ]; then
         runtime_file=${APPIMAGE_RUNTIME:-"$tools_dir/runtime-x86_64"}
-        if [ ! -s "$runtime_file" ] && command -v curl >/dev/null 2>&1; then
-            curl -L -o "$runtime_file" "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64" || true
+        if [ -z "${APPIMAGE_RUNTIME:-}" ] && { [ ! -s "$runtime_file" ] || [ "$(sha256_file "$runtime_file")" != "$runtime_sha256" ]; }; then
+            download_verified "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64" "$runtime_file" "$runtime_sha256" || true
         fi
         if [ -s "$runtime_file" ]; then
             extract_dir="$tools_dir/linuxdeploy-extract"
