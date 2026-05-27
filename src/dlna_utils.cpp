@@ -44,44 +44,81 @@ struct ExtensionFormat {
     const wchar_t* ext;
     const wchar_t* mime;
     const wchar_t* upnpClass;
+    const char* dlnaProfile;
+    bool byteSeek;
 };
 
 const ExtensionFormat kFormats[] = {
-    { L".mp4",  L"video/mp4",               L"object.item.videoItem" },
-    { L".m4v",  L"video/mp4",               L"object.item.videoItem" },
-    { L".mkv",  L"video/x-matroska",        L"object.item.videoItem" },
-    { L".webm", L"video/webm",              L"object.item.videoItem" },
-    { L".avi",  L"video/x-msvideo",         L"object.item.videoItem" },
-    { L".mov",  L"video/quicktime",         L"object.item.videoItem" },
-    { L".mpg",  L"video/mpeg",              L"object.item.videoItem" },
-    { L".mpeg", L"video/mpeg",              L"object.item.videoItem" },
-    { L".mpe",  L"video/mpeg",              L"object.item.videoItem" },
-    { L".ts",   L"video/vnd.dlna.mpeg-tts", L"object.item.videoItem" },
-    { L".m2ts", L"video/vnd.dlna.mpeg-tts", L"object.item.videoItem" },
-    { L".wmv",  L"video/x-ms-wmv",          L"object.item.videoItem" },
-    { L".flv",  L"video/x-flv",             L"object.item.videoItem" },
-    { L".3gp",  L"video/3gpp",              L"object.item.videoItem" },
-    { L".3g2",  L"video/3gpp2",             L"object.item.videoItem" },
-    { L".mp3",  L"audio/mpeg",              L"object.item.audioItem.musicTrack" },
-    { L".flac", L"audio/flac",              L"object.item.audioItem.musicTrack" },
-    { L".m4a",  L"audio/mp4",               L"object.item.audioItem.musicTrack" },
-    { L".aac",  L"audio/aac",               L"object.item.audioItem.musicTrack" },
-    { L".wav",  L"audio/wav",               L"object.item.audioItem.musicTrack" },
-    { L".wma",  L"audio/x-ms-wma",          L"object.item.audioItem.musicTrack" },
-    { L".ogg",  L"audio/ogg",               L"object.item.audioItem.musicTrack" },
-    { L".oga",  L"audio/ogg",               L"object.item.audioItem.musicTrack" },
-    { L".opus", L"audio/opus",              L"object.item.audioItem.musicTrack" },
-    { L".aiff", L"audio/aiff",              L"object.item.audioItem.musicTrack" },
-    { L".aif",  L"audio/aiff",              L"object.item.audioItem.musicTrack" },
-    { L".jpg",  L"image/jpeg",              L"object.item.imageItem.photo" },
-    { L".jpeg", L"image/jpeg",              L"object.item.imageItem.photo" },
-    { L".png",  L"image/png",               L"object.item.imageItem.photo" },
-    { L".gif",  L"image/gif",               L"object.item.imageItem.photo" },
-    { L".bmp",  L"image/bmp",               L"object.item.imageItem.photo" },
-    { L".tif",  L"image/tiff",              L"object.item.imageItem.photo" },
-    { L".tiff", L"image/tiff",              L"object.item.imageItem.photo" },
-    { L".webp", L"image/webp",              L"object.item.imageItem.photo" },
+    { L".mp4",  L"video/mp4",               L"object.item.videoItem",             "AVC_MP4_MP_SD_AAC_MULT5", true },
+    { L".m4v",  L"video/mp4",               L"object.item.videoItem",             "AVC_MP4_MP_SD_AAC_MULT5", true },
+    { L".mkv",  L"video/x-matroska",        L"object.item.videoItem",             "", true },
+    { L".webm", L"video/webm",              L"object.item.videoItem",             "", true },
+    { L".avi",  L"video/x-msvideo",         L"object.item.videoItem",             "", true },
+    { L".divx", L"video/x-msvideo",         L"object.item.videoItem",             "", true },
+    { L".mov",  L"video/quicktime",         L"object.item.videoItem",             "", true },
+    { L".mpg",  L"video/mpeg",              L"object.item.videoItem",             "MPEG_PS_NTSC", true },
+    { L".mpeg", L"video/mpeg",              L"object.item.videoItem",             "MPEG_PS_NTSC", true },
+    { L".mpe",  L"video/mpeg",              L"object.item.videoItem",             "MPEG_PS_NTSC", true },
+    { L".vob",  L"video/mpeg",              L"object.item.videoItem",             "MPEG_PS_NTSC", true },
+    { L".ts",   L"video/vnd.dlna.mpeg-tts", L"object.item.videoItem",             "MPEG_TS_SD_NA", true },
+    { L".m2ts", L"video/vnd.dlna.mpeg-tts", L"object.item.videoItem",             "MPEG_TS_SD_NA", true },
+    { L".mts",  L"video/vnd.dlna.mpeg-tts", L"object.item.videoItem",             "MPEG_TS_SD_NA", true },
+    { L".wmv",  L"video/x-ms-wmv",          L"object.item.videoItem",             "WMVMED_BASE", true },
+    { L".flv",  L"video/x-flv",             L"object.item.videoItem",             "", true },
+    { L".3gp",  L"video/3gpp",              L"object.item.videoItem",             "", true },
+    { L".3g2",  L"video/3gpp2",             L"object.item.videoItem",             "", true },
+    { L".mp3",  L"audio/mpeg",              L"object.item.audioItem.musicTrack",  "MP3", true },
+    { L".flac", L"audio/flac",              L"object.item.audioItem.musicTrack",  "", true },
+    { L".m4a",  L"audio/mp4",               L"object.item.audioItem.musicTrack",  "AAC_ISO_320", true },
+    { L".aac",  L"audio/aac",               L"object.item.audioItem.musicTrack",  "AAC_ISO_320", true },
+    { L".wav",  L"audio/wav",               L"object.item.audioItem.musicTrack",  "LPCM", true },
+    { L".wma",  L"audio/x-ms-wma",          L"object.item.audioItem.musicTrack",  "WMABASE", true },
+    { L".ogg",  L"audio/ogg",               L"object.item.audioItem.musicTrack",  "", true },
+    { L".oga",  L"audio/ogg",               L"object.item.audioItem.musicTrack",  "", true },
+    { L".opus", L"audio/opus",              L"object.item.audioItem.musicTrack",  "", true },
+    { L".aiff", L"audio/aiff",              L"object.item.audioItem.musicTrack",  "", true },
+    { L".aif",  L"audio/aiff",              L"object.item.audioItem.musicTrack",  "", true },
+    { L".ac3",  L"audio/ac3",               L"object.item.audioItem.musicTrack",  "AC3", true },
+    { L".dts",  L"audio/vnd.dts",           L"object.item.audioItem.musicTrack",  "", true },
+    { L".jpg",  L"image/jpeg",              L"object.item.imageItem.photo",       "JPEG_LRG", false },
+    { L".jpeg", L"image/jpeg",              L"object.item.imageItem.photo",       "JPEG_LRG", false },
+    { L".png",  L"image/png",               L"object.item.imageItem.photo",       "PNG_LRG", false },
+    { L".gif",  L"image/gif",               L"object.item.imageItem.photo",       "GIF_LRG", false },
+    { L".bmp",  L"image/bmp",               L"object.item.imageItem.photo",       "", false },
+    { L".tif",  L"image/tiff",              L"object.item.imageItem.photo",       "", false },
+    { L".tiff", L"image/tiff",              L"object.item.imageItem.photo",       "", false },
+    { L".webp", L"image/webp",              L"object.item.imageItem.photo",       "", false },
 };
+
+MediaFormatInfo FormatInfoFromExtensionFormat(const ExtensionFormat& format) {
+    MediaFormatInfo info;
+    info.mimeType = format.mime;
+    info.upnpClass = format.upnpClass;
+    info.dlnaProfile = format.dlnaProfile;
+    info.byteSeek = format.byteSeek;
+    return info;
+}
+
+std::string ProtocolTail(const MediaFormatInfo& info, bool hasKnownSize) {
+    const bool seek = info.byteSeek && hasKnownSize;
+    std::string tail;
+    if (!info.dlnaProfile.empty()) {
+        tail += "DLNA.ORG_PN=" + info.dlnaProfile + ";";
+    }
+    tail += "DLNA.ORG_OP=";
+    tail += seek ? "01" : "00";
+    tail += ";DLNA.ORG_FLAGS=" + info.dlnaFlags;
+    return tail;
+}
+
+std::string NarrowAscii(const std::wstring& value) {
+    std::string result;
+    result.reserve(value.size());
+    for (wchar_t ch : value) {
+        result.push_back(static_cast<char>(ch));
+    }
+    return result;
+}
 }
 
 std::string TrimAscii(const std::string& value) {
@@ -225,12 +262,60 @@ bool GetMediaFormatForExtension(const std::wstring& ext, MediaFormatInfo& info) 
     std::wstring lower = ToLowerWide(ext);
     for (const auto& format : kFormats) {
         if (lower == format.ext) {
-            info.mimeType = format.mime;
-            info.upnpClass = format.upnpClass;
+            info = FormatInfoFromExtensionFormat(format);
             return true;
         }
     }
     return false;
+}
+
+std::string BuildProtocolInfo(const MediaFormatInfo& info, bool hasKnownSize) {
+    return "http-get:*:" + NarrowAscii(info.mimeType) + ":" + ProtocolTail(info, hasKnownSize);
+}
+
+std::string BuildProtocolInfoForExtension(const std::wstring& ext, const std::wstring& mimeType, bool hasKnownSize) {
+    MediaFormatInfo info;
+    if (!GetMediaFormatForExtension(ext, info)) {
+        info.mimeType = mimeType;
+        info.byteSeek = hasKnownSize;
+    }
+    if (info.mimeType.empty()) {
+        info.mimeType = mimeType;
+    }
+    return BuildProtocolInfo(info, hasKnownSize);
+}
+
+std::string BuildContentFeatures(const MediaFormatInfo& info, bool hasKnownSize) {
+    return ProtocolTail(info, hasKnownSize);
+}
+
+std::string BuildContentFeaturesForExtension(const std::wstring& ext, const std::wstring& mimeType, bool hasKnownSize) {
+    MediaFormatInfo info;
+    if (!GetMediaFormatForExtension(ext, info)) {
+        info.mimeType = mimeType;
+        info.byteSeek = hasKnownSize;
+    }
+    if (info.mimeType.empty()) {
+        info.mimeType = mimeType;
+    }
+    return BuildContentFeatures(info, hasKnownSize);
+}
+
+std::string BuildSourceProtocolInfoList() {
+    std::vector<std::string> entries;
+    for (const auto& format : kFormats) {
+        MediaFormatInfo info = FormatInfoFromExtensionFormat(format);
+        std::string entry = BuildProtocolInfo(info, true);
+        if (std::find(entries.begin(), entries.end(), entry) == entries.end()) {
+            entries.push_back(entry);
+        }
+    }
+    std::string result;
+    for (size_t i = 0; i < entries.size(); ++i) {
+        if (i > 0) result += ",";
+        result += entries[i];
+    }
+    return result;
 }
 
 bool IsSubtitleExtension(const std::wstring& ext) {

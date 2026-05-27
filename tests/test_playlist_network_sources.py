@@ -44,7 +44,7 @@ class PlaylistNetworkSourceTests(unittest.TestCase):
             self.assertIn("StreamRemoteContent", source)
             self.assertIn("ProbeRemoteContentLength", source)
             self.assertIn("Accept-Ranges: none", source)
-            self.assertIn("DLNA.ORG_OP=", source)
+            self.assertIn("BuildContentFeaturesForExtension", source)
 
     def test_gui_paths_accept_playlists_and_network_urls(self):
         windows_gui = self.read("src/mainwindow.cpp")

@@ -266,6 +266,8 @@ Settings can create a default playlist entry from a movie path and optional subt
 
 The DLNA device description advertises bundled PNG icons at 48, 120, and 256 px. Clients choose the best `/icons/server_icon_*.png` image from the UPnP `iconList`.
 
+The server answers ContentDirectory `Browse` and `Search` probes plus ConnectionManager `GetProtocolInfo` requests. Browse, HTTP streaming, and ConnectionManager responses use the same DLNA protocol metadata table. Companion `folder.jpg`, `cover.jpg`, `album.jpg`, and same-stem JPG/PNG art is advertised as `upnp:albumArtURI` and served from `/albumart/{id}`.
+
 When the main window closes, the app stays in the tray. Use the tray menu to show the window, stop the server, or exit.
 
 ### Linux/macOS GUI
