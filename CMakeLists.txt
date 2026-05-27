@@ -172,6 +172,15 @@ else()
                     "${CMAKE_SOURCE_DIR}/resources/app.ico"
                     "${DLNA_APP_BUNDLE}/Contents/Resources/app.ico"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${CMAKE_SOURCE_DIR}/resources/server_icon_48.png"
+                    "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_48.png"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${CMAKE_SOURCE_DIR}/resources/server_icon_120.png"
+                    "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_120.png"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${CMAKE_SOURCE_DIR}/resources/server_icon_256.png"
+                    "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_256.png"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${CMAKE_BINARY_DIR}/Info.plist"
                     "${DLNA_APP_BUNDLE}/Contents/Info.plist"
             COMMAND chmod +x
@@ -186,6 +195,11 @@ else()
         configure_file(packaging/linux/install_desktop.cmake.in "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake" @ONLY)
         configure_file(packaging/linux/dlna-server.appdata.xml.in "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" @ONLY)
         install(FILES resources/dlna-server.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+        install(FILES
+            resources/server_icon_48.png
+            resources/server_icon_120.png
+            resources/server_icon_256.png
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/icons)
         install(FILES "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
         install(SCRIPT "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake")
     endif()

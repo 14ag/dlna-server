@@ -85,11 +85,29 @@ bool AppendDefaultPlaylistEntry(const std::string& moviePath, const std::string&
 }
 
 void ShowPlaylistEntryDialog() {
-    Fl_Window dialog(460, 150, "Default playlist entry");
+    Fl_Window dialog(560, 150, "Default playlist entry");
     Fl_Input movie(110, 18, 330, 24, "Movie path:");
+    Fl_Button movieBrowse(455, 18, 85, 24, "Browse...");
     Fl_Input subtitle(110, 54, 330, 24, "Subtitle path:");
-    Fl_Button add(365, 102, 75, 26, "Add");
-    struct AddState { Fl_Window* window; bool done; } state{ &dialog, false };
+    Fl_Button subtitleBrowse(455, 54, 85, 24, "Browse...");
+    Fl_Button add(465, 102, 75, 26, "Add");
+    struct AddState { Fl_Window* window; Fl_Input* movie; Fl_Input* subtitle; bool done; } state{ &dialog, &movie, &subtitle, false };
+    movieBrowse.callback([](Fl_Widget*, void* data) {
+        auto* state = static_cast<AddState*>(data);
+        Fl_Native_File_Chooser chooser;
+        chooser.title("Choose movie file");
+        chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
+        chooser.filter("Movie files\t*.{mp4,m4v,mkv,webm,avi,mov,mpg,mpeg,ts,m2ts,wmv,flv,3gp,3g2}\nAll files\t*");
+        if (chooser.show() == 0 && chooser.filename()) state->movie->value(chooser.filename());
+    }, &state);
+    subtitleBrowse.callback([](Fl_Widget*, void* data) {
+        auto* state = static_cast<AddState*>(data);
+        Fl_Native_File_Chooser chooser;
+        chooser.title("Choose subtitle file");
+        chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
+        chooser.filter("Subtitle files\t*.{srt,vtt,sub,ass,ssa,smi,txt}\nAll files\t*");
+        if (chooser.show() == 0 && chooser.filename()) state->subtitle->value(chooser.filename());
+    }, &state);
     add.callback([](Fl_Widget*, void* data) {
         auto* state = static_cast<AddState*>(data);
         state->done = true;
@@ -162,8 +180,6 @@ public:
           m_debugLog(16, 138, 190, 24, "Debug Log (Write to file)"),
           m_defaultPlaylist(260, 112, 130, 24, "Default playlist"),
           m_defaultPlaylistAdd(400, 112, 70, 24, "Add..."),
-          m_serverIcon(300, 148, 120, 24, "Server icon:"),
-          m_serverIconBrowse(430, 148, 50, 24, "..."),
           m_artistAlbum(16, 164, 230, 24, "Add Artist/Album folders to audio"),
           m_hideAllMedia(16, 190, 230, 24, "Do not show 'All Media' folders"),
           m_flatFolders(16, 216, 190, 24, "Flat folders style"),
@@ -186,7 +202,6 @@ public:
         m_viewLogButton.callback(ShowLog, nullptr);
         m_defaultPlaylist.callback(DefaultPlaylistToggled, this);
         m_defaultPlaylistAdd.callback(AddDefaultPlaylistEntry, this);
-        m_serverIconBrowse.callback(BrowseServerIcon, this);
         m_cancelButton.callback(CloseWindow, this);
         m_okButton.callback(OkClicked, this);
         RefreshDefaultPlaylistControls();
@@ -213,7 +228,6 @@ private:
         m_runOnStartup.value(AppConfig.runOnBoot ? 1 : 0);
         m_debugLog.value(AppConfig.debugLog ? 1 : 0);
         m_defaultPlaylist.value(AppConfig.defaultPlaylistEnabled ? 1 : 0);
-        m_serverIcon.value(ToUtf8(AppConfig.serverIconPath).c_str());
         m_artistAlbum.value(AppConfig.addArtistAlbumFolders ? 1 : 0);
         m_hideAllMedia.value(AppConfig.doNotShowAllMediaFolders ? 1 : 0);
         m_flatFolders.value(AppConfig.flatFolderStyle ? 1 : 0);
@@ -231,7 +245,6 @@ private:
         AppConfig.debugLog = m_debugLog.value() != 0;
         AppConfig.defaultPlaylistEnabled = m_defaultPlaylist.value() != 0;
         if (AppConfig.defaultPlaylistPath.empty()) AppConfig.defaultPlaylistPath = AppConfig.GetDefaultPlaylistPath();
-        AppConfig.serverIconPath = ToWide(m_serverIcon.value());
         AppConfig.addArtistAlbumFolders = m_artistAlbum.value() != 0;
         AppConfig.doNotShowAllMediaFolders = m_hideAllMedia.value() != 0;
         AppConfig.flatFolderStyle = m_flatFolders.value() != 0;
@@ -277,17 +290,6 @@ private:
         self->RefreshDefaultPlaylistControls();
     }
 
-    static void BrowseServerIcon(Fl_Widget*, void* data) {
-        auto* self = static_cast<SettingsDialog*>(data);
-        Fl_Native_File_Chooser chooser;
-        chooser.title("Choose server icon");
-        chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
-        chooser.filter("Icon and image files\t*.{ico,png,jpg,jpeg}\nAll files\t*");
-        if (chooser.show() == 0 && chooser.filename()) {
-            self->m_serverIcon.value(chooser.filename());
-        }
-    }
-
     Fl_Input m_serverName;
     Fl_Int_Input m_httpPort;
     Fl_Int_Input m_filePort;
@@ -296,8 +298,6 @@ private:
     Fl_Check_Button m_debugLog;
     Fl_Check_Button m_defaultPlaylist;
     Fl_Button m_defaultPlaylistAdd;
-    Fl_Input m_serverIcon;
-    Fl_Button m_serverIconBrowse;
     Fl_Check_Button m_artistAlbum;
     Fl_Check_Button m_hideAllMedia;
     Fl_Check_Button m_flatFolders;

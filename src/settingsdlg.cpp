@@ -13,6 +13,8 @@ namespace {
 const int IDC_PLAYLIST_MOVIE = 6101;
 const int IDC_PLAYLIST_SUBTITLE = 6102;
 const int IDC_PLAYLIST_ADD = 6103;
+const int IDC_PLAYLIST_MOVIE_BROWSE = 6104;
+const int IDC_PLAYLIST_SUBTITLE_BROWSE = 6105;
 
 std::wstring TrimWide(const std::wstring& value) {
     size_t start = 0;
@@ -36,6 +38,48 @@ std::wstring MovieTitleFromPath(const std::wstring& moviePath) {
     wcscpy_s(fileName, PathFindFileNameW(moviePath.c_str()));
     PathRemoveExtensionW(fileName);
     return fileName[0] ? fileName : L"Media item";
+}
+
+std::wstring BrowseFile(HWND owner, const wchar_t* title, const COMDLG_FILTERSPEC* filters, UINT filterCount) {
+    IFileOpenDialog* pFileOpen = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
+    std::wstring result;
+    if (SUCCEEDED(hr)) {
+        pFileOpen->SetTitle(title);
+        if (filters && filterCount > 0) {
+            pFileOpen->SetFileTypes(filterCount, filters);
+        }
+        if (SUCCEEDED(pFileOpen->Show(owner))) {
+            IShellItem* pItem = nullptr;
+            if (SUCCEEDED(pFileOpen->GetResult(&pItem))) {
+                PWSTR pszFilePath = nullptr;
+                if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath))) {
+                    result = pszFilePath;
+                    CoTaskMemFree(pszFilePath);
+                }
+                pItem->Release();
+            }
+        }
+        pFileOpen->Release();
+    }
+    return result;
+}
+
+void BrowsePlaylistEntryPath(HWND hwnd, int targetId, bool subtitle) {
+    COMDLG_FILTERSPEC movieFilters[] = {
+        { L"Movie files", L"*.mp4;*.m4v;*.mkv;*.webm;*.avi;*.mov;*.mpg;*.mpeg;*.ts;*.m2ts;*.wmv;*.flv;*.3gp;*.3g2" },
+        { L"All files", L"*.*" },
+    };
+    COMDLG_FILTERSPEC subtitleFilters[] = {
+        { L"Subtitle files", L"*.srt;*.vtt;*.sub;*.ass;*.ssa;*.smi;*.txt" },
+        { L"All files", L"*.*" },
+    };
+    std::wstring selected = subtitle
+        ? BrowseFile(hwnd, L"Choose subtitle file", subtitleFilters, 2)
+        : BrowseFile(hwnd, L"Choose movie file", movieFilters, 2);
+    if (!selected.empty()) {
+        SetDlgItemTextW(hwnd, targetId, selected.c_str());
+    }
 }
 
 bool FileHasBytes(const std::wstring& path) {
@@ -105,10 +149,12 @@ LRESULT CALLBACK PlaylistEntryProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
         HWND movieLabel = CreateWindowW(L"STATIC", L"Movie path:", WS_VISIBLE | WS_CHILD, 16, 18, 90, 18, hwnd, NULL, NULL, NULL);
         state->movieEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 112, 16, 300, 24, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_MOVIE)), NULL, NULL);
+        HWND movieBrowse = CreateWindowW(L"BUTTON", L"Browse...", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 424, 16, 76, 24, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_MOVIE_BROWSE)), NULL, NULL);
         HWND subtitleLabel = CreateWindowW(L"STATIC", L"Subtitle path:", WS_VISIBLE | WS_CHILD, 16, 54, 90, 18, hwnd, NULL, NULL, NULL);
         state->subtitleEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 112, 52, 300, 24, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_SUBTITLE)), NULL, NULL);
-        HWND add = CreateWindowW(L"BUTTON", L"Add", WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, 336, 92, 76, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_ADD)), NULL, NULL);
-        HWND controls[] = { movieLabel, state->movieEdit, subtitleLabel, state->subtitleEdit, add };
+        HWND subtitleBrowse = CreateWindowW(L"BUTTON", L"Browse...", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 424, 52, 76, 24, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_SUBTITLE_BROWSE)), NULL, NULL);
+        HWND add = CreateWindowW(L"BUTTON", L"Add", WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, 424, 92, 76, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_ADD)), NULL, NULL);
+        HWND controls[] = { movieLabel, state->movieEdit, movieBrowse, subtitleLabel, state->subtitleEdit, subtitleBrowse, add };
         for (HWND control : controls) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SetFocus(state->movieEdit);
         return 0;
@@ -116,6 +162,14 @@ LRESULT CALLBACK PlaylistEntryProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     case WM_COMMAND:
         if (LOWORD(wParam) == IDC_PLAYLIST_ADD) {
             FinishPlaylistEntry(hwnd, state, true);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_PLAYLIST_MOVIE_BROWSE) {
+            BrowsePlaylistEntryPath(hwnd, IDC_PLAYLIST_MOVIE, false);
+            return 0;
+        }
+        if (LOWORD(wParam) == IDC_PLAYLIST_SUBTITLE_BROWSE) {
+            BrowsePlaylistEntryPath(hwnd, IDC_PLAYLIST_SUBTITLE, true);
             return 0;
         }
         break;
@@ -126,32 +180,6 @@ LRESULT CALLBACK PlaylistEntryProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-std::wstring BrowseIconFile(HWND owner) {
-    IFileOpenDialog* pFileOpen = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
-    std::wstring result;
-    if (SUCCEEDED(hr)) {
-        COMDLG_FILTERSPEC filters[] = {
-            { L"Icon and image files", L"*.ico;*.png;*.jpg;*.jpeg" },
-            { L"All files", L"*.*" },
-        };
-        pFileOpen->SetFileTypes(2, filters);
-        pFileOpen->SetTitle(L"Choose server icon");
-        if (SUCCEEDED(pFileOpen->Show(owner))) {
-            IShellItem* pItem = nullptr;
-            if (SUCCEEDED(pFileOpen->GetResult(&pItem))) {
-                PWSTR pszFilePath = nullptr;
-                if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath))) {
-                    result = pszFilePath;
-                    CoTaskMemFree(pszFilePath);
-                }
-                pItem->Release();
-            }
-        }
-        pFileOpen->Release();
-    }
-    return result;
-}
 }
 
 INT_PTR SettingsDialog::Show(HWND hParent) {
@@ -165,8 +193,7 @@ void SettingsDialog::OnInitDialog(HWND hwndDlg) {
     SetDlgItemInt(hwndDlg, IDC_EDT_PORT, cfg.port, FALSE);
     SetDlgItemInt(hwndDlg, IDC_EDT_FILESERVER_PORT, cfg.fileServerPort, FALSE);
     SetDlgItemTextW(hwndDlg, IDC_EDT_IP_WHITELIST, cfg.ipWhiteList.c_str());
-    SetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_ICON, cfg.serverIconPath.c_str());
-    
+
     CheckDlgButton(hwndDlg, IDC_CHK_RUN_ON_BOOT, cfg.runOnBoot ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hwndDlg, IDC_CHK_DEBUG_LOG, cfg.debugLog ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hwndDlg, IDC_CHK_DEFAULT_PLAYLIST, cfg.defaultPlaylistEnabled ? BST_CHECKED : BST_UNCHECKED);
@@ -192,9 +219,6 @@ void SettingsDialog::OnOK(HWND hwndDlg) {
     GetDlgItemTextW(hwndDlg, IDC_EDT_IP_WHITELIST, buf, 1024);
     cfg.ipWhiteList = buf;
 
-    GetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_ICON, buf, 1024);
-    cfg.serverIconPath = TrimWide(buf);
-    
     cfg.runOnBoot = (IsDlgButtonChecked(hwndDlg, IDC_CHK_RUN_ON_BOOT) == BST_CHECKED);
     cfg.debugLog = (IsDlgButtonChecked(hwndDlg, IDC_CHK_DEBUG_LOG) == BST_CHECKED);
     cfg.defaultPlaylistEnabled = (IsDlgButtonChecked(hwndDlg, IDC_CHK_DEFAULT_PLAYLIST) == BST_CHECKED);
@@ -212,13 +236,6 @@ void SettingsDialog::OnOK(HWND hwndDlg) {
 void SettingsDialog::UpdateDefaultPlaylistButton(HWND hwndDlg) {
     BOOL enabled = IsDlgButtonChecked(hwndDlg, IDC_CHK_DEFAULT_PLAYLIST) == BST_CHECKED;
     EnableWindow(GetDlgItem(hwndDlg, IDC_BTN_DEFAULT_PLAYLIST_ADD), enabled);
-}
-
-void SettingsDialog::BrowseServerIcon(HWND hwndDlg) {
-    std::wstring selected = BrowseIconFile(hwndDlg);
-    if (!selected.empty()) {
-        SetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_ICON, selected.c_str());
-    }
 }
 
 void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
@@ -239,10 +256,10 @@ void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
     state.owner = hwndDlg;
     RECT ownerRect = {};
     GetWindowRect(hwndDlg, &ownerRect);
-    int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - 450) / 2;
-    int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top) - 160) / 2;
+    int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - 540) / 2;
+    int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top) - 170) / 2;
     HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, className, L"Default playlist entry",
-        WS_CAPTION | WS_SYSMENU | WS_POPUP, x, y, 450, 160, hwndDlg, NULL, GetModuleHandleW(NULL), &state);
+        WS_CAPTION | WS_SYSMENU | WS_POPUP, x, y, 540, 170, hwndDlg, NULL, GetModuleHandleW(NULL), &state);
     if (!hwnd) return;
     EnableWindow(hwndDlg, FALSE);
     ShowWindow(hwnd, SW_SHOW);
@@ -286,10 +303,6 @@ INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
             ShowPlaylistEntryForm(hwndDlg);
             CheckDlgButton(hwndDlg, IDC_CHK_DEFAULT_PLAYLIST, BST_CHECKED);
             UpdateDefaultPlaylistButton(hwndDlg);
-            return (INT_PTR)TRUE;
-        }
-        else if (LOWORD(wParam) == IDC_BTN_SERVER_ICON_BROWSE) {
-            BrowseServerIcon(hwndDlg);
             return (INT_PTR)TRUE;
         }
         else if (LOWORD(wParam) == IDC_BTN_RESTART) {
