@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cctype>
 #include <cstring>
 #include <fcntl.h>
 #include <arpa/inet.h>
@@ -121,6 +122,49 @@ bool LoadServerIconPng(const std::string& fileName, std::string& bytes) {
     }
     return false;
 }
+
+std::string LowerAscii(std::string value) {
+    for (char& ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+std::string EventSid() {
+    std::string uuid = WideToUtf8(AppConfig.deviceUUID);
+    return "uuid:" + (uuid.empty() ? "00000000-0000-0000-0000-000000000000" : uuid);
+}
+
+bool IsEventPath(const std::string& path) {
+    return path == "/upnp/event/content_directory" || path == "/upnp/event/connection_manager";
+}
+
+std::string EventSubscriptionResponse(const std::string& method, const std::string& path, const std::string& req) {
+    if (!IsEventPath(path)) {
+        return "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    }
+
+    const std::string sid = FindHeaderValueCaseInsensitive(req, "SID");
+    if (method == "UNSUBSCRIBE") {
+        if (sid.empty()) {
+            return "HTTP/1.1 412 Precondition Failed\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        }
+        return "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    }
+
+    const std::string callback = FindHeaderValueCaseInsensitive(req, "CALLBACK");
+    const std::string nt = LowerAscii(FindHeaderValueCaseInsensitive(req, "NT"));
+    if (sid.empty() && (callback.empty() || nt != "upnp:event")) {
+        return "HTTP/1.1 412 Precondition Failed\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    }
+
+    const std::string responseSid = sid.empty() ? EventSid() : sid;
+    return "HTTP/1.1 200 OK\r\n"
+           "SID: " + responseSid + "\r\n"
+           "TIMEOUT: Second-1800\r\n"
+           "Connection: close\r\n"
+           "Content-Length: 0\r\n\r\n";
+}
 }
 
 HttpServer& HttpServer::Get() {
@@ -195,6 +239,11 @@ void HttpServer::HandleClient(int clientSocket, const std::string&) {
         if (sendBody) response += body;
         SendAll(clientSocket, response);
     };
+
+    if ((method == "SUBSCRIBE" || method == "UNSUBSCRIBE") && IsEventPath(path)) {
+        SendAll(clientSocket, EventSubscriptionResponse(method, path, req));
+        return;
+    }
 
     if (method == "GET" || method == "HEAD") {
         if (path == "/description.xml") sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetDeviceDescriptionXML());

@@ -13,12 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DLNA device descriptions now advertise bundled 48, 120, and 256 px PNG icons.
 - Windows and FLTK source lists now support a text-labeled **Delete** button and keyboard `Delete`.
 - DLNA service handling now includes ConnectionManager SOAP responses, ContentDirectory Search, and companion album-art serving.
+- Advertised UPnP event URLs now accept GENA subscribe and unsubscribe requests.
 
 ### Changed
 - Start, stop, and restart now run outside the UI thread and show busy status text.
 - Main toolbar buttons now use text labels, Windows-style spacing, and a dark Windows title bar/frame.
 - Removed disabled thumbnail placeholder controls from desktop settings.
 - Media protocol metadata is now generated from a shared DLNA format table for Browse, HTTP streaming, and ConnectionManager responses.
+- Release scripts now verify downloaded packaging inputs, avoid stale AppImage reuse, and publish Windows assets from GitHub Actions.
+- Added a PDF-derived DLNA framework upgrade blueprint for future protocol hardening work.
+
+### Fixed
+- Windows modal sub-windows now preserve quit messages and use the dark DWM frame consistently.
 
 ## [1.3.0] - 2026-05-24
 

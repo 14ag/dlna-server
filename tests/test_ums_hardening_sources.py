@@ -24,6 +24,10 @@ class UmsHardeningSourceTests(unittest.TestCase):
             self.assertIn(f"## {heading}", roadmap)
         self.assertIn("clean-room", roadmap)
         self.assertIn("GPL implementation code must not be copied", roadmap)
+        blueprint = self.read("docs/pdf-dlna-framework-upgrade-blueprint.md")
+        self.assertIn("Feature Spec: PDF-Derived DLNA Framework Readiness", blueprint)
+        self.assertIn("Event subscription request", blueprint)
+        self.assertIn("Implementation Blueprint", blueprint)
 
     def test_shared_utility_layer_owns_common_protocol_rules(self):
         header = self.read("src/dlna_utils.h")
@@ -86,6 +90,11 @@ class UmsHardeningSourceTests(unittest.TestCase):
             self.assertIn("albumArtPath", source)
             self.assertIn("/upnp/control/connection_manager", source)
             self.assertIn("HandleConnectionManagerControl", source)
+            self.assertIn('method == "SUBSCRIBE" || method == "UNSUBSCRIBE"', source)
+            self.assertIn("/upnp/event/content_directory", source)
+            self.assertIn("/upnp/event/connection_manager", source)
+            self.assertIn("EventSubscriptionResponse", source)
+            self.assertIn("412 Precondition Failed", source)
 
         utils = self.read("src/dlna_utils.cpp")
         self.assertIn("fileSize <= 0", utils)
