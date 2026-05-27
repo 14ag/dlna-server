@@ -12,10 +12,11 @@ Native Linux GUI target: FLTK C++ app matching current Windows Win32 behavior. K
 - Status strip: y 48-72 px
 - Source list: y 72 to bottom, full width
 - Title text: `dlna-server`, Segoe UI 24 px bold equivalent
-- Add button: plus symbol, opens folder picker
-- Start/Stop button: play symbol when stopped, stop symbol when running
-- Settings button: gear symbol, opens settings dialog
-- Empty-state text: `Please add shared folders or files (button "+")`
+- Add button: text label `Add`, opens folder picker
+- Delete button: text label `Delete`, removes the selected source entry only
+- Start/Stop button: text label `Start` when stopped, `Stop` when running
+- Settings button: text label `Settings`, opens settings dialog
+- Empty-state text: `Please add shared folders or files with Add.`
 - Status stopped text: `dlna-server is stopped`
 - Status running text: `dlna-server is running on {endpoint}`
 - Status busy text: `starting server...` or `stopping server...`
@@ -27,7 +28,7 @@ Native Linux GUI target: FLTK C++ app matching current Windows Win32 behavior. K
 ## Settings Dialog Inventory
 
 - Dialog title: `dlna-server Settings`
-- Windows resource size: 320 x 280 dialog units
+- Windows resource size: 400 x 326 dialog units
 - Bottom actions: `Restart`, `View log`, `Cancel`, `OK`
 - Text field: `Server Name:`
 - Numeric field: `HTTP Port:`
@@ -59,6 +60,8 @@ Settings load from `AppConfig` on dialog open. `OK` writes every enabled setting
 ## Behavior Checklist
 
 - Adding a folder appends an enabled media source, saves config, refreshes list, and rescans media.
+- Deleting a source removes only the selected app source entry, saves config, preserves nearest selection, and rescans media.
+- Keyboard `Delete` removes the selected source when the source list has focus.
 - Starting and stopping server run in a worker thread, show busy text immediately, and disable source/settings controls until complete.
 - Default playlist entry form writes or appends `default.m3u` beside `config.ini`.
 - Default playlist entry form has browse buttons for movie and subtitle paths.
@@ -72,8 +75,8 @@ Settings load from `AppConfig` on dialog open. `OK` writes every enabled setting
 ## Visual/Usability Checklist
 
 - No clipped text at 640 x 460 or larger.
-- Toolbar buttons keep stable square dimensions and right alignment.
+- Toolbar buttons keep stable text-button dimensions and right alignment.
 - Status text truncates gracefully if endpoint is long.
 - Source list stays readable with long paths.
 - Keyboard tab order follows visible order.
-- Tooltips exist for plus, start/stop, settings, restart, view log, and default playlist add.
+- Tooltips exist for Add, Delete, start/stop, settings, restart, view log, and default playlist add.

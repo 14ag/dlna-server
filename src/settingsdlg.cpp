@@ -15,6 +15,48 @@ const int IDC_PLAYLIST_SUBTITLE = 6102;
 const int IDC_PLAYLIST_ADD = 6103;
 const int IDC_PLAYLIST_MOVIE_BROWSE = 6104;
 const int IDC_PLAYLIST_SUBTITLE_BROWSE = 6105;
+const int kDialogMargin = 16;
+const int kLabelToControlGap = 12;
+const int kRelatedControlGap = 8;
+const int kLabelWidth = 84;
+const int kControlHeight = 32;
+const int kBrowseButtonWidth = 92;
+const int kPlaylistDialogWidth = 552;
+const int kPlaylistDialogHeight = 196;
+const int kPlaylistEditLeft = kDialogMargin + kLabelWidth + kLabelToControlGap;
+const int kPlaylistEditWidth = kPlaylistDialogWidth - (kDialogMargin * 2) - kLabelWidth - kLabelToControlGap - kRelatedControlGap - kBrowseButtonWidth;
+const int kPlaylistBrowseLeft = kPlaylistEditLeft + kPlaylistEditWidth + kRelatedControlGap;
+const int kPlaylistMovieTop = 16;
+const int kPlaylistSubtitleTop = kPlaylistMovieTop + kControlHeight + 12;
+const int kPlaylistAddTop = kPlaylistSubtitleTop + kControlHeight + 16;
+
+HFONT CreateScaledFont(HWND hwnd, int pixelSize, int weight, const wchar_t* faceName) {
+    HDC hdc = GetDC(hwnd);
+    int dpiY = hdc ? GetDeviceCaps(hdc, LOGPIXELSY) : 96;
+    if (hdc) {
+        ReleaseDC(hwnd, hdc);
+    }
+
+    return CreateFontW(-MulDiv(pixelSize, dpiY, 96), 0, 0, 0, weight, FALSE, FALSE, FALSE,
+                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, faceName);
+}
+
+HFONT DialogBodyFont(HWND hwnd) {
+    static HFONT font = CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI");
+    return font ? font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+}
+
+BOOL CALLBACK SetChildFontProc(HWND child, LPARAM fontParam) {
+    SendMessageW(child, WM_SETFONT, static_cast<WPARAM>(fontParam), TRUE);
+    return TRUE;
+}
+
+void ApplyDialogFont(HWND hwnd) {
+    HFONT font = DialogBodyFont(hwnd);
+    SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    EnumChildWindows(hwnd, SetChildFontProc, reinterpret_cast<LPARAM>(font));
+}
 
 std::wstring TrimWide(const std::wstring& value) {
     size_t start = 0;
@@ -146,14 +188,14 @@ LRESULT CALLBACK PlaylistEntryProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
         state = reinterpret_cast<PlaylistEntryState*>(cs->lpCreateParams);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
-        HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-        HWND movieLabel = CreateWindowW(L"STATIC", L"Movie path:", WS_VISIBLE | WS_CHILD, 16, 18, 90, 18, hwnd, NULL, NULL, NULL);
-        state->movieEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 112, 16, 300, 24, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_MOVIE)), NULL, NULL);
-        HWND movieBrowse = CreateWindowW(L"BUTTON", L"Browse...", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 424, 16, 76, 24, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_MOVIE_BROWSE)), NULL, NULL);
-        HWND subtitleLabel = CreateWindowW(L"STATIC", L"Subtitle path:", WS_VISIBLE | WS_CHILD, 16, 54, 90, 18, hwnd, NULL, NULL, NULL);
-        state->subtitleEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 112, 52, 300, 24, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_SUBTITLE)), NULL, NULL);
-        HWND subtitleBrowse = CreateWindowW(L"BUTTON", L"Browse...", WS_VISIBLE | WS_CHILD | WS_TABSTOP, 424, 52, 76, 24, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_SUBTITLE_BROWSE)), NULL, NULL);
-        HWND add = CreateWindowW(L"BUTTON", L"Add", WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, 424, 92, 76, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_ADD)), NULL, NULL);
+        HFONT font = DialogBodyFont(hwnd);
+        HWND movieLabel = CreateWindowW(L"STATIC", L"Movie path:", WS_VISIBLE | WS_CHILD, kDialogMargin, kPlaylistMovieTop + 8, kLabelWidth, 18, hwnd, NULL, NULL, NULL);
+        state->movieEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, kPlaylistEditLeft, kPlaylistMovieTop, kPlaylistEditWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_MOVIE)), NULL, NULL);
+        HWND movieBrowse = CreateWindowW(L"BUTTON", L"Browse...", WS_VISIBLE | WS_CHILD | WS_TABSTOP, kPlaylistBrowseLeft, kPlaylistMovieTop, kBrowseButtonWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_MOVIE_BROWSE)), NULL, NULL);
+        HWND subtitleLabel = CreateWindowW(L"STATIC", L"Subtitle path:", WS_VISIBLE | WS_CHILD, kDialogMargin, kPlaylistSubtitleTop + 8, kLabelWidth, 18, hwnd, NULL, NULL, NULL);
+        state->subtitleEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, kPlaylistEditLeft, kPlaylistSubtitleTop, kPlaylistEditWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_SUBTITLE)), NULL, NULL);
+        HWND subtitleBrowse = CreateWindowW(L"BUTTON", L"Browse...", WS_VISIBLE | WS_CHILD | WS_TABSTOP, kPlaylistBrowseLeft, kPlaylistSubtitleTop, kBrowseButtonWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_SUBTITLE_BROWSE)), NULL, NULL);
+        HWND add = CreateWindowW(L"BUTTON", L"Add", WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, kPlaylistBrowseLeft, kPlaylistAddTop, kBrowseButtonWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_ADD)), NULL, NULL);
         HWND controls[] = { movieLabel, state->movieEdit, movieBrowse, subtitleLabel, state->subtitleEdit, subtitleBrowse, add };
         for (HWND control : controls) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SetFocus(state->movieEdit);
@@ -187,8 +229,9 @@ INT_PTR SettingsDialog::Show(HWND hParent) {
 }
 
 void SettingsDialog::OnInitDialog(HWND hwndDlg) {
+    ApplyDialogFont(hwndDlg);
+
     auto& cfg = AppConfig;
-    
     SetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_NAME, cfg.serverName.c_str());
     SetDlgItemInt(hwndDlg, IDC_EDT_PORT, cfg.port, FALSE);
     SetDlgItemInt(hwndDlg, IDC_EDT_FILESERVER_PORT, cfg.fileServerPort, FALSE);
@@ -256,10 +299,10 @@ void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
     state.owner = hwndDlg;
     RECT ownerRect = {};
     GetWindowRect(hwndDlg, &ownerRect);
-    int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - 540) / 2;
-    int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top) - 170) / 2;
+    int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - kPlaylistDialogWidth) / 2;
+    int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top) - kPlaylistDialogHeight) / 2;
     HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, className, L"Default playlist entry",
-        WS_CAPTION | WS_SYSMENU | WS_POPUP, x, y, 540, 170, hwndDlg, NULL, GetModuleHandleW(NULL), &state);
+        WS_CAPTION | WS_SYSMENU | WS_POPUP, x, y, kPlaylistDialogWidth, kPlaylistDialogHeight, hwndDlg, NULL, GetModuleHandleW(NULL), &state);
     if (!hwnd) return;
     EnableWindow(hwndDlg, FALSE);
     ShowWindow(hwnd, SW_SHOW);

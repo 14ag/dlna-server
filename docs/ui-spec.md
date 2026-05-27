@@ -10,24 +10,32 @@ Scope: Windows Win32 UI and Linux FLTK UI. Keep both quiet, compact, and utility
 - Toolbar height: 56 px
 - Status strip height: 40 px
 - Source list starts below status strip and fills remaining space
-- Theme adapts to Windows light/dark app mode where platform APIs allow it
+- Shell is dark, and Windows enables the dark DWM title bar/frame
+- Windows settings, log, add-source, and default-playlist dialogs use normal system dialog controls
+- WinUI-style spacing uses 16 px outer margins, 12 px label-to-control gaps, and 8 px gaps between related controls
+- Windows dialog templates use 10 pt Segoe UI; dynamic Win32 dialog controls use 14 px Segoe UI
+- Parent surfaces own layout: shell/status/list areas stretch with the window; dialogs use fixed content surfaces sized to their controls
+- Avoid fixed text-field widths unless the surface itself is fixed; long text clips or scrolls inside the text field instead of resizing neighboring controls
 - Use semantic neutral colors, with accent color only for focus, selection, and primary action states
 - Do not hardcode a dark-only shell; all custom drawing must consume theme tokens
-- Windows UI font: Segoe UI Variable
+- Windows UI font: Segoe UI for controls/body/title, with semibold weight for the shell title
 
 ## Controls
 
-- Toolbar buttons are 40 x 40 px, right-aligned, 8 px from top
-- Toolbar button spacing is 8 px, with a 24 px right gutter
+- Toolbar buttons are 32 px tall, text-labeled, right-aligned, and vertically centered
+- Toolbar button spacing is 8 px, with a 16 px right gutter
 - Toolbar buttons use a 1 px border and 8 px corner radius
-- Toolbar button order: Add, Start/Stop, Settings
+- Toolbar button order: Add, Delete, Start/Stop, Settings
 - Add button tooltip: `Add media folder`
+- Delete button tooltip: `Delete selected source`
 - Start button tooltip: `Start server`
 - Stop button tooltip: `Stop server`
 - Settings button tooltip: `Settings`
 - Toolbar title is left-aligned and bold
 - Source list paths use single-line rows with clipping or horizontal scroll where platform supports it
 - Empty-state text appears only when no sources exist
+- Delete removes the selected source entry only; it never deletes files, folders, or playlists from disk
+- Delete is disabled while busy or when no source row is selected; keyboard `Delete` performs the same action
 
 ## Settings Dialog
 
