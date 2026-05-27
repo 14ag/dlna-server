@@ -13,6 +13,8 @@ public:
     std::string GetContentDirectoryXML();
     std::string GetConnectionManagerXML();
 
+    std::string HandleContentDirectoryControl(const std::string& soapBody, const std::string& hostUrl);
+    std::string HandleConnectionManagerControl(const std::string& soapBody);
     std::string HandleBrowse(const std::string& soapBody, const std::string& hostUrl);
 
 private:

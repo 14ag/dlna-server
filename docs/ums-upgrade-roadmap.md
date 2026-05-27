@@ -5,15 +5,15 @@ This roadmap is clean-room and MIT-safe. Universal Media Server was used as a be
 ## No New Dependencies
 
 - HTTP correctness: shared header parsing, strict numeric parsing, valid byte ranges, `HEAD` support, `416` responses with `Content-Range`, empty-file handling, bad `Content-Length` rejection, and IPv6-safe host URLs.
-- DLNA Browse hardening: SOAP faults for malformed requests, `GetSearchCapabilities`, `GetSortCapabilities`, correct `TotalMatches`, deterministic sort handling, and consistent XML escaping.
-- Media scanning: shared extension-to-MIME table, safe hidden/system/unreadable file filtering, symlink/reparse loop avoidance, companion subtitle detection on every backend, and natural ordering.
+- DLNA Browse hardening: SOAP faults for malformed requests, `GetSearchCapabilities`, `GetSortCapabilities`, `Search`, correct `TotalMatches`, deterministic sort handling, and consistent XML escaping.
+- Media scanning: shared extension-to-MIME/protocol-info table, safe hidden/system/unreadable file filtering, symlink/reparse loop avoidance, companion subtitle/art detection on every backend, dedupe, and natural ordering.
 - Code efficiency: move duplicated Windows/POSIX parsing and media-format rules into shared helpers, keep platform code focused on sockets/filesystem APIs, and grow tests around shared behavior first.
 - Logging/tests: keep logs concise but actionable, add blackbox smoke checks for description XML, Browse, range `206/416`, `HEAD`, and subtitle URLs.
 
 ## Optional FFmpeg/ffprobe
 
 - Add optional `ffprobe` discovery and cache media duration, bitrate, codecs, dimensions, audio channels, subtitle tracks, and container metadata.
-- Add thumbnail extraction for video/image/audio art with cached output and DLNA album-art/resource links.
+- Add thumbnail extraction for video/image/audio art with cached output; companion album art is already advertised with DLNA album-art links.
 - Use metadata to improve DLNA protocol info and choose direct-stream vs future transcode paths.
 - Keep direct streaming default when FFmpeg is unavailable.
 
@@ -35,7 +35,7 @@ This roadmap is clean-room and MIT-safe. Universal Media Server was used as a be
 - Implement `Search` with useful criteria mapping once the index exists.
 - Add ContentDirectory eventing for `SystemUpdateID` changes.
 - Add Samsung-compatible feature/bookmark actions behind safe defaults.
-- Add ConnectionManager action responses that include richer source protocol info.
+- Keep ConnectionManager action responses aligned with the shared source protocol info table.
 
 ## Later New Features
 

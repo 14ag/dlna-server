@@ -18,6 +18,8 @@ struct MediaItem {
     // full path to companion subtitle file if one exists in the same folder
     // empty string means no subtitle was found
     std::wstring subtitlePath;
+    std::wstring albumArtPath;
+    std::wstring albumArtMime;
 };
 
 class MediaSources {
@@ -26,6 +28,7 @@ public:
 
     void Scan();
     std::vector<MediaItem> GetChildren(int parentId);
+    std::vector<MediaItem> GetAllItems();
     MediaItem GetItem(int id);
     int GetSystemUpdateID();
 

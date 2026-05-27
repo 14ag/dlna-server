@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cwctype>
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -26,6 +27,50 @@ bool IsReadableEntry(const fs::directory_entry& entry) {
     std::error_code ec;
     const fs::file_status status = entry.status(ec);
     return !ec && HasAnyReadBit(status.permissions());
+}
+
+std::wstring CanonicalMediaKey(const std::wstring& pathText) {
+    if (IsRemoteMediaUrl(pathText)) {
+        std::wstring value = pathText;
+        std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
+            return static_cast<wchar_t>(std::towlower(ch));
+        });
+        return value;
+    }
+    std::error_code ec;
+    fs::path path(WideToUtf8(pathText));
+    fs::path canonical = fs::weakly_canonical(path, ec);
+    return Utf8ToWide((ec ? path : canonical).u8string());
+}
+
+bool HasDuplicateMediaPath(const std::vector<MediaItem>& items, int parentId, const std::wstring& path) {
+    const std::wstring key = CanonicalMediaKey(path);
+    for (const auto& item : items) {
+        if (!item.isFolder && item.parentId == parentId && CanonicalMediaKey(item.path) == key) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void SetAlbumArtIfExists(MediaItem& item) {
+    if (IsRemoteMediaUrl(item.path)) return;
+    fs::path path(WideToUtf8(item.path));
+    std::vector<std::pair<fs::path, std::wstring>> candidates = {
+        { path.parent_path() / "folder.jpg", L"image/jpeg" },
+        { path.parent_path() / "cover.jpg", L"image/jpeg" },
+        { path.parent_path() / "album.jpg", L"image/jpeg" },
+        { path.parent_path() / (path.stem().u8string() + ".jpg"), L"image/jpeg" },
+        { path.parent_path() / (path.stem().u8string() + ".png"), L"image/png" },
+    };
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        if (fs::is_regular_file(candidate.first, ec)) {
+            item.albumArtPath = Utf8ToWide(candidate.first.u8string());
+            item.albumArtMime = candidate.second;
+            return;
+        }
+    }
 }
 }
 
@@ -93,6 +138,8 @@ void MediaSources::Scan() {
 }
 
 void MediaSources::AddMediaFile(const std::wstring& pathText, int parentId, const std::wstring& titleOverride, const std::wstring& subtitleOverride) {
+    if (HasDuplicateMediaPath(m_items, parentId, pathText)) return;
+
     std::wstring mime, uclass;
     std::wstring ext = SourceExtension(pathText);
     if (!IsAllowedExtension(ext, mime, uclass)) {
@@ -142,6 +189,7 @@ void MediaSources::AddMediaFile(const std::wstring& pathText, int parentId, cons
         }
     }
 
+    SetAlbumArtIfExists(file);
     m_items.push_back(file);
 }
 
@@ -234,6 +282,11 @@ std::vector<MediaItem> MediaSources::GetChildren(int parentId) {
         return NaturalLessWide(a.title, b.title);
     });
     return result;
+}
+
+std::vector<MediaItem> MediaSources::GetAllItems() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_items;
 }
 
 MediaItem MediaSources::GetItem(int id) {

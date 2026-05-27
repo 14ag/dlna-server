@@ -12,11 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings now include default playlist entry creation with browse buttons for movie and subtitle paths.
 - DLNA device descriptions now advertise bundled 48, 120, and 256 px PNG icons.
 - Windows and FLTK source lists now support a text-labeled **Delete** button and keyboard `Delete`.
+- DLNA service handling now includes ConnectionManager SOAP responses, ContentDirectory Search, and companion album-art serving.
 
 ### Changed
 - Start, stop, and restart now run outside the UI thread and show busy status text.
 - Main toolbar buttons now use text labels, Windows-style spacing, and a dark Windows title bar/frame.
 - Removed disabled thumbnail placeholder controls from desktop settings.
+- Media protocol metadata is now generated from a shared DLNA format table for Browse, HTTP streaming, and ConnectionManager responses.
 
 ## [1.3.0] - 2026-05-24
 
