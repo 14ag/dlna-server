@@ -1,6 +1,7 @@
 #include "server.h"
 #include "config.h"
 #include "contentdirectory.h"
+#include "dlna_utils.h"
 #include "httpserver.h"
 #include "ipwhitelist.h"
 #include "log.h"
@@ -33,6 +34,10 @@ void Server::RefreshEndpoints() {
 bool Server::Start() {
     if (m_running) return true;
     IPWhitelist::Get().Load(AppConfig.ipWhiteList);
+    if (!IsValidPort(AppConfig.port)) {
+        LogPrint(L"Invalid HTTP port: %d", AppConfig.port);
+        return false;
+    }
     if (AppConfig.mediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
         AppConfig.mediaSources.push_back({L".", true});
     }

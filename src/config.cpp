@@ -1,4 +1,5 @@
 #include "config.h"
+#include "dlna_utils.h"
 #include "netutils.h"
 #include <shlwapi.h>
 #include <shlobj.h>
@@ -143,6 +144,11 @@ Config::Config() : port(8200), fileServerPort(8201), flatFolderStyle(false), sho
     debugLog(false), runOnBoot(false), defaultPlaylistEnabled(false) {
 }
 
+int ParsePortOrDefault(const std::unordered_map<std::string, std::string>& values, const char* key, int defaultValue) {
+    int parsed = ParseIntOrDefault(values, key, defaultValue);
+    return IsValidPort(parsed) ? parsed : defaultValue;
+}
+
 std::wstring Config::GetConfigPath() {
     wchar_t szPath[MAX_PATH];
     DWORD len = GetModuleFileNameW(NULL, szPath, MAX_PATH);
@@ -202,8 +208,8 @@ void Config::Load() {
         serverName = DefaultServerName();
     }
 
-    port = ParseIntOrDefault(values, "Port", 8200);
-    fileServerPort = ParseIntOrDefault(values, "FileServerPort", 8201);
+    port = ParsePortOrDefault(values, "Port", 8200);
+    fileServerPort = ParsePortOrDefault(values, "FileServerPort", 8201);
     flatFolderStyle = ParseIntOrDefault(values, "FlatFolderStyle", 0) != 0;
     showFileNamesInsteadOfTitles = ParseIntOrDefault(values, "ShowFileNamesInsteadOfTitles", 0) != 0;
     proxyStreams = ParseIntOrDefault(values, "ProxyStreams", 0) != 0;

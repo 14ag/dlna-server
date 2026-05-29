@@ -3,11 +3,11 @@
 
 #include <string>
 #include <vector>
+#include <atomic>
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
 #else
-#include <atomic>
 #include <thread>
 #endif
 #include "netutils.h"
@@ -29,7 +29,7 @@ private:
     void HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int remoteLen, const std::string& request);
     static DWORD WINAPI ThreadWorker(LPVOID lpParam);
 
-    bool m_running;
+    std::atomic<bool> m_running;
     HANDLE m_hThread;
     SOCKET m_ipv4Socket;
     SOCKET m_ipv6Socket;

@@ -3,6 +3,7 @@
 #include "netutils.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
 #include <cwctype>
 #include <cstdio>
@@ -12,6 +13,11 @@
 
 #ifdef _WIN32
 #include <io.h>
+#include <windows.h>
+#else
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -127,76 +133,158 @@ std::wstring ResolvePlaylistSidecar(const std::wstring& playlistPath, const std:
 }
 
 #ifdef _WIN32
-std::wstring QuoteArg(const std::wstring& value) {
+std::wstring QuoteProcessArg(const std::wstring& value) {
     std::wstring out = L"\"";
+    size_t slashCount = 0;
     for (wchar_t ch : value) {
-        if (ch == L'"') out += L"\\\"";
-        else if (ch == L'%') out += L"%%";
-        else out.push_back(ch);
+        if (ch == L'\\') {
+            ++slashCount;
+        } else if (ch == L'"') {
+            out.append((slashCount * 2) + 1, L'\\');
+            out.push_back(ch);
+            slashCount = 0;
+        } else {
+            out.append(slashCount, L'\\');
+            slashCount = 0;
+            out.push_back(ch);
+        }
     }
-    out += L"\"";
+    out.append(slashCount * 2, L'\\');
+    out.push_back(L'"');
     return out;
 }
 
-FILE* OpenPipe(const std::wstring& command, const wchar_t* mode) {
-    return _wpopen(command.c_str(), mode);
+std::wstring BuildCurlProcessLine(const std::vector<std::wstring>& args) {
+    std::vector<std::wstring> allArgs = { L"curl.exe", L"--globoff", L"--silent", L"--fail" };
+    allArgs.insert(allArgs.end(), args.begin(), args.end());
+
+    std::wstring commandLine;
+    for (const auto& arg : allArgs) {
+        if (!commandLine.empty()) commandLine.push_back(L' ');
+        commandLine += QuoteProcessArg(arg);
+    }
+    return commandLine;
 }
 
-int ClosePipe(FILE* pipe) {
-    return _pclose(pipe);
+bool RunCurlWithReader(const std::vector<std::wstring>& args,
+                       const std::function<bool(const char*, size_t)>& readChunk) {
+    SECURITY_ATTRIBUTES security{};
+    security.nLength = sizeof(security);
+    security.bInheritHandle = TRUE;
+
+    HANDLE readPipe = NULL;
+    HANDLE writePipe = NULL;
+    if (!CreatePipe(&readPipe, &writePipe, &security, 0)) return false;
+    SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    startup.hStdOutput = writePipe;
+    startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+
+    PROCESS_INFORMATION process{};
+    std::wstring commandLine = BuildCurlProcessLine(args);
+    BOOL started = CreateProcessW(nullptr,
+                                  commandLine.data(),
+                                  nullptr,
+                                  nullptr,
+                                  TRUE,
+                                  CREATE_NO_WINDOW,
+                                  nullptr,
+                                  nullptr,
+                                  &startup,
+                                  &process);
+    CloseHandle(writePipe);
+    if (!started) {
+        CloseHandle(readPipe);
+        return false;
+    }
+
+    bool keepGoing = true;
+    char buffer[65536];
+    DWORD readBytes = 0;
+    while (ReadFile(readPipe, buffer, sizeof(buffer), &readBytes, nullptr) && readBytes > 0) {
+        if (keepGoing) {
+            keepGoing = readChunk(buffer, static_cast<size_t>(readBytes));
+            if (!keepGoing) TerminateProcess(process.hProcess, 1);
+        }
+    }
+
+    CloseHandle(readPipe);
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD exitCode = 1;
+    GetExitCodeProcess(process.hProcess, &exitCode);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return keepGoing && exitCode == 0;
 }
 #else
-std::wstring QuoteArg(const std::wstring& value) {
-    std::string text = WideToUtf8(value);
-    std::string out = "'";
-    for (char ch : text) {
-        if (ch == '\'') out += "'\\''";
-        else out.push_back(ch);
+std::vector<std::string> BuildCurlArgvText(const std::vector<std::wstring>& args) {
+    std::vector<std::string> allArgs = { "curl", "--globoff", "--silent", "--fail" };
+    for (const auto& arg : args) allArgs.push_back(WideToUtf8(arg));
+    return allArgs;
+}
+
+bool RunCurlWithReader(const std::vector<std::wstring>& args,
+                       const std::function<bool(const char*, size_t)>& readChunk) {
+    int pipeFd[2] = {-1, -1};
+    if (pipe(pipeFd) != 0) return false;
+
+    pid_t child = fork();
+    if (child < 0) {
+        close(pipeFd[0]);
+        close(pipeFd[1]);
+        return false;
     }
-    out += "'";
-    return Utf8ToWide(out);
-}
 
-FILE* OpenPipe(const std::wstring& command, const char* mode) {
-    return popen(WideToUtf8(command).c_str(), mode);
-}
+    if (child == 0) {
+        dup2(pipeFd[1], STDOUT_FILENO);
+        close(pipeFd[0]);
+        close(pipeFd[1]);
 
-int ClosePipe(FILE* pipe) {
-    return pclose(pipe);
+        std::vector<std::string> argvText = BuildCurlArgvText(args);
+        std::vector<char*> argv;
+        argv.reserve(argvText.size() + 1);
+        for (auto& arg : argvText) argv.push_back(arg.data());
+        argv.push_back(nullptr);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+
+    close(pipeFd[1]);
+
+    bool keepGoing = true;
+    char buffer[65536];
+    while (true) {
+        ssize_t readBytes = read(pipeFd[0], buffer, sizeof(buffer));
+        if (readBytes <= 0) break;
+        if (keepGoing) {
+            keepGoing = readChunk(buffer, static_cast<size_t>(readBytes));
+            if (!keepGoing) kill(child, SIGTERM);
+        }
+    }
+
+    close(pipeFd[0]);
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno != EINTR) return false;
+    }
+    return keepGoing && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 #endif
-
-std::wstring BuildCurlCommand(const std::vector<std::wstring>& args) {
-#ifdef _WIN32
-    std::wstring command = L"curl.exe --globoff --silent --fail";
-#else
-    std::wstring command = L"curl --globoff --silent --fail";
-#endif
-    for (const auto& arg : args) {
-        command += L" ";
-        command += QuoteArg(arg);
-    }
-    return command;
-}
 
 std::string RunCurlCapture(const std::vector<std::wstring>& args) {
-    std::wstring command = BuildCurlCommand(args);
-#ifdef _WIN32
-    FILE* pipe = OpenPipe(command, L"rb");
-#else
-    FILE* pipe = OpenPipe(command, "r");
-#endif
-    if (!pipe) return {};
-
     std::string output;
-    char buffer[4096];
-    while (!std::feof(pipe) && static_cast<int>(output.size()) < kMaxCurlOutputBytes) {
-        size_t readCount = std::fread(buffer, 1, sizeof(buffer), pipe);
-        if (readCount > 0) output.append(buffer, readCount);
-        if (readCount < sizeof(buffer) && std::ferror(pipe)) break;
-    }
-    ClosePipe(pipe);
-    return output;
+    bool ok = RunCurlWithReader(args, [&](const char* data, size_t length) {
+        if (output.size() < kMaxCurlOutputBytes) {
+            size_t allowed = static_cast<size_t>(kMaxCurlOutputBytes) - output.size();
+            output.append(data, length < allowed ? length : allowed);
+        }
+        return true; // Always drain to avoid blocking curl on a full pipe.
+    });
+    return ok ? output : std::string();
 }
 
 std::string ReadLocalTextFile(const std::wstring& path) {
@@ -448,26 +536,10 @@ bool StreamRemoteContent(const std::wstring& url,
     }
     args.push_back(url);
 
-    std::wstring command = BuildCurlCommand(args);
-#ifdef _WIN32
-    FILE* pipe = OpenPipe(command, L"rb");
-#else
-    FILE* pipe = OpenPipe(command, "r");
-#endif
-    if (!pipe) return false;
-
     bool wrote = false;
-    bool keepGoing = true;
-    char buffer[65536];
-    while (keepGoing && !std::feof(pipe)) {
-        size_t readCount = std::fread(buffer, 1, sizeof(buffer), pipe);
-        if (readCount > 0) {
-            wrote = true;
-            keepGoing = writeChunk(buffer, readCount);
-        }
-        if (readCount < sizeof(buffer) && std::ferror(pipe)) break;
-    }
-
-    int result = ClosePipe(pipe);
-    return wrote && result == 0;
+    bool ok = RunCurlWithReader(args, [&](const char* data, size_t length) {
+        wrote = true;
+        return writeChunk(data, length);
+    });
+    return wrote && ok;
 }

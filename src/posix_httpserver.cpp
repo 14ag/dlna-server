@@ -16,6 +16,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <vector>
 #include <sys/select.h>
@@ -77,6 +78,12 @@ int CreateListenSocket(int family, int port) {
     }
     if (listen(fd, SOMAXCONN) != 0) { close(fd); return -1; }
     return fd;
+}
+
+void SetSocketTimeouts(int fd) {
+    timeval timeout{10, 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 }
 
 void SendAll(int fd, const std::string& bytes) {
@@ -192,6 +199,12 @@ void HttpServer::Stop() {
     if (m_listenSocketV6 >= 0) { shutdown(m_listenSocketV6, SHUT_RDWR); close(m_listenSocketV6); m_listenSocketV6 = -1; }
     for (auto& thread : m_threads) if (thread.joinable()) thread.join();
     m_threads.clear();
+    std::vector<std::thread> clients;
+    {
+        std::lock_guard<std::mutex> lock(m_clientMutex);
+        clients.swap(m_clientThreads);
+    }
+    for (auto& thread : clients) if (thread.joinable()) thread.join();
 }
 
 void HttpServer::AcceptLoop(int listenSocket) {
@@ -200,6 +213,7 @@ void HttpServer::AcceptLoop(int listenSocket) {
         socklen_t len = sizeof(remote);
         int client = accept(listenSocket, reinterpret_cast<sockaddr*>(&remote), &len);
         if (client < 0) continue;
+        SetSocketTimeouts(client);
 #ifdef SO_NOSIGPIPE
         { int on = 1; setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on)); }
 #endif
@@ -211,7 +225,10 @@ void HttpServer::AcceptLoop(int listenSocket) {
             close(client);
             continue;
         }
-        std::thread(&HttpServer::HandleClient, this, client, clientIp).detach();
+        {
+            std::lock_guard<std::mutex> lock(m_clientMutex);
+            m_clientThreads.emplace_back(&HttpServer::HandleClient, this, client, clientIp);
+        }
     }
 }
 
