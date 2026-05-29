@@ -29,6 +29,10 @@ def _as_bool(value: str, fallback: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _is_valid_port(value: int) -> bool:
+    return 1 <= value <= 65535
+
+
 @dataclass
 class ServerConfig:
     server_name: str = field(default_factory=default_server_name)
@@ -70,8 +74,8 @@ class ConfigStore:
 
         config = ServerConfig()
         config.server_name = values.get("ServerName", config.server_name) or config.server_name
-        config.port = self._parse_int(values.get("Port"), config.port)
-        config.file_server_port = self._parse_int(values.get("FileServerPort"), config.file_server_port)
+        config.port = self._parse_port(values.get("Port"), config.port)
+        config.file_server_port = self._parse_port(values.get("FileServerPort"), config.file_server_port)
         config.flat_folder_style = _as_bool(values.get("FlatFolderStyle", ""), config.flat_folder_style)
         config.show_file_names = _as_bool(values.get("ShowFileNamesInsteadOfTitles", ""), config.show_file_names)
         config.proxy_streams = _as_bool(values.get("ProxyStreams", ""), config.proxy_streams)
@@ -115,6 +119,11 @@ class ConfigStore:
             return int(value)
         except ValueError:
             return fallback
+
+    @staticmethod
+    def _parse_port(value: str | None, fallback: int) -> int:
+        parsed = ConfigStore._parse_int(value, fallback)
+        return parsed if _is_valid_port(parsed) else fallback
 
 
 def find_server_binary() -> Path:
@@ -212,7 +221,7 @@ class DlnaGui:
     def _read_widgets(self) -> ServerConfig:
         config = self.config
         config.server_name = self.name_var.get().strip() or default_server_name()
-        config.port = ConfigStore._parse_int(self.port_var.get(), 8200)
+        config.port = ConfigStore._parse_port(self.port_var.get(), 8200)
         config.debug_log = bool(self.debug_var.get())
         config.media_sources = [self.sources.get(i) for i in range(self.sources.size())]
         return config

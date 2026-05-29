@@ -43,6 +43,16 @@ class ConfigStoreTests(unittest.TestCase):
             self.assertEqual(loaded.port, 8205)
             self.assertEqual(loaded.media_sources, ["/srv/media"])
 
+    def test_invalid_ports_fall_back_to_safe_defaults(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.ini"
+            path.write_text("[Settings]\nPort=70000\nFileServerPort=0\n", encoding="utf-8")
+
+            loaded = ConfigStore(path).load()
+
+            self.assertEqual(loaded.port, 8200)
+            self.assertEqual(loaded.file_server_port, 8201)
+
     def test_env_server_binary_wins(self):
         old_value = os.environ.get("DLNA_SERVER_BIN")
         try:

@@ -1,4 +1,5 @@
 #include "config.h"
+#include "dlna_utils.h"
 #include "netutils.h"
 
 #include <cstdlib>
@@ -95,6 +96,11 @@ Config::Config()
       defaultPlaylistPath(L"") {
 }
 
+int ParsePortOrDefault(const std::string& value, int fallback) {
+    int parsed = ParseIntOrDefault(value, fallback);
+    return IsValidPort(parsed) ? parsed : fallback;
+}
+
 std::wstring Config::GetConfigPath() {
     return Utf8ToWide(AppRootConfigPath());
 }
@@ -148,8 +154,8 @@ void Config::Load() {
         const std::string key = Trim(line.substr(0, eq));
         const std::string value = line.substr(eq + 1);
         if (key == "ServerName") serverName = Utf8ToWide(value);
-        else if (key == "Port") port = ParseIntOrDefault(value, port);
-        else if (key == "FileServerPort") fileServerPort = ParseIntOrDefault(value, fileServerPort);
+        else if (key == "Port") port = ParsePortOrDefault(value, port);
+        else if (key == "FileServerPort") fileServerPort = ParsePortOrDefault(value, fileServerPort);
         else if (key == "FlatFolderStyle") flatFolderStyle = ParseIntOrDefault(value, 0) != 0;
         else if (key == "ShowFileNamesInsteadOfTitles") showFileNamesInsteadOfTitles = ParseIntOrDefault(value, 0) != 0;
         else if (key == "ProxyStreams") proxyStreams = ParseIntOrDefault(value, 0) != 0;

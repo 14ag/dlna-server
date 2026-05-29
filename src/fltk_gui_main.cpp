@@ -1,4 +1,5 @@
 #include "config.h"
+#include "dlna_utils.h"
 #include "log.h"
 #include "media_sources.h"
 #include "netutils.h"
@@ -54,13 +55,8 @@ std::wstring ToWide(const char* value) {
 }
 
 int ParsePort(const char* value, int fallback) {
-    if (!value || !*value) return fallback;
-    try {
-        int port = std::stoi(value);
-        return (port > 0 && port <= 65535) ? port : fallback;
-    } catch (...) {
-        return fallback;
-    }
+    int port = 0;
+    return (value && TryParsePortStrict(value, port)) ? port : fallback;
 }
 
 std::string TitleFromPath(const std::string& moviePath) {
@@ -242,10 +238,17 @@ private:
         m_proxyStreams.value(AppConfig.proxyStreams ? 1 : 0);
     }
 
-    void SaveToConfig() {
+    bool SaveToConfig() {
+        int httpPort = 0;
+        int filePort = 0;
+        if (!TryParsePortStrict(m_httpPort.value() ? m_httpPort.value() : "", httpPort) ||
+            !TryParsePortStrict(m_filePort.value() ? m_filePort.value() : "", filePort)) {
+            fl_alert("Ports must be between 1 and 65535.");
+            return false;
+        }
         AppConfig.serverName = ToWide(m_serverName.value());
-        AppConfig.port = ParsePort(m_httpPort.value(), AppConfig.port);
-        AppConfig.fileServerPort = ParsePort(m_filePort.value(), AppConfig.fileServerPort);
+        AppConfig.port = httpPort;
+        AppConfig.fileServerPort = filePort;
         AppConfig.ipWhiteList = ToWide(m_ipWhitelist.value());
         AppConfig.runOnBoot = m_runOnStartup.value() != 0;
         AppConfig.debugLog = m_debugLog.value() != 0;
@@ -259,18 +262,19 @@ private:
         AppConfig.proxyStreams = m_proxyStreams.value() != 0;
         AppConfig.Save();
         LogPrint(L"Saved settings.");
+        return true;
     }
 
     static void OkClicked(Fl_Widget*, void* data) {
         auto* self = static_cast<SettingsDialog*>(data);
-        self->SaveToConfig();
+        if (!self->SaveToConfig()) return;
         self->m_saved = true;
         self->hide();
     }
 
     static void RestartClicked(Fl_Widget*, void* data) {
         auto* self = static_cast<SettingsDialog*>(data);
-        self->SaveToConfig();
+        if (!self->SaveToConfig()) return;
         self->m_saved = true;
         self->m_restartRequested = true;
         self->hide();

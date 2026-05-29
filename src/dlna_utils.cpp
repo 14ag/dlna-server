@@ -200,6 +200,19 @@ bool TryParseNonNegativeLongLong(const std::string& text, long long& value) {
     return ParseRangeNumber(text, value);
 }
 
+bool IsValidPort(int port) {
+    return port > 0 && port <= 65535;
+}
+
+bool TryParsePortStrict(const std::string& text, int& port) {
+    int parsed = 0;
+    if (!TryParseIntStrict(TrimAscii(text), parsed) || !IsValidPort(parsed)) {
+        return false;
+    }
+    port = parsed;
+    return true;
+}
+
 HttpByteRange ParseHttpRangeHeader(const std::string& rangeHeader, long long fileSize) {
     HttpByteRange result;
     result.end = fileSize > 0 ? fileSize - 1 : -1;

@@ -31,6 +31,12 @@ void SendAll(SOCKET s, const std::string& str) {
     SendAll(s, str.c_str(), static_cast<int>(str.size()));
 }
 
+void SetSocketTimeouts(SOCKET s) {
+    DWORD timeoutMs = 10000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+}
+
 int IconResourceForPath(const std::string& path) {
     if (path == "/icons/server_icon_48.png") return IDR_SERVER_ICON_48;
     if (path == "/icons/server_icon_120.png") return IDR_SERVER_ICON_120;
@@ -161,7 +167,7 @@ HttpServer::HttpServer()
 }
 
 bool HttpServer::Start(int port) {
-    if (m_running) return true;
+    if (m_running.load()) return true;
 
     m_listenSocketV4 = CreateListenSocket(AF_INET, port);
     m_listenSocketV6 = CreateListenSocket(AF_INET6, port);
@@ -188,7 +194,7 @@ bool HttpServer::Start(int port) {
     SetThreadpoolCallbackPool(&m_cbe, m_threadPool);
     SetThreadpoolCallbackCleanupGroup(&m_cbe, m_cleanupGroup, NULL);
 
-    m_running = true;
+    m_running.store(true);
     m_hAcceptThread = CreateThread(NULL, 0, AcceptThreadWorker, this, 0, NULL);
     if (!m_hAcceptThread) {
         Stop();
@@ -199,9 +205,9 @@ bool HttpServer::Start(int port) {
 }
 
 void HttpServer::Stop() {
-    if (!m_running && m_listenSocketV4 == INVALID_SOCKET && m_listenSocketV6 == INVALID_SOCKET) return;
+    if (!m_running.load() && m_listenSocketV4 == INVALID_SOCKET && m_listenSocketV6 == INVALID_SOCKET) return;
 
-    m_running = false;
+    m_running.store(false);
 
     if (m_listenSocketV4 != INVALID_SOCKET) {
         closesocket(m_listenSocketV4);
@@ -234,7 +240,7 @@ void HttpServer::Stop() {
 DWORD WINAPI HttpServer::AcceptThreadWorker(LPVOID lpParam) {
     HttpServer* pThis = reinterpret_cast<HttpServer*>(lpParam);
 
-    while (pThis->m_running) {
+    while (pThis->m_running.load()) {
         fd_set readfds;
         FD_ZERO(&readfds);
 
@@ -269,6 +275,7 @@ DWORD WINAPI HttpServer::AcceptThreadWorker(LPVOID lpParam) {
             if (clientSocket == INVALID_SOCKET) {
                 continue;
             }
+            SetSocketTimeouts(clientSocket);
 
             std::string clientIP = NormalizeIpLiteral(SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&clientAddr)));
 
@@ -442,7 +449,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             p += sent;
                             remaining -= static_cast<size_t>(sent);
                         }
-                        return m_running;
+                        return m_running.load();
                     });
                     return;
                 }
@@ -500,7 +507,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     DWORD bytesToRead = 0;
                     DWORD bytesReadFile = 0;
 
-                    while (remaining > 0 && m_running) {
+                    while (remaining > 0 && m_running.load()) {
                         bytesToRead = (remaining > static_cast<long long>(sizeof(fileBuf))) ? static_cast<DWORD>(sizeof(fileBuf)) : static_cast<DWORD>(remaining);
                         if (!ReadFile(hFile, fileBuf, bytesToRead, &bytesReadFile, NULL) || bytesReadFile == 0) {
                             break;
@@ -564,7 +571,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     // stream subtitle bytes to client
                     char subBuf[16384];
                     DWORD subRead = 0;
-                    while (m_running) {
+                    while (m_running.load()) {
                         if (!ReadFile(hFile, subBuf, sizeof(subBuf), &subRead, NULL) ||
                             subRead == 0)
                             break;
@@ -612,7 +619,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
                     char artBuf[16384];
                     DWORD artRead = 0;
-                    while (m_running) {
+                    while (m_running.load()) {
                         if (!ReadFile(hFile, artBuf, sizeof(artBuf), &artRead, NULL) || artRead == 0) break;
                         const char* p = artBuf;
                         DWORD toSend = artRead;
@@ -651,7 +658,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }
-                while (static_cast<int>(body.length()) < contentLength && m_running) {
+                while (static_cast<int>(body.length()) < contentLength && m_running.load()) {
                     int r = recv(clientSocket, buf, HTTP_BUF_SIZE, 0);
                     if (r <= 0) break;
                     body.append(buf, r);

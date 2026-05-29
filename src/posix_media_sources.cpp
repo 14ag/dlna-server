@@ -94,7 +94,7 @@ void MediaSources::Scan() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_items.clear();
     m_nextId = 1;
-    m_items.push_back({0, -1, L"", L"Root", true, L"", L"object.container.storageFolder", 0});
+    m_items.push_back({0, -1, L"", L"Root", true, L"", L"object.container.storageFolder", 0, L"", L"", L""});
     for (const auto& source : AppConfig.mediaSources) {
         if (!source.enabled) continue;
         if (!IsPlaylistSourcePath(source.path) && !IsNetworkShareUrl(source.path)) {
@@ -239,12 +239,18 @@ void MediaSources::ScanNetworkFolder(const std::wstring& folderUrl, int parentId
 void MediaSources::ScanFolder(const std::wstring& rootPath, int parentId) {
     fs::path root(WideToUtf8(rootPath));
     std::error_code ec;
-    for (const auto& entry : fs::directory_iterator(root, fs::directory_options::skip_permission_denied, ec)) {
-        if (ec) break;
+    fs::directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
+    fs::directory_iterator end;
+    if (ec) {
+        LogPrint(L"Skipping unreadable folder: %ls", rootPath.c_str());
+        return;
+    }
+    while (it != end) {
+        const fs::directory_entry entry = *it;
+        ec.clear();
         const fs::path path = entry.path();
-        if (entry.is_symlink(ec)) continue;
-        if (IsHiddenPath(path) || !IsReadableEntry(entry)) continue;
-        if (entry.is_directory(ec)) {
+        bool skip = entry.is_symlink(ec) || IsHiddenPath(path) || !IsReadableEntry(entry);
+        if (!skip && entry.is_directory(ec)) {
             MediaItem folder{};
             folder.id = m_nextId++;
             folder.parentId = parentId;
@@ -254,7 +260,7 @@ void MediaSources::ScanFolder(const std::wstring& rootPath, int parentId) {
             folder.upnpClass = L"object.container.storageFolder";
             m_items.push_back(folder);
             ScanFolder(folder.path, folder.id);
-        } else if (entry.is_regular_file(ec)) {
+        } else if (!skip && entry.is_regular_file(ec)) {
             std::wstring fullPath = Utf8ToWide(path.u8string());
             if (IsPlaylistSourcePath(fullPath)) {
                 MediaItem playlistFolder{};
@@ -269,6 +275,11 @@ void MediaSources::ScanFolder(const std::wstring& rootPath, int parentId) {
             } else {
                 AddMediaFile(fullPath, parentId);
             }
+        }
+        it.increment(ec);
+        if (ec) {
+            LogPrint(L"Skipping unreadable directory entry under: %ls", rootPath.c_str());
+            ec.clear();
         }
     }
 }

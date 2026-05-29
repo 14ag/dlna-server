@@ -158,7 +158,7 @@ SSDP::SSDP()
 }
 
 bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid) {
-    if (m_running) return true;
+    if (m_running.load()) return true;
 
     m_endpoints = endpoints;
     m_port = port;
@@ -238,10 +238,10 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
         return false;
     }
 
-    m_running = true;
+    m_running.store(true);
     m_hThread = CreateThread(NULL, 0, ThreadWorker, this, 0, NULL);
     if (!m_hThread) {
-        m_running = false;
+        m_running.store(false);
         CloseSockets();
         return false;
     }
@@ -251,9 +251,9 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
 }
 
 void SSDP::Stop() {
-    if (!m_running) return;
+    if (!m_running.load()) return;
 
-    m_running = false;
+    m_running.store(false);
     SendNotifyBurst("ssdp:byebye", 1, 0);
     CloseSockets();
 
@@ -431,7 +431,7 @@ DWORD WINAPI SSDP::ThreadWorker(LPVOID lpParam) {
     SSDP* pThis = reinterpret_cast<SSDP*>(lpParam);
     DWORD lastNotifyTicks = GetTickCount();
 
-    while (pThis->m_running) {
+    while (pThis->m_running.load()) {
         fd_set readfds;
         FD_ZERO(&readfds);
 
@@ -450,7 +450,7 @@ DWORD WINAPI SSDP::ThreadWorker(LPVOID lpParam) {
 
         timeval tv = { 1, 0 };
         int result = select(0, &readfds, NULL, NULL, &tv);
-        if (!pThis->m_running) {
+        if (!pThis->m_running.load()) {
             break;
         }
 

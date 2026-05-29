@@ -74,6 +74,7 @@ build.log
 output.log
 vlc-help.txt
 *.log
+*.bak
 
 # Personal/AI specific
 .antigravity/

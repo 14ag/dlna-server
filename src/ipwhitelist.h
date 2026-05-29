@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <shared_mutex>
 
 class IPWhitelist {
 public:
@@ -13,6 +14,7 @@ public:
 
 private:
     IPWhitelist();
+    mutable std::shared_mutex m_mutex;
     std::vector<std::string> m_allowedIps;
 };
 
