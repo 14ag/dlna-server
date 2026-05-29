@@ -42,9 +42,9 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         apprun = self.read("packaging/linux/AppRun")
 
         self.assertIn('DLNA_SERVER_BIN="$appdir/usr/bin/dlna-server"', apprun)
-        self.assertIn('DLNA_SERVER_GUI_DIR="$appdir/usr/share/dlna-server"', apprun)
         self.assertIn('DLNA_SERVER_GUI_BIN="$appdir/usr/bin/dlna-server-gui-bin"', apprun)
         self.assertIn('exec "$appdir/usr/bin/dlna-server-gui"', apprun)
+        self.assertNotIn("DLNA_SERVER_GUI_DIR", apprun)
 
     def test_appdir_desktop_metadata_is_relative(self):
         desktop = self.read("packaging/linux/dlna-server.appimage.desktop")
@@ -103,6 +103,8 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("DLNA_PLATFORM_NAME=\\\"macOS\\\"", cmake)
         self.assertIn("<string>DLNA Server</string>", plist)
         self.assertIn('native_gui="$app_dir/Contents/MacOS/dlna-server-gui-bin"', launcher)
+        self.assertIn("Rebuild with -DDLNA_ENABLE_FLTK_GUI=ON.", launcher)
+        self.assertNotIn("posix_gui.py", launcher)
         self.assertIn("hdiutil create", script)
         self.assertIn("notarytool submit", script)
 
@@ -115,9 +117,11 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("dlna-server-gui", script)
         self.assertIn("PASS WSLg native GUI launch smoke", script)
 
-    def test_fltk_gui_dependency_is_optional(self):
+    def test_fltk_gui_is_only_posix_desktop_ui(self):
         cmake = self.read("CMakeLists.txt")
         gui_source = self.read("src/fltk_gui_main.cpp")
+        linux_launcher = self.read("packaging/linux/dlna-server-gui")
+        mac_launcher = self.read("packaging/macos/dlna-server-gui")
 
         self.assertIn("DLNA_ENABLE_FLTK_GUI", cmake)
         self.assertIn('option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" ON)', cmake)
@@ -134,6 +138,11 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("Threads::Threads", cmake)
         self.assertIn("#include <FL/Fl_Window.H>", gui_source)
         self.assertIn("DLNA Server is stopped", gui_source)
+        self.assertFalse((ROOT / "src/posix_gui.py").exists())
+        self.assertFalse((ROOT / "tests/test_posix_gui.py").exists())
+        self.assertNotIn("tkinter", linux_launcher + mac_launcher + cmake)
+        self.assertNotIn("python3", linux_launcher + mac_launcher + cmake)
+        self.assertIn("DLNA Server native GUI is missing", linux_launcher)
 
     def test_readme_says_native_gui_is_default(self):
         readme = self.read("README.md")
@@ -172,7 +181,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
             "HTTP Port:",
             "File Port:",
             "IP Whitelist:",
-            "Run on Windows Startup",
+            "Run on startup",
             "Debug Log (Write to file)",
             "Add Artist/Album folders to audio",
             "Do not show 'All Media' folders",

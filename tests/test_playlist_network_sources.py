@@ -49,14 +49,13 @@ class PlaylistNetworkSourceTests(unittest.TestCase):
     def test_gui_paths_accept_playlists_and_network_urls(self):
         windows_gui = self.read("src/mainwindow.cpp")
         fltk_gui = self.read("src/fltk_gui_main.cpp")
-        python_gui = self.read("src/posix_gui.py")
 
         for token in ("Playlist", "Network", "smb://user:pass@server/share", "ftp://user:pass@server"):
-            self.assertIn(token, windows_gui + fltk_gui + python_gui)
+            self.assertIn(token, windows_gui + fltk_gui)
 
         self.assertIn("BrowsePlaylist", windows_gui)
-        self.assertIn("add_playlist", python_gui)
-        self.assertIn("add_network_source", python_gui)
+        self.assertIn("Fl_Native_File_Chooser", fltk_gui)
+        self.assertIn("fl_input", fltk_gui)
 
 
 if __name__ == "__main__":

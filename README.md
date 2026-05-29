@@ -82,7 +82,7 @@ The script builds:
 Pass a version or WSL distribution when needed:
 
 ```bat
-build-assets.bat -Version 1.3.0 -WslDistro Ubuntu
+build-assets.bat -Version 1.4.0 -WslDistro Ubuntu
 ```
 
 The Windows builds use Visual Studio through CMake. The Linux builds run in WSL and write back to the same `output/` folder. The script downloads pinned FLTK and AppImage packaging inputs from Windows, verifies SHA256 hashes, and then hands work to WSL, so a WSL DNS problem does not stop the Linux package build.
@@ -125,7 +125,7 @@ cmake --build build-linux-native
 cmake --install build-linux-native
 ```
 
-To force the older compatibility Python/Tk launcher, configure with `-DDLNA_ENABLE_FLTK_GUI=OFF`.
+To build only the headless POSIX server, configure with `-DDLNA_ENABLE_FLTK_GUI=OFF`. This skips the GUI launcher, desktop entry, app metadata, and icons.
 
 From Windows, install directly into WSL with:
 
@@ -157,7 +157,7 @@ On WSLg, `[WARN:COPY MODE]` in the Windows taskbar title is emitted by WSLg, not
 
 ### Linux desktop downloads
 
-Release builds provide three Linux GUI options:
+Release builds provide three Linux GUI package formats, all using the native FLTK GUI:
 
 - `.deb` for Ubuntu and Debian desktops. Open it with your software installer, then launch **DLNA Server** from the app menu.
 - `.flatpak` for desktops with Flatpak enabled. Install it with your software app or `flatpak install`.
@@ -278,7 +278,7 @@ When the main window closes, the Windows app stays in the tray. Use the tray men
 
 Launch **DLNA Server** from the desktop app list on Linux, or open `dlna-server.app` on macOS. Add one or more media sources, set the server name and port, then press Start.
 
-The native Linux GUI uses the same config schema as the server and writes `config.ini` beside the installed executable, so command-line and desktop launches share settings. On WSLg, the launcher forces FLTK to use X11 when a Windows display is available; this avoids cases where the window appears in the taskbar but never paints. If startup fails, run `dlna-server-gui` from a terminal so display or dependency errors are visible.
+The native Linux GUI uses the same config schema as the server and writes `config.ini` beside the installed executable, so command-line and desktop launches share settings. On WSLg, the launcher forces FLTK to use X11 when a Windows display is available; this avoids cases where the window appears in the taskbar but never paints. If the native GUI binary is missing, `dlna-server-gui` exits with a rebuild hint instead of falling back to another UI.
 
 To hide the WSLg copy-mode warning title on systems where WSLg still adds it, create `%USERPROFILE%\.wslgconfig` with:
 
@@ -350,10 +350,10 @@ cmake --install build-windows --config Release --prefix output
 .\tests\verify-smoke.ps1
 ```
 
-Run Android reachability checks through ADB:
+Run Android reachability checks through ADB against the Windows app:
 
 ```powershell
-.\tests\verify-android-smoke.ps1
+.\tests\verify-android-smoke.ps1 -Target Windows
 ```
 
 If more than one ADB device is connected, pass the phone serial:
@@ -361,6 +361,14 @@ If more than one ADB device is connected, pass the phone serial:
 ```powershell
 .\tests\verify-android-smoke.ps1 -DeviceSerial DKJ9X18709W05461
 ```
+
+Run the hybrid POSIX-over-WSL Android check with:
+
+```powershell
+.\tests\verify-android-smoke.ps1 -Target PosixWsl -DeviceSerial DKJ9X18709W05461
+```
+
+The POSIX WSL mode uses `adb reverse` for Android HTTP/SOAP/VLC direct playback and validates SSDP locally inside WSL, because normal Android multicast discovery cannot reliably reach WSL2 NAT.
 
 The Android smoke test requires Windows Firewall access for the built app. If the test reports missing firewall rules, run the helper once from an elevated PowerShell:
 
@@ -390,8 +398,7 @@ The script builds `dlna-server` on the remote device, starts it headless, verifi
 - `src/main.cpp`, `src/mainwindow.cpp`, `src/settingsdlg.cpp` - Windows UI entry points.
 - `src/server.cpp`, `src/httpserver.cpp`, `src/ssdp.cpp` - Windows server and discovery implementation.
 - `src/posix_main.cpp`, `src/posix_httpserver.cpp`, `src/posix_ssdp.cpp` - headless POSIX implementation.
-- `src/fltk_gui_main.cpp`, `packaging/linux` - native Linux GUI and AppImage packaging inputs.
-- `src/posix_gui.py`, `packaging/macos` - compatibility POSIX GUI wrapper used by macOS and non-native fallback installs.
+- `src/fltk_gui_main.cpp`, `packaging/linux`, `packaging/macos` - native POSIX GUI and packaging inputs.
 - `src/contentdirectory.cpp` - shared UPnP XML and Browse response generation.
 - `src/media_sources.cpp`, `src/posix_media_sources.cpp` - media indexing.
 - `tests/verify-smoke.ps1`, `tests/verify-android-smoke.ps1`, `tests/verify-posix-ssh.ps1`, `tests/verify-wslg-gui.ps1` - protocol and device smoke tests.

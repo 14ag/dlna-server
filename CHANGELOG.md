@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-05-29
+
 ### Added
 - Windows keeps the PC awake while the DLNA server is starting, running, or stopping.
 - Settings now include default playlist entry creation with browse buttons for movie and subtitle paths.
@@ -14,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Windows and FLTK source lists now support a text-labeled **Delete** button and keyboard `Delete`.
 - DLNA service handling now includes ConnectionManager SOAP responses, ContentDirectory Search, and companion album-art serving.
 - Advertised UPnP event URLs now accept GENA subscribe and unsubscribe requests.
+- POSIX SSDP now supports IPv6 sockets, M-SEARCH responses, and periodic `ssdp:alive` refreshes.
+- Android VLC smoke tests now cover both the Windows app and the POSIX WSL server path.
+- CI now runs Python tests plus CMake builds on Windows and Linux.
 
 ### Changed
 - Start, stop, and restart now run outside the UI thread and show busy status text.
@@ -22,9 +27,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Media protocol metadata is now generated from a shared DLNA format table for Browse, HTTP streaming, and ConnectionManager responses.
 - Release scripts now verify downloaded packaging inputs, avoid stale AppImage reuse, and publish Windows assets from GitHub Actions.
 - Added a PDF-derived DLNA framework upgrade blueprint for future protocol hardening work.
+- POSIX desktop builds now use the native FLTK GUI only. `DLNA_ENABLE_FLTK_GUI=OFF` builds the headless server and skips the GUI launcher.
+- Remote SMB and FTP fetching now launches `curl` without a shell.
+- Config, CLI, and desktop settings now reject invalid ports before the server binds or advertises them.
 
 ### Fixed
 - Windows modal sub-windows now preserve quit messages and use the dark DWM frame consistently.
+- IP whitelist reloads are synchronized with HTTP workers.
+- POSIX HTTP workers are tracked and joined during shutdown, with receive and send timeouts applied.
+- POSIX media scanning continues through unreadable directory entries.
+
+### Removed
+- Removed the Python/Tk POSIX GUI fallback and its packaging paths.
+
+### Security
+- Removed shell command construction from remote media fetching to block command injection through remote URLs.
+- Rejected out-of-range ports consistently across supported configuration paths.
 
 ## [1.3.0] - 2026-05-24
 

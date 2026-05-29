@@ -93,6 +93,10 @@ class FirewallAccessSourceTests(unittest.TestCase):
             "Android range GET expected 206",
             "SSDP search in: src=",
             "HTTP request: src=",
+            'ValidateSet("Windows", "PosixWsl")',
+            "adb reverse",
+            "Rewrite-MediaUrlForTarget",
+            "Invoke-PosixWslSsdpProbe",
         ):
             self.assertIn(token, script)
 
@@ -100,10 +104,10 @@ class FirewallAccessSourceTests(unittest.TestCase):
         self.assertIn("--configure-firewall", script)
 
     def test_http_debug_log_records_media_requests_for_blackbox_verification(self):
-        source = self.read("src/httpserver.cpp")
-
-        self.assertIn("HTTP request: src=%hs method=%hs path=%hs", source)
-        self.assertIn('path.rfind("/media/", 0) == 0', source)
+        for path in ("src/httpserver.cpp", "src/posix_httpserver.cpp"):
+            source = self.read(path)
+            self.assertIn("HTTP request: src=%hs method=%hs path=%hs", source)
+            self.assertIn('path.rfind("/media/", 0) == 0', source)
 
 
 if __name__ == "__main__":
