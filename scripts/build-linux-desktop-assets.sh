@@ -133,9 +133,15 @@ flatpak=${FLATPAK:-$(command -v flatpak || true)}
 if [ -n "$flatpak_builder" ] && [ -n "$flatpak" ]; then
     flatpak_repo="$output_dir/flatpak-repo"
     flatpak_build="$output_dir/flatpak-build"
+    flatpak_bundle="$output_dir/dlna-server-${version}-linux-x86_64.flatpak"
     rm -rf "$flatpak_build" "$flatpak_repo"
-    "$flatpak_builder" --force-clean --repo="$flatpak_repo" "$flatpak_build" "$repo_root/packaging/flatpak/com.github.14ag.dlna_server.yml"
-    "$flatpak" build-bundle "$flatpak_repo" "$output_dir/dlna-server-${version}-linux-x86_64.flatpak" com.github.14ag.dlna_server stable
+    if "$flatpak_builder" --force-clean --repo="$flatpak_repo" "$flatpak_build" "$repo_root/packaging/flatpak/com.github.14ag.dlna_server.yml" &&
+       "$flatpak" build-bundle "$flatpak_repo" "$flatpak_bundle" com.github.14ag.dlna_server stable; then
+        :
+    else
+        rm -f "$flatpak_bundle"
+        echo "WARN: Flatpak build failed; Flatpak bundle skipped" >&2
+    fi
 else
     echo "WARN: flatpak-builder unavailable; Flatpak bundle skipped" >&2
 fi
