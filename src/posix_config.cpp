@@ -13,6 +13,10 @@
 #include <mach-o/dyld.h>
 #endif
 
+#ifndef HOST_NAME_MAX
+#define HOST_NAME_MAX 255
+#endif
+
 namespace {
 std::string Trim(const std::string& value) {
     const char* ws = " \t\r\n";
