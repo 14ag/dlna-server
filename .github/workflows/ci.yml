@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cmake_args: -DDLNA_ENABLE_FLTK_GUI=OFF
+          - os: windows-latest
+            cmake_args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Run Python tests
+        run: python -m pytest -q
+      - name: Configure CMake
+        run: cmake -S . -B build-ci ${{ matrix.cmake_args }}
+      - name: Build
+        run: cmake --build build-ci --config Release

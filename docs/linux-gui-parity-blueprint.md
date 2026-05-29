@@ -34,7 +34,7 @@ Native Linux GUI target: FLTK C++ app matching current Windows Win32 behavior. K
 - Numeric field: `HTTP Port:`
 - Numeric field: `File Port:`
 - Text field: `IP Whitelist:`
-- Checkbox: `Run on Windows Startup`
+- Checkbox: `Run on startup`
 - Checkbox: `Debug Log (Write to file)`
 - Checkbox: `Default playlist`
 - Button: `Add...`

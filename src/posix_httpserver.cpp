@@ -232,7 +232,7 @@ void HttpServer::AcceptLoop(int listenSocket) {
     }
 }
 
-void HttpServer::HandleClient(int clientSocket, const std::string&) {
+void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
     ScopedFd client(clientSocket);
     char buf[kBufferSize];
     ssize_t readBytes = recv(clientSocket, buf, sizeof(buf) - 1, 0);
@@ -247,6 +247,9 @@ void HttpServer::HandleClient(int clientSocket, const std::string&) {
     if (space1 == std::string::npos || space2 <= space1) return;
     const std::string method = firstLine.substr(0, space1);
     const std::string path = firstLine.substr(space1 + 1, space2 - space1 - 1);
+    if (AppConfig.debugLog) {
+        LogPrint(L"HTTP request: src=%hs method=%hs path=%hs", clientIp.c_str(), method.c_str(), path.c_str());
+    }
     std::string hostUrl = FindHeaderValueCaseInsensitive(req, "Host");
     if (hostUrl.empty()) hostUrl = "127.0.0.1:" + std::to_string(AppConfig.port);
 

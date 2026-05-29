@@ -331,7 +331,7 @@ void SSDP::SendNotifyRound(const char* nts) {
                     "LOCATION: " + endpoint.locationUrl + "\r\n"
                     "NT: " + target.st + "\r\n" +
                     "NTS: " + nts + "\r\n"
-                    "SERVER: Windows/10.0 UPnP/1.0 dlna-server/1.3.0\r\n"
+                    "SERVER: Windows/10.0 UPnP/1.0 dlna-server/1.4.0\r\n"
                     "USN: " + target.usn + "\r\n"
                     "\r\n";
             }
@@ -417,7 +417,7 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
             "DATE: " + date + "\r\n"
             "EXT:\r\n"
             "LOCATION: " + endpoint->locationUrl + "\r\n"
-            "SERVER: Windows/10.0 UPnP/1.0 dlna-server/1.3.0\r\n"
+            "SERVER: Windows/10.0 UPnP/1.0 dlna-server/1.4.0\r\n"
             "ST: " + target->st + "\r\n"
             "USN: " + target->usn + "\r\n"
             "\r\n";

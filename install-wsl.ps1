@@ -61,7 +61,7 @@ case "$prefix" in
     "~/"*) prefix="$HOME/${prefix#"~/"}" ;;
 esac
 
-required_commands="cmake g++ make python3"
+required_commands="cmake g++ make"
 missing_commands=""
 for command_name in $required_commands; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -70,7 +70,7 @@ for command_name in $required_commands; do
 done
 if [ -n "$missing_commands" ]; then
     echo "ERROR missing WSL commands:$missing_commands" >&2
-    echo "Install with: sudo apt install build-essential cmake python3" >&2
+    echo "Install with: sudo apt install build-essential cmake" >&2
     exit 1
 fi
 
@@ -87,10 +87,10 @@ fi
 if [ -n "$missing_packages" ]; then
     if [ "$install_packages" = "1" ]; then
         sudo apt-get update
-        sudo apt-get install -y build-essential cmake python3 $required_packages
+        sudo apt-get install -y build-essential cmake $required_packages
     else
         echo "ERROR missing native GUI build packages:$missing_packages" >&2
-        echo "Rerun with -InstallPackages, or run: sudo apt install build-essential cmake python3 $required_packages" >&2
+        echo "Rerun with -InstallPackages, or run: sudo apt install build-essential cmake $required_packages" >&2
         exit 1
     fi
 fi

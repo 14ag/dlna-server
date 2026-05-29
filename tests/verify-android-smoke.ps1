@@ -1,6 +1,10 @@
 param(
     [switch]$KeepFirewallRules,
-    [string]$DeviceSerial = "DKJ9X18709W05461"
+    [string]$DeviceSerial = "DKJ9X18709W05461",
+    [ValidateSet("Windows", "PosixWsl")]
+    [string]$Target = "Windows",
+    [string]$Distro = "Ubuntu",
+    [string]$WslBuildDir = "build-posix-android-smoke"
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,16 +15,20 @@ $outDir = Join-Path $repo "output"
 $appDataDir = Join-Path $env:APPDATA "dlna-server"
 $configPath = Join-Path $outDir "config.ini"
 $debugLogPath = Join-Path $appDataDir "debug.log"
-$resultsPath = Join-Path $outDir "android-verification-results.txt"
-$debugCopyPath = Join-Path $outDir "android-verification-debug.log"
-$testMediaDir = Join-Path $env:TEMP "dlna-server-Android-TestMedia"
+$targetSlug = if ($Target -eq "Windows") { "windows" } else { "posix-wsl" }
+$resultsPath = Join-Path $outDir "android-verification-$targetSlug-results.txt"
+$debugCopyPath = Join-Path $outDir "android-verification-$targetSlug-debug.log"
+$testMediaDir = Join-Path $env:TEMP "dlna-server-Android-$Target-TestMedia"
 $serverProc = $null
 $backupPath = $null
 $summary = New-Object System.Collections.Generic.List[string]
-$serverPort = 18200
+$serverPort = if ($Target -eq "Windows") { 18200 } else { 18220 }
 $ssdpPort = 1900
 $firewallReadDenied = $false
 $adbTargetArgs = @()
+$adbReverseAdded = $false
+$posixWslLogPath = "/tmp/dlna-posix-android-smoke.log"
+$posixWslUuid = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
 
 if (-not ("Kernel32IniBridge" -as [type])) {
     Add-Type @"
@@ -52,6 +60,48 @@ function Read-DebugLog {
     }
 
     return ""
+}
+
+function Invoke-WslText([string]$script) {
+    $cleanScript = $script -replace "`r", ""
+    $output = & wsl.exe -d $Distro --exec bash -lc $cleanScript 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $text = (($output | Out-String).Trim())
+        if (-not $text) {
+            $text = "wsl exited with code $LASTEXITCODE"
+        }
+        throw $text
+    }
+    return (($output | Out-String).Trim())
+}
+
+function ConvertTo-WslPath([string]$path) {
+    $resolved = (Resolve-Path -LiteralPath $path).Path
+    if ($resolved -notmatch "^[A-Za-z]:\\") {
+        throw "Only drive-letter Windows paths can be mapped to WSL: $resolved"
+    }
+    $drive = $resolved.Substring(0, 1).ToLowerInvariant()
+    $rest = $resolved.Substring(3) -replace "\\", "/"
+    return "/mnt/$drive/$rest"
+}
+
+function Quote-Bash([string]$value) {
+    return "'" + ($value -replace "'", "'\''") + "'"
+}
+
+function Read-PosixWslLog {
+    try {
+        return Invoke-WslText ("cat " + (Quote-Bash $posixWslLogPath) + " 2>/dev/null || true")
+    } catch {
+        return ""
+    }
+}
+
+function Read-ServerLog {
+    if ($Target -eq "PosixWsl") {
+        return Read-PosixWslLog
+    }
+    return Read-DebugLog
 }
 
 function Assert-Command([string]$tool) {
@@ -113,6 +163,18 @@ function Invoke-AdbText([string[]]$adbArgs) {
         $text = (($output | Out-String).Trim())
         if (-not $text) {
             $text = "adb exited with code $LASTEXITCODE"
+        }
+        throw $text
+    }
+    return (($output | Out-String).Trim())
+}
+
+function Invoke-CurlText([string[]]$curlArgs) {
+    $output = & curl.exe @curlArgs 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $text = (($output | Out-String).Trim())
+        if (-not $text) {
+            $text = "curl.exe exited with code $LASTEXITCODE"
         }
         throw $text
     }
@@ -341,7 +403,7 @@ function Invoke-TapUiText([string[]]$patterns) {
 }
 
 function Invoke-VlcLocalNetworkDiscovery([string]$androidIp, [string]$serverName) {
-    $preLog = Read-DebugLog
+    $preLog = Read-ServerLog
     Invoke-AdbText @("shell", "am", "force-stop", "org.videolan.vlc") | Out-Null
     Invoke-AdbText @("shell", "monkey", "-p", "org.videolan.vlc", "-c", "android.intent.category.LAUNCHER", "1") | Out-Null
     Start-Sleep -Seconds 5
@@ -355,7 +417,7 @@ function Invoke-VlcLocalNetworkDiscovery([string]$androidIp, [string]$serverName
     Invoke-TapUiText @("(?i)local network", "(?i)\bnetwork\b") | Out-Null
 
     Start-Sleep -Seconds 20
-    $postLog = Read-DebugLog
+    $postLog = Read-ServerLog
     $newLog = $postLog.Substring([Math]::Min($preLog.Length, $postLog.Length))
     if ($newLog -notmatch "SSDP search in: src=$([regex]::Escape($androidIp))") {
         throw "VLC Local Network did not trigger SSDP M-SEARCH from $androidIp"
@@ -373,7 +435,7 @@ function Invoke-VlcLocalNetworkDiscovery([string]$androidIp, [string]$serverName
 }
 
 function Invoke-VlcPlayback([string]$androidIp, [string]$mediaUrl, [string]$mediaId) {
-    $preLog = Read-DebugLog
+    $preLog = Read-ServerLog
     Invoke-AdbText @("shell", "am", "force-stop", "org.videolan.vlc") | Out-Null
     Invoke-AdbText @(
         "shell", "am", "start",
@@ -384,20 +446,120 @@ function Invoke-VlcPlayback([string]$androidIp, [string]$mediaUrl, [string]$medi
     ) | Out-Null
     Start-Sleep -Seconds 10
 
-    $postLog = Read-DebugLog
+    $postLog = Read-ServerLog
     $newLog = $postLog.Substring([Math]::Min($preLog.Length, $postLog.Length))
-    if ($newLog -match "HTTP request: src=$([regex]::Escape($androidIp)) method=(GET|HEAD) path=/media/$mediaId") {
+    $requestPattern = if ($Target -eq "PosixWsl") {
+        "HTTP request: src=.* method=(GET|HEAD) path=/media/$mediaId"
+    } else {
+        "HTTP request: src=$([regex]::Escape($androidIp)) method=(GET|HEAD) path=/media/$mediaId"
+    }
+    if ($newLog -match $requestPattern) {
         Add-Result "PASS Android VLC requested DLNA media /media/$mediaId from server"
     } else {
         throw "Android VLC did not request /media/$mediaId from server"
     }
 }
 
+function Rewrite-MediaUrlForTarget([string]$url) {
+    if ($Target -ne "PosixWsl") {
+        return $url
+    }
+    return ($url -replace "^http://[^/:]+(:\d+/)", "http://127.0.0.1`$1")
+}
+
+function Start-PosixWslServer {
+    Assert-Command "wsl.exe"
+
+    $repoWsl = ConvertTo-WslPath $repo
+    $mediaWsl = ConvertTo-WslPath $testMediaDir
+    $buildDirQuoted = Quote-Bash $WslBuildDir
+    $repoQuoted = Quote-Bash $repoWsl
+    $mediaQuoted = Quote-Bash $mediaWsl
+    $logQuoted = Quote-Bash $posixWslLogPath
+
+    Invoke-WslText @"
+set -e
+cd $repoQuoted
+cmake -S . -B $buildDirQuoted -DDLNA_ENABLE_FLTK_GUI=OFF
+cmake --build $buildDirQuoted -j2
+rm -f $logQuoted
+pkill -f "[d]lna-server --port $serverPort" 2>/dev/null || true
+"@ | Out-Null
+
+    Invoke-WslText @"
+cat > /tmp/dlna-posix-android-start.sh <<'SH'
+#!/usr/bin/env bash
+exec > $logQuoted 2>&1
+cd $repoQuoted
+exec ./$WslBuildDir/dlna-server --port $serverPort --name 'PosixDLNA Android Smoke' --uuid '$posixWslUuid' --debug --source $mediaQuoted
+SH
+chmod +x /tmp/dlna-posix-android-start.sh
+"@ | Out-Null
+    $script:serverProc = Start-Process -FilePath "wsl.exe" -ArgumentList @("-d", $Distro, "--exec", "bash", "/tmp/dlna-posix-android-start.sh") -WindowStyle Hidden -PassThru
+
+    $ready = $false
+    for ($i = 0; $i -lt 40; $i++) {
+        Start-Sleep -Milliseconds 500
+        try {
+            $desc = Invoke-CurlText @("-sS", "-m", "3", "http://127.0.0.1:$serverPort/description.xml")
+            if ($desc -match "PosixDLNA Android Smoke" -and $desc -match "ContentDirectory:1") {
+                $ready = $true
+                break
+            }
+        } catch {
+        }
+    }
+    if (-not $ready) {
+        throw "POSIX WSL server did not become reachable on localhost:$serverPort. Log: $(Read-PosixWslLog)"
+    }
+    Add-Result "PASS POSIX WSL server reachable on localhost:$serverPort"
+
+    Invoke-AdbText @("reverse", "tcp:$serverPort", "tcp:$serverPort") | Out-Null
+    $script:adbReverseAdded = $true
+    Add-Result "PASS adb reverse tcp:$serverPort configured"
+}
+
+function Invoke-PosixWslSsdpProbe {
+    $script = @"
+set -e
+python3 - <<'PY'
+import socket
+msg = (
+    "M-SEARCH * HTTP/1.1\r\n"
+    "HOST: 239.255.255.250:1900\r\n"
+    "MAN: \"ssdp:discover\"\r\n"
+    "MX: 1\r\n"
+    "ST: urn:schemas-upnp-org:device:MediaServer:1\r\n"
+    "\r\n"
+).encode("ascii")
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(5)
+s.bind(("", 0))
+s.sendto(msg, ("127.0.0.1", 1900))
+data, addr = s.recvfrom(4096)
+text = data.decode("ascii", "replace")
+if "HTTP/1.1 200 OK" not in text or "urn:schemas-upnp-org:device:MediaServer:1" not in text:
+    raise SystemExit(text)
+print("PASS POSIX WSL SSDP M-SEARCH response from %s:%s" % addr)
+print(text)
+PY
+"@
+    $response = Invoke-WslText $script
+    if ($response -match "PASS POSIX WSL SSDP M-SEARCH") {
+        Add-Result (($response -split "`r?`n")[0])
+    } else {
+        throw "POSIX WSL SSDP probe failed: $response"
+    }
+}
+
 try {
     Assert-Command "adb"
     Assert-Command "curl.exe"
-    if (-not (Test-Path $exePath)) {
+    if ($Target -eq "Windows" -and -not (Test-Path $exePath)) {
         throw "Missing built exe at $exePath"
+    }
+    if ($Target -eq "PosixWsl") {
+        Assert-Command "wsl.exe"
     }
 
     $selectedDevice = Select-AdbDevice
@@ -408,79 +570,92 @@ try {
     Add-Result "PASS adb device $selectedDevice and Android VLC detected"
 
     $androidIp = Get-AndroidIPv4
-    $pcIp = Get-PCAddressForAndroid $androidIp
-    Add-Result "PASS Android wlan0=$androidIp Windows peer=$pcIp"
-    Ensure-FirewallAccess
+    Add-Result "PASS Android wlan0=$androidIp"
     Assert-PhoneUnlocked
     Add-Result "PASS Android phone is unlocked for VLC UI automation"
 
-    New-Item -ItemType Directory -Path $appDataDir -Force | Out-Null
     New-Item -ItemType Directory -Path $outDir -Force | Out-Null
-    if (Test-Path $configPath) {
-        $backupPath = Join-Path $env:TEMP ("dlna-server-config-backup-" + [guid]::NewGuid().ToString() + ".ini")
-        Copy-Item -LiteralPath $configPath -Destination $backupPath -Force
-    }
-    if (Test-Path $debugLogPath) {
-        Remove-Item -LiteralPath $debugLogPath -Force
-    }
     if (Test-Path $testMediaDir) {
         Remove-Item -LiteralPath $testMediaDir -Recurse -Force
     }
     New-Item -ItemType Directory -Path $testMediaDir | Out-Null
     New-TestWav (Join-Path $testMediaDir "android-smoke.wav")
 
-    if (Test-Path $configPath) {
-        Remove-Item -LiteralPath $configPath -Force
-    }
-    Set-IniValue "Settings" "ServerName" "WinDLNA Android Smoke"
-    Set-IniValue "Settings" "Port" "$serverPort"
-    Set-IniValue "Settings" "FileServerPort" "18201"
-    Set-IniValue "Settings" "FlatFolderStyle" "0"
-    Set-IniValue "Settings" "ShowFileNamesInsteadOfTitles" "0"
-    Set-IniValue "Settings" "ProxyStreams" "0"
-    Set-IniValue "Settings" "SortByTitle" "0"
-    Set-IniValue "Settings" "DoNotShowAllMediaFolders" "0"
-    Set-IniValue "Settings" "AddArtistAlbumFolders" "0"
-    Set-IniValue "Settings" "DebugLog" "1"
-    Set-IniValue "Settings" "RunOnBoot" "0"
-    Set-IniValue "Settings" "IPWhiteList" ""
-    Set-IniValue "Settings" "DeviceUUID" "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-    Set-IniValue "Settings" "MediaSources" $testMediaDir
-
-    $serverProc = Start-Process -FilePath $exePath -ArgumentList "--minimized" -WindowStyle Hidden -PassThru
-    $listenReady = $false
-    for ($i = 0; $i -lt 40; $i++) {
-        Start-Sleep -Milliseconds 500
-        $listen = Get-NetTCPConnection -State Listen -LocalPort $serverPort -ErrorAction SilentlyContinue
-        if ($listen) {
-            $listenReady = $true
-            break
+    $browseHost = ""
+    $serverName = ""
+    if ($Target -eq "Windows") {
+        $serverName = "WinDLNA Android Smoke"
+        $pcIp = Get-PCAddressForAndroid $androidIp
+        Add-Result "PASS Windows peer=$pcIp"
+        Ensure-FirewallAccess
+        New-Item -ItemType Directory -Path $appDataDir -Force | Out-Null
+        if (Test-Path $configPath) {
+            $backupPath = Join-Path $env:TEMP ("dlna-server-config-backup-" + [guid]::NewGuid().ToString() + ".ini")
+            Copy-Item -LiteralPath $configPath -Destination $backupPath -Force
         }
-    }
-    if (-not $listenReady) {
-        throw "Server did not listen on TCP $serverPort"
-    }
-    Add-Result "PASS server listening on TCP $serverPort"
+        if (Test-Path $debugLogPath) {
+            Remove-Item -LiteralPath $debugLogPath -Force
+        }
+        if (Test-Path $configPath) {
+            Remove-Item -LiteralPath $configPath -Force
+        }
+        Set-IniValue "Settings" "ServerName" $serverName
+        Set-IniValue "Settings" "Port" "$serverPort"
+        Set-IniValue "Settings" "FileServerPort" "18201"
+        Set-IniValue "Settings" "FlatFolderStyle" "0"
+        Set-IniValue "Settings" "ShowFileNamesInsteadOfTitles" "0"
+        Set-IniValue "Settings" "ProxyStreams" "0"
+        Set-IniValue "Settings" "SortByTitle" "0"
+        Set-IniValue "Settings" "DoNotShowAllMediaFolders" "0"
+        Set-IniValue "Settings" "AddArtistAlbumFolders" "0"
+        Set-IniValue "Settings" "DebugLog" "1"
+        Set-IniValue "Settings" "RunOnBoot" "0"
+        Set-IniValue "Settings" "IPWhiteList" ""
+        Set-IniValue "Settings" "DeviceUUID" "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        Set-IniValue "Settings" "MediaSources" $testMediaDir
 
-    $desc = Invoke-AdbText @("shell", "curl", "-sS", "-m", "8", "http://$pcIp`:$serverPort/description.xml")
-    if ($desc -match "WinDLNA Android Smoke" -and $desc -match "ContentDirectory:1") {
-        Add-Result "PASS Android curl fetched description.xml from Windows server"
+        $serverProc = Start-Process -FilePath $exePath -ArgumentList "--minimized" -WindowStyle Hidden -PassThru
+        $listenReady = $false
+        for ($i = 0; $i -lt 40; $i++) {
+            Start-Sleep -Milliseconds 500
+            $listen = Get-NetTCPConnection -State Listen -LocalPort $serverPort -ErrorAction SilentlyContinue
+            if ($listen) {
+                $listenReady = $true
+                break
+            }
+        }
+        if (-not $listenReady) {
+            throw "Server did not listen on TCP $serverPort"
+        }
+        Add-Result "PASS Windows server listening on TCP $serverPort"
+        $browseHost = $pcIp
+    } else {
+        $serverName = "PosixDLNA Android Smoke"
+        Start-PosixWslServer
+        Invoke-PosixWslSsdpProbe
+        $browseHost = "127.0.0.1"
+    }
+
+    $desc = Invoke-AdbText @("shell", "curl", "-sS", "-m", "8", "http://$browseHost`:$serverPort/description.xml")
+    if ($desc -match [regex]::Escape($serverName) -and $desc -match "ContentDirectory:1") {
+        Add-Result "PASS Android curl fetched description.xml from $Target server"
     } else {
         throw "Android curl description.xml missing expected DLNA XML"
     }
 
-    $rootBrowse = Invoke-AndroidBrowse $pcIp 0
+    $rootBrowse = Invoke-AndroidBrowse $browseHost 0
     $folderId = Find-FirstGroupValue $rootBrowse @('container id=&quot;(\d+)&quot;', 'container id="(\d+)"')
     if (-not $folderId) {
         throw "ContentDirectory root browse did not return a media folder"
     }
-    $folderBrowse = Invoke-AndroidBrowse $pcIp ([int]$folderId)
+    $folderBrowse = Invoke-AndroidBrowse $browseHost ([int]$folderId)
     $mediaUrl = Find-FirstGroupValue $folderBrowse @('(http://[^&<\s"]+/media/(\d+))')
     if (-not $mediaUrl) {
         throw "ContentDirectory folder browse did not return a media URL"
     }
     $mediaId = Find-FirstGroupValue $mediaUrl @('/media/(\d+)')
     Add-Result "PASS Android SOAP Browse found media URL $mediaUrl"
+    $mediaUrl = Rewrite-MediaUrlForTarget $mediaUrl
 
     $head = Invoke-AdbText @("shell", "curl", "-sS", "-I", "-m", "8", $mediaUrl)
     if ($head -notmatch "200 OK" -or $head -notmatch "audio/wav") {
@@ -493,12 +668,22 @@ try {
     }
     Add-Result "PASS Android curl verified media HEAD and byte-range GET"
 
-    Invoke-VlcLocalNetworkDiscovery $androidIp "WinDLNA Android Smoke"
+    if ($Target -eq "Windows") {
+        Invoke-VlcLocalNetworkDiscovery $androidIp $serverName
+    } else {
+        Add-Result "PASS POSIX WSL skips Android SSDP discovery; WSL2 NAT cannot reliably receive phone multicast"
+    }
     Invoke-VlcPlayback $androidIp $mediaUrl $mediaId
 
-    Set-Content -LiteralPath $debugCopyPath -Value (Read-DebugLog) -Encoding UTF8
+    Set-Content -LiteralPath $debugCopyPath -Value (Read-ServerLog) -Encoding UTF8
     Set-Content -LiteralPath $resultsPath -Value ($summary -join [Environment]::NewLine) -Encoding UTF8
 } finally {
+    if ($adbReverseAdded) {
+        try {
+            Invoke-AdbText @("reverse", "--remove", "tcp:$serverPort") | Out-Null
+        } catch {
+        }
+    }
     if ($serverProc) {
         try {
             $serverProc.Refresh()
@@ -508,10 +693,21 @@ try {
         } catch {
         }
     }
-    if ($backupPath -and (Test-Path $backupPath)) {
-        Copy-Item -LiteralPath $backupPath -Destination $configPath -Force
-        Remove-Item -LiteralPath $backupPath -Force
-    } elseif (Test-Path $configPath) {
-        Remove-Item -LiteralPath $configPath -Force
+    if ($Target -eq "PosixWsl") {
+        try {
+            Invoke-WslText "pkill -f '[d]lna-server --port $serverPort' 2>/dev/null || true" | Out-Null
+        } catch {
+        }
+    }
+    if ($Target -eq "Windows") {
+        if ($backupPath -and (Test-Path $backupPath)) {
+            Copy-Item -LiteralPath $backupPath -Destination $configPath -Force
+            Remove-Item -LiteralPath $backupPath -Force
+        } elseif (Test-Path $configPath) {
+            Remove-Item -LiteralPath $configPath -Force
+        }
+    }
+    if (Test-Path $testMediaDir) {
+        Remove-Item -LiteralPath $testMediaDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

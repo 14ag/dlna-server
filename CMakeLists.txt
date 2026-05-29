@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(dlna-server VERSION 1.3.0)
+project(dlna-server VERSION 1.4.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -103,9 +103,9 @@ else()
     target_link_libraries(dlna-server PRIVATE Threads::Threads)
 
     install(TARGETS dlna-server RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-    configure_file(packaging/linux/dlna-server-gui "${CMAKE_BINARY_DIR}/dlna-server-gui" @ONLY NEWLINE_STYLE UNIX)
 
     if(DLNA_ENABLE_FLTK_GUI)
+        configure_file(packaging/linux/dlna-server-gui "${CMAKE_BINARY_DIR}/dlna-server-gui" @ONLY NEWLINE_STYLE UNIX)
         find_package(FLTK QUIET)
         if(NOT FLTK_FOUND)
             FetchContent_Declare(
@@ -156,64 +156,62 @@ else()
         target_link_libraries(dlna-server-gui-native PRIVATE ${DLNA_FLTK_TARGET} Threads::Threads)
         install(TARGETS dlna-server-gui-native RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
-    else()
-        install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
-        install(PROGRAMS src/posix_gui.py DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server)
     endif()
 
     if(APPLE)
-        set(DLNA_APP_BUNDLE "${CMAKE_BINARY_DIR}/DLNA Server.app")
-        configure_file(packaging/macos/Info.plist.in "${CMAKE_BINARY_DIR}/Info.plist" @ONLY)
-        add_custom_target(DLNAServerApp ALL
-            COMMAND ${CMAKE_COMMAND} -E make_directory
-                    "${DLNA_APP_BUNDLE}/Contents/MacOS"
-                    "${DLNA_APP_BUNDLE}/Contents/Resources"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "$<TARGET_FILE:dlna-server>"
-                    "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${CMAKE_SOURCE_DIR}/packaging/macos/dlna-server-gui"
-                    "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "$<TARGET_FILE:dlna-server-gui-native>"
-                    "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui-bin"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${CMAKE_SOURCE_DIR}/src/posix_gui.py"
-                    "${DLNA_APP_BUNDLE}/Contents/Resources/posix_gui.py"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${CMAKE_SOURCE_DIR}/resources/app.ico"
-                    "${DLNA_APP_BUNDLE}/Contents/Resources/app.ico"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${CMAKE_SOURCE_DIR}/resources/server_icon_48.png"
-                    "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_48.png"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${CMAKE_SOURCE_DIR}/resources/server_icon_120.png"
-                    "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_120.png"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${CMAKE_SOURCE_DIR}/resources/server_icon_256.png"
-                    "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_256.png"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${CMAKE_BINARY_DIR}/Info.plist"
-                    "${DLNA_APP_BUNDLE}/Contents/Info.plist"
-            COMMAND chmod +x
-                    "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server"
-                    "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui"
-                    "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui-bin"
-            DEPENDS dlna-server dlna-server-gui-native
-            COMMENT "Assembling DLNA Server.app"
-        )
-        install(DIRECTORY "${DLNA_APP_BUNDLE}" DESTINATION . USE_SOURCE_PERMISSIONS)
+        if(DLNA_ENABLE_FLTK_GUI)
+            set(DLNA_APP_BUNDLE "${CMAKE_BINARY_DIR}/DLNA Server.app")
+            configure_file(packaging/macos/Info.plist.in "${CMAKE_BINARY_DIR}/Info.plist" @ONLY)
+            add_custom_target(DLNAServerApp ALL
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                        "${DLNA_APP_BUNDLE}/Contents/MacOS"
+                        "${DLNA_APP_BUNDLE}/Contents/Resources"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "$<TARGET_FILE:dlna-server>"
+                        "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${CMAKE_SOURCE_DIR}/packaging/macos/dlna-server-gui"
+                        "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "$<TARGET_FILE:dlna-server-gui-native>"
+                        "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui-bin"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${CMAKE_SOURCE_DIR}/resources/app.ico"
+                        "${DLNA_APP_BUNDLE}/Contents/Resources/app.ico"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${CMAKE_SOURCE_DIR}/resources/server_icon_48.png"
+                        "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_48.png"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${CMAKE_SOURCE_DIR}/resources/server_icon_120.png"
+                        "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_120.png"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${CMAKE_SOURCE_DIR}/resources/server_icon_256.png"
+                        "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_256.png"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${CMAKE_BINARY_DIR}/Info.plist"
+                        "${DLNA_APP_BUNDLE}/Contents/Info.plist"
+                COMMAND chmod +x
+                        "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server"
+                        "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui"
+                        "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui-bin"
+                DEPENDS dlna-server dlna-server-gui-native
+                COMMENT "Assembling DLNA Server.app"
+            )
+            install(DIRECTORY "${DLNA_APP_BUNDLE}" DESTINATION . USE_SOURCE_PERMISSIONS)
+        endif()
     else()
-        configure_file(packaging/linux/install_desktop.cmake.in "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake" @ONLY)
-        configure_file(packaging/linux/dlna-server.appdata.xml.in "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" @ONLY)
-        install(FILES resources/dlna-server.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
-        install(FILES
-            resources/server_icon_48.png
-            resources/server_icon_120.png
-            resources/server_icon_256.png
-            DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/icons)
-        install(FILES "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
-        install(SCRIPT "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake")
+        if(DLNA_ENABLE_FLTK_GUI)
+            configure_file(packaging/linux/install_desktop.cmake.in "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake" @ONLY)
+            configure_file(packaging/linux/dlna-server.appdata.xml.in "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" @ONLY)
+            install(FILES resources/dlna-server.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+            install(FILES
+                resources/server_icon_48.png
+                resources/server_icon_120.png
+                resources/server_icon_256.png
+                DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/icons)
+            install(FILES "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+            install(SCRIPT "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake")
+        endif()
     endif()
 endif()
 

@@ -33,7 +33,7 @@ function Save-UrlIfMissing {
     if (Test-Path -LiteralPath $Path) {
         $existing = Get-Item -LiteralPath $Path
         if ($existing.Length -gt 0) {
-            if (-not $Sha256 -or ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ieq $Sha256)) {
+            if (-not $Sha256 -or ((Get-Sha256Hex -Path $Path) -ieq $Sha256)) {
                 return
             }
             Remove-Item -LiteralPath $Path -Force
@@ -48,7 +48,7 @@ function Save-UrlIfMissing {
         $client.Dispose()
     }
 
-    if ($Sha256 -and -not ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ieq $Sha256)) {
+    if ($Sha256 -and -not ((Get-Sha256Hex -Path $Path) -ieq $Sha256)) {
         Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
         throw "Checksum mismatch for $Path"
     }
