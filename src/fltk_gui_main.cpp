@@ -54,11 +54,6 @@ std::wstring ToWide(const char* value) {
     return Utf8ToWide(value ? value : "");
 }
 
-int ParsePort(const char* value, int fallback) {
-    int port = 0;
-    return (value && TryParsePortStrict(value, port)) ? port : fallback;
-}
-
 std::string TitleFromPath(const std::string& moviePath) {
     size_t slash = moviePath.find_last_of("/\\");
     std::string name = slash == std::string::npos ? moviePath : moviePath.substr(slash + 1);
@@ -178,7 +173,7 @@ public:
           m_httpPort(120, 44, 70, 24, "HTTP Port:"),
           m_filePort(270, 44, 70, 24, "File Port:"),
           m_ipWhitelist(120, 74, 350, 24, "IP Whitelist:"),
-          m_runOnStartup(16, 112, 190, 24, "Run on Windows Startup"),
+          m_runOnStartup(16, 112, 190, 24, "Run on startup"),
           m_debugLog(16, 138, 190, 24, "Debug Log (Write to file)"),
           m_defaultPlaylist(260, 112, 130, 24, "Default playlist"),
           m_defaultPlaylistAdd(400, 112, 70, 24, "Add..."),
