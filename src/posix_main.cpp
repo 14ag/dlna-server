@@ -1,4 +1,5 @@
 #include "config.h"
+#include "dlna_utils.h"
 #include "log.h"
 #include "netutils.h"
 #include "server.h"
@@ -26,7 +27,14 @@ int main(int argc, char** argv) {
     AppConfig.Load();
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--port" && i + 1 < argc) AppConfig.port = std::stoi(argv[++i]);
+        if (arg == "--port" && i + 1 < argc) {
+            int port = 0;
+            if (!TryParsePortStrict(argv[++i], port)) {
+                PrintUsage(argv[0]);
+                return 2;
+            }
+            AppConfig.port = port;
+        }
         else if (arg == "--name" && i + 1 < argc) AppConfig.serverName = Utf8ToWide(argv[++i]);
         else if (arg == "--uuid" && i + 1 < argc) AppConfig.deviceUUID = Utf8ToWide(argv[++i]);
         else if (arg == "--source" && i + 1 < argc) AppConfig.mediaSources.push_back({Utf8ToWide(argv[++i]), true});

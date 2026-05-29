@@ -4,6 +4,14 @@ project(dlna-server VERSION 1.3.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+function(dlna_enable_warnings target_name)
+    if(MSVC)
+        target_compile_options(${target_name} PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(${target_name} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endfunction()
+
 if(WIN32)
     set(SOURCES
         src/main.cpp
@@ -45,6 +53,7 @@ if(WIN32)
 
     add_executable(dlna-server WIN32 ${SOURCES} ${HEADERS} resources/app.rc)
     set_target_properties(dlna-server PROPERTIES OUTPUT_NAME "DLNA Server")
+    dlna_enable_warnings(dlna-server)
     target_link_libraries(dlna-server
         ws2_32
         shell32
@@ -82,6 +91,7 @@ else()
         src/dlna_utils.cpp
         src/network_sources.cpp
     )
+    dlna_enable_warnings(dlna-server)
     target_include_directories(dlna-server PRIVATE src)
     target_compile_definitions(dlna-server PRIVATE DLNA_POSIX=1)
     if(APPLE)
@@ -132,6 +142,7 @@ else()
             src/network_sources.cpp
         )
         set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
+        dlna_enable_warnings(dlna-server-gui-native)
         target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_POSIX=1)
         if(APPLE)
             target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_PLATFORM_NAME=\"macOS\")

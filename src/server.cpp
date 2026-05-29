@@ -1,5 +1,6 @@
 #include "server.h"
 #include "config.h"
+#include "dlna_utils.h"
 #include "log.h"
 #include "media_sources.h"
 #include "ssdp.h"
@@ -45,6 +46,10 @@ bool Server::Start() {
 
     AppConfig.Load();
     IPWhitelist::Get().Load(AppConfig.ipWhiteList);
+    if (!IsValidPort(AppConfig.port)) {
+        LogPrint(L"Invalid HTTP port: %d", AppConfig.port);
+        return false;
+    }
 
     // Validate we have at least one source
     bool hasSource = AppConfig.defaultPlaylistEnabled && !AppConfig.defaultPlaylistPath.empty();

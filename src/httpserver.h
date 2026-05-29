@@ -2,11 +2,12 @@
 #define HTTPSERVER_H
 
 #include <string>
+#include <atomic>
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
 #else
-#include <atomic>
+#include <mutex>
 #include <thread>
 #include <vector>
 #endif
@@ -30,7 +31,7 @@ private:
     static DWORD WINAPI AcceptThreadWorker(LPVOID lpParam);
     static void CALLBACK WorkerCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_WORK Work);
 
-    bool m_running;
+    std::atomic<bool> m_running;
     HANDLE m_hAcceptThread;
     SOCKET m_listenSocketV4;
     SOCKET m_listenSocketV6;
@@ -45,6 +46,8 @@ private:
     int m_listenSocketV4;
     int m_listenSocketV6;
     std::vector<std::thread> m_threads;
+    std::mutex m_clientMutex;
+    std::vector<std::thread> m_clientThreads;
 #endif
 };
 

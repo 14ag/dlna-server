@@ -1,5 +1,6 @@
 #include "settingsdlg.h"
 #include "logdlg.h"
+#include "dlna_utils.h"
 #include "netutils.h"
 #include "../resources/resource.h"
 #include <commctrl.h>
@@ -166,6 +167,20 @@ bool AppendDefaultPlaylistEntry(const std::wstring& moviePath, const std::wstrin
     return AppendUtf8Text(playlistPath, text);
 }
 
+bool ReadPortFromDialog(HWND hwndDlg, int controlId, const wchar_t* label, int& port) {
+    wchar_t text[32] = {};
+    GetDlgItemTextW(hwndDlg, controlId, text, 32);
+    int parsed = 0;
+    if (!TryParsePortStrict(WideToUtf8(text), parsed)) {
+        std::wstring message = std::wstring(label) + L" must be between 1 and 65535.";
+        MessageBoxW(hwndDlg, message.c_str(), L"Invalid port", MB_ICONWARNING | MB_OK);
+        SetFocus(GetDlgItem(hwndDlg, controlId));
+        return false;
+    }
+    port = parsed;
+    return true;
+}
+
 struct PlaylistEntryState {
     HWND owner = NULL;
     HWND movieEdit = NULL;
@@ -262,15 +277,21 @@ void SettingsDialog::OnInitDialog(HWND hwndDlg) {
     UpdateDefaultPlaylistButton(hwndDlg);
 }
 
-void SettingsDialog::OnOK(HWND hwndDlg) {
+bool SettingsDialog::OnOK(HWND hwndDlg) {
     auto& cfg = AppConfig;
     
     wchar_t buf[1024];
     GetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_NAME, buf, 1024);
     cfg.serverName = buf;
     
-    cfg.port = GetDlgItemInt(hwndDlg, IDC_EDT_PORT, NULL, FALSE);
-    cfg.fileServerPort = GetDlgItemInt(hwndDlg, IDC_EDT_FILESERVER_PORT, NULL, FALSE);
+    int httpPort = 0;
+    int fileServerPort = 0;
+    if (!ReadPortFromDialog(hwndDlg, IDC_EDT_PORT, L"HTTP port", httpPort) ||
+        !ReadPortFromDialog(hwndDlg, IDC_EDT_FILESERVER_PORT, L"File server port", fileServerPort)) {
+        return false;
+    }
+    cfg.port = httpPort;
+    cfg.fileServerPort = fileServerPort;
     
     GetDlgItemTextW(hwndDlg, IDC_EDT_IP_WHITELIST, buf, 1024);
     cfg.ipWhiteList = buf;
@@ -287,6 +308,7 @@ void SettingsDialog::OnOK(HWND hwndDlg) {
     cfg.proxyStreams = (IsDlgButtonChecked(hwndDlg, IDC_CHK_PROXY_STREAMS) == BST_CHECKED);
     
     cfg.Save();
+    return true;
 }
 
 void SettingsDialog::UpdateDefaultPlaylistButton(HWND hwndDlg) {
@@ -344,8 +366,7 @@ INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
         
     case WM_COMMAND:
         if (LOWORD(wParam) == IDOK) {
-            OnOK(hwndDlg);
-            EndDialog(hwndDlg, LOWORD(wParam));
+            if (OnOK(hwndDlg)) EndDialog(hwndDlg, LOWORD(wParam));
             return (INT_PTR)TRUE;
         }
         else if (LOWORD(wParam) == IDCANCEL) {
@@ -367,8 +388,7 @@ INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
             return (INT_PTR)TRUE;
         }
         else if (LOWORD(wParam) == IDC_BTN_RESTART) {
-            OnOK(hwndDlg);
-            EndDialog(hwndDlg, IDC_BTN_RESTART);
+            if (OnOK(hwndDlg)) EndDialog(hwndDlg, IDC_BTN_RESTART);
             return (INT_PTR)TRUE;
         }
         break;

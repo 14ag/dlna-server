@@ -23,6 +23,8 @@ std::string ToLowerAscii(std::string value);
 std::string FindHeaderValueCaseInsensitive(const std::string& request, const std::string& headerName);
 bool TryParseIntStrict(const std::string& text, int& value);
 bool TryParseNonNegativeLongLong(const std::string& text, long long& value);
+bool IsValidPort(int port);
+bool TryParsePortStrict(const std::string& text, int& port);
 HttpByteRange ParseHttpRangeHeader(const std::string& rangeHeader, long long fileSize);
 bool GetMediaFormatForExtension(const std::wstring& ext, MediaFormatInfo& info);
 std::string BuildProtocolInfo(const MediaFormatInfo& info, bool hasKnownSize);
