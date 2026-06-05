@@ -31,6 +31,8 @@
 
 namespace {
 constexpr int kBufferSize = 8192;
+constexpr size_t kMaxHeaderBytes = 64 * 1024;
+constexpr size_t kMaxClientThreads = 64;
 
 class ScopedFd {
 public:
@@ -95,6 +97,22 @@ void SendAll(int fd, const std::string& bytes) {
         data += sent;
         remaining -= static_cast<size_t>(sent);
     }
+}
+
+std::string ConnectionHeader(bool keepAlive) {
+    return keepAlive ? "Connection: keep-alive\r\n" : "Connection: close\r\n";
+}
+
+bool ReadHttpRequestHeaders(int fd, std::string& req) {
+    req.clear();
+    char buffer[kBufferSize];
+    while (req.find("\r\n\r\n") == std::string::npos) {
+        ssize_t readBytes = recv(fd, buffer, sizeof(buffer), 0);
+        if (readBytes <= 0) return false;
+        req.append(buffer, static_cast<size_t>(readBytes));
+        if (req.size() > kMaxHeaderBytes) return false;
+    }
+    return true;
 }
 
 std::string IconFileNameForPath(const std::string& path) {
@@ -199,16 +217,30 @@ void HttpServer::Stop() {
     if (m_listenSocketV6 >= 0) { shutdown(m_listenSocketV6, SHUT_RDWR); close(m_listenSocketV6); m_listenSocketV6 = -1; }
     for (auto& thread : m_threads) if (thread.joinable()) thread.join();
     m_threads.clear();
-    std::vector<std::thread> clients;
+    std::vector<ClientThread> clients;
     {
         std::lock_guard<std::mutex> lock(m_clientMutex);
         clients.swap(m_clientThreads);
     }
-    for (auto& thread : clients) if (thread.joinable()) thread.join();
+    for (auto& client : clients) if (client.thread.joinable()) client.thread.join();
+}
+
+void HttpServer::ReapFinishedClientThreads() {
+    std::lock_guard<std::mutex> lock(m_clientMutex);
+    auto it = m_clientThreads.begin();
+    while (it != m_clientThreads.end()) {
+        if (it->done && it->done->load()) {
+            if (it->thread.joinable()) it->thread.join();
+            it = m_clientThreads.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 void HttpServer::AcceptLoop(int listenSocket) {
     while (m_running) {
+        ReapFinishedClientThreads();
         sockaddr_storage remote{};
         socklen_t len = sizeof(remote);
         int client = accept(listenSocket, reinterpret_cast<sockaddr*>(&remote), &len);
@@ -227,7 +259,20 @@ void HttpServer::AcceptLoop(int listenSocket) {
         }
         {
             std::lock_guard<std::mutex> lock(m_clientMutex);
-            m_clientThreads.emplace_back(&HttpServer::HandleClient, this, client, clientIp);
+            if (m_clientThreads.size() >= kMaxClientThreads) {
+                static const char* busy = "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+                send(client, busy, strlen(busy), MSG_NOSIGNAL);
+                close(client);
+                continue;
+            }
+            auto done = std::make_shared<std::atomic<bool>>(false);
+            m_clientThreads.push_back({
+                std::thread([this, client, clientIp, done]() {
+                    HandleClient(client, clientIp);
+                    done->store(true);
+                }),
+                done
+            });
         }
     }
 }
@@ -235,10 +280,8 @@ void HttpServer::AcceptLoop(int listenSocket) {
 void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
     ScopedFd client(clientSocket);
     char buf[kBufferSize];
-    ssize_t readBytes = recv(clientSocket, buf, sizeof(buf) - 1, 0);
-    if (readBytes <= 0) return;
-    buf[readBytes] = '\0';
-    std::string req(buf, static_cast<size_t>(readBytes));
+    std::string req;
+    if (!ReadHttpRequestHeaders(clientSocket, req)) return;
     const size_t firstLineEnd = req.find("\r\n");
     if (firstLineEnd == std::string::npos) return;
     const std::string firstLine = req.substr(0, firstLineEnd);
@@ -255,7 +298,7 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
 
     const bool sendBody = method != "HEAD";
     auto sendText = [&](const std::string& status, const std::string& type, const std::string& body) {
-        std::string response = "HTTP/1.1 " + status + "\r\nContent-Type: " + type + "\r\nContent-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n";
+        std::string response = "HTTP/1.1 " + status + "\r\nContent-Type: " + type + "\r\nContent-Length: " + std::to_string(body.size()) + "\r\n" + ConnectionHeader(false) + "\r\n";
         if (sendBody) response += body;
         SendAll(clientSocket, response);
     };

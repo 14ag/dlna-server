@@ -7,10 +7,27 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
-#else
-#include <thread>
 #endif
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include "netutils.h"
+
+struct DelayedSearchResponse {
+#ifdef _WIN32
+    SOCKET socket;
+#else
+    int socket;
+#endif
+    SOCKADDR_STORAGE remoteAddr;
+    int remoteLen;
+    NetworkEndpoint endpoint;
+    std::vector<std::string> messages;
+    std::vector<std::string> logSt;
+    std::vector<std::string> logUsn;
+    std::chrono::steady_clock::time_point dueAt;
+};
 
 class SSDP {
 public:
@@ -24,6 +41,9 @@ private:
 
     void CloseSockets();
     void SendNotifyRound(const char* nts);
+    void QueueSearchResponses(DelayedSearchResponse response);
+    void SendDelayedSearchResponse(const DelayedSearchResponse& response);
+    void ResponseWorker();
 #ifdef _WIN32
     void SendNotifyBurst(const char* nts, int rounds, DWORD delayMs);
     void HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int remoteLen, const std::string& request);
@@ -43,6 +63,10 @@ private:
     int m_ipv4Socket;
     int m_ipv6Socket;
 #endif
+    std::thread m_responseThread;
+    std::mutex m_responseMutex;
+    std::condition_variable m_responseCondition;
+    std::vector<DelayedSearchResponse> m_delayedResponses;
 
     std::vector<NetworkEndpoint> m_endpoints;
     int m_port;

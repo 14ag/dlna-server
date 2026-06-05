@@ -32,6 +32,7 @@ std::string BuildProtocolInfoForExtension(const std::wstring& ext, const std::ws
 std::string BuildContentFeatures(const MediaFormatInfo& info, bool hasKnownSize);
 std::string BuildContentFeaturesForExtension(const std::wstring& ext, const std::wstring& mimeType, bool hasKnownSize);
 std::string BuildSourceProtocolInfoList();
+std::string GetDlnaServerHeader();
 bool IsSubtitleExtension(const std::wstring& ext);
 std::string SubtitleMimeForExtension(const std::wstring& ext);
 bool NaturalLessWide(const std::wstring& left, const std::wstring& right);

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Media indexing now builds lookup maps off-lock and swaps completed scans into place.
+- Server startup now begins HTTP and SSDP before the background media scan completes.
+- Remote media access now uses an optional `libcurl` backend instead of spawning `curl` per request.
+- SSDP M-SEARCH MX delays now run on response workers instead of blocking receive loops.
+- Existing media organization settings now apply more consistently across local folders, playlists, and SMB/FTP sources.
+- Playlist order is preserved unless title sorting is enabled or requested by the DLNA client.
+
+### Fixed
+- POSIX endpoint discovery now skips APIPA IPv4 addresses; Windows advertises all usable IPv4 aliases.
+- Device description metadata can now be configured, including manufacturer, model name, and presentation URL.
+- IP whitelist checks now support CIDR ranges and exact-match hash lookup.
+- POSIX HTTP client threads and in-memory logs are bounded.
+- Remote source failures now produce clearer logs, companion album art lookup covers `thumb` names, and Browse no longer advertises missing album art.
+
 ## [1.4.0] - 2026-05-29
 
 ### Added

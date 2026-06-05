@@ -5,9 +5,12 @@
 #include "netutils.h"
 #include "network_sources.h"
 #include <algorithm>
+#include <filesystem>
 #include <sstream>
 #include <vector>
 #include <cwctype>
+
+namespace fs = std::filesystem;
 
 namespace {
 bool IsValidXml(const std::string& xml) {
@@ -135,7 +138,7 @@ std::string ItemProtocolInfo(const MediaItem& item) {
 }
 
 void SortItems(std::vector<MediaItem>& items, const std::string& sortCriteria) {
-    if (IsTitleSort(sortCriteria) || IsClassSort(sortCriteria)) {
+    if (IsTitleSort(sortCriteria) || IsClassSort(sortCriteria) || (sortCriteria.empty() && AppConfig.sortByTitle)) {
         const bool desc = IsDescendingSort(sortCriteria);
         const bool classSort = IsClassSort(sortCriteria);
         std::sort(items.begin(), items.end(), [desc, classSort](const MediaItem& a, const MediaItem& b) {
@@ -186,22 +189,25 @@ bool MatchesSearchCriteria(const MediaItem& item, const std::string& criteria) {
     return false;
 }
 
-void CollectDescendants(int parentId, std::vector<MediaItem>& out) {
-    for (const auto& child : AppMedia.GetChildren(parentId)) {
-        out.push_back(child);
-        if (child.isFolder) CollectDescendants(child.id, out);
-    }
+bool IsRegularFileWide(const std::wstring& value) {
+    std::error_code ec;
+#ifdef _WIN32
+    return fs::is_regular_file(fs::path(value), ec);
+#else
+    return fs::is_regular_file(fs::path(WideToUtf8(value)), ec);
+#endif
 }
 
 std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, int requestedCount, const std::string& hostUrl, int& returnCount) {
     returnCount = 0;
     std::string didl = "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" xmlns:dlna=\"urn:schemas-dlna-org:metadata-1-0/\" xmlns:sec=\"http://www.sec.co.kr/dlna\">";
+    didl.reserve(256 + (items.size() * 512));
     for (int i = startingIndex; i < static_cast<int>(items.size()) && (requestedCount == 0 || returnCount < requestedCount); ++i) {
         const auto& it = items[i];
         if (it.id == -1) continue;
         if (it.isFolder) {
             std::stringstream css;
-            int childCount = AppMedia.GetChildren(it.id).size();
+            int childCount = AppMedia.GetChildCount(it.id);
             css << "<container id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" childCount=\"" << childCount << "\" restricted=\"1\">"
                 << "<dc:title>" << EscapeWide(it.title) << "</dc:title>"
                 << "<upnp:class>" << EscapeWide(it.upnpClass) << "</upnp:class>"
@@ -213,16 +219,18 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
             iss << "<item id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" restricted=\"1\">"
                 << "<dc:title>" << EscapeWide(it.title) << "</dc:title>"
                 << "<upnp:class>" << EscapeWide(it.upnpClass) << "</upnp:class>";
-            if (!it.albumArtPath.empty()) {
+            if (!it.albumArtPath.empty() && IsRegularFileWide(it.albumArtPath)) {
                 iss << "<upnp:albumArtURI dlna:profileID=\"JPEG_TN\">http://" << hostUrl << "/albumart/" << it.id << "</upnp:albumArtURI>";
             }
             iss << "<res protocolInfo=\"" << ItemProtocolInfo(it) << "\"";
             if (hasKnownSize) {
                 iss << " size=\"" << it.sizeBytes << "\"";
             }
-            iss << ">http://" << hostUrl << "/media/" << it.id << "</res>";
+            const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !AppConfig.proxyStreams;
+            iss << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id))) << "</res>";
             if (!it.subtitlePath.empty()) {
-                std::wstring subExtW = it.subtitlePath.substr(it.subtitlePath.rfind(L'.') + 1);
+                size_t dot = it.subtitlePath.rfind(L'.');
+                std::wstring subExtW = dot == std::wstring::npos ? L"" : it.subtitlePath.substr(dot + 1);
                 std::string subExt = WideToUtf8(subExtW);
                 iss << "<sec:CaptionInfoEx sec:type=\"" << subExt << "\">"
                     << "http://" << hostUrl << "/subtitle/" << it.id
@@ -264,6 +272,9 @@ std::string ContentDirectory::GetDeviceDescriptionXML() {
     auto& cfg = AppConfig;
     std::string deviceUUID = WideToUtf8(cfg.deviceUUID);
     std::string serverName = XMLEscapeUtf8(WideToUtf8(cfg.serverName));
+    std::string manufacturer = XMLEscapeUtf8(WideToUtf8(cfg.deviceManufacturer));
+    std::string modelName = XMLEscapeUtf8(WideToUtf8(cfg.deviceModelName));
+    std::string presentationUrl = XMLEscapeUtf8(WideToUtf8(cfg.presentationUrl));
 
     std::stringstream ss;
     ss << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
@@ -272,10 +283,11 @@ std::string ContentDirectory::GetDeviceDescriptionXML() {
        << "  <device>\n"
        << "    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>\n"
        << "    <friendlyName>" << serverName << "</friendlyName>\n"
-       << "    <manufacturer>CustomDLNA</manufacturer>\n"
-       << "    <modelName>dlna-server</modelName>\n"
+       << "    <manufacturer>" << manufacturer << "</manufacturer>\n"
+       << "    <modelName>" << modelName << "</modelName>\n"
        << "    <UDN>uuid:" << deviceUUID << "</UDN>\n"
        << "    <dlna:X_DLNADOC xmlns:dlna=\"urn:schemas-dlna-org:device-1-0\">DMS-1.50</dlna:X_DLNADOC>\n"
+       << "    <presentationURL>" << presentationUrl << "</presentationURL>\n"
        << "    <iconList>\n"
        << "      <icon><mimetype>image/png</mimetype><width>48</width><height>48</height><depth>24</depth><url>/icons/server_icon_48.png</url></icon>\n"
        << "      <icon><mimetype>image/png</mimetype><width>120</width><height>120</height><depth>24</depth><url>/icons/server_icon_120.png</url></icon>\n"
@@ -439,8 +451,7 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         }
         if (AppMedia.GetItem(containerId).id == -1) return SoapFault(701, "No such object");
 
-        std::vector<MediaItem> descendants;
-        CollectDescendants(containerId, descendants);
+        std::vector<MediaItem> descendants = AppMedia.GetDescendants(containerId);
         std::vector<MediaItem> results;
         for (const auto& item : descendants) {
             if (MatchesSearchCriteria(item, searchCriteria)) {

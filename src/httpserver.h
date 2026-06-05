@@ -7,6 +7,7 @@
 #include <winsock2.h>
 #include <windows.h>
 #else
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -41,13 +42,19 @@ private:
     TP_CALLBACK_ENVIRON m_cbe;
 #else
     void AcceptLoop(int listenSocket);
+    void ReapFinishedClientThreads();
+
+    struct ClientThread {
+        std::thread thread;
+        std::shared_ptr<std::atomic<bool>> done;
+    };
 
     std::atomic<bool> m_running;
     int m_listenSocketV4;
     int m_listenSocketV6;
     std::vector<std::thread> m_threads;
     std::mutex m_clientMutex;
-    std::vector<std::thread> m_clientThreads;
+    std::vector<ClientThread> m_clientThreads;
 #endif
 };
 

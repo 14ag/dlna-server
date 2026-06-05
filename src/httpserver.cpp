@@ -37,6 +37,23 @@ void SetSocketTimeouts(SOCKET s) {
     setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
 }
 
+std::string ConnectionHeader(bool keepAlive) {
+    return keepAlive ? "Connection: keep-alive\r\n" : "Connection: close\r\n";
+}
+
+bool ReadHttpRequestHeaders(SOCKET s, std::string& req) {
+    req.clear();
+    char buffer[HTTP_BUF_SIZE];
+    constexpr size_t kMaxHeaderBytes = 64 * 1024;
+    while (req.find("\r\n\r\n") == std::string::npos) {
+        int bytesRead = recv(s, buffer, sizeof(buffer), 0);
+        if (bytesRead <= 0) return false;
+        req.append(buffer, static_cast<size_t>(bytesRead));
+        if (req.size() > kMaxHeaderBytes) return false;
+    }
+    return true;
+}
+
 int IconResourceForPath(const std::string& path) {
     if (path == "/icons/server_icon_48.png") return IDR_SERVER_ICON_48;
     if (path == "/icons/server_icon_120.png") return IDR_SERVER_ICON_120;
@@ -312,11 +329,8 @@ void CALLBACK HttpServer::WorkerCallback(PTP_CALLBACK_INSTANCE, PVOID Context, P
 
 void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) {
     char buf[HTTP_BUF_SIZE];
-    int bytesRead = recv(clientSocket, buf, HTTP_BUF_SIZE - 1, 0);
-    if (bytesRead <= 0) return;
-
-    buf[bytesRead] = '\0';
-    std::string req(buf);
+    std::string req;
+    if (!ReadHttpRequestHeaders(clientSocket, req)) return;
 
     size_t firstLineEnd = req.find("\r\n");
     if (firstLineEnd == std::string::npos) return;
@@ -353,7 +367,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
         std::string response;
         if (path == "/description.xml") {
             std::string body = AppContent.GetDeviceDescriptionXML();
-            response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n";
+            response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\n" + ConnectionHeader(false) + "\r\n";
             if (sendBody) response += body;
             SendAll(clientSocket, response);
             return;
@@ -361,7 +375,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
         if (path == "/ContentDirectory.xml") {
             std::string body = AppContent.GetContentDirectoryXML();
-            response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n";
+            response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\n" + ConnectionHeader(false) + "\r\n";
             if (sendBody) response += body;
             SendAll(clientSocket, response);
             return;
@@ -369,7 +383,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
         if (path == "/ConnectionManager.xml") {
             std::string body = AppContent.GetConnectionManagerXML();
-            response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n";
+            response = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(body.length()) + "\r\n" + ConnectionHeader(false) + "\r\n";
             if (sendBody) response += body;
             SendAll(clientSocket, response);
             return;
@@ -382,7 +396,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                 SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
-            response = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: " + std::to_string(body.length()) + "\r\nConnection: close\r\n\r\n";
+            response = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: " + std::to_string(body.length()) + "\r\n" + ConnectionHeader(false) + "\r\n";
             if (sendBody) response += body;
             SendAll(clientSocket, response);
             return;

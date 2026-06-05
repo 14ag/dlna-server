@@ -1,9 +1,9 @@
 #include "network_sources.h"
 #include "dlna_utils.h"
+#include "log.h"
 #include "netutils.h"
 
 #include <algorithm>
-#include <cerrno>
 #include <cctype>
 #include <cwctype>
 #include <cstdio>
@@ -11,13 +11,8 @@
 #include <map>
 #include <sstream>
 
-#ifdef _WIN32
-#include <io.h>
-#include <windows.h>
-#else
-#include <signal.h>
-#include <sys/wait.h>
-#include <unistd.h>
+#ifdef DLNA_HAS_LIBCURL
+#include <curl/curl.h>
 #endif
 
 namespace {
@@ -132,160 +127,131 @@ std::wstring ResolvePlaylistSidecar(const std::wstring& playlistPath, const std:
     return ResolvePlaylistEntry(playlistPath, trimmed);
 }
 
-#ifdef _WIN32
-std::wstring QuoteProcessArg(const std::wstring& value) {
-    std::wstring out = L"\"";
-    size_t slashCount = 0;
-    for (wchar_t ch : value) {
-        if (ch == L'\\') {
-            ++slashCount;
-        } else if (ch == L'"') {
-            out.append((slashCount * 2) + 1, L'\\');
-            out.push_back(ch);
-            slashCount = 0;
+struct RemoteFetchResult {
+    bool ok = false;
+    long long contentLength = 0;
+    std::string body;
+};
+
+#ifdef DLNA_HAS_LIBCURL
+struct CurlGlobalInit {
+    CurlGlobalInit() {
+        curl_global_init(CURL_GLOBAL_DEFAULT);
+    }
+    ~CurlGlobalInit() {
+        curl_global_cleanup();
+    }
+};
+
+size_t CurlWriteBody(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    auto* output = static_cast<std::string*>(userdata);
+    size_t bytes = size * nmemb;
+    if (output->size() < kMaxCurlOutputBytes) {
+        size_t allowed = static_cast<size_t>(kMaxCurlOutputBytes) - output->size();
+        output->append(ptr, bytes < allowed ? bytes : allowed);
+    }
+    return bytes;
+}
+
+size_t CurlWriteStream(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    auto* writeChunk = static_cast<std::function<bool(const char*, size_t)>*>(userdata);
+    size_t bytes = size * nmemb;
+    return (*writeChunk)(ptr, bytes) ? bytes : 0;
+}
+
+CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer) {
+    static CurlGlobalInit init;
+    (void)init;
+    CURL* curl = curl_easy_init();
+    if (!curl) return nullptr;
+    std::string urlText = WideToUtf8(url);
+    curl_easy_setopt(curl, CURLOPT_URL, urlText.c_str());
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
+    curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errorBuffer);
+    return curl;
+}
+
+RemoteFetchResult CurlCapture(const std::wstring& url, bool headOnly, bool listOnly) {
+    RemoteFetchResult result;
+    char errorBuffer[CURL_ERROR_SIZE] = {};
+    CURL* curl = CreateCurlHandle(url, errorBuffer);
+    if (!curl) {
+        LogPrint(L"Remote content unavailable: libcurl handle creation failed.");
+        return result;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteBody);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &result.body);
+    if (headOnly) curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+    if (listOnly) curl_easy_setopt(curl, CURLOPT_DIRLISTONLY, 1L);
+
+    CURLcode code = curl_easy_perform(curl);
+    long responseCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &responseCode);
+    if (code == CURLE_OK) {
+        curl_off_t length = -1;
+        curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &length);
+        result.contentLength = length > 0 ? static_cast<long long>(length) : 0;
+        result.ok = true;
+    } else {
+        if (responseCode == 401 || responseCode == 403 || code == CURLE_LOGIN_DENIED) {
+            LogPrint(L"Remote content unavailable: authentication failed for %ls", url.c_str());
         } else {
-            out.append(slashCount, L'\\');
-            slashCount = 0;
-            out.push_back(ch);
+            LogPrint(L"Remote content unavailable: %hs", errorBuffer[0] ? errorBuffer : curl_easy_strerror(code));
         }
     }
-    out.append(slashCount * 2, L'\\');
-    out.push_back(L'"');
-    return out;
+    curl_easy_cleanup(curl);
+    return result;
 }
 
-std::wstring BuildCurlProcessLine(const std::vector<std::wstring>& args) {
-    std::vector<std::wstring> allArgs = { L"curl.exe", L"--globoff", L"--silent", L"--fail" };
-    allArgs.insert(allArgs.end(), args.begin(), args.end());
-
-    std::wstring commandLine;
-    for (const auto& arg : allArgs) {
-        if (!commandLine.empty()) commandLine.push_back(L' ');
-        commandLine += QuoteProcessArg(arg);
-    }
-    return commandLine;
-}
-
-bool RunCurlWithReader(const std::vector<std::wstring>& args,
-                       const std::function<bool(const char*, size_t)>& readChunk) {
-    SECURITY_ATTRIBUTES security{};
-    security.nLength = sizeof(security);
-    security.bInheritHandle = TRUE;
-
-    HANDLE readPipe = NULL;
-    HANDLE writePipe = NULL;
-    if (!CreatePipe(&readPipe, &writePipe, &security, 0)) return false;
-    SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
-
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
-    startup.dwFlags = STARTF_USESTDHANDLES;
-    startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-    startup.hStdOutput = writePipe;
-    startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-
-    PROCESS_INFORMATION process{};
-    std::wstring commandLine = BuildCurlProcessLine(args);
-    BOOL started = CreateProcessW(nullptr,
-                                  commandLine.data(),
-                                  nullptr,
-                                  nullptr,
-                                  TRUE,
-                                  CREATE_NO_WINDOW,
-                                  nullptr,
-                                  nullptr,
-                                  &startup,
-                                  &process);
-    CloseHandle(writePipe);
-    if (!started) {
-        CloseHandle(readPipe);
+bool CurlStream(const std::wstring& url,
+                bool useRange,
+                long long startByte,
+                long long endByte,
+                const std::function<bool(const char*, size_t)>& writeChunk) {
+    char errorBuffer[CURL_ERROR_SIZE] = {};
+    CURL* curl = CreateCurlHandle(url, errorBuffer);
+    if (!curl) {
+        LogPrint(L"Remote content unavailable: libcurl handle creation failed.");
         return false;
     }
 
-    bool keepGoing = true;
-    char buffer[65536];
-    DWORD readBytes = 0;
-    while (ReadFile(readPipe, buffer, sizeof(buffer), &readBytes, nullptr) && readBytes > 0) {
-        if (keepGoing) {
-            keepGoing = readChunk(buffer, static_cast<size_t>(readBytes));
-            if (!keepGoing) TerminateProcess(process.hProcess, 1);
-        }
+    std::string rangeText;
+    if (useRange) {
+        rangeText = std::to_string(startByte) + "-" + std::to_string(endByte);
+        curl_easy_setopt(curl, CURLOPT_RANGE, rangeText.c_str());
     }
 
-    CloseHandle(readPipe);
-    WaitForSingleObject(process.hProcess, INFINITE);
-    DWORD exitCode = 1;
-    GetExitCodeProcess(process.hProcess, &exitCode);
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    return keepGoing && exitCode == 0;
+    auto callback = writeChunk;
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteStream);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &callback);
+    CURLcode code = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    if (code != CURLE_OK) {
+        LogPrint(L"Remote content unavailable: %hs", errorBuffer[0] ? errorBuffer : curl_easy_strerror(code));
+        return false;
+    }
+    return true;
 }
 #else
-std::vector<std::string> BuildCurlArgvText(const std::vector<std::wstring>& args) {
-    std::vector<std::string> allArgs = { "curl", "--globoff", "--silent", "--fail" };
-    for (const auto& arg : args) allArgs.push_back(WideToUtf8(arg));
-    return allArgs;
+RemoteFetchResult CurlCapture(const std::wstring&, bool, bool) {
+    LogPrint(L"Remote content unavailable: libcurl support was not enabled at build time.");
+    return {};
 }
 
-bool RunCurlWithReader(const std::vector<std::wstring>& args,
-                       const std::function<bool(const char*, size_t)>& readChunk) {
-    int pipeFd[2] = {-1, -1};
-    if (pipe(pipeFd) != 0) return false;
-
-    pid_t child = fork();
-    if (child < 0) {
-        close(pipeFd[0]);
-        close(pipeFd[1]);
-        return false;
-    }
-
-    if (child == 0) {
-        dup2(pipeFd[1], STDOUT_FILENO);
-        close(pipeFd[0]);
-        close(pipeFd[1]);
-
-        std::vector<std::string> argvText = BuildCurlArgvText(args);
-        std::vector<char*> argv;
-        argv.reserve(argvText.size() + 1);
-        for (auto& arg : argvText) argv.push_back(arg.data());
-        argv.push_back(nullptr);
-        execvp(argv[0], argv.data());
-        _exit(127);
-    }
-
-    close(pipeFd[1]);
-
-    bool keepGoing = true;
-    char buffer[65536];
-    while (true) {
-        ssize_t readBytes = read(pipeFd[0], buffer, sizeof(buffer));
-        if (readBytes <= 0) break;
-        if (keepGoing) {
-            keepGoing = readChunk(buffer, static_cast<size_t>(readBytes));
-            if (!keepGoing) kill(child, SIGTERM);
-        }
-    }
-
-    close(pipeFd[0]);
-    int status = 0;
-    while (waitpid(child, &status, 0) < 0) {
-        if (errno != EINTR) return false;
-    }
-    return keepGoing && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+bool CurlStream(const std::wstring&,
+                bool,
+                long long,
+                long long,
+                const std::function<bool(const char*, size_t)>&) {
+    LogPrint(L"Remote content unavailable: libcurl support was not enabled at build time.");
+    return false;
 }
 #endif
-
-std::string RunCurlCapture(const std::vector<std::wstring>& args) {
-    std::string output;
-    bool ok = RunCurlWithReader(args, [&](const char* data, size_t length) {
-        if (output.size() < kMaxCurlOutputBytes) {
-            size_t allowed = static_cast<size_t>(kMaxCurlOutputBytes) - output.size();
-            output.append(data, length < allowed ? length : allowed);
-        }
-        return true; // Always drain to avoid blocking curl on a full pipe.
-    });
-    return ok ? output : std::string();
-}
 
 std::string ReadLocalTextFile(const std::wstring& path) {
 #ifdef _WIN32
@@ -310,7 +276,7 @@ std::string ReadLocalTextFile(const std::wstring& path) {
 }
 
 std::string ReadSourceText(const std::wstring& source) {
-    if (IsRemoteMediaUrl(source)) return RunCurlCapture({ Utf8ToWide("--location"), source });
+    if (IsRemoteMediaUrl(source)) return CurlCapture(source, false, false).body;
     return ReadLocalTextFile(source);
 }
 
@@ -325,6 +291,16 @@ std::wstring TrimWide(const std::wstring& value) {
     size_t end = value.size();
     while (end > start && std::iswspace(value[end - 1])) --end;
     return value.substr(start, end - start);
+}
+
+std::string UnquotePlaylistValue(std::string value) {
+    value = TrimAscii(value);
+    if (value.size() >= 2 &&
+        ((value.front() == '"' && value.back() == '"') ||
+         (value.front() == '\'' && value.back() == '\''))) {
+        return value.substr(1, value.size() - 2);
+    }
+    return value;
 }
 
 std::vector<PlaylistEntry> ParseM3u(const std::wstring& playlistPath, const std::string& text) {
@@ -380,7 +356,7 @@ std::vector<PlaylistEntry> ParsePls(const std::wstring& playlistPath, const std:
         if (eq == std::string::npos) continue;
 
         std::string key = ToLowerCopy(TrimAscii(trimmed.substr(0, eq)));
-        std::string value = TrimAscii(trimmed.substr(eq + 1));
+        std::string value = UnquotePlaylistValue(trimmed.substr(eq + 1));
         size_t digitsAt = std::string::npos;
         for (size_t i = 0; i < key.size(); ++i) {
             if (std::isdigit(static_cast<unsigned char>(key[i]))) {
@@ -483,7 +459,12 @@ std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& direct
     if (!IsNetworkShareUrl(directoryUrl)) return {};
     std::wstring url = directoryUrl;
     if (!url.empty() && url.back() != L'/') url.push_back(L'/');
-    std::string text = RunCurlCapture({ Utf8ToWide("--list-only"), url });
+    RemoteFetchResult fetch = CurlCapture(url, false, true);
+    if (!fetch.ok) return {};
+    if (fetch.body.empty()) {
+        LogPrint(L"Remote directory listing empty: %ls", url.c_str());
+    }
+    std::string text = fetch.body;
 
     std::vector<RemoteDirectoryEntry> entries;
     std::istringstream stream(text);
@@ -491,14 +472,23 @@ std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& direct
     while (std::getline(stream, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
         std::string trimmed = TrimAscii(line);
-        if (trimmed.empty() || trimmed == "." || trimmed == "..") continue;
+        if (trimmed.empty() || trimmed == "." || trimmed == ".." || trimmed.rfind("total ", 0) == 0) continue;
 
-        bool slashDirectory = trimmed.back() == '/';
+        bool detailDirectory = !trimmed.empty() && trimmed[0] == 'd';
+        if ((detailDirectory || (!trimmed.empty() && trimmed[0] == '-')) && trimmed.find(' ') != std::string::npos) {
+            size_t nameStart = trimmed.find_last_of(' ');
+            if (nameStart != std::string::npos && nameStart + 1 < trimmed.size()) {
+                trimmed = trimmed.substr(nameStart + 1);
+            }
+        }
+
+        bool slashDirectory = !trimmed.empty() && trimmed.back() == '/';
         if (slashDirectory) trimmed.pop_back();
+        if (trimmed.empty() || trimmed == "." || trimmed == "..") continue;
         std::wstring name = Utf8ToWide(trimmed);
         std::wstring child = ChildUrl(url, name);
         std::wstring ext = SourceExtension(name);
-        bool likelyDirectory = slashDirectory || (ext.empty() && !IsPlaylistSourcePath(name));
+        bool likelyDirectory = detailDirectory || slashDirectory || (ext.empty() && !IsPlaylistSourcePath(name));
         entries.push_back({ name, child, likelyDirectory });
     }
     return entries;
@@ -506,19 +496,7 @@ std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& direct
 
 long long ProbeRemoteContentLength(const std::wstring& url) {
     if (!IsRemoteMediaUrl(url)) return 0;
-    std::string headers = RunCurlCapture({ Utf8ToWide("--head"), Utf8ToWide("--location"), url });
-    std::istringstream stream(headers);
-    std::string line;
-    long long size = 0;
-    while (std::getline(stream, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        std::string lower = ToLowerCopy(line);
-        if (lower.rfind("content-length:", 0) == 0) {
-            long long parsed = 0;
-            if (TryParseNonNegativeLongLong(TrimAscii(line.substr(15)), parsed)) size = parsed;
-        }
-    }
-    return size;
+    return CurlCapture(url, true, false).contentLength;
 }
 
 bool StreamRemoteContent(const std::wstring& url,
@@ -528,18 +506,5 @@ bool StreamRemoteContent(const std::wstring& url,
                          const std::function<bool(const char*, size_t)>& writeChunk) {
     if (!IsRemoteMediaUrl(url)) return false;
 
-    std::vector<std::wstring> args;
-    args.push_back(Utf8ToWide("--location"));
-    if (useRange) {
-        args.push_back(Utf8ToWide("--range"));
-        args.push_back(Utf8ToWide(std::to_string(startByte) + "-" + std::to_string(endByte)));
-    }
-    args.push_back(url);
-
-    bool wrote = false;
-    bool ok = RunCurlWithReader(args, [&](const char* data, size_t length) {
-        wrote = true;
-        return writeChunk(data, length);
-    });
-    return wrote && ok;
+    return CurlStream(url, useRange, startByte, endByte, writeChunk);
 }

@@ -23,6 +23,19 @@ Server::Server() : m_running(false) {
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 }
 
+void Server::StartBackgroundScan() {
+    JoinBackgroundScan();
+    m_scanThread = std::thread([]() {
+        AppMedia.Scan();
+    });
+}
+
+void Server::JoinBackgroundScan() {
+    if (m_scanThread.joinable()) {
+        m_scanThread.join();
+    }
+}
+
 void Server::RefreshEndpoints() {
     m_endpoints.clear();
     if (!EnumerateNetworkEndpoints(AppConfig.port, m_endpoints)) {
@@ -74,7 +87,6 @@ bool Server::Start() {
         }
     }
 
-    AppMedia.Scan();
     RefreshEndpoints();
     if (m_endpoints.empty()) {
         LogPrint(L"Failed to find any active network endpoint for discovery.");
@@ -107,6 +119,7 @@ bool Server::Start() {
     }
 
     m_running = true;
+    StartBackgroundScan();
     return true;
 }
 
@@ -117,6 +130,7 @@ void Server::Stop() {
     
     SSDP::Get().Stop();
     HttpServer::Get().Stop();
+    JoinBackgroundScan();
     
     m_running = false;
     m_endpoint = L"";

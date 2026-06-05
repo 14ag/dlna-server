@@ -1,6 +1,7 @@
 #include "log.h"
 
 #include <cstdarg>
+#include <cstddef>
 #include <cstdio>
 #include <ctime>
 #include <mutex>
@@ -10,6 +11,7 @@
 namespace {
 std::mutex g_logMutex;
 std::vector<std::wstring> g_lines;
+constexpr size_t kMaxLogLines = 1000;
 }
 
 void LogPrint(const wchar_t* fmt, ...) {
@@ -21,12 +23,16 @@ void LogPrint(const wchar_t* fmt, ...) {
 
     std::lock_guard<std::mutex> lock(g_logMutex);
     g_lines.push_back(buffer);
+    if (g_lines.size() > kMaxLogLines) {
+        g_lines.erase(g_lines.begin(), g_lines.begin() + static_cast<std::ptrdiff_t>(g_lines.size() - kMaxLogLines));
+    }
     std::fwprintf(stderr, L"%ls\n", buffer);
 }
 
 std::wstring GetSystemLog() {
     std::lock_guard<std::mutex> lock(g_logMutex);
     std::wstring result;
+    result.reserve(g_lines.size() * 128);
     for (const auto& line : g_lines) {
         result += line;
         result += L"\n";

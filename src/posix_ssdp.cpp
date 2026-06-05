@@ -1,11 +1,13 @@
 #include "ssdp.h"
 #include "config.h"
+#include "dlna_utils.h"
 #include "log.h"
 
 #include <algorithm>
 #include <arpa/inet.h>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <netinet/in.h>
 #include <sstream>
@@ -29,31 +31,13 @@ struct SSDPTarget {
     std::string usn;
 };
 
-std::string TrimAscii(const std::string& value) {
-    size_t start = 0;
-    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) ++start;
-    size_t end = value.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) --end;
-    return value.substr(start, end - start);
-}
-
-std::string ToLowerAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return value;
-}
-
-std::string HeaderValue(const std::string& request, const std::string& name) {
-    const std::string needle = ToLowerAscii(name) + ":";
-    size_t pos = request.find("\r\n");
-    while (pos != std::string::npos) {
-        pos += 2;
-        const size_t end = request.find("\r\n", pos);
-        if (end == std::string::npos || end == pos) break;
-        const std::string line = request.substr(pos, end - pos);
-        if (ToLowerAscii(line).rfind(needle, 0) == 0) return TrimAscii(line.substr(name.size() + 1));
-        pos = end;
-    }
-    return {};
+unsigned int ComputeDelayMilliseconds(int mxSeconds) {
+    int boundedSeconds = std::max(0, std::min(mxSeconds, 5));
+    if (boundedSeconds <= 1) return 0;
+    unsigned int maxDelay = static_cast<unsigned int>(boundedSeconds * 1000);
+    if (maxDelay == 0) return 0;
+    auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
+    return static_cast<unsigned int>(ticks % (maxDelay + 1));
 }
 
 std::vector<SSDPTarget> BuildTargets(const std::string& uuid) {
@@ -184,6 +168,7 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     if (m_ipv4Socket < 0 && m_ipv6Socket < 0) return false;
     m_running.store(true);
     m_thread = std::thread(&SSDP::ThreadWorker, this);
+    m_responseThread = std::thread(&SSDP::ResponseWorker, this);
     SendNotifyBurst("ssdp:alive", 3, 100);
     return true;
 }
@@ -192,8 +177,12 @@ void SSDP::Stop() {
     if (!m_running.load()) return;
     m_running.store(false);
     SendNotifyBurst("ssdp:byebye", 1, 0);
-    CloseSockets();
+    if (m_ipv4Socket >= 0) shutdown(m_ipv4Socket, SHUT_RDWR);
+    if (m_ipv6Socket >= 0) shutdown(m_ipv6Socket, SHUT_RDWR);
+    m_responseCondition.notify_all();
     if (m_thread.joinable()) m_thread.join();
+    if (m_responseThread.joinable()) m_responseThread.join();
+    CloseSockets();
 }
 
 void SSDP::CloseSockets() {
@@ -208,6 +197,7 @@ void SSDP::CloseSockets() {
 }
 
 void SSDP::SendNotifyRound(const char* nts) {
+    const std::string serverHeader = GetDlnaServerHeader();
     for (const auto& endpoint : m_endpoints) {
         int socketFd = endpoint.family == AF_INET ? m_ipv4Socket : m_ipv6Socket;
         if (socketFd < 0) continue;
@@ -229,7 +219,7 @@ void SSDP::SendNotifyRound(const char* nts) {
             ss << "NT: " << target.st << "\r\n"
                << "NTS: " << nts << "\r\n";
             if (std::strcmp(nts, "ssdp:byebye") != 0) {
-                ss << "SERVER: " << DLNA_PLATFORM_NAME << " UPnP/1.1 DLNAD/1.0\r\n";
+                ss << "SERVER: " << serverHeader << "\r\n";
             }
             ss << "USN: " << target.usn << "\r\n\r\n";
             const std::string msg = ss.str();
@@ -245,15 +235,66 @@ void SSDP::SendNotifyBurst(const char* nts, int rounds, unsigned int delayMs) {
     }
 }
 
+void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
+    {
+        std::lock_guard<std::mutex> lock(m_responseMutex);
+        m_delayedResponses.push_back(std::move(response));
+    }
+    m_responseCondition.notify_one();
+}
+
+void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
+    if (!m_running.load()) return;
+    SetOutboundInterface(response.socket, response.endpoint);
+    for (const std::string& message : response.messages) {
+        sendto(response.socket,
+               message.data(),
+               message.size(),
+               0,
+               reinterpret_cast<const sockaddr*>(&response.remoteAddr),
+               static_cast<socklen_t>(response.remoteLen));
+    }
+}
+
+void SSDP::ResponseWorker() {
+    while (true) {
+        DelayedSearchResponse response{};
+        {
+            std::unique_lock<std::mutex> lock(m_responseMutex);
+            while (m_running.load() && m_delayedResponses.empty()) {
+                m_responseCondition.wait(lock);
+            }
+            if (!m_running.load()) {
+                m_delayedResponses.clear();
+                break;
+            }
+            auto next = std::min_element(m_delayedResponses.begin(), m_delayedResponses.end(),
+                [](const DelayedSearchResponse& a, const DelayedSearchResponse& b) {
+                    return a.dueAt < b.dueAt;
+                });
+            auto now = std::chrono::steady_clock::now();
+            if (next->dueAt > now) {
+                m_responseCondition.wait_for(lock, std::chrono::milliseconds(50));
+                continue;
+            }
+            response = std::move(*next);
+            m_delayedResponses.erase(next);
+        }
+
+        SendDelayedSearchResponse(response);
+    }
+}
+
 void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen_t remoteLen, const std::string& request) {
     const size_t firstLineEnd = request.find("\r\n");
     if (firstLineEnd == std::string::npos || ToLowerAscii(request.substr(0, firstLineEnd)) != "m-search * http/1.1") return;
-    const std::string man = ToLowerAscii(TrimAscii(HeaderValue(request, "MAN")));
-    const std::string st = HeaderValue(request, "ST");
+    const std::string man = ToLowerAscii(TrimAscii(FindHeaderValueCaseInsensitive(request, "MAN")));
+    const std::string st = FindHeaderValueCaseInsensitive(request, "ST");
+    const std::string mxText = FindHeaderValueCaseInsensitive(request, "MX");
+    int mx = mxText.empty() ? 1 : std::atoi(mxText.c_str());
     if (man != "\"ssdp:discover\"" && man != "ssdp:discover") return;
     const NetworkEndpoint* endpoint = SelectBestEndpoint(m_endpoints, remoteAddr);
     if (!endpoint || endpoint->family != remoteAddr->sa_family) return;
-    SetOutboundInterface(socketFd, *endpoint);
 
     std::vector<SSDPTarget> targets = BuildTargets(m_uuidStr);
     std::vector<SSDPTarget> responses;
@@ -264,6 +305,14 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
             if (ToLowerAscii(target.st) == ToLowerAscii(st)) responses.push_back(target);
         }
     }
+    unsigned int delayMs = ComputeDelayMilliseconds(mx);
+    const std::string serverHeader = GetDlnaServerHeader();
+    DelayedSearchResponse delayed{};
+    delayed.socket = socketFd;
+    delayed.remoteLen = static_cast<int>(remoteLen);
+    delayed.endpoint = *endpoint;
+    delayed.dueAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(delayMs);
+    std::memcpy(&delayed.remoteAddr, remoteAddr, remoteLen);
     for (const auto& target : responses) {
         std::stringstream ss;
         ss << "HTTP/1.1 200 OK\r\n"
@@ -271,11 +320,17 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
            << "DATE: " << BuildHttpDateHeaderValue() << "\r\n"
            << "EXT:\r\n"
            << "LOCATION: " << endpoint->locationUrl << "\r\n"
-           << "SERVER: " << DLNA_PLATFORM_NAME << " UPnP/1.1 DLNAD/1.0\r\n"
+           << "SERVER: " << serverHeader << "\r\n"
            << "ST: " << target.st << "\r\n"
            << "USN: " << target.usn << "\r\n\r\n";
-        const std::string msg = ss.str();
-        sendto(socketFd, msg.data(), msg.size(), 0, remoteAddr, remoteLen);
+        delayed.messages.push_back(ss.str());
+        delayed.logSt.push_back(target.st);
+        delayed.logUsn.push_back(target.usn);
+    }
+    if (delayMs == 0) {
+        SendDelayedSearchResponse(delayed);
+    } else {
+        QueueSearchResponses(std::move(delayed));
     }
 }
 

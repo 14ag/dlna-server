@@ -141,7 +141,12 @@ Config& Config::Get() {
 
 Config::Config() : port(8200), fileServerPort(8201), flatFolderStyle(false), showFileNamesInsteadOfTitles(false),
     proxyStreams(false), sortByTitle(false), doNotShowAllMediaFolders(false), addArtistAlbumFolders(false),
-    debugLog(false), runOnBoot(false), defaultPlaylistEnabled(false) {
+    debugLog(false),
+    deviceManufacturer(L"dlna-server contributors"),
+    deviceModelName(L"dlna-server"),
+    presentationUrl(L"/"),
+    runOnBoot(false),
+    defaultPlaylistEnabled(false) {
 }
 
 int ParsePortOrDefault(const std::unordered_map<std::string, std::string>& values, const char* key, int defaultValue) {
@@ -222,10 +227,16 @@ void Config::Load() {
 
     ipWhiteList = Utf8ToWide(values.count("IPWhiteList") ? values["IPWhiteList"] : "");
     deviceUUID = Utf8ToWide(values.count("DeviceUUID") ? values["DeviceUUID"] : "");
+    deviceManufacturer = Utf8ToWide(values.count("DeviceManufacturer") ? values["DeviceManufacturer"] : "dlna-server contributors");
+    deviceModelName = Utf8ToWide(values.count("DeviceModelName") ? values["DeviceModelName"] : "dlna-server");
+    presentationUrl = Utf8ToWide(values.count("PresentationURL") ? values["PresentationURL"] : "/");
     defaultPlaylistPath = Utf8ToWide(values.count("DefaultPlaylistPath") ? values["DefaultPlaylistPath"] : "");
     if (defaultPlaylistPath.empty()) {
         defaultPlaylistPath = GetDefaultPlaylistPath();
     }
+    if (deviceManufacturer.empty()) deviceManufacturer = L"dlna-server contributors";
+    if (deviceModelName.empty()) deviceModelName = L"dlna-server";
+    if (presentationUrl.empty()) presentationUrl = L"/";
     if (deviceUUID.empty()) {
         deviceUUID = GenerateUUID();
         Save();
@@ -268,6 +279,9 @@ void Config::Save() {
     ss << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
     ss << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
     ss << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
+    ss << "DeviceManufacturer=" << WideToUtf8(deviceManufacturer) << "\n";
+    ss << "DeviceModelName=" << WideToUtf8(deviceModelName) << "\n";
+    ss << "PresentationURL=" << WideToUtf8(presentationUrl) << "\n";
     ss << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";
 
     FILE* fp = NULL;

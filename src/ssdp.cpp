@@ -1,5 +1,6 @@
 #include "ssdp.h"
 #include "config.h"
+#include "dlna_utils.h"
 #include "log.h"
 #include "netutils.h"
 #include <winsock2.h>
@@ -19,27 +20,6 @@ struct SSDPTarget {
     std::string usn;
 };
 
-std::string TrimAscii(const std::string& value) {
-    size_t start = 0;
-    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
-        ++start;
-    }
-
-    size_t end = value.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
-        --end;
-    }
-
-    return value.substr(start, end - start);
-}
-
-std::string ToLowerAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-}
-
 void DiscoveryLog(const wchar_t* fmt, ...) {
     if (!AppConfig.debugLog) {
         return;
@@ -53,29 +33,6 @@ void DiscoveryLog(const wchar_t* fmt, ...) {
     LogPrint(L"%ls", buffer);
 }
 
-std::string FindHeaderValueCaseInsensitive(const std::string& request, const std::string& headerName) {
-    std::string needle = ToLowerAscii(headerName) + ":";
-    size_t lineStart = request.find("\r\n");
-
-    while (lineStart != std::string::npos) {
-        lineStart += 2;
-        size_t lineEnd = request.find("\r\n", lineStart);
-        if (lineEnd == std::string::npos || lineEnd == lineStart) {
-            break;
-        }
-
-        std::string line = request.substr(lineStart, lineEnd - lineStart);
-        std::string lowerLine = ToLowerAscii(line);
-        if (lowerLine.rfind(needle, 0) == 0) {
-            return TrimAscii(line.substr(headerName.size() + 1));
-        }
-
-        lineStart = lineEnd;
-    }
-
-    return std::string();
-}
-
 bool IsDiscoverManHeader(const std::string& man) {
     std::string normalized = ToLowerAscii(TrimAscii(man));
     return normalized == "\"ssdp:discover\"" || normalized == "ssdp:discover";
@@ -83,6 +40,9 @@ bool IsDiscoverManHeader(const std::string& man) {
 
 DWORD ComputeDelayMilliseconds(int mxSeconds) {
     int boundedSeconds = (std::max)(0, (std::min)(mxSeconds, 5));
+    if (boundedSeconds <= 1) {
+        return 0;
+    }
     DWORD maxDelay = static_cast<DWORD>(boundedSeconds * 1000);
     if (maxDelay == 0) {
         return 0;
@@ -90,7 +50,7 @@ DWORD ComputeDelayMilliseconds(int mxSeconds) {
 
     LARGE_INTEGER counter = {};
     QueryPerformanceCounter(&counter);
-    DWORD randomValue = counter.LowPart ^ GetTickCount() ^ GetCurrentThreadId();
+    DWORD randomValue = counter.LowPart ^ static_cast<DWORD>(GetTickCount64()) ^ GetCurrentThreadId();
 
     return randomValue % (maxDelay + 1);
 }
@@ -186,7 +146,10 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
                 }
 
                 ip_mreq membership = {};
-                membership.imr_multiaddr.s_addr = inet_addr(SSDP_MULTICAST_IPV4);
+                if (InetPtonA(AF_INET, SSDP_MULTICAST_IPV4, &membership.imr_multiaddr) != 1) {
+                    DiscoveryLog(L"SSDP IPv4 multicast address parse failed");
+                    continue;
+                }
                 membership.imr_interface = reinterpret_cast<const SOCKADDR_IN*>(&endpoint.sockaddr)->sin_addr;
 
                 if (setsockopt(m_ipv4Socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, reinterpret_cast<const char*>(&membership), sizeof(membership)) == 0) {
@@ -245,6 +208,7 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
         CloseSockets();
         return false;
     }
+    m_responseThread = std::thread(&SSDP::ResponseWorker, this);
 
     SendNotifyBurst("ssdp:alive", 3, 100);
     return true;
@@ -255,13 +219,17 @@ void SSDP::Stop() {
 
     m_running.store(false);
     SendNotifyBurst("ssdp:byebye", 1, 0);
-    CloseSockets();
+    m_responseCondition.notify_all();
 
     if (m_hThread) {
         WaitForSingleObject(m_hThread, 2000);
         CloseHandle(m_hThread);
         m_hThread = NULL;
     }
+    if (m_responseThread.joinable()) {
+        m_responseThread.join();
+    }
+    CloseSockets();
 }
 
 void SSDP::CloseSockets() {
@@ -278,6 +246,7 @@ void SSDP::CloseSockets() {
 
 void SSDP::SendNotifyRound(const char* nts) {
     std::vector<SSDPTarget> targets = BuildAdvertisedTargets(m_uuidStr);
+    std::string serverHeader = GetDlnaServerHeader();
 
     for (const auto& endpoint : m_endpoints) {
         SOCKET socket = (endpoint.family == AF_INET) ? m_ipv4Socket : m_ipv6Socket;
@@ -331,7 +300,7 @@ void SSDP::SendNotifyRound(const char* nts) {
                     "LOCATION: " + endpoint.locationUrl + "\r\n"
                     "NT: " + target.st + "\r\n" +
                     "NTS: " + nts + "\r\n"
-                    "SERVER: Windows/10.0 UPnP/1.0 dlna-server/1.4.0\r\n"
+                    "SERVER: " + serverHeader + "\r\n" +
                     "USN: " + target.usn + "\r\n"
                     "\r\n";
             }
@@ -348,6 +317,69 @@ void SSDP::SendNotifyBurst(const char* nts, int rounds, DWORD delayMs) {
         if (i + 1 < rounds && delayMs > 0) {
             Sleep(delayMs);
         }
+    }
+}
+
+void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
+    {
+        std::lock_guard<std::mutex> lock(m_responseMutex);
+        m_delayedResponses.push_back(std::move(response));
+    }
+    m_responseCondition.notify_one();
+}
+
+void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
+    if (!m_running.load()) {
+        return;
+    }
+    if (!SetOutboundInterface(response.socket, response.endpoint, false)) {
+        DiscoveryLog(L"SSDP response interface select failed: if=%lu err=%d", response.endpoint.interfaceIndex, WSAGetLastError());
+        return;
+    }
+
+    for (size_t i = 0; i < response.messages.size(); ++i) {
+        const std::string& message = response.messages[i];
+        sendto(response.socket,
+               message.c_str(),
+               static_cast<int>(message.size()),
+               0,
+               reinterpret_cast<const SOCKADDR*>(&response.remoteAddr),
+               response.remoteLen);
+        const std::string st = i < response.logSt.size() ? response.logSt[i] : std::string();
+        const std::string usn = i < response.logUsn.size() ? response.logUsn[i] : std::string();
+        std::string destination = SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&response.remoteAddr));
+        DiscoveryLog(L"SSDP response sent: dst=%hs st=%hs usn=%hs location=%hs", destination.c_str(), st.c_str(), usn.c_str(), response.endpoint.locationUrl.c_str());
+    }
+}
+
+void SSDP::ResponseWorker() {
+    while (true) {
+        DelayedSearchResponse response = {};
+        {
+            std::unique_lock<std::mutex> lock(m_responseMutex);
+            while (m_running.load() && m_delayedResponses.empty()) {
+                m_responseCondition.wait(lock);
+            }
+            if (!m_running.load()) {
+                m_delayedResponses.clear();
+                break;
+            }
+
+            auto next = std::min_element(m_delayedResponses.begin(), m_delayedResponses.end(),
+                [](const DelayedSearchResponse& a, const DelayedSearchResponse& b) {
+                    return a.dueAt < b.dueAt;
+                });
+            auto now = std::chrono::steady_clock::now();
+            if (next->dueAt > now) {
+                m_responseCondition.wait_for(lock, std::chrono::milliseconds(50));
+                continue;
+            }
+
+            response = std::move(*next);
+            m_delayedResponses.erase(next);
+        }
+
+        SendDelayedSearchResponse(response);
     }
 }
 
@@ -400,16 +432,15 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
 
     DWORD delayMs = ComputeDelayMilliseconds(mx);
     DiscoveryLog(L"SSDP search match: src=%hs delayMs=%lu location=%hs", source.c_str(), delayMs, endpoint->locationUrl.c_str());
-    if (delayMs > 0) {
-        Sleep(delayMs);
-    }
-
-    if (!SetOutboundInterface(socket, *endpoint, false)) {
-        DiscoveryLog(L"SSDP response interface select failed: if=%lu err=%d", endpoint->interfaceIndex, WSAGetLastError());
-        return;
-    }
 
     std::string date = BuildHttpDateHeaderValue();
+    std::string serverHeader = GetDlnaServerHeader();
+    DelayedSearchResponse delayed = {};
+    delayed.socket = socket;
+    delayed.remoteLen = remoteLen;
+    delayed.endpoint = *endpoint;
+    delayed.dueAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(delayMs);
+    memcpy(&delayed.remoteAddr, remoteAddr, remoteLen);
     for (const SSDPTarget* target : responses) {
         std::string response =
             "HTTP/1.1 200 OK\r\n"
@@ -417,19 +448,26 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
             "DATE: " + date + "\r\n"
             "EXT:\r\n"
             "LOCATION: " + endpoint->locationUrl + "\r\n"
-            "SERVER: Windows/10.0 UPnP/1.0 dlna-server/1.4.0\r\n"
+            "SERVER: " + serverHeader + "\r\n"
             "ST: " + target->st + "\r\n"
             "USN: " + target->usn + "\r\n"
             "\r\n";
 
-        sendto(socket, response.c_str(), static_cast<int>(response.size()), 0, remoteAddr, remoteLen);
-        DiscoveryLog(L"SSDP response sent: dst=%hs st=%hs usn=%hs location=%hs", source.c_str(), target->st.c_str(), target->usn.c_str(), endpoint->locationUrl.c_str());
+        delayed.messages.push_back(response);
+        delayed.logSt.push_back(target->st);
+        delayed.logUsn.push_back(target->usn);
+        DiscoveryLog(L"SSDP response queued: dst=%hs st=%hs usn=%hs location=%hs", source.c_str(), target->st.c_str(), target->usn.c_str(), endpoint->locationUrl.c_str());
+    }
+    if (delayMs == 0) {
+        SendDelayedSearchResponse(delayed);
+    } else {
+        QueueSearchResponses(std::move(delayed));
     }
 }
 
 DWORD WINAPI SSDP::ThreadWorker(LPVOID lpParam) {
     SSDP* pThis = reinterpret_cast<SSDP*>(lpParam);
-    DWORD lastNotifyTicks = GetTickCount();
+    ULONGLONG lastNotifyTicks = GetTickCount64();
 
     while (pThis->m_running.load()) {
         fd_set readfds;
@@ -454,7 +492,7 @@ DWORD WINAPI SSDP::ThreadWorker(LPVOID lpParam) {
             break;
         }
 
-        DWORD now = GetTickCount();
+        ULONGLONG now = GetTickCount64();
         if (now - lastNotifyTicks > 900000) {
             pThis->SendNotifyRound("ssdp:alive");
             lastNotifyTicks = now;
