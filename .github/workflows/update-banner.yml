@@ -2,8 +2,8 @@ name: Update Banner
 
 on:
   schedule:
-    # runs every 12 hours
-    - cron: '0 */12 * * *'
+    # runs every 48 hours
+    - cron: '0 */48 * * *'
   workflow_dispatch:
   push:
     branches:
