@@ -58,8 +58,8 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         readme = self.read("README.md")
 
         self.assertIn("-DDLNA_ENABLE_FLTK_GUI=ON", readme)
-        self.assertIn("output/dlna-server.AppDir", readme)
-        self.assertIn("linuxdeploy --appdir output/dlna-server.AppDir --output appimage", readme)
+        self.assertIn("output/linux/dlna-server.AppDir", readme)
+        self.assertIn("linuxdeploy --appdir output/linux/dlna-server.AppDir --output appimage", readme)
 
     def test_linux_desktop_installers_are_scripted(self):
         cmake = self.read("CMakeLists.txt")
@@ -75,9 +75,9 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("linuxdeploy-x86_64.AppImage", script)
         self.assertIn("linuxdeploy_version=\"1-alpha-20251107-1\"", script)
         self.assertIn("linuxdeploy_sha256=", script)
-        self.assertIn("runtime_sha256=", script)
         self.assertIn("download_verified", script)
-        self.assertIn('-name "*.AppImage"', script)
+        self.assertIn("-name '*.AppImage'", script)
+        self.assertIn('flatpak-builder and flatpak are required for default release assets', script)
         self.assertIn("*.sh text eol=lf", gitattributes)
         self.assertIn("*.yml text eol=lf", gitattributes)
         self.assertIn("build-bundle", script)
@@ -87,7 +87,8 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("Name=DLNA Server", desktop)
         self.assertIn("Release assets", workflow)
         self.assertIn("runs-on: windows-latest", workflow)
-        self.assertIn("output/*.zip", workflow)
+        self.assertIn("output/winx64/*.zip", workflow)
+        self.assertIn("output/winx86/*.zip", workflow)
         self.assertIn("flatpak flatpak-builder", workflow)
         self.assertIn("org.freedesktop.Sdk//24.08", workflow)
         self.assertIn("scripts/build-linux-desktop-assets.sh", workflow)

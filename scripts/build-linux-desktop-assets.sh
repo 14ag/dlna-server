@@ -3,14 +3,20 @@ set -euo pipefail
 
 repo_root=${DLNA_REPO_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
 version=${DLNA_SERVER_VERSION:-$(grep -E '^project\(dlna-server VERSION ' "$repo_root/CMakeLists.txt" | sed -E 's/.*VERSION ([0-9.]+).*/\1/')}
+platform_dir=${DLNA_LINUX_PLATFORM_DIR:-"$repo_root/output/linux"}
 build_dir=${DLNA_LINUX_BUILD_DIR:-"$repo_root/build-release-linux"}
-install_dir=${DLNA_LINUX_INSTALL_DIR:-"$repo_root/output/linux"}
-output_dir=${DLNA_OUTPUT_DIR:-"$repo_root/output"}
+install_dir=${DLNA_LINUX_INSTALL_DIR:-"$platform_dir/install"}
+output_dir=${DLNA_OUTPUT_DIR:-"$platform_dir"}
+
+case "$platform_dir" in /*) ;; *) platform_dir="$repo_root/$platform_dir" ;; esac
+case "$build_dir" in /*) ;; *) build_dir="$repo_root/$build_dir" ;; esac
+case "$install_dir" in /*) ;; *) install_dir="$repo_root/$install_dir" ;; esac
+case "$output_dir" in /*) ;; *) output_dir="$repo_root/$output_dir" ;; esac
 appdir="$output_dir/dlna-server.AppDir"
-tools_dir="$output_dir/tools"
+tools_dir=${DLNA_RELEASE_TOOLS_DIR:-"$repo_root/build-release-tools/linux"}
+case "$tools_dir" in /*) ;; *) tools_dir="$repo_root/$tools_dir" ;; esac
 linuxdeploy_version="1-alpha-20251107-1"
 linuxdeploy_sha256="c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
-runtime_sha256="a2419dce47568395ae79c01ffa9a5a341dd339581352ff104d073527543177e5"
 
 sha256_file() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -34,10 +40,11 @@ download_verified() {
 
     rm -f "$path"
     if command -v curl >/dev/null 2>&1; then
-        curl -L -o "$path" "$url" || return 1
+        curl -L -o "$path" "$url"
     elif command -v wget >/dev/null 2>&1; then
-        wget -O "$path" "$url" || return 1
+        wget -O "$path" "$url"
     else
+        echo "curl or wget is required to download packaging tools" >&2
         return 1
     fi
 
@@ -48,13 +55,13 @@ download_verified() {
     fi
 }
 
+if [ "${DLNA_NO_CLEAN:-0}" != "1" ]; then
+    case "$platform_dir" in
+        "$repo_root"/output/*) rm -rf "$platform_dir" ;;
+        *) echo "Refusing to clean non-output platform dir: $platform_dir" >&2; exit 1 ;;
+    esac
+fi
 mkdir -p "$output_dir" "$tools_dir"
-find "$output_dir" -maxdepth 1 -type f \( \
-    -name "dlna-server_${version}_*.deb" -o \
-    -name "dlna-server-${version}-linux-*" -o \
-    -name "DLNA_Server-${version}-x86_64.AppImage" -o \
-    -name "*.AppImage" \
-    \) -delete
 
 cmake_args=(
     -S "$repo_root"
@@ -89,59 +96,40 @@ tr -d '\r' < "$repo_root/packaging/linux/dlna-server.appimage.desktop" > "$appdi
 cp "$repo_root/resources/dlna-server.svg" "$appdir/dlna-server.svg"
 chmod +x "$appdir/AppRun" "$appdir/usr/bin/dlna-server" "$appdir/usr/bin/dlna-server-gui" "$appdir/usr/bin/dlna-server-gui-bin"
 
-linuxdeploy=${LINUXDEPLOY:-}
-if [ -z "$linuxdeploy" ]; then
-    linuxdeploy="$tools_dir/linuxdeploy-x86_64.AppImage"
-    download_verified "https://github.com/linuxdeploy/linuxdeploy/releases/download/$linuxdeploy_version/linuxdeploy-x86_64.AppImage" "$linuxdeploy" "$linuxdeploy_sha256" || true
-    chmod +x "$linuxdeploy" 2>/dev/null || true
+linuxdeploy=${LINUXDEPLOY:-"$tools_dir/linuxdeploy-x86_64.AppImage"}
+if [ ! -s "$linuxdeploy" ]; then
+    download_verified "https://github.com/linuxdeploy/linuxdeploy/releases/download/$linuxdeploy_version/linuxdeploy-x86_64.AppImage" "$linuxdeploy" "$linuxdeploy_sha256"
 fi
-chmod +x "$linuxdeploy" 2>/dev/null || true
+chmod +x "$linuxdeploy"
 
-if [ -x "$linuxdeploy" ]; then
-    if ! (cd "$output_dir" && APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" --appdir "$appdir" --desktop-file "$appdir/dlna-server.desktop" --icon-file "$appdir/dlna-server.svg" --output appimage); then
-        echo "WARN: linuxdeploy AppImage plugin failed; trying local appimagetool fallback" >&2
-    fi
-    appimage=$(find "$output_dir" -maxdepth 1 -type f -name '*.AppImage' | head -n 1 || true)
-    if [ -n "$appimage" ]; then
-        mv "$appimage" "$output_dir/DLNA_Server-${version}-x86_64.AppImage"
-    fi
-
-    if [ ! -f "$output_dir/DLNA_Server-${version}-x86_64.AppImage" ]; then
-        runtime_file=${APPIMAGE_RUNTIME:-"$tools_dir/runtime-x86_64"}
-        if [ -z "${APPIMAGE_RUNTIME:-}" ] && { [ ! -s "$runtime_file" ] || [ "$(sha256_file "$runtime_file")" != "$runtime_sha256" ]; }; then
-            download_verified "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64" "$runtime_file" "$runtime_sha256" || true
-        fi
-        if [ -s "$runtime_file" ]; then
-            extract_dir="$tools_dir/linuxdeploy-extract"
-            rm -rf "$extract_dir"
-            mkdir -p "$extract_dir"
-            (cd "$extract_dir" && "$linuxdeploy" --appimage-extract >/dev/null)
-            appimagetool=$(find "$extract_dir" -path '*/linuxdeploy-plugin-appimage/usr/bin/appimagetool' -type f | head -n 1 || true)
-            if [ -n "$appimagetool" ]; then
-                chmod +x "$appimagetool" "$runtime_file"
-                ARCH=x86_64 "$appimagetool" --runtime-file "$runtime_file" "$appdir" "$output_dir/DLNA_Server-${version}-x86_64.AppImage"
-            fi
-            rm -rf "$extract_dir"
-        fi
-    fi
-else
-    echo "WARN: linuxdeploy unavailable; AppImage skipped" >&2
+(cd "$output_dir" && APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" --appdir "$appdir" --desktop-file "$appdir/dlna-server.desktop" --icon-file "$appdir/dlna-server.svg" --output appimage)
+appimage=$(find "$output_dir" -maxdepth 1 -type f -name '*.AppImage' | head -n 1)
+if [ -z "$appimage" ]; then
+    echo "AppImage build did not produce an AppImage in $output_dir" >&2
+    exit 1
 fi
+mv "$appimage" "$output_dir/DLNA_Server-${version}-x86_64.AppImage"
 
 flatpak_builder=${FLATPAK_BUILDER:-$(command -v flatpak-builder || true)}
 flatpak=${FLATPAK:-$(command -v flatpak || true)}
-if [ -n "$flatpak_builder" ] && [ -n "$flatpak" ]; then
-    flatpak_repo="$output_dir/flatpak-repo"
-    flatpak_build="$output_dir/flatpak-build"
-    flatpak_bundle="$output_dir/dlna-server-${version}-linux-x86_64.flatpak"
-    rm -rf "$flatpak_build" "$flatpak_repo"
-    if "$flatpak_builder" --force-clean --repo="$flatpak_repo" "$flatpak_build" "$repo_root/packaging/flatpak/com.github.14ag.dlna_server.yml" &&
-       "$flatpak" build-bundle "$flatpak_repo" "$flatpak_bundle" com.github.14ag.dlna_server stable; then
-        :
-    else
-        rm -f "$flatpak_bundle"
-        echo "WARN: Flatpak build failed; Flatpak bundle skipped" >&2
-    fi
-else
-    echo "WARN: flatpak-builder unavailable; Flatpak bundle skipped" >&2
+if [ -z "$flatpak_builder" ] || [ -z "$flatpak" ]; then
+    echo "flatpak-builder and flatpak are required for default release assets" >&2
+    exit 1
 fi
+
+flatpak_repo="$output_dir/flatpak-repo"
+flatpak_build="$output_dir/flatpak-build"
+flatpak_bundle="$output_dir/dlna-server-${version}-linux-x86_64.flatpak"
+rm -rf "$flatpak_build" "$flatpak_repo" "$flatpak_bundle"
+"$flatpak_builder" --force-clean --repo="$flatpak_repo" "$flatpak_build" "$repo_root/packaging/flatpak/com.github.14ag.dlna_server.yml"
+"$flatpak" build-bundle "$flatpak_repo" "$flatpak_bundle" com.github.14ag.dlna_server stable
+
+for required in \
+    "$output_dir"/dlna-server_"$version"_*.deb \
+    "$output_dir/DLNA_Server-${version}-x86_64.AppImage" \
+    "$flatpak_bundle"; do
+    if ! compgen -G "$required" >/dev/null; then
+        echo "Required Linux release artifact missing: $required" >&2
+        exit 1
+    fi
+done

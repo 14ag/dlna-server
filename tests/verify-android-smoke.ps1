@@ -10,8 +10,11 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$exePath = Join-Path $repo "output\DLNA Server.exe"
-$outDir = Join-Path $repo "output"
+$outDir = Join-Path $repo "output\winx64"
+$exePath = Join-Path $outDir "DLNA Server.exe"
+if ($Target -eq "Windows" -and -not (Test-Path -LiteralPath $exePath)) {
+    throw "Expected Windows x64 build at $exePath. Run cmake install with --prefix output\winx64 or build-assets.bat --platform winx64."
+}
 $appDataDir = Join-Path $env:APPDATA "dlna-server"
 $configPath = Join-Path $outDir "config.ini"
 $debugLogPath = Join-Path $appDataDir "debug.log"
@@ -261,7 +264,7 @@ function Ensure-FirewallAccess {
     }
 
     if (-not (Test-IsAdmin)) {
-        throw "Firewall rules missing and PowerShell is not elevated. Run '.\output\DLNA Server.exe' --configure-firewall --port $serverPort once as administrator, or rerun this script from an elevated PowerShell."
+        throw "Firewall rules missing and PowerShell is not elevated. Run '.\output\winx64\DLNA Server.exe' --configure-firewall --port $serverPort once as administrator, or rerun this script from an elevated PowerShell."
     }
 
     $proc = Start-Process -FilePath $exePath -ArgumentList @("--configure-firewall", "--port", "$serverPort") -Wait -PassThru -WindowStyle Hidden
