@@ -1,5 +1,6 @@
 #include "config.h"
 #include "dlna_utils.h"
+#include "log.h"
 #include "netutils.h"
 
 #include <cstdlib>
@@ -95,6 +96,9 @@ Config::Config()
       debugLog(false),
       ipWhiteList(L""),
       deviceUUID(L""),
+      deviceManufacturer(L"dlna-server contributors"),
+      deviceModelName(L"dlna-server"),
+      presentationUrl(L"/"),
       runOnBoot(false),
       defaultPlaylistEnabled(false),
       defaultPlaylistPath(L"") {
@@ -111,6 +115,9 @@ std::wstring Config::GetConfigPath() {
 
 std::wstring Config::GenerateUUID() {
     std::random_device rd;
+    if (rd.entropy() == 0.0) {
+        LogPrint(L"UUID entropy source did not report nondeterministic entropy.");
+    }
     std::mt19937 gen(rd());
     std::uniform_int_distribution<unsigned int> dist(0, 15);
     std::uniform_int_distribution<unsigned int> dist2(8, 11);
@@ -172,6 +179,9 @@ void Config::Load() {
         else if (key == "DefaultPlaylistPath") defaultPlaylistPath = Utf8ToWide(value);
         else if (key == "IPWhiteList") ipWhiteList = Utf8ToWide(value);
         else if (key == "DeviceUUID") deviceUUID = Utf8ToWide(value);
+        else if (key == "DeviceManufacturer") deviceManufacturer = Utf8ToWide(value);
+        else if (key == "DeviceModelName") deviceModelName = Utf8ToWide(value);
+        else if (key == "PresentationURL") presentationUrl = Utf8ToWide(value);
         else if (key == "MediaSources") {
             mediaSources.clear();
             std::stringstream ss(value);
@@ -183,6 +193,9 @@ void Config::Load() {
     }
     if (serverName.empty()) serverName = DefaultServerName();
     if (defaultPlaylistPath.empty()) defaultPlaylistPath = GetDefaultPlaylistPath();
+    if (deviceManufacturer.empty()) deviceManufacturer = L"dlna-server contributors";
+    if (deviceModelName.empty()) deviceModelName = L"dlna-server";
+    if (presentationUrl.empty()) presentationUrl = L"/";
     if (deviceUUID.empty()) {
         deviceUUID = GenerateUUID();
         Save();
@@ -216,5 +229,8 @@ void Config::Save() {
     file << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
     file << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
     file << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
+    file << "DeviceManufacturer=" << WideToUtf8(deviceManufacturer) << "\n";
+    file << "DeviceModelName=" << WideToUtf8(deviceModelName) << "\n";
+    file << "PresentationURL=" << WideToUtf8(presentationUrl) << "\n";
     file << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";
 }

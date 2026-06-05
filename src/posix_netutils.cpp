@@ -39,6 +39,11 @@ ULONG PrefixLengthFromNetmask(const sockaddr* netmask) {
     }
     return bits;
 }
+
+bool IsIPv4Apipa(const sockaddr_in* addr) {
+    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(&addr->sin_addr.s_addr);
+    return bytes[0] == 169 && bytes[1] == 254;
+}
 }
 
 std::string WideToUtf8(const std::wstring& value) {
@@ -176,6 +181,8 @@ bool EnumerateNetworkEndpoints(int port, std::vector<NetworkEndpoint>& endpoints
             if (endpoint.isLinkLocal) addr6->sin6_scope_id = endpoint.interfaceIndex;
             endpoint.host = "[" + SockaddrToLiteral(reinterpret_cast<SOCKADDR*>(&endpoint.sockaddr)) + "]";
         } else {
+            auto* addr4 = reinterpret_cast<sockaddr_in*>(&endpoint.sockaddr);
+            if (IsIPv4Apipa(addr4)) continue;
             endpoint.isLinkLocal = false;
             endpoint.host = SockaddrToLiteral(reinterpret_cast<SOCKADDR*>(&endpoint.sockaddr));
         }

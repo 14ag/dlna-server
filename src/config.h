@@ -32,6 +32,9 @@ public:
     bool debugLog;
     std::wstring ipWhiteList;
     std::wstring deviceUUID;
+    std::wstring deviceManufacturer;
+    std::wstring deviceModelName;
+    std::wstring presentationUrl;
     bool runOnBoot;
     bool defaultPlaylistEnabled;
     std::wstring defaultPlaylistPath;
