@@ -16,23 +16,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build Windows release zips
         shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $cmake = Get-Content -LiteralPath CMakeLists.txt -Raw
-          if ($cmake -notmatch "project\(dlna-server VERSION ([0-9.]+)\)") {
-            throw "Could not read project version from CMakeLists.txt"
-          }
-          $version = $Matches[1]
-          cmake -S . -B build-release-windows -A x64 -DCMAKE_INSTALL_PREFIX="$PWD/output/windows"
-          cmake --build build-release-windows --config Release --target install -- /m
-          cmake -S . -B build-release-windows-x86 -A Win32 -DCMAKE_INSTALL_PREFIX="$PWD/output/windows-x86"
-          cmake --build build-release-windows-x86 --config Release --target install -- /m
-          Compress-Archive -LiteralPath "output/windows/DLNA Server.exe" -DestinationPath "output/dlna-server-$version-windows-x86_64.zip" -Force
-          Compress-Archive -LiteralPath "output/windows-x86/DLNA Server.exe" -DestinationPath "output/dlna-server-$version-windows-x86.zip" -Force
+        run: scripts\build-release-assets.ps1 --platform winx64,winx86
       - name: Upload Windows assets
         uses: softprops/action-gh-release@v2
         with:
-          files: output/*.zip
+          files: |
+            output/dlna-server-*-source.zip
+            output/winx64/*.zip
+            output/winx86/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -47,14 +38,19 @@ jobs:
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           sudo flatpak install -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
       - name: Build Linux desktop assets
+        env:
+          DLNA_OUTPUT_DIR: output/linux
+          DLNA_LINUX_PLATFORM_DIR: output/linux
+          DLNA_LINUX_INSTALL_DIR: output/linux/install
+          DLNA_RELEASE_TOOLS_DIR: build-release-tools/linux
         run: bash scripts/build-linux-desktop-assets.sh
       - name: Upload Linux assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            output/*.deb
-            output/*.AppImage
-            output/*.flatpak
+            output/linux/*.deb
+            output/linux/*.AppImage
+            output/linux/*.flatpak
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -65,14 +61,17 @@ jobs:
         include:
           - os: macos-14
             arch: arm64
+            platform: macos-arm64
           - os: macos-13
             arch: x86_64
+            platform: macos-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Build macOS DMG
         env:
           DLNA_MACOS_ARCH: ${{ matrix.arch }}
+          DLNA_MACOS_PLATFORM_DIR: output/${{ matrix.platform }}
           APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
           APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
           APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
@@ -81,6 +80,6 @@ jobs:
       - name: Upload macOS asset
         uses: softprops/action-gh-release@v2
         with:
-          files: output/*.dmg
+          files: output/${{ matrix.platform }}/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
