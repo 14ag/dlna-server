@@ -16,6 +16,19 @@ Server& Server::Get() {
 Server::Server() : m_running(false) {
 }
 
+void Server::StartBackgroundScan() {
+    JoinBackgroundScan();
+    m_scanThread = std::thread([]() {
+        AppMedia.Scan();
+    });
+}
+
+void Server::JoinBackgroundScan() {
+    if (m_scanThread.joinable()) {
+        m_scanThread.join();
+    }
+}
+
 void Server::RefreshEndpoints() {
     m_endpoints.clear();
     EnumerateNetworkEndpoints(AppConfig.port, m_endpoints);
@@ -38,10 +51,17 @@ bool Server::Start() {
         LogPrint(L"Invalid HTTP port: %d", AppConfig.port);
         return false;
     }
-    if (AppConfig.mediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
-        AppConfig.mediaSources.push_back({L".", true});
+    bool hasSource = AppConfig.defaultPlaylistEnabled && !AppConfig.defaultPlaylistPath.empty();
+    for (const auto& source : AppConfig.mediaSources) {
+        if (source.enabled) {
+            hasSource = true;
+            break;
+        }
     }
-    AppMedia.Scan();
+    if (!hasSource) {
+        LogPrint(L"No media sources configured; refusing to serve current directory.");
+        return false;
+    }
     RefreshEndpoints();
     if (m_endpoints.empty()) {
         LogPrint(L"Failed to find any active network endpoint for discovery.");
@@ -59,6 +79,7 @@ bool Server::Start() {
         return false;
     }
     m_running = true;
+    StartBackgroundScan();
     LogPrint(L"DLNA server running on %ls", m_endpoint.c_str());
     return true;
 }
@@ -67,5 +88,6 @@ void Server::Stop() {
     if (!m_running) return;
     SSDP::Get().Stop();
     HttpServer::Get().Stop();
+    JoinBackgroundScan();
     m_running = false;
 }

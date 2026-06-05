@@ -12,6 +12,15 @@ function(dlna_enable_warnings target_name)
     endif()
 endfunction()
 
+find_package(CURL QUIET)
+
+function(dlna_link_optional_curl target_name)
+    if(CURL_FOUND AND TARGET CURL::libcurl)
+        target_link_libraries(${target_name} PRIVATE CURL::libcurl)
+        target_compile_definitions(${target_name} PRIVATE DLNA_HAS_LIBCURL=1)
+    endif()
+endfunction()
+
 if(WIN32)
     set(SOURCES
         src/main.cpp
@@ -54,6 +63,7 @@ if(WIN32)
     add_executable(dlna-server WIN32 ${SOURCES} ${HEADERS} resources/app.rc)
     set_target_properties(dlna-server PROPERTIES OUTPUT_NAME "DLNA Server")
     dlna_enable_warnings(dlna-server)
+    dlna_link_optional_curl(dlna-server)
     target_link_libraries(dlna-server
         ws2_32
         shell32
@@ -92,6 +102,7 @@ else()
         src/network_sources.cpp
     )
     dlna_enable_warnings(dlna-server)
+    dlna_link_optional_curl(dlna-server)
     target_include_directories(dlna-server PRIVATE src)
     target_compile_definitions(dlna-server PRIVATE DLNA_POSIX=1)
     if(APPLE)
@@ -143,6 +154,7 @@ else()
         )
         set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
         dlna_enable_warnings(dlna-server-gui-native)
+        dlna_link_optional_curl(dlna-server-gui-native)
         target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_POSIX=1)
         if(APPLE)
             target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_PLATFORM_NAME=\"macOS\")
@@ -227,7 +239,7 @@ if(UNIX AND NOT APPLE)
     set(CPACK_DEBIAN_PACKAGE_MAINTAINER "dlna-server contributors")
     set(CPACK_DEBIAN_PACKAGE_SECTION "net")
     set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/14ag/dlna-server")
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "curl")
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libcurl4")
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
     include(CPack)

@@ -23,7 +23,7 @@ class PlaylistNetworkSourceTests(unittest.TestCase):
             self.assertIn(token, header)
             self.assertIn(token, source)
 
-        for token in ('L".m3u"', 'L".m3u8"', 'L".pls"', '"smb"', '"ftp"', "--list-only", "--range"):
+        for token in ('L".m3u"', 'L".m3u8"', 'L".pls"', '"smb"', '"ftp"', "CURLOPT_DIRLISTONLY", "CURLOPT_RANGE"):
             self.assertIn(token, source)
 
     def test_windows_and_posix_scanners_index_playlist_and_network_sources(self):

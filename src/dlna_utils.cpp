@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cwctype>
 #include <limits>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -316,10 +317,11 @@ std::string BuildContentFeaturesForExtension(const std::wstring& ext, const std:
 
 std::string BuildSourceProtocolInfoList() {
     std::vector<std::string> entries;
+    std::unordered_set<std::string> seen;
     for (const auto& format : kFormats) {
         MediaFormatInfo info = FormatInfoFromExtensionFormat(format);
         std::string entry = BuildProtocolInfo(info, true);
-        if (std::find(entries.begin(), entries.end(), entry) == entries.end()) {
+        if (seen.insert(entry).second) {
             entries.push_back(entry);
         }
     }
@@ -329,6 +331,16 @@ std::string BuildSourceProtocolInfoList() {
         result += entries[i];
     }
     return result;
+}
+
+std::string GetDlnaServerHeader() {
+#ifdef _WIN32
+    return "Windows/10.0 UPnP/1.1 dlna-server/1.4.0";
+#elif defined(DLNA_PLATFORM_NAME)
+    return std::string(DLNA_PLATFORM_NAME) + " UPnP/1.1 dlna-server/1.4.0";
+#else
+    return "POSIX UPnP/1.1 dlna-server/1.4.0";
+#endif
 }
 
 bool IsSubtitleExtension(const std::wstring& ext) {

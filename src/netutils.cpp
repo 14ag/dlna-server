@@ -110,6 +110,33 @@ bool PrefixMatch(const NetworkEndpoint& endpoint, const SOCKADDR* remoteAddr) {
     ULONG prefix = std::min<ULONG>(endpoint.prefixLength, 128);
     return PrefixMatchBits(local6->sin6_addr.u.Byte, remote6->sin6_addr.u.Byte, prefix);
 }
+
+void AddEndpointForUnicast(std::vector<NetworkEndpoint>& endpoints,
+                           const IP_ADAPTER_ADDRESSES* adapter,
+                           const IP_ADAPTER_UNICAST_ADDRESS* unicast,
+                           int port) {
+    NetworkEndpoint endpoint = {};
+    endpoint.family = unicast->Address.lpSockaddr->sa_family;
+    endpoint.interfaceIndex = (endpoint.family == AF_INET6) ? adapter->Ipv6IfIndex : adapter->IfIndex;
+    endpoint.prefixLength = unicast->OnLinkPrefixLength;
+    endpoint.sockaddrLen = unicast->Address.iSockaddrLength;
+    memcpy(&endpoint.sockaddr, unicast->Address.lpSockaddr, endpoint.sockaddrLen);
+
+    if (endpoint.family == AF_INET6) {
+        SOCKADDR_IN6* addr6 = reinterpret_cast<SOCKADDR_IN6*>(&endpoint.sockaddr);
+        endpoint.isLinkLocal = IN6_IS_ADDR_LINKLOCAL(&addr6->sin6_addr) != 0;
+        if (endpoint.isLinkLocal && endpoint.interfaceIndex != 0) {
+            addr6->sin6_scope_id = endpoint.interfaceIndex;
+        }
+    } else {
+        endpoint.isLinkLocal = false;
+    }
+
+    endpoint.address = SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&endpoint.sockaddr));
+    endpoint.host = BuildEndpointHost(reinterpret_cast<const SOCKADDR*>(&endpoint.sockaddr), endpoint.interfaceIndex);
+    endpoint.locationUrl = "http://" + endpoint.host + ":" + std::to_string(port) + "/description.xml";
+    endpoints.push_back(endpoint);
+}
 }
 
 std::string WideToUtf8(const std::wstring& value) {
@@ -248,7 +275,6 @@ bool EnumerateNetworkEndpoints(int port, std::vector<NetworkEndpoint>& endpoints
             continue;
         }
 
-        const IP_ADAPTER_UNICAST_ADDRESS* chosenV4 = NULL;
         const IP_ADAPTER_UNICAST_ADDRESS* chosenV6 = NULL;
         int chosenV6Rank = 0;
 
@@ -257,10 +283,10 @@ bool EnumerateNetworkEndpoints(int port, std::vector<NetworkEndpoint>& endpoints
                 continue;
             }
 
-            if (unicast->Address.lpSockaddr->sa_family == AF_INET && chosenV4 == NULL) {
+            if (unicast->Address.lpSockaddr->sa_family == AF_INET) {
                 const SOCKADDR_IN* addr4 = reinterpret_cast<const SOCKADDR_IN*>(unicast->Address.lpSockaddr);
                 if (!IsIPv4Apipa(addr4)) {
-                    chosenV4 = unicast;
+                    AddEndpointForUnicast(endpoints, adapter, unicast, port);
                 }
             } else if (unicast->Address.lpSockaddr->sa_family == AF_INET6) {
                 const SOCKADDR_IN6* addr6 = reinterpret_cast<const SOCKADDR_IN6*>(unicast->Address.lpSockaddr);
@@ -272,33 +298,8 @@ bool EnumerateNetworkEndpoints(int port, std::vector<NetworkEndpoint>& endpoints
             }
         }
 
-        const IP_ADAPTER_UNICAST_ADDRESS* selected[] = { chosenV4, chosenV6 };
-        for (const IP_ADAPTER_UNICAST_ADDRESS* unicast : selected) {
-            if (!unicast || !unicast->Address.lpSockaddr) {
-                continue;
-            }
-
-            NetworkEndpoint endpoint = {};
-            endpoint.family = unicast->Address.lpSockaddr->sa_family;
-            endpoint.interfaceIndex = (endpoint.family == AF_INET6) ? adapter->Ipv6IfIndex : adapter->IfIndex;
-            endpoint.prefixLength = unicast->OnLinkPrefixLength;
-            endpoint.sockaddrLen = unicast->Address.iSockaddrLength;
-            memcpy(&endpoint.sockaddr, unicast->Address.lpSockaddr, endpoint.sockaddrLen);
-
-            if (endpoint.family == AF_INET6) {
-                SOCKADDR_IN6* addr6 = reinterpret_cast<SOCKADDR_IN6*>(&endpoint.sockaddr);
-                endpoint.isLinkLocal = IN6_IS_ADDR_LINKLOCAL(&addr6->sin6_addr) != 0;
-                if (endpoint.isLinkLocal && endpoint.interfaceIndex != 0) {
-                    addr6->sin6_scope_id = endpoint.interfaceIndex;
-                }
-            } else {
-                endpoint.isLinkLocal = false;
-            }
-
-            endpoint.address = SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&endpoint.sockaddr));
-            endpoint.host = BuildEndpointHost(reinterpret_cast<const SOCKADDR*>(&endpoint.sockaddr), endpoint.interfaceIndex);
-            endpoint.locationUrl = "http://" + endpoint.host + ":" + std::to_string(port) + "/description.xml";
-            endpoints.push_back(endpoint);
+        if (chosenV6 && chosenV6->Address.lpSockaddr) {
+            AddEndpointForUnicast(endpoints, adapter, chosenV6, port);
         }
     }
 
