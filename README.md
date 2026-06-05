@@ -18,6 +18,7 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - Can maintain a default `.m3u` playlist from the desktop settings dialog.
 - Reads media from SMB and FTP shares such as `smb://user:pass@server/share` and `ftp://user:pass@server:21/media`.
 - Supports byte-range requests so DLNA clients can seek within media files.
+- Starts HTTP and SSDP before the background media scan finishes, so slow libraries do not block initial reachability.
 - Advertises the server with SSDP multicast `NOTIFY` messages.
 - Handles UPnP `ContentDirectory:1` Browse SOAP requests.
 - Serves device, ContentDirectory, and ConnectionManager XML descriptions.
@@ -43,7 +44,7 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - CMake 3.20 or newer
 - A C++17 compiler such as `clang++` or `g++`
 - `make` or another CMake-supported build tool
-- `curl` for SMB and FTP media sources
+- `libcurl` for SMB, FTP, HTTP, and HTTPS media sources
 - X11 development headers for native FLTK GUI and AppImage builds
 
 On Debian or Ubuntu, native GUI and AppImage builds need:
@@ -70,22 +71,27 @@ From Windows, build the release downloads into `output/`:
 build-assets.bat
 ```
 
-The script builds:
+Platform-specific release files are written under `output/<platform>/`. The `output/` root is reserved for the release source zip and release notes/Markdown files.
 
-- `dlna-server-<version>-windows-x86_64.zip`
-- `dlna-server-<version>-windows-x86.zip`
-- `dlna-server_<version>_amd64.deb`
-- `DLNA_Server-<version>-x86_64.AppImage`
-- `dlna-server-<version>-linux-x86_64.flatpak` when Flatpak tooling is installed in WSL
-- `SHA256SUMS.txt`
+By default the wrapper requests every supported platform output: `winx64`, `winx86`, `linux`, `macos-x64`, and `macos-arm64`.
 
-Pass a version or WSL distribution when needed:
+- `output/dlna-server-<version>-source.zip`
+- `output/winx64/dlna-server-<version>-windows-x86_64.zip`
+- `output/winx86/dlna-server-<version>-windows-x86.zip`
+- `output/linux/dlna-server_<version>_amd64.deb`
+- `output/linux/DLNA_Server-<version>-x86_64.AppImage`
+- `output/linux/dlna-server-<version>-linux-x86_64.flatpak`
+- `output/macos-x64/DLNA_Server-<version>-macos-x64.dmg`
+- `output/macos-arm64/DLNA_Server-<version>-macos-arm64.dmg`
+
+Pass a version, WSL distribution, platform list, or disable platform-folder cleaning when needed:
 
 ```bat
 build-assets.bat -Version 1.4.0 -WslDistro Ubuntu
+build-assets.bat --platform winx64,linux --no-clean
 ```
 
-The Windows builds use Visual Studio through CMake. The Linux builds run in WSL and write back to the same `output/` folder. The script downloads pinned FLTK and AppImage packaging inputs from Windows, verifies SHA256 hashes, and then hands work to WSL, so a WSL DNS problem does not stop the Linux package build.
+Supported platform names are exactly `winx64`, `winx86`, `linux`, `macos-x64`, and `macos-arm64`. Without `--no-clean`, only the selected `output/<platform>/` folders are deleted and recreated before artifacts are copied into them. No build script cleans the `output/` root. The Windows builds use Visual Studio through CMake. The Linux builds run in WSL and write back to `output/linux`. The script downloads pinned FLTK and AppImage packaging inputs outside `output/`, verifies SHA256 hashes, and then hands work to WSL, so `output/` stays release-only.
 
 ### Windows
 
@@ -169,7 +175,7 @@ Build only the Linux desktop release assets from WSL or Linux:
 bash scripts/build-linux-desktop-assets.sh
 ```
 
-This writes the `.deb`, AppImage when verified `linuxdeploy` is available, Flatpak when `flatpak-builder` and the Freedesktop runtime are available, and the installed tree under `output/`. The script clears old top-level AppImages before packaging so stale files cannot be renamed as the current release. From Windows, prefer `build-assets.bat` when you want Windows and Linux downloads in one run.
+This writes the `.deb`, AppImage, Flatpak bundle, AppDir, and installed tree under `output/linux/`. From Windows, prefer `build-assets.bat` when you want Windows and Linux downloads in one run.
 
 ### Linux AppImage
 
@@ -184,14 +190,14 @@ cmake --install build-linux-native --prefix "$PWD/output"
 For an AppImage release, install into a local staging directory, create an AppDir, and run `linuxdeploy`:
 
 ```sh
-mkdir -p output/dlna-server.AppDir/usr/bin
-cp output/bin/dlna-server output/dlna-server.AppDir/usr/bin/
-cp output/bin/dlna-server-gui output/dlna-server.AppDir/usr/bin/
-cp output/bin/dlna-server-gui-bin output/dlna-server.AppDir/usr/bin/
-cp packaging/linux/AppRun output/dlna-server.AppDir/
-cp packaging/linux/dlna-server.appimage.desktop output/dlna-server.AppDir/dlna-server.desktop
-cp resources/dlna-server.svg output/dlna-server.AppDir/
-linuxdeploy --appdir output/dlna-server.AppDir --output appimage
+mkdir -p output/linux/dlna-server.AppDir/usr/bin
+cp output/linux/install/bin/dlna-server output/linux/dlna-server.AppDir/usr/bin/
+cp output/linux/install/bin/dlna-server-gui output/linux/dlna-server.AppDir/usr/bin/
+cp output/linux/install/bin/dlna-server-gui-bin output/linux/dlna-server.AppDir/usr/bin/
+cp packaging/linux/AppRun output/linux/dlna-server.AppDir/
+cp packaging/linux/dlna-server.appimage.desktop output/linux/dlna-server.AppDir/dlna-server.desktop
+cp resources/dlna-server.svg output/linux/dlna-server.AppDir/
+linuxdeploy --appdir output/linux/dlna-server.AppDir --output appimage
 ```
 
 This expects `linuxdeploy` on `PATH`.
@@ -268,7 +274,9 @@ Settings can create a default playlist entry from a movie path and optional subt
 
 The DLNA device description advertises bundled PNG icons at 48, 120, and 256 px. Clients choose the best `/icons/server_icon_*.png` image from the UPnP `iconList`.
 
-The server answers ContentDirectory `Browse` and `Search` probes plus ConnectionManager `GetProtocolInfo` requests. Browse, HTTP streaming, and ConnectionManager responses use the same DLNA protocol metadata table. Companion `folder.jpg`, `cover.jpg`, `album.jpg`, and same-stem JPG/PNG art is advertised as `upnp:albumArtURI` and served from `/albumart/{id}`.
+The server answers ContentDirectory `Browse` and `Search` probes plus ConnectionManager `GetProtocolInfo` requests. Browse, HTTP streaming, and ConnectionManager responses use the same DLNA protocol metadata table. Companion `folder.jpg`, `cover.jpg`, `album.jpg`, `thumb.jpg`, `thumb.jpeg`, and same-stem JPG/JPEG/PNG art is advertised as `upnp:albumArtURI` only while the file exists and is served from `/albumart/{id}`.
+
+Settings such as **Flat folders style**, **Show file names instead titles**, **Sort by title instead of file name**, **Proxy streams**, and **Add Artist/Album folders to audio** apply consistently to local folders, playlists, and network shares. Playlist order is preserved unless title sorting is enabled or a DLNA client sends an explicit sort request. When **Proxy streams** is disabled for remote HTTP/FTP/SMB entries, Browse can advertise the remote URL directly; otherwise media is proxied through `/media/{id}`.
 
 The advertised ContentDirectory and ConnectionManager event URLs accept UPnP GENA `SUBSCRIBE` and `UNSUBSCRIBE` requests with stable `SID` and timeout headers. This keeps diagnosis tools from flagging dead event endpoints while deeper callback notification fan-out remains future work.
 
@@ -315,9 +323,9 @@ Examples:
 
 Settings are stored in `config.ini` beside the executable:
 
-- Windows release output: `output/config.ini`
+- Windows release output: `output/winx64/config.ini` or `output/winx86/config.ini`
 - Windows CMake build output: `build/<Config>/config.ini`
-- POSIX release output: `output/bin/config.ini`
+- POSIX release output: `output/linux/install/bin/config.ini`
 - POSIX CMake build output: `build/config.ini`
 - Linux user install: `~/.local/bin/config.ini`
 
@@ -334,8 +342,11 @@ DebugLog=0
 RunOnBoot=0
 DefaultPlaylistEnabled=0
 DefaultPlaylistPath=C:\Path\To\App\default.m3u
-IPWhiteList=
+IPWhiteList=192.168.1.0/24,fd00::/8
 DeviceUUID=11111111-2222-3333-4444-555555555555
+DeviceManufacturer=dlna-server contributors
+DeviceModelName=dlna-server
+PresentationURL=/
 MediaSources=C:\Media|D:\Videos|C:\Playlists\radio.m3u|smb://user:pass@server/share|ftp://user:pass@server:21/media
 ```
 
@@ -346,7 +357,7 @@ Run the Windows build and protocol smoke test:
 ```powershell
 cmake -S . -B build-windows
 cmake --build build-windows --config Release
-cmake --install build-windows --config Release --prefix output
+cmake --install build-windows --config Release --prefix output\winx64
 .\tests\verify-smoke.ps1
 ```
 
@@ -373,7 +384,7 @@ The POSIX WSL mode uses `adb reverse` for Android HTTP/SOAP/VLC direct playback 
 The Android smoke test requires Windows Firewall access for the built app. If the test reports missing firewall rules, run the helper once from an elevated PowerShell:
 
 ```powershell
-.\output\DLNA Server.exe --configure-firewall --port 18200
+.\output\winx64\DLNA Server.exe --configure-firewall --port 18200
 ```
 
 The `--port` value is kept for compatibility with the test command. On Windows, the TCP rule is app-wide and limited to `LocalSubnet`; UDP discovery remains limited to port `1900`. The normal Windows app also prompts to configure these rules the first time the server starts.

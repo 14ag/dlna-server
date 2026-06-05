@@ -3,8 +3,11 @@ param()
 $ErrorActionPreference = "Stop"
 
 $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$outputDir = Join-Path $repo "output"
+$outputDir = Join-Path $repo "output\winx64"
 $exePath = Join-Path $outputDir "DLNA Server.exe"
+if (-not (Test-Path -LiteralPath $exePath)) {
+    throw "Expected Windows x64 build at $exePath. Run cmake install with --prefix output\winx64 or build-assets.bat --platform winx64."
+}
 $vlcPath = "C:\Program Files\VideoLAN\VLC\vlc.exe"
 $appDataDir = Join-Path $env:APPDATA "dlna-server"
 $configPath = Join-Path $outputDir "config.ini"
