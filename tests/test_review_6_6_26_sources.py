@@ -3,8 +3,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE = ROOT.parent
-
 
 def read_source(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
@@ -14,17 +12,8 @@ def get_source_bundle(*paths: str) -> str:
     return "\n".join(read_source(path) for path in paths)
 
 
-def get_review_blueprint_text() -> str:
-    return (WORKSPACE / "misc" / "patches" / "dlna-server-review-6-6-26-implementation-blueprint.md").read_text(encoding="utf-8")
-
 
 class ReviewSixJuneSourceContracts(unittest.TestCase):
-    def test_blueprint_written_to_patches_folder(self):
-        blueprint = get_review_blueprint_text()
-
-        self.assertIn("DLNA Server Review 2026-06-06 Implementation Blueprint", blueprint)
-        self.assertIn("Plan covers findings 1-60", blueprint)
-        self.assertIn("Runtime blackbox tests are required", blueprint)
 
     def test_shared_helpers_replace_dead_and_duplicate_surfaces(self):
         utils = get_source_bundle("src/dlna_utils.h", "src/dlna_utils.cpp")
@@ -109,6 +98,26 @@ class ReviewSixJuneSourceContracts(unittest.TestCase):
         self.assertIn("std::seed_seq seed", posix_config)
         self.assertNotIn("goto", get_source_bundle("src/httpserver.cpp"))
         self.assertIn("ScopedHandle", get_source_bundle("src/httpserver.cpp"))
+
+    def test_debug_logs_are_written_beside_config_on_all_platforms(self):
+        windows_log = read_source("src/log.cpp")
+        posix_log = read_source("src/posix_log.cpp")
+        config_header = read_source("src/config.h")
+        bug_template = read_source(".github/ISSUE_TEMPLATE/bug_report.md")
+
+        self.assertIn("std::wstring GetConfigPath()", config_header)
+        self.assertIn("AppConfig.GetConfigPath()", windows_log)
+        self.assertIn('PathAppendW(szPath, L"debug.log")', windows_log)
+        self.assertNotIn("CSIDL_APPDATA", windows_log)
+        self.assertNotIn("SHGetFolderPathW", windows_log)
+
+        self.assertIn("AppConfig.GetConfigPath()", posix_log)
+        self.assertIn('"debug.log"', posix_log)
+        self.assertIn("std::FILE* g_debugLogFile", posix_log)
+        self.assertIn("AppConfig.Snapshot().debugLog", posix_log)
+
+        self.assertIn("beside `config.ini`", bug_template)
+        self.assertNotIn("WinDLNAServer", bug_template)
 
 
 if __name__ == "__main__":

@@ -338,6 +338,8 @@ Server workers read a config snapshot when they start a scan or handle a request
 
 The server also writes `media-cache.tsv` beside `config.ini`. It stores stable file IDs plus scan-error and metadata cache records. Deleting it is safe, but clients may see media item IDs change after the next scan.
 
+When **Debug Log** is enabled, the server writes `debug.log` beside `config.ini` on every platform.
+
 Example:
 
 ```ini

@@ -15,9 +15,8 @@ $exePath = Join-Path $outDir "DLNA Server.exe"
 if ($Target -eq "Windows" -and -not (Test-Path -LiteralPath $exePath)) {
     throw "Expected Windows x64 build at $exePath. Run cmake install with --prefix output\winx64 or build-assets.bat --platform winx64."
 }
-$appDataDir = Join-Path $env:APPDATA "dlna-server"
 $configPath = Join-Path $outDir "config.ini"
-$debugLogPath = Join-Path $appDataDir "debug.log"
+$debugLogPath = Join-Path $outDir "debug.log"
 $targetSlug = if ($Target -eq "Windows") { "windows" } else { "posix-wsl" }
 $resultsPath = Join-Path $outDir "android-verification-$targetSlug-results.txt"
 $debugCopyPath = Join-Path $outDir "android-verification-$targetSlug-debug.log"
@@ -591,7 +590,6 @@ try {
         $pcIp = Get-PCAddressForAndroid $androidIp
         Add-Result "PASS Windows peer=$pcIp"
         Ensure-FirewallAccess
-        New-Item -ItemType Directory -Path $appDataDir -Force | Out-Null
         if (Test-Path $configPath) {
             $backupPath = Join-Path $env:TEMP ("dlna-server-config-backup-" + [guid]::NewGuid().ToString() + ".ini")
             Copy-Item -LiteralPath $configPath -Destination $backupPath -Force
