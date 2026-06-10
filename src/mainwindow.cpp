@@ -10,6 +10,7 @@
 #include <thread>
 #include "config.h"
 #include "media_sources.h"
+#include "modal_focus.h"
 #include "server.h"
 
 #pragma comment(lib, "comctl32.lib")
@@ -32,6 +33,8 @@ const int kButtonHeight = 32;
 const int kButtonGap = 8;
 const int kListTop = kToolbarHeight + kStatusHeight + 8;
 const int kCornerDiameter = 8;
+const int kDefaultWindowWidth = 440;
+const int kDefaultWindowHeight = 600;
 const int kAddButtonWidth = 56;
 const int kDeleteButtonWidth = 72;
 const int kStartStopButtonWidth = 72;
@@ -152,6 +155,7 @@ std::wstring BrowsePlaylist(HWND owner) {
 struct SourcePromptState {
     HWND owner = NULL;
     HWND edit = NULL;
+    ModalFocusSnapshot focusSnapshot;
     bool done = false;
     bool accepted = false;
     std::wstring value;
@@ -167,6 +171,7 @@ void FinishSourcePrompt(HWND hwnd, SourcePromptState* state, bool accepted) {
         state->accepted = !state->value.empty();
     }
     state->done = true;
+    EnableOwnerAndRestoreModalFocus(state->focusSnapshot, state->owner);
     DestroyWindow(hwnd);
 }
 
@@ -205,11 +210,13 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         if (id == IDC_SOURCE_BROWSE_FOLDER) {
             std::wstring selected = BrowseFolder(hwnd);
             if (!selected.empty()) SetWindowTextW(state->edit, selected.c_str());
+            RestoreModalFocus(state->focusSnapshot, state->edit);
             return 0;
         }
         if (id == IDC_SOURCE_BROWSE_PLAYLIST) {
             std::wstring selected = BrowsePlaylist(hwnd);
             if (!selected.empty()) SetWindowTextW(state->edit, selected.c_str());
+            RestoreModalFocus(state->focusSnapshot, state->edit);
             return 0;
         }
         if (id == IDC_SOURCE_ADD) {
@@ -245,6 +252,7 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
 
     SourcePromptState state;
     state.owner = owner;
+    state.focusSnapshot = CaptureModalFocus(owner);
     RECT ownerRect = {};
     GetWindowRect(owner, &ownerRect);
     int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - kSourcePromptWidth) / 2;
@@ -269,8 +277,10 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
         }
     }
 
-    EnableWindow(owner, TRUE);
-    SetForegroundWindow(owner);
+    if (!state.done) {
+        EnableOwnerAndRestoreModalFocus(state.focusSnapshot, owner);
+        if (IsWindow(hwnd)) DestroyWindow(hwnd);
+    }
     if (getResult == 0) {
         PostQuitMessage(static_cast<int>(msg.wParam));
     }
@@ -321,7 +331,7 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
     m_hwnd = CreateWindowExW(
         0, CLASS_NAME, L"DLNA Server",
         WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
+        CW_USEDEFAULT, CW_USEDEFAULT, kDefaultWindowWidth, kDefaultWindowHeight,
         NULL, NULL, hInstance, this
     );
 
@@ -357,7 +367,7 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
 
     m_hListSources = CreateWindowExW(0, L"LISTBOX", NULL,
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER | LBS_HASSTRINGS | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
-        kGutter, kListTop, 800 - (kGutter * 2), 600 - kListTop - kGutter,
+        kGutter, kListTop, kDefaultWindowWidth - (kGutter * 2), kDefaultWindowHeight - kListTop - kGutter,
         m_hwnd, (HMENU)IDC_LIST_SOURCES, hInstance, NULL);
     if (m_hBodyFont) {
         SendMessage(m_hListSources, WM_SETFONT, (WPARAM)m_hBodyFont, TRUE);
@@ -505,9 +515,9 @@ void MainWindow::ShowTrayMenu() {
     POINT pt;
     GetCursorPos(&pt);
     HMENU hMenu = CreatePopupMenu();
-    InsertMenuW(hMenu, -1, MF_BYPOSITION | MF_STRING, 1, L"Show Window");
-    InsertMenuW(hMenu, -1, MF_BYPOSITION | MF_STRING | (IsBusy() ? MF_GRAYED : 0), 2, IsRunning() ? L"Stop Server" : L"Start Server");
-    InsertMenuW(hMenu, -1, MF_BYPOSITION | MF_STRING, 3, L"Exit");
+    AppendMenuW(hMenu, MF_STRING, 1, L"Show Window");
+    AppendMenuW(hMenu, MF_STRING | (IsBusy() ? MF_GRAYED : 0), 2, IsRunning() ? L"Stop Server" : L"Start Server");
+    AppendMenuW(hMenu, MF_STRING, 3, L"Exit");
 
     SetForegroundWindow(m_hwnd);
     int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, m_hwnd, NULL);

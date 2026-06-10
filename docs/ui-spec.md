@@ -6,7 +6,8 @@ This contract covers Windows Win32 UI and Linux FLTK UI surfaces for the desktop
 
 ## Layout Rules
 
-- Minimum content size: 640 x 460
+- Default main window size: 440 x 600
+- Minimum content size: 440 x 460
 - Toolbar height: 56 px
 - Status strip height: 40 px
 - Toolbar buttons are 32 px tall
@@ -33,6 +34,7 @@ This contract covers Windows Win32 UI and Linux FLTK UI surfaces for the desktop
 
 - Default playlist is editable from Settings.
 - Log text is read-only.
+- Modal child windows restore focus to their owner only when the app still owns the foreground chain.
 
 ## Assets
 
