@@ -27,10 +27,11 @@
 #include <thread>
 
 namespace {
-constexpr int kWindowWidth = 800;
+constexpr int kWindowWidth = 440;
 constexpr int kWindowHeight = 600;
-constexpr int kToolbarHeight = 48;
-constexpr int kStatusHeight = 24;
+constexpr int kToolbarHeight = 56;
+constexpr int kStatusHeight = 40;
+constexpr int kListTopGap = 8;
 constexpr int kButtonHeight = 32;
 constexpr int kAddButtonWidth = 56;
 constexpr int kDeleteButtonWidth = 72;
@@ -96,6 +97,7 @@ void ShowPlaylistEntryDialog() {
         chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
         chooser.filter("Movie files\t*.{mp4,m4v,mkv,webm,avi,mov,mpg,mpeg,ts,m2ts,wmv,flv,3gp,3g2}\nAll files\t*");
         if (chooser.show() == 0 && chooser.filename()) state->movie->value(chooser.filename());
+        Fl::focus(state->movie);
     }, &state);
     subtitleBrowse.callback([](Fl_Widget*, void* data) {
         auto* state = static_cast<AddState*>(data);
@@ -104,6 +106,7 @@ void ShowPlaylistEntryDialog() {
         chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
         chooser.filter("Subtitle files\t*.{srt,vtt,sub,ass,ssa,smi,txt}\nAll files\t*");
         if (chooser.show() == 0 && chooser.filename()) state->subtitle->value(chooser.filename());
+        Fl::focus(state->subtitle);
     }, &state);
     add.callback([](Fl_Widget*, void* data) {
         auto* state = static_cast<AddState*>(data);
@@ -113,6 +116,7 @@ void ShowPlaylistEntryDialog() {
     dialog.set_modal();
     dialog.end();
     dialog.show();
+    Fl::focus(&dialog);
     while (dialog.shown()) Fl::wait();
     if (state.done) {
         if (!AppendDefaultPlaylistEntry(movie.value(), subtitle.value())) {
@@ -147,6 +151,7 @@ public:
         LogDialog dialog;
         dialog.set_modal();
         dialog.show();
+        Fl::focus(&dialog);
         while (dialog.shown()) {
             Fl::wait();
         }
@@ -196,7 +201,7 @@ public:
         m_defaultPlaylistAdd.tooltip("Add default playlist entry");
 
         m_restartButton.callback(RestartClicked, this);
-        m_viewLogButton.callback(ShowLog, nullptr);
+        m_viewLogButton.callback(ShowLog, this);
         m_defaultPlaylist.callback(DefaultPlaylistToggled, this);
         m_defaultPlaylistAdd.callback(AddDefaultPlaylistEntry, this);
         m_cancelButton.callback(CloseWindow, this);
@@ -275,8 +280,9 @@ private:
         self->hide();
     }
 
-    static void ShowLog(Fl_Widget*, void*) {
+    static void ShowLog(Fl_Widget*, void* data) {
         LogDialog::ShowModal();
+        if (data) Fl::focus(static_cast<SettingsDialog*>(data));
     }
 
     void RefreshDefaultPlaylistControls() {
@@ -293,6 +299,7 @@ private:
         ShowPlaylistEntryDialog();
         self->m_defaultPlaylist.value(1);
         self->RefreshDefaultPlaylistControls();
+        Fl::focus(self);
     }
 
     Fl_Input m_serverName;
@@ -328,14 +335,14 @@ public:
           m_startStopButton(0, 8, kStartStopButtonWidth, kButtonHeight, "Start"),
           m_settingsButton(0, 8, kSettingsButtonWidth, kButtonHeight, "Settings"),
           m_status(15, kToolbarHeight, kWindowWidth - 30, kStatusHeight, "DLNA Server is stopped"),
-          m_sources(0, kToolbarHeight + kStatusHeight, kWindowWidth, kWindowHeight - kToolbarHeight - kStatusHeight),
-          m_emptyState(15, 80, kWindowWidth - 30, 24, "Please add shared folders or files with Add."),
+          m_sources(0, kToolbarHeight + kStatusHeight + kListTopGap, kWindowWidth, kWindowHeight - kToolbarHeight - kStatusHeight - kListTopGap),
+          m_emptyState(15, kToolbarHeight + kStatusHeight + kListTopGap + 16, kWindowWidth - 30, 24, "Please add shared folders or files with Add."),
           m_state(ServerUiState::Stopped),
           m_hasPendingResult(false),
           m_pendingSuccess(false),
           m_pendingState(ServerUiState::Stopped) {
         color(fl_rgb_color(30, 30, 30));
-        size_range(640, 460);
+        size_range(440, 460);
         callback(CloseRequested, this);
 
         m_toolbar.box(FL_FLAT_BOX);
@@ -557,9 +564,11 @@ private:
             if (chooser.show() == 0 && chooser.filename()) {
                 selected = chooser.filename();
             }
+            self->RestoreMainFocus();
         } else if (choice == 2) {
             const char* typed = fl_input("Network share URL", "smb://user:pass@server/share");
             if (typed) selected = typed;
+            self->RestoreMainFocus();
         }
 
         if (!selected.empty()) {
@@ -611,6 +620,7 @@ private:
             self->RefreshStatus();
             if (restartRequested) self->RestartServer();
         }
+        self->RestoreMainFocus();
     }
 
     static void CloseRequested(Fl_Widget*, void* data) {
@@ -641,9 +651,14 @@ private:
         m_removeButton.resize(deleteLeft, buttonTop, kDeleteButtonWidth, kButtonHeight);
         m_startStopButton.resize(startLeft, buttonTop, kStartStopButtonWidth, kButtonHeight);
         m_settingsButton.resize(settingsLeft, buttonTop, kSettingsButtonWidth, kButtonHeight);
+        const int listTop = kToolbarHeight + kStatusHeight + kListTopGap;
         m_status.resize(15, kToolbarHeight, width - 30, kStatusHeight);
-        m_sources.resize(0, kToolbarHeight + kStatusHeight, width, height - kToolbarHeight - kStatusHeight);
-        m_emptyState.resize(15, 80, width - 30, 24);
+        m_sources.resize(0, listTop, width, height - listTop);
+        m_emptyState.resize(15, listTop + 16, width - 30, 24);
+    }
+
+    void RestoreMainFocus() {
+        Fl::focus(&m_sources);
     }
 
     Fl_Box m_toolbar;

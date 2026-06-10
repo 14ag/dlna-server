@@ -1,6 +1,7 @@
 #include "settingsdlg.h"
 #include "logdlg.h"
 #include "dlna_utils.h"
+#include "modal_focus.h"
 #include "netutils.h"
 #include "../resources/resource.h"
 #include <commctrl.h>
@@ -120,7 +121,17 @@ std::wstring BrowseFile(HWND owner, const wchar_t* title, const COMDLG_FILTERSPE
     return result;
 }
 
+struct PlaylistEntryState {
+    HWND owner = NULL;
+    HWND movieEdit = NULL;
+    HWND subtitleEdit = NULL;
+    ModalFocusSnapshot focusSnapshot;
+    bool done = false;
+};
+
 void BrowsePlaylistEntryPath(HWND hwnd, int targetId, bool subtitle) {
+    PlaylistEntryState* state = reinterpret_cast<PlaylistEntryState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    ModalFocusSnapshot fallbackSnapshot = CaptureModalFocus(hwnd);
     COMDLG_FILTERSPEC movieFilters[] = {
         { L"Movie files", L"*.mp4;*.m4v;*.mkv;*.webm;*.avi;*.mov;*.mpg;*.mpeg;*.ts;*.m2ts;*.wmv;*.flv;*.3gp;*.3g2" },
         { L"All files", L"*.*" },
@@ -134,6 +145,11 @@ void BrowsePlaylistEntryPath(HWND hwnd, int targetId, bool subtitle) {
         : BrowseFile(hwnd, L"Choose movie file", movieFilters, 2);
     if (!selected.empty()) {
         SetDlgItemTextW(hwnd, targetId, selected.c_str());
+    }
+    if (state) {
+        RestoreModalFocus(state->focusSnapshot, GetDlgItem(hwnd, targetId));
+    } else {
+        RestoreModalFocus(fallbackSnapshot, GetDlgItem(hwnd, targetId));
     }
 }
 
@@ -181,13 +197,6 @@ bool ReadPortFromDialog(HWND hwndDlg, int controlId, const wchar_t* label, int& 
     return true;
 }
 
-struct PlaylistEntryState {
-    HWND owner = NULL;
-    HWND movieEdit = NULL;
-    HWND subtitleEdit = NULL;
-    bool done = false;
-};
-
 void FinishPlaylistEntry(HWND hwnd, PlaylistEntryState* state, bool add) {
     if (add) {
         std::wstring movie = GetDlgText(hwnd, IDC_PLAYLIST_MOVIE);
@@ -205,6 +214,7 @@ void FinishPlaylistEntry(HWND hwnd, PlaylistEntryState* state, bool add) {
         AppConfig.Save();
     }
     state->done = true;
+    EnableOwnerAndRestoreModalFocus(state->focusSnapshot, state->owner);
     DestroyWindow(hwnd);
 }
 
@@ -253,7 +263,10 @@ LRESULT CALLBACK PlaylistEntryProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 }
 
 INT_PTR SettingsDialog::Show(HWND hParent) {
-    return DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCE(IDD_SETTINGS), hParent, DialogProc, 0);
+    ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hParent);
+    INT_PTR result = DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCE(IDD_SETTINGS), hParent, DialogProc, 0);
+    RestoreModalFocus(focusSnapshot, hParent);
+    return result;
 }
 
 void SettingsDialog::OnInitDialog(HWND hwndDlg) {
@@ -332,6 +345,7 @@ void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
 
     PlaylistEntryState state;
     state.owner = hwndDlg;
+    state.focusSnapshot = CaptureModalFocus(hwndDlg);
     RECT ownerRect = {};
     GetWindowRect(hwndDlg, &ownerRect);
     int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - kPlaylistDialogWidth) / 2;
@@ -350,8 +364,10 @@ void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
             DispatchMessageW(&msg);
         }
     }
-    EnableWindow(hwndDlg, TRUE);
-    SetForegroundWindow(hwndDlg);
+    if (!state.done) {
+        EnableOwnerAndRestoreModalFocus(state.focusSnapshot, hwndDlg);
+        if (IsWindow(hwnd)) DestroyWindow(hwnd);
+    }
     if (getResult == 0) {
         PostQuitMessage(static_cast<int>(msg.wParam));
     }
@@ -374,7 +390,9 @@ INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
             return (INT_PTR)TRUE;
         }
         else if (LOWORD(wParam) == IDC_BTN_VIEW_LOG) {
+            ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hwndDlg);
             LogDialog::Show(hwndDlg);
+            RestoreModalFocus(focusSnapshot, hwndDlg);
             return (INT_PTR)TRUE;
         }
         else if (LOWORD(wParam) == IDC_CHK_DEFAULT_PLAYLIST) {

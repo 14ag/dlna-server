@@ -1,5 +1,6 @@
 #include "logdlg.h"
 #include "log.h"
+#include "modal_focus.h"
 #include "../resources/resource.h"
 #include <dwmapi.h>
 
@@ -46,7 +47,10 @@ void ApplyDarkFrame(HWND hwnd) {
 }
 
 INT_PTR LogDialog::Show(HWND hParent) {
-    return DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCE(IDD_LOG), hParent, DialogProc, 0);
+    ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hParent);
+    INT_PTR result = DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCE(IDD_LOG), hParent, DialogProc, 0);
+    RestoreModalFocus(focusSnapshot, hParent);
+    return result;
 }
 
 INT_PTR CALLBACK LogDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
