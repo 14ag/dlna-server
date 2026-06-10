@@ -6,12 +6,15 @@
 #include <thread>
 #include "netutils.h"
 
+struct ConfigSnapshot;
+
 class Server {
 public:
     static Server& Get();
 
     bool Start();
     void Stop();
+    bool Rescan();
     
     bool IsRunning() const { return m_running; }
     std::wstring GetEndpoint() const { return m_endpoint; }
@@ -19,7 +22,8 @@ public:
 
 private:
     Server();
-    void RefreshEndpoints();
+    ~Server();
+    void RefreshEndpoints(const ConfigSnapshot& cfg);
     void StartBackgroundScan();
     void JoinBackgroundScan();
 

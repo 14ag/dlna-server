@@ -16,6 +16,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <fstream>
+#include <limits.h>
 #include <mutex>
 #include <sstream>
 #include <vector>
@@ -23,6 +24,9 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 // macOS lacks MSG_NOSIGNAL; use SO_NOSIGPIPE socket option instead
 #ifndef MSG_NOSIGNAL
@@ -33,6 +37,7 @@ namespace {
 constexpr int kBufferSize = 8192;
 constexpr size_t kMaxHeaderBytes = 64 * 1024;
 constexpr size_t kMaxClientThreads = 64;
+constexpr size_t kMaxSoapBodyBytes = 1024 * 1024;
 
 class ScopedFd {
 public:
@@ -131,11 +136,31 @@ bool ReadIconFile(const std::string& path, std::string& bytes) {
     return !bytes.empty();
 }
 
+std::string ExecutableDirectory() {
+#ifdef __APPLE__
+    char path[PATH_MAX];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) == 0) {
+        std::string exe(path);
+        const size_t slash = exe.find_last_of('/');
+        if (slash != std::string::npos) return exe.substr(0, slash);
+    }
+#else
+    char path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    if (len > 0) {
+        path[len] = '\0';
+        std::string exe(path);
+        const size_t slash = exe.find_last_of('/');
+        if (slash != std::string::npos) return exe.substr(0, slash);
+    }
+#endif
+    return ".";
+}
+
 bool LoadServerIconPng(const std::string& fileName, std::string& bytes) {
     if (fileName.empty()) return false;
-    const std::string defaultPlaylistPath = WideToUtf8(AppConfig.GetDefaultPlaylistPath());
-    const size_t slash = defaultPlaylistPath.find_last_of('/');
-    std::string exeDir = slash == std::string::npos ? "." : defaultPlaylistPath.substr(0, slash);
+    const std::string exeDir = ExecutableDirectory();
     std::vector<std::string> candidates = {
         "resources/" + fileName,
         exeDir + "/" + fileName,
@@ -156,7 +181,7 @@ std::string LowerAscii(std::string value) {
 }
 
 std::string EventSid() {
-    std::string uuid = WideToUtf8(AppConfig.deviceUUID);
+    std::string uuid = WideToUtf8(AppConfig.Snapshot().deviceUUID);
     return "uuid:" + (uuid.empty() ? "00000000-0000-0000-0000-000000000000" : uuid);
 }
 
@@ -290,11 +315,12 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
     if (space1 == std::string::npos || space2 <= space1) return;
     const std::string method = firstLine.substr(0, space1);
     const std::string path = firstLine.substr(space1 + 1, space2 - space1 - 1);
-    if (AppConfig.debugLog) {
+    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    if (cfg.debugLog) {
         LogPrint(L"HTTP request: src=%hs method=%hs path=%hs", clientIp.c_str(), method.c_str(), path.c_str());
     }
     std::string hostUrl = FindHeaderValueCaseInsensitive(req, "Host");
-    if (hostUrl.empty()) hostUrl = "127.0.0.1:" + std::to_string(AppConfig.port);
+    if (hostUrl.empty()) hostUrl = "127.0.0.1:" + std::to_string(cfg.port);
 
     const bool sendBody = method != "HEAD";
     auto sendText = [&](const std::string& status, const std::string& type, const std::string& body) {
@@ -312,9 +338,9 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
         if (path == "/description.xml") sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetDeviceDescriptionXML());
         else if (path == "/ContentDirectory.xml") sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetContentDirectoryXML());
         else if (path == "/ConnectionManager.xml") sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetConnectionManagerXML());
-        else if (!IconFileNameForPath(path).empty()) {
+        else if (std::string iconFileName = IconFileNameForPath(path); !iconFileName.empty()) {
             std::string body;
-            if (!LoadServerIconPng(IconFileNameForPath(path), body)) {
+            if (!LoadServerIconPng(iconFileName, body)) {
                 SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
@@ -437,7 +463,7 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
             headers << "HTTP/1.1 200 OK\r\n"
                     << "Content-Type: " << SubtitleMimeForExtension(Utf8ToWide(ext)) << "\r\n"
                     << "Content-Length: " << static_cast<long long>(st.st_size) << "\r\n"
-                    << "Accept-Ranges: bytes\r\nConnection: close\r\n\r\n";
+                    << "Accept-Ranges: none\r\nConnection: close\r\n\r\n";
             SendAll(clientSocket, headers.str());
             if (sendBody) {
                 while (true) {
@@ -484,17 +510,20 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
         std::string body = headersEnd == std::string::npos ? std::string() : req.substr(headersEnd + 4);
         const std::string lengthText = FindHeaderValueCaseInsensitive(req, "Content-Length");
         if (!lengthText.empty()) {
-            int contentLength = 0;
-            if (!TryParseIntStrict(lengthText, contentLength) || contentLength < 0) {
+            long long contentLength = 0;
+            if (!TryParseNonNegativeLongLong(lengthText, contentLength) ||
+                contentLength < 0 ||
+                static_cast<unsigned long long>(contentLength) > kMaxSoapBodyBytes) {
                 SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
-            while (static_cast<int>(body.size()) < contentLength) {
+            const size_t expectedBodyLength = static_cast<size_t>(contentLength);
+            while (body.size() < expectedBodyLength) {
                 ssize_t r = recv(clientSocket, buf, sizeof(buf), 0);
                 if (r <= 0) break;
                 body.append(buf, static_cast<size_t>(r));
             }
-            if (static_cast<int>(body.size()) < contentLength) {
+            if (body.size() < expectedBodyLength) {
                 SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                 return;
             }

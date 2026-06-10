@@ -16,6 +16,10 @@ Server& Server::Get() {
 Server::Server() : m_running(false) {
 }
 
+Server::~Server() {
+    Stop();
+}
+
 void Server::StartBackgroundScan() {
     JoinBackgroundScan();
     m_scanThread = std::thread([]() {
@@ -29,10 +33,10 @@ void Server::JoinBackgroundScan() {
     }
 }
 
-void Server::RefreshEndpoints() {
+void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
     m_endpoints.clear();
-    EnumerateNetworkEndpoints(AppConfig.port, m_endpoints);
-    if (AppConfig.debugLog) {
+    EnumerateNetworkEndpoints(cfg.port, m_endpoints);
+    if (cfg.debugLog) {
         for (const auto& endpoint : m_endpoints) {
             LogPrint(L"Discovery endpoint selected: family=%d addr=%hs if=%lu prefix=%lu location=%hs",
                      endpoint.family,
@@ -46,13 +50,17 @@ void Server::RefreshEndpoints() {
 
 bool Server::Start() {
     if (m_running) return true;
-    IPWhitelist::Get().Load(AppConfig.ipWhiteList);
-    if (!IsValidPort(AppConfig.port)) {
-        LogPrint(L"Invalid HTTP port: %d", AppConfig.port);
+    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    IPWhitelist::Get().Load(cfg.ipWhiteList);
+    if (!IsValidPort(cfg.port)) {
+        LogPrint(L"Invalid HTTP port: %d", cfg.port);
         return false;
     }
-    bool hasSource = AppConfig.defaultPlaylistEnabled && !AppConfig.defaultPlaylistPath.empty();
-    for (const auto& source : AppConfig.mediaSources) {
+    if (cfg.fileServerPort != cfg.port) {
+        LogPrint(L"FileServerPort is deprecated; serving media on Port %d.", cfg.port);
+    }
+    bool hasSource = cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
+    for (const auto& source : cfg.mediaSources) {
         if (source.enabled) {
             hasSource = true;
             break;
@@ -62,18 +70,18 @@ bool Server::Start() {
         LogPrint(L"No media sources configured; refusing to serve current directory.");
         return false;
     }
-    RefreshEndpoints();
+    RefreshEndpoints(cfg);
     if (m_endpoints.empty()) {
         LogPrint(L"Failed to find any active network endpoint for discovery.");
         return false;
     }
     const NetworkEndpoint* displayEndpoint = SelectBestEndpoint(m_endpoints, nullptr);
-    m_endpoint = Utf8ToWide(displayEndpoint->host + ":" + std::to_string(AppConfig.port));
-    if (!HttpServer::Get().Start(AppConfig.port)) {
+    m_endpoint = Utf8ToWide(displayEndpoint->host + ":" + std::to_string(cfg.port));
+    if (!HttpServer::Get().Start(cfg.port)) {
         LogPrint(L"Failed to start HTTP server.");
         return false;
     }
-    if (!SSDP::Get().Start(m_endpoints, AppConfig.port, AppConfig.serverName, AppConfig.deviceUUID)) {
+    if (!SSDP::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
         LogPrint(L"Failed to start SSDP.");
         HttpServer::Get().Stop();
         return false;
@@ -81,6 +89,15 @@ bool Server::Start() {
     m_running = true;
     StartBackgroundScan();
     LogPrint(L"DLNA server running on %ls", m_endpoint.c_str());
+    return true;
+}
+
+bool Server::Rescan() {
+    if (m_running) {
+        StartBackgroundScan();
+    } else {
+        AppMedia.Scan();
+    }
     return true;
 }
 

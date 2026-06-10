@@ -19,8 +19,9 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - Reads media from SMB and FTP shares such as `smb://user:pass@server/share` and `ftp://user:pass@server:21/media`.
 - Supports byte-range requests so DLNA clients can seek within media files.
 - Starts HTTP and SSDP before the background media scan finishes, so slow libraries do not block initial reachability.
+- Supports explicit rescans from the server layer; completed scans replace the old index only after a full scan succeeds.
 - Advertises the server with SSDP multicast `NOTIFY` messages.
-- Handles UPnP `ContentDirectory:1` Browse SOAP requests.
+- Handles UPnP `ContentDirectory:1` Browse and Search SOAP requests with exact action dispatch.
 - Serves device, ContentDirectory, and ConnectionManager XML descriptions.
 - Accepts GENA event subscribe/unsubscribe requests on advertised UPnP event URLs.
 - Provides a native Windows UI with tray behavior.
@@ -330,6 +331,8 @@ Settings are stored in `config.ini` beside the executable:
 - Linux user install: `~/.local/bin/config.ini`
 
 If `config.ini` is missing, the app creates it on startup with default settings, the computer hostname as `ServerName`, and a generated UUID. On later starts, values from `config.ini` take precedence over defaults.
+
+Server workers read a config snapshot when they start a scan or handle a request. `FileServerPort` stays in the file for compatibility; media files are served on `Port`.
 
 Example:
 

@@ -5,11 +5,11 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cwctype>
 #include <cstdio>
+#include <cwctype>
 #include <fstream>
-#include <map>
 #include <sstream>
+#include <vector>
 
 #ifdef DLNA_HAS_LIBCURL
 #include <curl/curl.h>
@@ -17,31 +17,18 @@
 
 namespace {
 constexpr int kMaxCurlOutputBytes = 4 * 1024 * 1024;
+constexpr long kCurlCaptureTimeoutSeconds = 30L;
 
 std::wstring TrimWide(const std::wstring& value);
 
-std::string ToLowerCopy(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-}
-
-std::wstring ToLowerWideCopy(std::wstring value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
-        return static_cast<wchar_t>(std::towlower(ch));
-    });
-    return value;
-}
-
 bool HasScheme(const std::string& value, const char* scheme) {
     std::string prefix = std::string(scheme) + "://";
-    return ToLowerCopy(value).rfind(prefix, 0) == 0;
+    return ToLowerAscii(value).rfind(prefix, 0) == 0;
 }
 
 bool IsAbsoluteLocalPath(const std::wstring& value) {
     if (value.rfind(L"\\\\", 0) == 0 || value.rfind(L"//", 0) == 0) return true;
-    if (value.size() >= 3 && std::iswalpha(value[0]) && value[1] == L':' &&
+    if (value.size() >= 3 && iswalpha(value[0]) && value[1] == L':' &&
         (value[2] == L'\\' || value[2] == L'/')) {
         return true;
     }
@@ -70,7 +57,17 @@ std::wstring ParentLocalPath(const std::wstring& value) {
 std::string UrlEncodePathSegment(const std::string& value) {
     static const char* hex = "0123456789ABCDEF";
     std::string out;
-    for (unsigned char ch : value) {
+    for (size_t i = 0; i < value.size(); ++i) {
+        const unsigned char ch = static_cast<unsigned char>(value[i]);
+        if (ch == '%' && i + 2 < value.size() &&
+            std::isxdigit(static_cast<unsigned char>(value[i + 1])) &&
+            std::isxdigit(static_cast<unsigned char>(value[i + 2]))) {
+            out.push_back('%');
+            out.push_back(value[i + 1]);
+            out.push_back(value[i + 2]);
+            i += 2;
+            continue;
+        }
         if ((ch >= 'a' && ch <= 'z') ||
             (ch >= 'A' && ch <= 'Z') ||
             (ch >= '0' && ch <= '9') ||
@@ -154,12 +151,12 @@ size_t CurlWriteBody(char* ptr, size_t size, size_t nmemb, void* userdata) {
 }
 
 size_t CurlWriteStream(char* ptr, size_t size, size_t nmemb, void* userdata) {
-    auto* writeChunk = static_cast<std::function<bool(const char*, size_t)>*>(userdata);
+    auto* writeChunk = static_cast<const std::function<bool(const char*, size_t)>*>(userdata);
     size_t bytes = size * nmemb;
     return (*writeChunk)(ptr, bytes) ? bytes : 0;
 }
 
-CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer) {
+CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutSeconds) {
     static CurlGlobalInit init;
     (void)init;
     CURL* curl = curl_easy_init();
@@ -170,7 +167,7 @@ CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer) {
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSeconds);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errorBuffer);
     return curl;
 }
@@ -178,7 +175,7 @@ CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer) {
 RemoteFetchResult CurlCapture(const std::wstring& url, bool headOnly, bool listOnly) {
     RemoteFetchResult result;
     char errorBuffer[CURL_ERROR_SIZE] = {};
-    CURL* curl = CreateCurlHandle(url, errorBuffer);
+    CURL* curl = CreateCurlHandle(url, errorBuffer, kCurlCaptureTimeoutSeconds);
     if (!curl) {
         LogPrint(L"Remote content unavailable: libcurl handle creation failed.");
         return result;
@@ -214,7 +211,7 @@ bool CurlStream(const std::wstring& url,
                 long long endByte,
                 const std::function<bool(const char*, size_t)>& writeChunk) {
     char errorBuffer[CURL_ERROR_SIZE] = {};
-    CURL* curl = CreateCurlHandle(url, errorBuffer);
+    CURL* curl = CreateCurlHandle(url, errorBuffer, 0L);
     if (!curl) {
         LogPrint(L"Remote content unavailable: libcurl handle creation failed.");
         return false;
@@ -226,9 +223,8 @@ bool CurlStream(const std::wstring& url,
         curl_easy_setopt(curl, CURLOPT_RANGE, rangeText.c_str());
     }
 
-    auto callback = writeChunk;
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteStream);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &writeChunk);
     CURLcode code = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
     if (code != CURLE_OK) {
@@ -287,9 +283,9 @@ std::wstring TitleFromEntry(const std::wstring& location) {
 
 std::wstring TrimWide(const std::wstring& value) {
     size_t start = 0;
-    while (start < value.size() && std::iswspace(value[start])) ++start;
+    while (start < value.size() && iswspace(value[start])) ++start;
     size_t end = value.size();
-    while (end > start && std::iswspace(value[end - 1])) --end;
+    while (end > start && iswspace(value[end - 1])) --end;
     return value.substr(start, end - start);
 }
 
@@ -343,9 +339,13 @@ std::vector<PlaylistEntry> ParseM3u(const std::wstring& playlistPath, const std:
     return entries;
 }
 
+struct PlsEntryBuilder {
+    std::wstring file;
+    std::wstring title;
+};
+
 std::vector<PlaylistEntry> ParsePls(const std::wstring& playlistPath, const std::string& text) {
-    std::map<int, std::wstring> files;
-    std::map<int, std::wstring> titles;
+    std::vector<PlsEntryBuilder> parsed;
     std::istringstream stream(text);
     std::string line;
     while (std::getline(stream, line)) {
@@ -355,7 +355,7 @@ std::vector<PlaylistEntry> ParsePls(const std::wstring& playlistPath, const std:
         size_t eq = trimmed.find('=');
         if (eq == std::string::npos) continue;
 
-        std::string key = ToLowerCopy(TrimAscii(trimmed.substr(0, eq)));
+        std::string key = ToLowerAscii(TrimAscii(trimmed.substr(0, eq)));
         std::string value = UnquotePlaylistValue(trimmed.substr(eq + 1));
         size_t digitsAt = std::string::npos;
         for (size_t i = 0; i < key.size(); ++i) {
@@ -372,14 +372,20 @@ std::vector<PlaylistEntry> ParsePls(const std::wstring& playlistPath, const std:
             continue;
         }
 
-        if (key.rfind("file", 0) == 0) files[index] = Utf8ToWide(value);
-        else if (key.rfind("title", 0) == 0) titles[index] = Utf8ToWide(value);
+        if (index <= 0) continue;
+        if (parsed.size() < static_cast<size_t>(index)) {
+            parsed.resize(static_cast<size_t>(index));
+        }
+
+        if (key.rfind("file", 0) == 0) parsed[static_cast<size_t>(index - 1)].file = Utf8ToWide(value);
+        else if (key.rfind("title", 0) == 0) parsed[static_cast<size_t>(index - 1)].title = Utf8ToWide(value);
     }
 
     std::vector<PlaylistEntry> entries;
-    for (const auto& it : files) {
-        std::wstring location = ResolvePlaylistEntry(playlistPath, it.second);
-        std::wstring title = titles[it.first].empty() ? TitleFromEntry(location) : titles[it.first];
+    for (const auto& entry : parsed) {
+        if (entry.file.empty()) continue;
+        std::wstring location = ResolvePlaylistEntry(playlistPath, entry.file);
+        std::wstring title = entry.title.empty() ? TitleFromEntry(location) : entry.title;
         entries.push_back({ location, title, L"" });
     }
     return entries;
@@ -418,7 +424,7 @@ std::wstring SourceExtension(const std::wstring& value) {
     size_t slash = clean.find_last_of(L"\\/");
     size_t dot = clean.find_last_of(L'.');
     if (dot == std::wstring::npos || (slash != std::wstring::npos && dot < slash)) return {};
-    return ToLowerWideCopy(clean.substr(dot));
+    return ToLowerWide(clean.substr(dot));
 }
 
 bool IsPlaylistSourcePath(const std::wstring& value) {
@@ -488,7 +494,7 @@ std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& direct
         std::wstring name = Utf8ToWide(trimmed);
         std::wstring child = ChildUrl(url, name);
         std::wstring ext = SourceExtension(name);
-        bool likelyDirectory = detailDirectory || slashDirectory || (ext.empty() && !IsPlaylistSourcePath(name));
+        bool likelyDirectory = detailDirectory || slashDirectory;
         entries.push_back({ name, child, likelyDirectory });
     }
     return entries;

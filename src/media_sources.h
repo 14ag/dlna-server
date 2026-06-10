@@ -6,8 +6,11 @@
 #include <mutex>
 #include <atomic>
 #include <cstddef>
+#include <utility>
 #include <unordered_map>
 #include <unordered_set>
+
+struct ConfigSnapshot;
 
 struct MediaItem {
     int id;
@@ -29,6 +32,8 @@ struct MediaIndexState {
     std::vector<MediaItem> items;
     std::unordered_map<int, size_t> idToIndex;
     std::unordered_map<int, std::vector<size_t>> childrenByParent;
+    std::unordered_map<std::wstring, int> containerKeys;
+    std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> albumArtByDirectory;
     std::unordered_set<std::wstring> duplicateKeys;
     int nextId = 1;
 };
@@ -43,14 +48,15 @@ public:
     std::vector<MediaItem> GetAllItems();
     MediaItem GetItem(int id);
     int GetChildCount(int parentId);
+    std::unordered_map<int, int> GetChildCounts(const std::vector<MediaItem>& items);
     int GetSystemUpdateID();
 
 private:
     MediaSources();
-    void AddMediaFile(MediaIndexState& state, const std::wstring& path, int parentId, const std::wstring& titleOverride = L"", const std::wstring& subtitleOverride = L"", bool allowArtistAlbumMirror = true);
-    void ScanPlaylist(MediaIndexState& state, const std::wstring& playlistPath, int parentId);
-    void ScanNetworkFolder(MediaIndexState& state, const std::wstring& folderUrl, int parentId, int depth);
-    void ScanFolder(MediaIndexState& state, const std::wstring& rootPath, int parentId);
+    void AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& path, int parentId, const std::wstring& titleOverride = L"", const std::wstring& subtitleOverride = L"", bool allowArtistAlbumMirror = true);
+    void ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& playlistPath, int parentId);
+    void ScanNetworkFolder(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& folderUrl, int parentId, int depth);
+    void ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& rootPath, int parentId, int depth = 0);
     bool IsAllowedExtension(const std::wstring& ext, std::wstring& mime, std::wstring& uclass);
     static void BuildIndexes(MediaIndexState& state);
     void SwapScannedState(MediaIndexState&& state);

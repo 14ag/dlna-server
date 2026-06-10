@@ -2,6 +2,12 @@
 #define DLNA_UTILS_H
 
 #include <string>
+#include <vector>
+
+struct AlbumArtCandidate {
+    std::wstring fileName;
+    std::wstring mimeType;
+};
 
 struct MediaFormatInfo {
     std::wstring mimeType;
@@ -20,6 +26,7 @@ struct HttpByteRange {
 
 std::string TrimAscii(const std::string& value);
 std::string ToLowerAscii(std::string value);
+std::wstring ToLowerWide(std::wstring value);
 std::string FindHeaderValueCaseInsensitive(const std::string& request, const std::string& headerName);
 bool TryParseIntStrict(const std::string& text, int& value);
 bool TryParseNonNegativeLongLong(const std::string& text, long long& value);
@@ -36,5 +43,6 @@ std::string GetDlnaServerHeader();
 bool IsSubtitleExtension(const std::wstring& ext);
 std::string SubtitleMimeForExtension(const std::wstring& ext);
 bool NaturalLessWide(const std::wstring& left, const std::wstring& right);
+std::vector<AlbumArtCandidate> BuildAlbumArtCandidateNames(const std::wstring& stem);
 
 #endif // DLNA_UTILS_H

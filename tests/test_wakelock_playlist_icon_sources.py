@@ -46,7 +46,7 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
 
         for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
             source = self.read(path)
-            self.assertIn("AppConfig.defaultPlaylistEnabled", source)
+            self.assertIn("cfg.defaultPlaylistEnabled", source)
             self.assertIn("Default playlist", source)
             self.assertIn("entry.subtitlePath", source)
 
