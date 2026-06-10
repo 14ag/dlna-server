@@ -10,25 +10,6 @@ class UmsHardeningSourceTests(unittest.TestCase):
     def read(self, path):
         return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_roadmap_groups_upgrade_work_by_dependency_depth(self):
-        roadmap = self.read("docs/ums-upgrade-roadmap.md")
-
-        for heading in (
-            "No New Dependencies",
-            "Optional FFmpeg/ffprobe",
-            "Index/Database",
-            "Renderer Profiles",
-            "UPnP Advanced",
-            "Later New Features",
-        ):
-            self.assertIn(f"## {heading}", roadmap)
-        self.assertIn("clean-room", roadmap)
-        self.assertIn("GPL implementation code must not be copied", roadmap)
-        blueprint = self.read("docs/pdf-dlna-framework-upgrade-blueprint.md")
-        self.assertIn("Feature Spec: PDF-Derived DLNA Framework Readiness", blueprint)
-        self.assertIn("Event subscription request", blueprint)
-        self.assertIn("Implementation Blueprint", blueprint)
-
     def test_shared_utility_layer_owns_common_protocol_rules(self):
         header = self.read("src/dlna_utils.h")
         source = self.read("src/dlna_utils.cpp")

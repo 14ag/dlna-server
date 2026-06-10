@@ -4,7 +4,6 @@
 #include <stdio.h>
 #include <deque>
 #include <shlwapi.h>
-#include <shlobj.h>
 #include <mutex>
 
 static std::deque<std::wstring> g_logLines;
@@ -14,12 +13,13 @@ static std::wstring g_debugLogPath;
 const size_t MAX_LOG_LINES = 1000;
 
 FILE* GetDebugLogFile() {
-    wchar_t szPath[MAX_PATH];
-    if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, szPath))) {
+    std::wstring configPath = AppConfig.GetConfigPath();
+    wchar_t szPath[MAX_PATH] = {};
+    if (configPath.empty() || configPath.size() >= MAX_PATH) {
         return NULL;
     }
-    PathAppendW(szPath, L"dlna-server");
-    CreateDirectoryW(szPath, NULL);
+    wcscpy_s(szPath, configPath.c_str());
+    PathRemoveFileSpecW(szPath);
     PathAppendW(szPath, L"debug.log");
 
     std::wstring path(szPath);
