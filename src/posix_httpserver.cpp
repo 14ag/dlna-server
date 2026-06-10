@@ -185,7 +185,7 @@ bool LoadServerIconPng(const std::string& fileName, std::string& bytes) {
     if (fileName.empty()) return false;
     const std::string exeDir = ExecutableDirectory();
     std::vector<std::string> candidates = {
-        "resources/" + fileName,
+        std::string(DLNA_RESOURCE_DIR) + "/" + fileName,
         exeDir + "/" + fileName,
         exeDir + "/../share/dlna-server/icons/" + fileName,
         exeDir + "/../Resources/" + fileName,

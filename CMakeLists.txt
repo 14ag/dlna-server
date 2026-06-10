@@ -113,7 +113,10 @@ else()
     dlna_enable_warnings(dlna-server)
     dlna_link_required_curl(dlna-server)
     target_include_directories(dlna-server PRIVATE src)
-    target_compile_definitions(dlna-server PRIVATE DLNA_POSIX=1)
+    target_compile_definitions(dlna-server PRIVATE
+        DLNA_POSIX=1
+        DLNA_RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources"
+    )
     if(APPLE)
         target_compile_definitions(dlna-server PRIVATE DLNA_PLATFORM_NAME=\"macOS\")
     else()
@@ -167,7 +170,10 @@ else()
         set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
         dlna_enable_warnings(dlna-server-gui-native)
         dlna_link_required_curl(dlna-server-gui-native)
-        target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_POSIX=1)
+        target_compile_definitions(dlna-server-gui-native PRIVATE
+            DLNA_POSIX=1
+            DLNA_RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources"
+        )
         if(APPLE)
             target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_PLATFORM_NAME=\"macOS\")
         else()
