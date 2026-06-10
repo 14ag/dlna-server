@@ -67,6 +67,7 @@ private:
     std::mutex m_responseMutex;
     std::condition_variable m_responseCondition;
     std::vector<DelayedSearchResponse> m_delayedResponses;
+    std::mutex m_socketMutex;
 
     std::vector<NetworkEndpoint> m_endpoints;
     int m_port;

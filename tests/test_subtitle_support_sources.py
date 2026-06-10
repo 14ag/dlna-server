@@ -38,7 +38,9 @@ class SubtitleSupportSourceTests(unittest.TestCase):
         self.assertIn('path.rfind("/subtitle/", 0) == 0', source)
         self.assertIn("item.subtitlePath.c_str()", source)
         self.assertIn("SubtitleMimeForExtension", source)
-        self.assertIn("done_subtitle:", source)
+        self.assertIn("ScopedHandle", source)
+        self.assertIn("TrySendAll(clientSocket, subBuf, subRead)", source)
+        self.assertNotIn("done_subtitle:", source)
 
 
 if __name__ == "__main__":

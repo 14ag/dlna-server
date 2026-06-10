@@ -7,9 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cwctype>
 #include <filesystem>
-#include <functional>
 #include <utility>
 
 namespace fs = std::filesystem;
@@ -33,11 +31,7 @@ bool IsReadableEntry(const fs::directory_entry& entry) {
 
 std::wstring CanonicalMediaKey(const std::wstring& pathText) {
     if (IsRemoteMediaUrl(pathText)) {
-        std::wstring value = pathText;
-        std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
-            return static_cast<wchar_t>(std::towlower(ch));
-        });
-        return value;
+        return ToLowerWide(pathText);
     }
     std::error_code ec;
     fs::path path(WideToUtf8(pathText));
@@ -49,42 +43,39 @@ std::wstring BuildDuplicateMediaKey(int parentId, const std::wstring& path) {
     return std::to_wstring(parentId) + L"\n" + CanonicalMediaKey(path);
 }
 
-void SetAlbumArtIfExists(MediaItem& item) {
+std::wstring ContainerLookupKey(int parentId, const std::wstring& title, const std::wstring& keyPath) {
+    return std::to_wstring(parentId) + L"\n" + title + L"\n" + keyPath;
+}
+
+void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
     if (IsRemoteMediaUrl(item.path)) return;
     fs::path path(WideToUtf8(item.path));
-    std::vector<std::pair<fs::path, std::wstring>> candidates = {
-        { path.parent_path() / "folder.jpg", L"image/jpeg" },
-        { path.parent_path() / "folder.JPG", L"image/jpeg" },
-        { path.parent_path() / "Folder.jpg", L"image/jpeg" },
-        { path.parent_path() / "cover.jpg", L"image/jpeg" },
-        { path.parent_path() / "cover.JPG", L"image/jpeg" },
-        { path.parent_path() / "Cover.jpg", L"image/jpeg" },
-        { path.parent_path() / "album.jpg", L"image/jpeg" },
-        { path.parent_path() / "album.JPG", L"image/jpeg" },
-        { path.parent_path() / "Album.jpg", L"image/jpeg" },
-        { path.parent_path() / "thumb.jpg", L"image/jpeg" },
-        { path.parent_path() / "thumb.JPG", L"image/jpeg" },
-        { path.parent_path() / "thumb.jpeg", L"image/jpeg" },
-        { path.parent_path() / "thumb.JPEG", L"image/jpeg" },
-        { path.parent_path() / (path.stem().u8string() + ".jpg"), L"image/jpeg" },
-        { path.parent_path() / (path.stem().u8string() + ".jpeg"), L"image/jpeg" },
-        { path.parent_path() / (path.stem().u8string() + ".png"), L"image/png" },
-    };
-    for (const auto& candidate : candidates) {
+    const std::wstring directoryKey = Utf8ToWide(path.parent_path().u8string());
+    auto cached = state.albumArtByDirectory.find(directoryKey);
+    if (cached != state.albumArtByDirectory.end()) {
+        item.albumArtPath = cached->second.first;
+        item.albumArtMime = cached->second.second;
+        return;
+    }
+
+    for (const auto& candidate : BuildAlbumArtCandidateNames(Utf8ToWide(path.stem().u8string()))) {
+        fs::path candidatePath = path.parent_path() / WideToUtf8(candidate.fileName);
         std::error_code ec;
-        if (fs::is_regular_file(candidate.first, ec)) {
-            item.albumArtPath = Utf8ToWide(candidate.first.u8string());
-            item.albumArtMime = candidate.second;
+        if (fs::is_regular_file(candidatePath, ec)) {
+            item.albumArtPath = Utf8ToWide(candidatePath.u8string());
+            item.albumArtMime = candidate.mimeType;
+            state.albumArtByDirectory[directoryKey] = { item.albumArtPath, item.albumArtMime };
             return;
         }
     }
+    state.albumArtByDirectory[directoryKey] = { L"", L"" };
 }
 
 int FindOrAddContainer(MediaIndexState& state, int parentId, const std::wstring& title, const std::wstring& keyPath) {
-    for (const auto& item : state.items) {
-        if (item.isFolder && item.parentId == parentId && item.title == title && item.path == keyPath) {
-            return item.id;
-        }
+    const std::wstring lookupKey = ContainerLookupKey(parentId, title, keyPath);
+    auto found = state.containerKeys.find(lookupKey);
+    if (found != state.containerKeys.end()) {
+        return found->second;
     }
 
     MediaItem folder{};
@@ -95,11 +86,12 @@ int FindOrAddContainer(MediaIndexState& state, int parentId, const std::wstring&
     folder.isFolder = true;
     folder.upnpClass = L"object.container.storageFolder";
     state.items.push_back(folder);
+    state.containerKeys[lookupKey] = folder.id;
     return folder.id;
 }
 
-void AddArtistAlbumMirrorIfPresent(MediaIndexState& state, const MediaItem& item, int sourceParentId) {
-    if (!AppConfig.addArtistAlbumFolders || !AppConfig.flatFolderStyle || IsRemoteMediaUrl(item.path)) return;
+void AddArtistAlbumMirrorIfPresent(MediaIndexState& state, const ConfigSnapshot& cfg, const MediaItem& item, int sourceParentId) {
+    if (!cfg.addArtistAlbumFolders || !cfg.flatFolderStyle || IsRemoteMediaUrl(item.path)) return;
     if (item.upnpClass != L"object.item.audioItem.musicTrack" && item.upnpClass != L"object.item.videoItem") return;
 
     fs::path path(WideToUtf8(item.path));
@@ -117,6 +109,31 @@ void AddArtistAlbumMirrorIfPresent(MediaIndexState& state, const MediaItem& item
     mirror.id = state.nextId++;
     mirror.parentId = albumId;
     state.items.push_back(mirror);
+}
+
+void AppendDescendants(const std::vector<MediaItem>& items,
+                       const std::unordered_map<int, std::vector<size_t>>& childrenByParent,
+                       int parentId,
+                       bool sortByTitle,
+                       std::vector<MediaItem>& result) {
+    auto found = childrenByParent.find(parentId);
+    if (found == childrenByParent.end()) return;
+
+    std::vector<MediaItem> children;
+    for (size_t index : found->second) {
+        if (index < items.size()) children.push_back(items[index]);
+    }
+    if (sortByTitle) {
+        std::sort(children.begin(), children.end(), [](const MediaItem& a, const MediaItem& b) {
+            if (a.isFolder != b.isFolder) return a.isFolder && !b.isFolder;
+            return NaturalLessWide(a.title, b.title);
+        });
+    }
+
+    for (const auto& child : children) {
+        result.push_back(child);
+        if (child.isFolder) AppendDescendants(items, childrenByParent, child.id, sortByTitle, result);
+    }
 }
 }
 
@@ -137,9 +154,10 @@ bool MediaSources::IsAllowedExtension(const std::wstring& ext, std::wstring& mim
 }
 
 void MediaSources::Scan() {
+    const ConfigSnapshot cfg = AppConfig.Snapshot();
     MediaIndexState state;
     state.items.push_back({0, -1, L"", L"Root", true, L"", L"object.container.storageFolder", 0, L"", L"", L""});
-    for (const auto& source : AppConfig.mediaSources) {
+    for (const auto& source : cfg.mediaSources) {
         if (!source.enabled) continue;
         if (!IsPlaylistSourcePath(source.path) && !IsNetworkShareUrl(source.path)) {
             fs::path path(WideToUtf8(source.path));
@@ -155,36 +173,38 @@ void MediaSources::Scan() {
         state.items.push_back(folder);
 
         if (IsPlaylistSourcePath(source.path)) {
-            ScanPlaylist(state, source.path, folder.id);
+            ScanPlaylist(state, cfg, source.path, folder.id);
         } else if (IsNetworkShareUrl(source.path)) {
-            ScanNetworkFolder(state, source.path, folder.id, 0);
+            ScanNetworkFolder(state, cfg, source.path, folder.id, 0);
         } else {
-            ScanFolder(state, source.path, folder.id);
+            ScanFolder(state, cfg, source.path, folder.id);
         }
     }
-    if (AppConfig.defaultPlaylistEnabled && !AppConfig.defaultPlaylistPath.empty()) {
-        fs::path path(WideToUtf8(AppConfig.defaultPlaylistPath));
+    if (cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty()) {
+        fs::path path(WideToUtf8(cfg.defaultPlaylistPath));
         std::error_code ec;
         if (fs::is_regular_file(path, ec)) {
             MediaItem playlistFolder{};
             playlistFolder.id = state.nextId++;
             playlistFolder.parentId = 0;
-            playlistFolder.path = AppConfig.defaultPlaylistPath;
+            playlistFolder.path = cfg.defaultPlaylistPath;
             playlistFolder.title = L"Default playlist";
             playlistFolder.isFolder = true;
             playlistFolder.upnpClass = L"object.container.storageFolder";
             state.items.push_back(playlistFolder);
-            ScanPlaylist(state, AppConfig.defaultPlaylistPath, playlistFolder.id);
+            ScanPlaylist(state, cfg, cfg.defaultPlaylistPath, playlistFolder.id);
         }
     }
-    int itemCount = static_cast<int>(state.items.size());
+    int mediaItemCount = static_cast<int>(std::count_if(state.items.begin(), state.items.end(), [](const MediaItem& item) {
+        return !item.isFolder;
+    }));
     BuildIndexes(state);
     SwapScannedState(std::move(state));
     m_systemUpdateId.fetch_add(1, std::memory_order_release);
-    LogPrint(L"Scanned %d media items.", itemCount);
+    LogPrint(L"Scanned %d media items.", mediaItemCount);
 }
 
-void MediaSources::AddMediaFile(MediaIndexState& state, const std::wstring& pathText, int parentId, const std::wstring& titleOverride, const std::wstring& subtitleOverride, bool allowArtistAlbumMirror) {
+void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& pathText, int parentId, const std::wstring& titleOverride, const std::wstring& subtitleOverride, bool allowArtistAlbumMirror) {
     std::wstring mime, uclass;
     std::wstring ext = SourceExtension(pathText);
     if (!IsAllowedExtension(ext, mime, uclass)) {
@@ -215,7 +235,7 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const std::wstring& path
         file.sizeBytes = static_cast<long long>(fs::file_size(path, ec));
     }
 
-    if (AppConfig.showFileNamesInsteadOfTitles) file.title = SourceDisplayName(pathText);
+    if (cfg.showFileNamesInsteadOfTitles) file.title = SourceDisplayName(pathText);
     else if (!titleOverride.empty()) file.title = titleOverride;
     else file.title = SourceStemName(pathText);
 
@@ -234,20 +254,20 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const std::wstring& path
         }
     }
 
-    SetAlbumArtIfExists(file);
+    SetAlbumArtIfExists(state, file);
     state.items.push_back(file);
     if (allowArtistAlbumMirror) {
-        AddArtistAlbumMirrorIfPresent(state, file, parentId);
+        AddArtistAlbumMirrorIfPresent(state, cfg, file, parentId);
     }
 }
 
-void MediaSources::ScanPlaylist(MediaIndexState& state, const std::wstring& playlistPath, int parentId) {
+void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& playlistPath, int parentId) {
     for (const auto& entry : LoadPlaylistEntries(playlistPath)) {
-        AddMediaFile(state, entry.location, parentId, entry.title, entry.subtitlePath);
+        AddMediaFile(state, cfg, entry.location, parentId, entry.title, entry.subtitlePath);
     }
 }
 
-void MediaSources::ScanNetworkFolder(MediaIndexState& state, const std::wstring& folderUrl, int parentId, int depth) {
+void MediaSources::ScanNetworkFolder(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& folderUrl, int parentId, int depth) {
     if (depth > 8) return;
 
     for (const auto& entry : ListRemoteDirectory(folderUrl)) {
@@ -260,19 +280,19 @@ void MediaSources::ScanNetworkFolder(MediaIndexState& state, const std::wstring&
             playlistFolder.isFolder = true;
             playlistFolder.upnpClass = L"object.container.storageFolder";
             state.items.push_back(playlistFolder);
-            ScanPlaylist(state, entry.url, playlistFolder.id);
+            ScanPlaylist(state, cfg, entry.url, playlistFolder.id);
             continue;
         }
 
         std::wstring mime, uclass;
         if (IsAllowedExtension(SourceExtension(entry.url), mime, uclass)) {
-            AddMediaFile(state, entry.url, parentId);
+            AddMediaFile(state, cfg, entry.url, parentId);
             continue;
         }
 
         if (entry.likelyDirectory) {
-            if (AppConfig.flatFolderStyle) {
-                ScanNetworkFolder(state, entry.url, parentId, depth + 1);
+            if (cfg.flatFolderStyle) {
+                ScanNetworkFolder(state, cfg, entry.url, parentId, depth + 1);
             } else {
                 MediaItem folder{};
                 folder.id = state.nextId++;
@@ -282,13 +302,17 @@ void MediaSources::ScanNetworkFolder(MediaIndexState& state, const std::wstring&
                 folder.isFolder = true;
                 folder.upnpClass = L"object.container.storageFolder";
                 state.items.push_back(folder);
-                ScanNetworkFolder(state, entry.url, folder.id, depth + 1);
+                ScanNetworkFolder(state, cfg, entry.url, folder.id, depth + 1);
             }
         }
     }
 }
 
-void MediaSources::ScanFolder(MediaIndexState& state, const std::wstring& rootPath, int parentId) {
+void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& rootPath, int parentId, int depth) {
+    if (depth > 64) {
+        LogPrint(L"Skipping folder due to recursion depth limit: %ls", rootPath.c_str());
+        return;
+    }
     fs::path root(WideToUtf8(rootPath));
     std::error_code ec;
     fs::directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
@@ -303,8 +327,8 @@ void MediaSources::ScanFolder(MediaIndexState& state, const std::wstring& rootPa
         const fs::path path = entry.path();
         bool skip = entry.is_symlink(ec) || IsHiddenPath(path) || !IsReadableEntry(entry);
         if (!skip && entry.is_directory(ec)) {
-            if (AppConfig.flatFolderStyle) {
-                ScanFolder(state, Utf8ToWide(path.u8string()), parentId);
+            if (cfg.flatFolderStyle) {
+                ScanFolder(state, cfg, Utf8ToWide(path.u8string()), parentId, depth + 1);
             } else {
                 MediaItem folder{};
                 folder.id = state.nextId++;
@@ -314,7 +338,7 @@ void MediaSources::ScanFolder(MediaIndexState& state, const std::wstring& rootPa
                 folder.isFolder = true;
                 folder.upnpClass = L"object.container.storageFolder";
                 state.items.push_back(folder);
-                ScanFolder(state, folder.path, folder.id);
+                ScanFolder(state, cfg, folder.path, folder.id, depth + 1);
             }
         } else if (!skip && entry.is_regular_file(ec)) {
             std::wstring fullPath = Utf8ToWide(path.u8string());
@@ -327,9 +351,9 @@ void MediaSources::ScanFolder(MediaIndexState& state, const std::wstring& rootPa
                 playlistFolder.isFolder = true;
                 playlistFolder.upnpClass = L"object.container.storageFolder";
                 state.items.push_back(playlistFolder);
-                ScanPlaylist(state, fullPath, playlistFolder.id);
+                ScanPlaylist(state, cfg, fullPath, playlistFolder.id);
             } else {
-                AddMediaFile(state, fullPath, parentId);
+                AddMediaFile(state, cfg, fullPath, parentId);
             }
         }
         it.increment(ec);
@@ -349,7 +373,8 @@ std::vector<MediaItem> MediaSources::GetChildren(int parentId) {
             if (index < m_items.size()) result.push_back(m_items[index]);
         }
     }
-    if (AppConfig.sortByTitle) {
+    const bool sortByTitle = AppConfig.Snapshot().sortByTitle;
+    if (sortByTitle) {
         std::sort(result.begin(), result.end(), [](const MediaItem& a, const MediaItem& b) {
             if (a.isFolder != b.isFolder) return a.isFolder && !b.isFolder;
             return NaturalLessWide(a.title, b.title);
@@ -368,27 +393,7 @@ std::vector<MediaItem> MediaSources::GetDescendants(int parentId) {
     }
 
     std::vector<MediaItem> result;
-    std::function<void(int)> appendChildren = [&](int currentParent) {
-        auto found = childrenByParent.find(currentParent);
-        if (found == childrenByParent.end()) return;
-
-        std::vector<MediaItem> children;
-        for (size_t index : found->second) {
-            if (index < items.size()) children.push_back(items[index]);
-        }
-        if (AppConfig.sortByTitle) {
-            std::sort(children.begin(), children.end(), [](const MediaItem& a, const MediaItem& b) {
-                if (a.isFolder != b.isFolder) return a.isFolder && !b.isFolder;
-                return NaturalLessWide(a.title, b.title);
-            });
-        }
-
-        for (const auto& child : children) {
-            result.push_back(child);
-            if (child.isFolder) appendChildren(child.id);
-        }
-    };
-    appendChildren(parentId);
+    AppendDescendants(items, childrenByParent, parentId, AppConfig.Snapshot().sortByTitle, result);
     return result;
 }
 
@@ -412,6 +417,17 @@ int MediaSources::GetChildCount(int parentId) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto found = m_childrenByParent.find(parentId);
     return found == m_childrenByParent.end() ? 0 : static_cast<int>(found->second.size());
+}
+
+std::unordered_map<int, int> MediaSources::GetChildCounts(const std::vector<MediaItem>& items) {
+    std::unordered_map<int, int> counts;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const auto& item : items) {
+        if (!item.isFolder) continue;
+        auto found = m_childrenByParent.find(item.id);
+        counts[item.id] = found == m_childrenByParent.end() ? 0 : static_cast<int>(found->second.size());
+    }
+    return counts;
 }
 
 int MediaSources::GetSystemUpdateID() {

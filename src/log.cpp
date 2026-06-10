@@ -9,7 +9,32 @@
 
 static std::deque<std::wstring> g_logLines;
 static std::mutex g_logMutex;
+static FILE* g_debugLogFile = NULL;
+static std::wstring g_debugLogPath;
 const size_t MAX_LOG_LINES = 1000;
+
+FILE* GetDebugLogFile() {
+    wchar_t szPath[MAX_PATH];
+    if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, szPath))) {
+        return NULL;
+    }
+    PathAppendW(szPath, L"dlna-server");
+    CreateDirectoryW(szPath, NULL);
+    PathAppendW(szPath, L"debug.log");
+
+    std::wstring path(szPath);
+    if (g_debugLogFile && g_debugLogPath == path) {
+        return g_debugLogFile;
+    }
+    if (g_debugLogFile) {
+        fclose(g_debugLogFile);
+        g_debugLogFile = NULL;
+    }
+    if (_wfopen_s(&g_debugLogFile, path.c_str(), L"a,ccs=UTF-8") == 0 && g_debugLogFile) {
+        g_debugLogPath = path;
+    }
+    return g_debugLogFile;
+}
 
 void LogPrint(const wchar_t* fmt, ...) {
     wchar_t msg[2048];
@@ -34,18 +59,12 @@ void LogPrint(const wchar_t* fmt, ...) {
         }
     }
 
-    if (AppConfig.debugLog) {
-        wchar_t szPath[MAX_PATH];
-        if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, szPath))) {
-            PathAppendW(szPath, L"dlna-server");
-            CreateDirectoryW(szPath, NULL);
-            PathAppendW(szPath, L"debug.log");
-            
-            FILE* fp = NULL;
-            if (_wfopen_s(&fp, szPath, L"a, ccs=UTF-8") == 0 && fp) {
-                fwprintf(fp, L"%s", line.c_str());
-                fclose(fp);
-            }
+    if (AppConfig.Snapshot().debugLog) {
+        std::lock_guard<std::mutex> lock(g_logMutex);
+        FILE* fp = GetDebugLogFile();
+        if (fp) {
+            fwprintf(fp, L"%s", line.c_str());
+            fflush(fp);
         }
     }
 }

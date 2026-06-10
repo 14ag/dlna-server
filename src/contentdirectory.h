@@ -15,14 +15,11 @@ public:
 
     std::string HandleContentDirectoryControl(const std::string& soapBody, const std::string& hostUrl);
     std::string HandleConnectionManagerControl(const std::string& soapBody);
-    std::string HandleBrowse(const std::string& soapBody, const std::string& hostUrl);
 
 private:
     ContentDirectory() {}
     
     std::string XMLEscape(const std::wstring& str);
-    std::wstring GetMimeType(const std::wstring& ext);
-    std::wstring GetUPnPClass(const std::wstring& ext);
 };
 
 #define AppContent ContentDirectory::Get()

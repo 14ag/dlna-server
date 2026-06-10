@@ -7,7 +7,9 @@
 #include <ws2tcpip.h>
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <stdarg.h>
+#include <random>
 #include <vector>
 
 #define SSDP_PORT 1900
@@ -21,7 +23,7 @@ struct SSDPTarget {
 };
 
 void DiscoveryLog(const wchar_t* fmt, ...) {
-    if (!AppConfig.debugLog) {
+    if (!AppConfig.Snapshot().debugLog) {
         return;
     }
 
@@ -48,11 +50,9 @@ DWORD ComputeDelayMilliseconds(int mxSeconds) {
         return 0;
     }
 
-    LARGE_INTEGER counter = {};
-    QueryPerformanceCounter(&counter);
-    DWORD randomValue = counter.LowPart ^ static_cast<DWORD>(GetTickCount64()) ^ GetCurrentThreadId();
-
-    return randomValue % (maxDelay + 1);
+    static thread_local std::mt19937 generator(std::random_device{}());
+    std::uniform_int_distribution<DWORD> distribution(0, maxDelay);
+    return distribution(generator);
 }
 
 bool SetOutboundInterface(SOCKET socket, const NetworkEndpoint& endpoint, bool multicast) {
@@ -217,12 +217,14 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
 void SSDP::Stop() {
     if (!m_running.load()) return;
 
-    m_running.store(false);
     SendNotifyBurst("ssdp:byebye", 1, 0);
+    m_running.store(false);
+    if (m_ipv4Socket != INVALID_SOCKET) shutdown(m_ipv4Socket, SD_BOTH);
+    if (m_ipv6Socket != INVALID_SOCKET) shutdown(m_ipv6Socket, SD_BOTH);
     m_responseCondition.notify_all();
 
     if (m_hThread) {
-        WaitForSingleObject(m_hThread, 2000);
+        WaitForSingleObject(m_hThread, INFINITE);
         CloseHandle(m_hThread);
         m_hThread = NULL;
     }
@@ -254,6 +256,7 @@ void SSDP::SendNotifyRound(const char* nts) {
             continue;
         }
 
+        std::lock_guard<std::mutex> socketLock(m_socketMutex);
         if (!SetOutboundInterface(socket, endpoint, true)) {
             DiscoveryLog(L"SSDP notify interface select failed: family=%d if=%lu err=%d", endpoint.family, endpoint.interfaceIndex, WSAGetLastError());
             continue;
@@ -284,7 +287,7 @@ void SSDP::SendNotifyRound(const char* nts) {
 
         for (const auto& target : targets) {
             std::string message;
-            if (_stricmp(nts, "ssdp:byebye") == 0) {
+            if (std::strcmp(nts, "ssdp:byebye") == 0) {
                 message =
                     "NOTIFY * HTTP/1.1\r\n"
                     "HOST: " + hostHeader + ":" + std::to_string(SSDP_PORT) + "\r\n" +
@@ -332,6 +335,7 @@ void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
     if (!m_running.load()) {
         return;
     }
+    std::lock_guard<std::mutex> socketLock(m_socketMutex);
     if (!SetOutboundInterface(response.socket, response.endpoint, false)) {
         DiscoveryLog(L"SSDP response interface select failed: if=%lu err=%d", response.endpoint.interfaceIndex, WSAGetLastError());
         return;
@@ -371,7 +375,7 @@ void SSDP::ResponseWorker() {
                 });
             auto now = std::chrono::steady_clock::now();
             if (next->dueAt > now) {
-                m_responseCondition.wait_for(lock, std::chrono::milliseconds(50));
+                m_responseCondition.wait_until(lock, next->dueAt);
                 continue;
             }
 
@@ -399,7 +403,10 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
     std::string man = FindHeaderValueCaseInsensitive(request, "MAN");
     std::string st = FindHeaderValueCaseInsensitive(request, "ST");
     std::string mxStr = FindHeaderValueCaseInsensitive(request, "MX");
-    int mx = mxStr.empty() ? 1 : atoi(mxStr.c_str());
+    int mx = 1;
+    if (!mxStr.empty() && !TryParseIntStrict(TrimAscii(mxStr), mx)) {
+        mx = 1;
+    }
     std::string source = SockaddrToLiteral(remoteAddr);
 
     DiscoveryLog(L"SSDP search in: src=%hs st=%hs mx=%d man=%hs", source.c_str(), st.c_str(), mx, man.c_str());

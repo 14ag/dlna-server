@@ -49,7 +49,7 @@ class FirewallAccessSourceTests(unittest.TestCase):
         self.assertIn("firewall_access_win.cpp", cmake)
         self.assertIn("--configure-firewall", main)
         self.assertIn("ConfigureFirewallAccessElevated", main)
-        self.assertIn("EnsureFirewallAccess(AppConfig.port, FirewallAccessMode::Interactive", server)
+        self.assertIn("EnsureFirewallAccess(cfg.port, FirewallAccessMode::Interactive", server)
 
     def test_windows_settings_port_change_restarts_without_firewall_churn(self):
         source = self.read("src/mainwindow.cpp")
