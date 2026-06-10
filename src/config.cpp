@@ -25,6 +25,53 @@ std::string ConfigValueOrDefault(const std::unordered_map<std::string, std::stri
     return it == values.end() ? std::string(defaultValue) : StripUtf8Bom(it->second);
 }
 
+std::wstring EscapeConfigListField(const std::wstring& value) {
+    std::wstring escaped;
+    for (wchar_t ch : value) {
+        if (ch == L'\\' || ch == L'|' || ch == L'\r' || ch == L'\n') {
+            escaped.push_back(L'\\');
+            if (ch == L'\r') escaped.push_back(L'r');
+            else if (ch == L'\n') escaped.push_back(L'n');
+            else escaped.push_back(ch);
+        } else {
+            escaped.push_back(ch);
+        }
+    }
+    return escaped;
+}
+
+std::vector<std::wstring> SplitConfigList(const std::wstring& value) {
+    std::vector<std::wstring> fields;
+    std::wstring current;
+    bool escaping = false;
+    for (wchar_t ch : value) {
+        if (escaping) {
+            if (ch == L'r') current.push_back(L'\r');
+            else if (ch == L'n') current.push_back(L'\n');
+            else if (ch == L'|' || ch == L'\\') current.push_back(ch);
+            else {
+                current.push_back(L'\\');
+                current.push_back(ch);
+            }
+            escaping = false;
+            continue;
+        }
+        if (ch == L'\\') {
+            escaping = true;
+            continue;
+        }
+        if (ch == L'|') {
+            fields.push_back(current);
+            current.clear();
+            continue;
+        }
+        current.push_back(ch);
+    }
+    if (escaping) current.push_back(L'\\');
+    fields.push_back(current);
+    return fields;
+}
+
 std::unordered_map<std::string, std::string> ParseConfigText(std::string text) {
     std::unordered_map<std::string, std::string> values;
     if (text.size() >= 3 &&
@@ -270,13 +317,9 @@ void Config::Load() {
 
     mediaSources.clear();
     std::wstring sourcesStr = Utf8ToWide(ConfigValueOrDefault(values, "MediaSources", ""));
-    size_t pos = 0;
-    while ((pos = sourcesStr.find(L"|")) != std::wstring::npos) {
-        std::wstring token = sourcesStr.substr(0, pos);
+    for (const auto& token : SplitConfigList(sourcesStr)) {
         if (!token.empty()) mediaSources.push_back({ token, true });
-        sourcesStr.erase(0, pos + 1);
     }
-    if (!sourcesStr.empty()) mediaSources.push_back({ sourcesStr, true });
 }
 
 void Config::Save() {
@@ -285,7 +328,7 @@ void Config::Save() {
 
     std::wstring sourcesStr;
     for (size_t i = 0; i < mediaSources.size(); i++) {
-        sourcesStr += mediaSources[i].path;
+        sourcesStr += EscapeConfigListField(mediaSources[i].path);
         if (i < mediaSources.size() - 1) sourcesStr += L"|";
     }
 

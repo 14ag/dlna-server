@@ -26,11 +26,25 @@ constexpr int kSsdpPort = 1900;
 constexpr const char* kSsdpMulticastIPv4 = "239.255.255.250";
 constexpr const char* kSsdpMulticastIPv6 = "ff02::c";
 constexpr auto kAliveInterval = std::chrono::minutes(15);
+constexpr size_t kMaxDelayedResponses = 256;
 
 struct SSDPTarget {
     std::string st;
     std::string usn;
 };
+
+bool CoalesceDelayedResponse(std::vector<DelayedSearchResponse>& queue, DelayedSearchResponse&& response) {
+    for (auto& queued : queue) {
+        if (queued.remoteLen == response.remoteLen &&
+            std::memcmp(&queued.remoteAddr, &response.remoteAddr, static_cast<size_t>(response.remoteLen)) == 0 &&
+            queued.logUsn == response.logUsn &&
+            queued.logSt == response.logSt) {
+            queued = std::move(response);
+            return true;
+        }
+    }
+    return false;
+}
 
 unsigned int ComputeDelayMilliseconds(int mxSeconds) {
     int boundedSeconds = std::max(0, std::min(mxSeconds, 5));
@@ -115,14 +129,21 @@ int CreateIPv6Socket(const std::vector<NetworkEndpoint>& endpoints) {
     return fd;
 }
 
-void SetOutboundInterface(int fd, const NetworkEndpoint& endpoint) {
+bool SetOutboundInterface(int fd, const NetworkEndpoint& endpoint) {
     if (endpoint.family == AF_INET) {
         in_addr addr = reinterpret_cast<const sockaddr_in*>(&endpoint.sockaddr)->sin_addr;
-        setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &addr, sizeof(addr));
+        if (setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &addr, sizeof(addr)) != 0) {
+            LogPrint(L"IP_MULTICAST_IF failed for interface %lu.", endpoint.interfaceIndex);
+            return false;
+        }
     } else if (endpoint.family == AF_INET6) {
         unsigned int ifIndex = static_cast<unsigned int>(endpoint.interfaceIndex);
-        setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &ifIndex, sizeof(ifIndex));
+        if (setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &ifIndex, sizeof(ifIndex)) != 0) {
+            LogPrint(L"IP_MULTICAST_IF failed for interface %lu.", endpoint.interfaceIndex);
+            return false;
+        }
     }
+    return true;
 }
 
 bool BuildMulticastDestination(const NetworkEndpoint& endpoint, sockaddr_storage& dest, socklen_t& destLen, std::string& hostHeader) {
@@ -210,7 +231,9 @@ void SSDP::SendNotifyRound(const char* nts) {
         socklen_t destLen = 0;
         std::string hostHeader;
         if (!BuildMulticastDestination(endpoint, dest, destLen, hostHeader)) continue;
-        SetOutboundInterface(socketFd, endpoint);
+        if (!SetOutboundInterface(socketFd, endpoint)) {
+            continue;
+        }
 
         for (const auto& target : BuildTargets(m_uuidStr)) {
             std::stringstream ss;
@@ -227,7 +250,10 @@ void SSDP::SendNotifyRound(const char* nts) {
             }
             ss << "USN: " << target.usn << "\r\n\r\n";
             const std::string msg = ss.str();
-            sendto(socketFd, msg.data(), msg.size(), 0, reinterpret_cast<sockaddr*>(&dest), destLen);
+            ssize_t sent = sendto(socketFd, msg.data(), msg.size(), 0, reinterpret_cast<sockaddr*>(&dest), destLen);
+            if (sent < 0) {
+                LogPrint(L"SSDP send failed while sending notify.");
+            }
         }
     }
 }
@@ -240,8 +266,15 @@ void SSDP::SendNotifyBurst(const char* nts, int rounds, unsigned int delayMs) {
 }
 
 void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
+    if (response.messages.empty()) return;
     {
         std::lock_guard<std::mutex> lock(m_responseMutex);
+        if (CoalesceDelayedResponse(m_delayedResponses, std::move(response))) {
+            return;
+        }
+        if (m_delayedResponses.size() >= kMaxDelayedResponses) {
+            m_delayedResponses.erase(m_delayedResponses.begin());
+        }
         m_delayedResponses.push_back(std::move(response));
     }
     m_responseCondition.notify_one();
@@ -250,14 +283,17 @@ void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
 void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
     if (!m_running.load()) return;
     std::lock_guard<std::mutex> socketLock(m_socketMutex);
-    SetOutboundInterface(response.socket, response.endpoint);
+    if (!SetOutboundInterface(response.socket, response.endpoint)) return;
     for (const std::string& message : response.messages) {
-        sendto(response.socket,
-               message.data(),
-               message.size(),
-               0,
-               reinterpret_cast<const sockaddr*>(&response.remoteAddr),
-               static_cast<socklen_t>(response.remoteLen));
+        ssize_t sent = sendto(response.socket,
+                              message.data(),
+                              message.size(),
+                              0,
+                              reinterpret_cast<const sockaddr*>(&response.remoteAddr),
+                              static_cast<socklen_t>(response.remoteLen));
+        if (sent < 0) {
+            LogPrint(L"SSDP send failed while sending search response.");
+        }
     }
 }
 
@@ -313,6 +349,7 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
             if (ToLowerAscii(target.st) == ToLowerAscii(st)) responses.push_back(target);
         }
     }
+    if (responses.empty()) return;
     unsigned int delayMs = ComputeDelayMilliseconds(mx);
     const std::string serverHeader = GetDlnaServerHeader();
     DelayedSearchResponse delayed{};

@@ -17,6 +17,7 @@
 
 namespace {
 constexpr int kMaxCurlOutputBytes = 4 * 1024 * 1024;
+constexpr int kMaxPlsIndex = 10000;
 constexpr long kCurlCaptureTimeoutSeconds = 30L;
 
 std::wstring TrimWide(const std::wstring& value);
@@ -126,6 +127,7 @@ std::wstring ResolvePlaylistSidecar(const std::wstring& playlistPath, const std:
 
 struct RemoteFetchResult {
     bool ok = false;
+    bool truncated = false;
     long long contentLength = 0;
     std::string body;
 };
@@ -141,12 +143,13 @@ struct CurlGlobalInit {
 };
 
 size_t CurlWriteBody(char* ptr, size_t size, size_t nmemb, void* userdata) {
-    auto* output = static_cast<std::string*>(userdata);
+    auto* result = static_cast<RemoteFetchResult*>(userdata);
     size_t bytes = size * nmemb;
-    if (output->size() < kMaxCurlOutputBytes) {
-        size_t allowed = static_cast<size_t>(kMaxCurlOutputBytes) - output->size();
-        output->append(ptr, bytes < allowed ? bytes : allowed);
+    if (result->body.size() + bytes > static_cast<size_t>(kMaxCurlOutputBytes)) {
+        result->truncated = true;
+        return 0;
     }
+    result->body.append(ptr, bytes);
     return bytes;
 }
 
@@ -182,23 +185,25 @@ RemoteFetchResult CurlCapture(const std::wstring& url, bool headOnly, bool listO
     }
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteBody);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &result.body);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &result);
     if (headOnly) curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     if (listOnly) curl_easy_setopt(curl, CURLOPT_DIRLISTONLY, 1L);
 
     CURLcode code = curl_easy_perform(curl);
     long responseCode = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &responseCode);
-    if (code == CURLE_OK) {
+    if (result.truncated) {
+        LogPrint(L"[remote:parse] Remote content truncated after %d bytes: %ls", kMaxCurlOutputBytes, url.c_str());
+    } else if (code == CURLE_OK) {
         curl_off_t length = -1;
         curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &length);
         result.contentLength = length > 0 ? static_cast<long long>(length) : 0;
         result.ok = true;
     } else {
         if (responseCode == 401 || responseCode == 403 || code == CURLE_LOGIN_DENIED) {
-            LogPrint(L"Remote content unavailable: authentication failed for %ls", url.c_str());
+            LogPrint(L"[remote:auth] Remote content unavailable: authentication failed for %ls", url.c_str());
         } else {
-            LogPrint(L"Remote content unavailable: %hs", errorBuffer[0] ? errorBuffer : curl_easy_strerror(code));
+            LogPrint(L"[remote:network] Remote content unavailable: %hs", errorBuffer[0] ? errorBuffer : curl_easy_strerror(code));
         }
     }
     curl_easy_cleanup(curl);
@@ -372,7 +377,10 @@ std::vector<PlaylistEntry> ParsePls(const std::wstring& playlistPath, const std:
             continue;
         }
 
-        if (index <= 0) continue;
+        if (index <= 0 || index > kMaxPlsIndex) {
+            LogPrint(L"[remote:parse] Ignoring out-of-range PLS index %d in %ls", index, playlistPath.c_str());
+            continue;
+        }
         if (parsed.size() < static_cast<size_t>(index)) {
             parsed.resize(static_cast<size_t>(index));
         }
@@ -402,8 +410,42 @@ std::wstring StripQueryExtensionSource(const std::wstring& value) {
     return Utf8ToWide(text);
 }
 
+std::wstring ChildUrl(const std::wstring& directoryUrl, const std::wstring& childName);
+
+std::string ParseUnixListName(const std::string& trimmed) {
+    size_t pos = 0;
+    int fields = 0;
+    while (pos < trimmed.size() && fields < 8) {
+        while (pos < trimmed.size() && std::isspace(static_cast<unsigned char>(trimmed[pos]))) ++pos;
+        while (pos < trimmed.size() && !std::isspace(static_cast<unsigned char>(trimmed[pos]))) ++pos;
+        ++fields;
+    }
+    while (pos < trimmed.size() && std::isspace(static_cast<unsigned char>(trimmed[pos]))) ++pos;
+    return pos < trimmed.size() ? trimmed.substr(pos) : std::string();
+}
+
+RemoteDirectoryEntry ClassifyRemoteDirectoryEntry(const std::wstring& baseUrl, const std::string& line) {
+    std::string trimmed = TrimAscii(line);
+    const bool detailDirectory = !trimmed.empty() && trimmed[0] == 'd';
+    const bool detailFile = !trimmed.empty() && trimmed[0] == '-';
+    if ((detailDirectory || detailFile) && trimmed.find(' ') != std::string::npos) {
+        std::string parsedName = ParseUnixListName(trimmed);
+        if (!parsedName.empty()) trimmed = parsedName;
+    }
+    bool slashDirectory = !trimmed.empty() && trimmed.back() == '/';
+    if (slashDirectory) trimmed.pop_back();
+    std::wstring name = Utf8ToWide(trimmed);
+    std::wstring child = ChildUrl(baseUrl, name);
+    const bool likelyDirectory = detailDirectory || slashDirectory;
+    return { name, child, likelyDirectory };
+}
+
+std::string ParseUrlForJoin(const std::wstring& directoryUrl) {
+    return UrlWithoutQueryOrFragment(WideToUtf8(directoryUrl));
+}
+
 std::wstring ChildUrl(const std::wstring& directoryUrl, const std::wstring& childName) {
-    std::string base = WideToUtf8(directoryUrl);
+    std::string base = ParseUrlForJoin(directoryUrl);
     if (base.empty() || base.back() != '/') base.push_back('/');
     return Utf8ToWide(base + UrlEncodePathSegment(WideToUtf8(childName)));
 }
@@ -462,7 +504,12 @@ std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath)
 }
 
 std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& directoryUrl) {
-    if (!IsNetworkShareUrl(directoryUrl)) return {};
+    if (!IsNetworkShareUrl(directoryUrl)) {
+        if (IsRemoteMediaUrl(directoryUrl)) {
+            LogPrint(L"[remote:parse] HTTP directory listing is not supported: %ls", directoryUrl.c_str());
+        }
+        return {};
+    }
     std::wstring url = directoryUrl;
     if (!url.empty() && url.back() != L'/') url.push_back(L'/');
     RemoteFetchResult fetch = CurlCapture(url, false, true);
@@ -480,22 +527,9 @@ std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& direct
         std::string trimmed = TrimAscii(line);
         if (trimmed.empty() || trimmed == "." || trimmed == ".." || trimmed.rfind("total ", 0) == 0) continue;
 
-        bool detailDirectory = !trimmed.empty() && trimmed[0] == 'd';
-        if ((detailDirectory || (!trimmed.empty() && trimmed[0] == '-')) && trimmed.find(' ') != std::string::npos) {
-            size_t nameStart = trimmed.find_last_of(' ');
-            if (nameStart != std::string::npos && nameStart + 1 < trimmed.size()) {
-                trimmed = trimmed.substr(nameStart + 1);
-            }
-        }
-
-        bool slashDirectory = !trimmed.empty() && trimmed.back() == '/';
-        if (slashDirectory) trimmed.pop_back();
-        if (trimmed.empty() || trimmed == "." || trimmed == "..") continue;
-        std::wstring name = Utf8ToWide(trimmed);
-        std::wstring child = ChildUrl(url, name);
-        std::wstring ext = SourceExtension(name);
-        bool likelyDirectory = detailDirectory || slashDirectory;
-        entries.push_back({ name, child, likelyDirectory });
+        RemoteDirectoryEntry entry = ClassifyRemoteDirectoryEntry(url, trimmed);
+        if (entry.name.empty() || entry.name == L"." || entry.name == L"..") continue;
+        entries.push_back(entry);
     }
     return entries;
 }

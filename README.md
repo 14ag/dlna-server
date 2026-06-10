@@ -20,10 +20,12 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - Supports byte-range requests so DLNA clients can seek within media files.
 - Starts HTTP and SSDP before the background media scan finishes, so slow libraries do not block initial reachability.
 - Supports explicit rescans from the server layer; completed scans replace the old index only after a full scan succeeds.
+- Watches local media sources while running and rescans after local file changes without a manual restart.
+- Keeps a `media-cache.tsv` beside `config.ini` for stable media IDs, cached scan errors, and metadata groundwork.
 - Advertises the server with SSDP multicast `NOTIFY` messages.
 - Handles UPnP `ContentDirectory:1` Browse and Search SOAP requests with exact action dispatch.
 - Serves device, ContentDirectory, and ConnectionManager XML descriptions.
-- Accepts GENA event subscribe/unsubscribe requests on advertised UPnP event URLs.
+- Sends async GENA `SystemUpdateID` updates to subscribed ContentDirectory event callbacks.
 - Provides a native Windows UI with tray behavior.
 - Provides a native Linux FLTK GUI for media folders, server name, port, start, stop, settings, and logs.
 - Shows start/stop busy status and keeps Windows awake while the server is active.
@@ -279,7 +281,7 @@ The server answers ContentDirectory `Browse` and `Search` probes plus Connection
 
 Settings such as **Flat folders style**, **Show file names instead titles**, **Sort by title instead of file name**, **Proxy streams**, and **Add Artist/Album folders to audio** apply consistently to local folders, playlists, and network shares. Playlist order is preserved unless title sorting is enabled or a DLNA client sends an explicit sort request. When **Proxy streams** is disabled for remote HTTP/FTP/SMB entries, Browse can advertise the remote URL directly; otherwise media is proxied through `/media/{id}`.
 
-The advertised ContentDirectory and ConnectionManager event URLs accept UPnP GENA `SUBSCRIBE` and `UNSUBSCRIBE` requests with stable `SID` and timeout headers. This keeps diagnosis tools from flagging dead event endpoints while deeper callback notification fan-out remains future work.
+The advertised ContentDirectory and ConnectionManager event URLs accept UPnP GENA `SUBSCRIBE` and `UNSUBSCRIBE` requests with stable `SID` and timeout headers. ContentDirectory subscribers receive async `SystemUpdateID` `NOTIFY` callbacks after completed media-index swaps.
 
 When the main window closes, the Windows app stays in the tray. Use the tray menu to show the window, stop the server, or exit. Settings, log, add-source, and default-playlist windows are modal child windows: they stay above their owner, close back to that owner, and do not add separate taskbar buttons.
 
@@ -333,6 +335,8 @@ Settings are stored in `config.ini` beside the executable:
 If `config.ini` is missing, the app creates it on startup with default settings, the computer hostname as `ServerName`, and a generated UUID. On later starts, values from `config.ini` take precedence over defaults.
 
 Server workers read a config snapshot when they start a scan or handle a request. `FileServerPort` stays in the file for compatibility; media files are served on `Port`.
+
+The server also writes `media-cache.tsv` beside `config.ini`. It stores stable file IDs plus scan-error and metadata cache records. Deleting it is safe, but clients may see media item IDs change after the next scan.
 
 Example:
 

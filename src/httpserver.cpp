@@ -7,12 +7,12 @@
 #include "media_sources.h"
 #include "netutils.h"
 #include "network_sources.h"
+#include "upnp_eventing.h"
 #include "../resources/resource.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <shlwapi.h>
 #include <climits>
-#include <cctype>
 #include <sstream>
 
 #define HTTP_BUF_SIZE 8192
@@ -65,6 +65,19 @@ std::string ConnectionHeader(bool keepAlive) {
     return keepAlive ? "Connection: keep-alive\r\n" : "Connection: close\r\n";
 }
 
+std::string SplitRequestTarget(const std::string& requestTarget) {
+    const size_t query = requestTarget.find('?');
+    return query == std::string::npos ? requestTarget : requestTarget.substr(0, query);
+}
+
+bool ValidateHostHeader(const std::string& host) {
+    if (host.empty()) return false;
+    for (unsigned char ch : host) {
+        if (ch <= 32 || ch == '/' || ch == '\\') return false;
+    }
+    return true;
+}
+
 bool ReadHttpRequestHeaders(SOCKET s, std::string& req) {
     req.clear();
     char buffer[HTTP_BUF_SIZE];
@@ -97,48 +110,6 @@ bool LoadServerIconPng(int resourceId, std::string& bytes) {
     return true;
 }
 
-std::string LowerAscii(std::string value) {
-    for (char& ch : value) {
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    }
-    return value;
-}
-
-std::string EventSid() {
-    std::string uuid = WideToUtf8(AppConfig.Snapshot().deviceUUID);
-    return "uuid:" + (uuid.empty() ? "00000000-0000-0000-0000-000000000000" : uuid);
-}
-
-bool IsEventPath(const std::string& path) {
-    return path == "/upnp/event/content_directory" || path == "/upnp/event/connection_manager";
-}
-
-std::string EventSubscriptionResponse(const std::string& method, const std::string& path, const std::string& req) {
-    if (!IsEventPath(path)) {
-        return "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-    }
-
-    const std::string sid = FindHeaderValueCaseInsensitive(req, "SID");
-    if (method == "UNSUBSCRIBE") {
-        if (sid.empty()) {
-            return "HTTP/1.1 412 Precondition Failed\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-        }
-        return "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-    }
-
-    const std::string callback = FindHeaderValueCaseInsensitive(req, "CALLBACK");
-    const std::string nt = LowerAscii(FindHeaderValueCaseInsensitive(req, "NT"));
-    if (sid.empty() && (callback.empty() || nt != "upnp:event")) {
-        return "HTTP/1.1 412 Precondition Failed\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-    }
-
-    const std::string responseSid = sid.empty() ? EventSid() : sid;
-    return "HTTP/1.1 200 OK\r\n"
-           "SID: " + responseSid + "\r\n"
-           "TIMEOUT: Second-1800\r\n"
-           "Connection: close\r\n"
-           "Content-Length: 0\r\n\r\n";
-}
 } // namespace
 
 struct WorkData {
@@ -249,6 +220,7 @@ void HttpServer::Stop() {
     if (!m_running.load() && m_listenSocketV4 == INVALID_SOCKET && m_listenSocketV6 == INVALID_SOCKET) return;
 
     m_running.store(false);
+    AppEvents.ClearSubscriptions();
 
     if (m_hAcceptThread) {
         WaitForSingleObject(m_hAcceptThread, INFINITE);
@@ -365,13 +337,17 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
     if (space1 == std::string::npos || space2 == std::string::npos || space2 <= space1) return;
 
     std::string method = firstLine.substr(0, space1);
-    std::string path = firstLine.substr(space1 + 1, space2 - space1 - 1);
+    std::string path = SplitRequestTarget(firstLine.substr(space1 + 1, space2 - space1 - 1));
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     if (cfg.debugLog) {
         LogPrint(L"HTTP request: src=%hs method=%hs path=%hs", clientIP.c_str(), method.c_str(), path.c_str());
     }
 
     std::string hostUrl = FindHeaderValueCaseInsensitive(req, "Host");
+    if (!hostUrl.empty() && !ValidateHostHeader(hostUrl)) {
+        SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        return;
+    }
     if (hostUrl.empty()) {
         sockaddr_storage localAddr = {};
         int localAddrLen = sizeof(localAddr);
@@ -382,8 +358,8 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
         }
     }
 
-    if ((method == "SUBSCRIBE" || method == "UNSUBSCRIBE") && IsEventPath(path)) {
-        SendAll(clientSocket, EventSubscriptionResponse(method, path, req));
+    if (method == "SUBSCRIBE" || method == "UNSUBSCRIBE") {
+        SendAll(clientSocket, AppEvents.HandleEventSubscription(method, path, req));
         return;
     }
 
@@ -496,7 +472,10 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                 ScopedHandle hFile(CreateFileW(item.path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL));
                 if (hFile.valid()) {
                     LARGE_INTEGER fileSize = {};
-                    GetFileSizeEx(hFile.get(), &fileSize);
+                    if (!GetFileSizeEx(hFile.get(), &fileSize)) {
+                        SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                        return;
+                    }
 
                     HttpByteRange parsedRange = ParseHttpRangeHeader(FindHeaderValueCaseInsensitive(req, "Range"), fileSize.QuadPart);
                     if (!parsedRange.satisfiable) {
@@ -579,7 +558,10 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     std::string subMime = SubtitleMimeForExtension(subExtW);
 
                     LARGE_INTEGER fileSize = {};
-                    GetFileSizeEx(hFile.get(), &fileSize);
+                    if (!GetFileSizeEx(hFile.get(), &fileSize)) {
+                        SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                        return;
+                    }
                     long long totalBytes = fileSize.QuadPart;
 
                     std::stringstream subHeaders;
@@ -621,11 +603,15 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL));
                 if (hFile.valid()) {
                     LARGE_INTEGER fileSize = {};
-                    GetFileSizeEx(hFile.get(), &fileSize);
+                    if (!GetFileSizeEx(hFile.get(), &fileSize)) {
+                        SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                        return;
+                    }
                     std::stringstream artHeaders;
                     artHeaders << "HTTP/1.1 200 OK\r\n"
                                << "Content-Type: " << WideToUtf8(item.albumArtMime.empty() ? L"image/jpeg" : item.albumArtMime) << "\r\n"
                                << "Content-Length: " << fileSize.QuadPart << "\r\n"
+                               << "Accept-Ranges: none\r\n"
                                << "Connection: close\r\n\r\n";
                     SendAll(clientSocket, artHeaders.str());
                     if (!sendBody) {
@@ -658,24 +644,27 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
             body = req.substr(bodyStart);
 
             std::string contentLengthHeader = FindHeaderValueCaseInsensitive(req, "Content-Length");
-            if (!contentLengthHeader.empty()) {
-                long long contentLength = 0;
-                if (!TryParseNonNegativeLongLong(contentLengthHeader, contentLength) ||
-                    contentLength < 0 ||
-                    static_cast<unsigned long long>(contentLength) > kMaxSoapBodyBytes) {
-                    SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                    return;
-                }
-                const size_t expectedBodyLength = static_cast<size_t>(contentLength);
-                while (body.length() < expectedBodyLength && m_running.load()) {
-                    int r = recv(clientSocket, buf, HTTP_BUF_SIZE, 0);
-                    if (r <= 0) break;
-                    body.append(buf, r);
-                }
-                if (body.length() < expectedBodyLength) {
-                    SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                    return;
-                }
+            if (contentLengthHeader.empty()) {
+                LogPrint(L"Content-Length header required for SOAP POST.");
+                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
+            long long contentLength = 0;
+            if (!TryParseNonNegativeLongLong(contentLengthHeader, contentLength) ||
+                contentLength < 0 ||
+                static_cast<unsigned long long>(contentLength) > kMaxSoapBodyBytes) {
+                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
+            const size_t expectedBodyLength = static_cast<size_t>(contentLength);
+            while (body.length() < expectedBodyLength && m_running.load()) {
+                int r = recv(clientSocket, buf, HTTP_BUF_SIZE, 0);
+                if (r <= 0) break;
+                body.append(buf, r);
+            }
+            if (body.length() < expectedBodyLength) {
+                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                return;
             }
 
             std::string browseResp = path == "/upnp/control/connection_manager"
