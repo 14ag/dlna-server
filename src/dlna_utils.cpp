@@ -8,13 +8,6 @@
 #include <vector>
 
 namespace {
-std::wstring ToLowerWide(std::wstring value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
-        return static_cast<wchar_t>(std::towlower(ch));
-    });
-    return value;
-}
-
 bool StartsWithAsciiNoCase(const std::string& value, const std::string& prefix) {
     if (value.size() < prefix.size()) {
         return false;
@@ -139,6 +132,13 @@ std::string TrimAscii(const std::string& value) {
 std::string ToLowerAscii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+std::wstring ToLowerWide(std::wstring value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
+        return static_cast<wchar_t>(std::towlower(ch));
     });
     return value;
 }
@@ -394,4 +394,28 @@ bool NaturalLessWide(const std::wstring& left, const std::wstring& right) {
     }
 
     return left.size() < right.size();
+}
+
+std::vector<AlbumArtCandidate> BuildAlbumArtCandidateNames(const std::wstring& stem) {
+    std::vector<AlbumArtCandidate> candidates = {
+        { L"folder.jpg", L"image/jpeg" },
+        { L"folder.JPG", L"image/jpeg" },
+        { L"Folder.jpg", L"image/jpeg" },
+        { L"cover.jpg", L"image/jpeg" },
+        { L"cover.JPG", L"image/jpeg" },
+        { L"Cover.jpg", L"image/jpeg" },
+        { L"album.jpg", L"image/jpeg" },
+        { L"album.JPG", L"image/jpeg" },
+        { L"Album.jpg", L"image/jpeg" },
+        { L"thumb.jpg", L"image/jpeg" },
+        { L"thumb.JPG", L"image/jpeg" },
+        { L"thumb.jpeg", L"image/jpeg" },
+        { L"thumb.JPEG", L"image/jpeg" },
+    };
+    if (!stem.empty()) {
+        candidates.push_back({ stem + L".jpg", L"image/jpeg" });
+        candidates.push_back({ stem + L".jpeg", L"image/jpeg" });
+        candidates.push_back({ stem + L".png", L"image/png" });
+    }
+    return candidates;
 }

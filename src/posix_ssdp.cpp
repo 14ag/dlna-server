@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <netinet/in.h>
+#include <random>
 #include <sstream>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -36,8 +37,9 @@ unsigned int ComputeDelayMilliseconds(int mxSeconds) {
     if (boundedSeconds <= 1) return 0;
     unsigned int maxDelay = static_cast<unsigned int>(boundedSeconds * 1000);
     if (maxDelay == 0) return 0;
-    auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
-    return static_cast<unsigned int>(ticks % (maxDelay + 1));
+    static thread_local std::mt19937 generator(std::random_device{}());
+    std::uniform_int_distribution<unsigned int> distribution(0, maxDelay);
+    return distribution(generator);
 }
 
 std::vector<SSDPTarget> BuildTargets(const std::string& uuid) {
@@ -158,10 +160,11 @@ SSDP& SSDP::Get() {
 SSDP::SSDP() : m_running(false), m_ipv4Socket(-1), m_ipv6Socket(-1), m_port(0) {
 }
 
-bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring&, const std::wstring& uuid) {
+bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid) {
     if (m_running.load()) return true;
     m_endpoints = endpoints;
     m_port = port;
+    m_serverName = WideToUtf8(serverName);
     m_uuidStr = WideToUtf8(uuid);
     m_ipv4Socket = CreateIPv4Socket(m_endpoints);
     m_ipv6Socket = CreateIPv6Socket(m_endpoints);
@@ -202,6 +205,7 @@ void SSDP::SendNotifyRound(const char* nts) {
         int socketFd = endpoint.family == AF_INET ? m_ipv4Socket : m_ipv6Socket;
         if (socketFd < 0) continue;
 
+        std::lock_guard<std::mutex> socketLock(m_socketMutex);
         sockaddr_storage dest{};
         socklen_t destLen = 0;
         std::string hostHeader;
@@ -245,6 +249,7 @@ void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
 
 void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
     if (!m_running.load()) return;
+    std::lock_guard<std::mutex> socketLock(m_socketMutex);
     SetOutboundInterface(response.socket, response.endpoint);
     for (const std::string& message : response.messages) {
         sendto(response.socket,
@@ -274,7 +279,7 @@ void SSDP::ResponseWorker() {
                 });
             auto now = std::chrono::steady_clock::now();
             if (next->dueAt > now) {
-                m_responseCondition.wait_for(lock, std::chrono::milliseconds(50));
+                m_responseCondition.wait_until(lock, next->dueAt);
                 continue;
             }
             response = std::move(*next);
@@ -291,7 +296,10 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
     const std::string man = ToLowerAscii(TrimAscii(FindHeaderValueCaseInsensitive(request, "MAN")));
     const std::string st = FindHeaderValueCaseInsensitive(request, "ST");
     const std::string mxText = FindHeaderValueCaseInsensitive(request, "MX");
-    int mx = mxText.empty() ? 1 : std::atoi(mxText.c_str());
+    int mx = 1;
+    if (!mxText.empty() && !TryParseIntStrict(TrimAscii(mxText), mx)) {
+        mx = 1;
+    }
     if (man != "\"ssdp:discover\"" && man != "ssdp:discover") return;
     const NetworkEndpoint* endpoint = SelectBestEndpoint(m_endpoints, remoteAddr);
     if (!endpoint || endpoint->family != remoteAddr->sa_family) return;

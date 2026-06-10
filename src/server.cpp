@@ -23,6 +23,11 @@ Server::Server() : m_running(false) {
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 }
 
+Server::~Server() {
+    Stop();
+    WSACleanup();
+}
+
 void Server::StartBackgroundScan() {
     JoinBackgroundScan();
     m_scanThread = std::thread([]() {
@@ -36,13 +41,13 @@ void Server::JoinBackgroundScan() {
     }
 }
 
-void Server::RefreshEndpoints() {
+void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
     m_endpoints.clear();
-    if (!EnumerateNetworkEndpoints(AppConfig.port, m_endpoints)) {
+    if (!EnumerateNetworkEndpoints(cfg.port, m_endpoints)) {
         return;
     }
 
-    if (AppConfig.debugLog) {
+    if (cfg.debugLog) {
         for (const auto& endpoint : m_endpoints) {
             LogPrint(L"Discovery endpoint selected: family=%d addr=%hs if=%lu prefix=%lu location=%hs",
                      endpoint.family,
@@ -58,15 +63,19 @@ bool Server::Start() {
     if (m_running) return true;
 
     AppConfig.Load();
-    IPWhitelist::Get().Load(AppConfig.ipWhiteList);
-    if (!IsValidPort(AppConfig.port)) {
-        LogPrint(L"Invalid HTTP port: %d", AppConfig.port);
+    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    IPWhitelist::Get().Load(cfg.ipWhiteList);
+    if (!IsValidPort(cfg.port)) {
+        LogPrint(L"Invalid HTTP port: %d", cfg.port);
         return false;
+    }
+    if (cfg.fileServerPort != cfg.port) {
+        LogPrint(L"FileServerPort is deprecated; serving media on Port %d.", cfg.port);
     }
 
     // Validate we have at least one source
-    bool hasSource = AppConfig.defaultPlaylistEnabled && !AppConfig.defaultPlaylistPath.empty();
-    for (const auto& s : AppConfig.mediaSources) {
+    bool hasSource = cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
+    for (const auto& s : cfg.mediaSources) {
         if (s.enabled) { hasSource = true; break; }
     }
     if (!hasSource) {
@@ -77,7 +86,7 @@ bool Server::Start() {
     wchar_t skipFirewall[8] = {};
     if (GetEnvironmentVariableW(L"DLNA_SERVER_SKIP_FIREWALL", skipFirewall, 8) == 0) {
         std::wstring firewallMessage;
-        if (!EnsureFirewallAccess(AppConfig.port, FirewallAccessMode::Interactive, firewallMessage)) {
+        if (!EnsureFirewallAccess(cfg.port, FirewallAccessMode::Interactive, firewallMessage)) {
             LogPrint(L"%ls", firewallMessage.c_str());
             MessageBoxW(NULL, firewallMessage.c_str(), L"Firewall access required", MB_ICONWARNING | MB_OK);
             return false;
@@ -87,7 +96,7 @@ bool Server::Start() {
         }
     }
 
-    RefreshEndpoints();
+    RefreshEndpoints(cfg);
     if (m_endpoints.empty()) {
         LogPrint(L"Failed to find any active network endpoint for discovery.");
         return false;
@@ -104,15 +113,15 @@ bool Server::Start() {
         displayEndpoint = &m_endpoints.front();
     }
 
-    m_endpoint = std::wstring(displayEndpoint->host.begin(), displayEndpoint->host.end()) + L":" + std::to_wstring(AppConfig.port);
+    m_endpoint = std::wstring(displayEndpoint->host.begin(), displayEndpoint->host.end()) + L":" + std::to_wstring(cfg.port);
     LogPrint(L"Starting server on %ls", m_endpoint.c_str());
 
-    if (!HttpServer::Get().Start(AppConfig.port)) {
+    if (!HttpServer::Get().Start(cfg.port)) {
         LogPrint(L"Failed to start HTTP server.");
         return false;
     }
 
-    if (!SSDP::Get().Start(m_endpoints, AppConfig.port, AppConfig.serverName, AppConfig.deviceUUID)) {
+    if (!SSDP::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
         LogPrint(L"Failed to start SSDP.");
         HttpServer::Get().Stop();
         return false;
@@ -120,6 +129,15 @@ bool Server::Start() {
 
     m_running = true;
     StartBackgroundScan();
+    return true;
+}
+
+bool Server::Rescan() {
+    if (m_running) {
+        StartBackgroundScan();
+    } else {
+        AppMedia.Scan();
+    }
     return true;
 }
 

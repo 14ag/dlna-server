@@ -12,10 +12,11 @@ class ExistingFeatureImprovementTests(unittest.TestCase):
     def test_media_toggles_are_applied_in_both_scanners(self):
         for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
             source = self.read(path)
-            self.assertIn("AppConfig.flatFolderStyle", source)
-            self.assertIn("AppConfig.sortByTitle", source)
-            self.assertIn("AppConfig.showFileNamesInsteadOfTitles", source)
-            self.assertIn("AppConfig.addArtistAlbumFolders", source)
+            self.assertIn("const ConfigSnapshot cfg = AppConfig.Snapshot()", source)
+            self.assertIn("cfg.flatFolderStyle", source)
+            self.assertIn("AppConfig.Snapshot().sortByTitle", source)
+            self.assertIn("cfg.showFileNamesInsteadOfTitles", source)
+            self.assertIn("cfg.addArtistAlbumFolders", source)
             self.assertIn("AddArtistAlbumMirrorIfPresent", source)
             self.assertIn("FindOrAddContainer", source)
             self.assertIn("ScanFolder(state,", source)
@@ -24,12 +25,12 @@ class ExistingFeatureImprovementTests(unittest.TestCase):
     def test_playlist_order_preserved_until_sort_requested(self):
         for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
             source = self.read(path)
-            self.assertIn("if (AppConfig.sortByTitle)", source)
+            self.assertIn("if (sortByTitle)", source)
             self.assertIn("std::sort", source)
             self.assertIn("NaturalLessWide(a.title, b.title)", source)
 
         content = self.read("src/contentdirectory.cpp")
-        self.assertIn("sortCriteria.empty() && AppConfig.sortByTitle", content)
+        self.assertIn("sortCriteria.empty() && cfg.sortByTitle", content)
         self.assertIn("SortItems(results, sortCriteria)", content)
 
     def test_playlist_and_remote_source_hardening(self):
@@ -48,18 +49,22 @@ class ExistingFeatureImprovementTests(unittest.TestCase):
 
     def test_proxy_streams_controls_remote_didl_url(self):
         source = self.read("src/contentdirectory.cpp")
-        self.assertIn("IsRemoteMediaUrl(it.path) && !AppConfig.proxyStreams", source)
+        self.assertIn("IsRemoteMediaUrl(it.path) && !cfg.proxyStreams", source)
         self.assertIn('"/media/" + std::to_string(it.id)', source)
         self.assertIn("XMLEscapeUtf8(WideToUtf8(it.path))", source)
 
     def test_album_art_lookup_and_advertising_are_safer(self):
+        utils = self.read("src/dlna_utils.cpp")
+        for token in ("thumb.jpg", "thumb.JPG", "thumb.jpeg", "thumb.JPEG", ".jpeg"):
+            self.assertIn(token, utils)
+
         for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
             source = self.read(path)
-            for token in ("thumb.jpg", "thumb.JPG", "thumb.jpeg", "thumb.JPEG", ".jpeg"):
-                self.assertIn(token, source)
+            self.assertIn("BuildAlbumArtCandidateNames", source)
+            self.assertIn("albumArtByDirectory", source)
 
         content = self.read("src/contentdirectory.cpp")
-        self.assertIn("IsRegularFileWide(it.albumArtPath)", content)
+        self.assertNotIn("IsRegularFileWide(it.albumArtPath)", content)
         self.assertIn("upnp:albumArtURI", content)
 
     def test_config_schema_stays_stable(self):

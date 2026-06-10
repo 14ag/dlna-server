@@ -7,22 +7,22 @@
 #include <unordered_map>
 #include <vector>
 #include <algorithm>
-#include <cctype>
 #include <stdio.h>
 
 namespace {
-std::string TrimAscii(const std::string& value) {
-    size_t start = 0;
-    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
-        ++start;
+std::string StripUtf8Bom(std::string value) {
+    if (value.size() >= 3 &&
+        static_cast<unsigned char>(value[0]) == 0xEF &&
+        static_cast<unsigned char>(value[1]) == 0xBB &&
+        static_cast<unsigned char>(value[2]) == 0xBF) {
+        value.erase(0, 3);
     }
+    return value;
+}
 
-    size_t end = value.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
-        --end;
-    }
-
-    return value.substr(start, end - start);
+std::string ConfigValueOrDefault(const std::unordered_map<std::string, std::string>& values, const char* key, const char* defaultValue) {
+    auto it = values.find(key);
+    return it == values.end() ? std::string(defaultValue) : StripUtf8Bom(it->second);
 }
 
 std::unordered_map<std::string, std::string> ParseConfigText(std::string text) {
@@ -63,7 +63,7 @@ std::unordered_map<std::string, std::string> ParseConfigText(std::string text) {
         }
 
         std::string key = TrimAscii(trimmed.substr(0, eq));
-        std::string value = trimmed.substr(eq + 1);
+        std::string value = StripUtf8Bom(trimmed.substr(eq + 1));
         values[key] = value;
     }
 
@@ -149,6 +149,31 @@ Config::Config() : port(8200), fileServerPort(8201), flatFolderStyle(false), sho
     defaultPlaylistEnabled(false) {
 }
 
+ConfigSnapshot Config::Snapshot() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return ConfigSnapshot{
+        serverName,
+        port,
+        fileServerPort,
+        flatFolderStyle,
+        showFileNamesInsteadOfTitles,
+        proxyStreams,
+        sortByTitle,
+        doNotShowAllMediaFolders,
+        addArtistAlbumFolders,
+        debugLog,
+        ipWhiteList,
+        deviceUUID,
+        deviceManufacturer,
+        deviceModelName,
+        presentationUrl,
+        runOnBoot,
+        defaultPlaylistEnabled,
+        defaultPlaylistPath,
+        mediaSources
+    };
+}
+
 int ParsePortOrDefault(const std::unordered_map<std::string, std::string>& values, const char* key, int defaultValue) {
     int parsed = ParseIntOrDefault(values, key, defaultValue);
     return IsValidPort(parsed) ? parsed : defaultValue;
@@ -200,6 +225,7 @@ void Config::SetRunOnBoot(bool enable) {
 }
 
 void Config::Load() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::wstring path = GetConfigPath();
     auto values = ReadConfigFile(path);
 
@@ -225,12 +251,12 @@ void Config::Load() {
     runOnBoot = ParseIntOrDefault(values, "RunOnBoot", 0) != 0;
     defaultPlaylistEnabled = ParseIntOrDefault(values, "DefaultPlaylistEnabled", 0) != 0;
 
-    ipWhiteList = Utf8ToWide(values.count("IPWhiteList") ? values["IPWhiteList"] : "");
-    deviceUUID = Utf8ToWide(values.count("DeviceUUID") ? values["DeviceUUID"] : "");
-    deviceManufacturer = Utf8ToWide(values.count("DeviceManufacturer") ? values["DeviceManufacturer"] : "dlna-server contributors");
-    deviceModelName = Utf8ToWide(values.count("DeviceModelName") ? values["DeviceModelName"] : "dlna-server");
-    presentationUrl = Utf8ToWide(values.count("PresentationURL") ? values["PresentationURL"] : "/");
-    defaultPlaylistPath = Utf8ToWide(values.count("DefaultPlaylistPath") ? values["DefaultPlaylistPath"] : "");
+    ipWhiteList = Utf8ToWide(ConfigValueOrDefault(values, "IPWhiteList", ""));
+    deviceUUID = Utf8ToWide(ConfigValueOrDefault(values, "DeviceUUID", ""));
+    deviceManufacturer = Utf8ToWide(ConfigValueOrDefault(values, "DeviceManufacturer", "dlna-server contributors"));
+    deviceModelName = Utf8ToWide(ConfigValueOrDefault(values, "DeviceModelName", "dlna-server"));
+    presentationUrl = Utf8ToWide(ConfigValueOrDefault(values, "PresentationURL", "/"));
+    defaultPlaylistPath = Utf8ToWide(ConfigValueOrDefault(values, "DefaultPlaylistPath", ""));
     if (defaultPlaylistPath.empty()) {
         defaultPlaylistPath = GetDefaultPlaylistPath();
     }
@@ -243,7 +269,7 @@ void Config::Load() {
     }
 
     mediaSources.clear();
-    std::wstring sourcesStr = Utf8ToWide(values.count("MediaSources") ? values["MediaSources"] : "");
+    std::wstring sourcesStr = Utf8ToWide(ConfigValueOrDefault(values, "MediaSources", ""));
     size_t pos = 0;
     while ((pos = sourcesStr.find(L"|")) != std::wstring::npos) {
         std::wstring token = sourcesStr.substr(0, pos);
@@ -254,6 +280,7 @@ void Config::Load() {
 }
 
 void Config::Save() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::wstring path = GetConfigPath();
 
     std::wstring sourcesStr;

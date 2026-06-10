@@ -1,35 +1,14 @@
 #include "netutils.h"
+#include "dlna_utils.h"
 #include <windows.h>
 #include <iphlpapi.h>
 #include <ws2tcpip.h>
 #include <algorithm>
-#include <cctype>
 #include <vector>
 
 #pragma comment(lib, "iphlpapi.lib")
 
 namespace {
-std::string TrimAscii(const std::string& value) {
-    size_t start = 0;
-    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) {
-        ++start;
-    }
-
-    size_t end = value.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) {
-        --end;
-    }
-
-    return value.substr(start, end - start);
-}
-
-std::string ToLowerAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-}
-
 bool IsIPv4Apipa(const SOCKADDR_IN* addr) {
     const unsigned char* bytes = reinterpret_cast<const unsigned char*>(&addr->sin_addr.S_un.S_addr);
     return bytes[0] == 169 && bytes[1] == 254;

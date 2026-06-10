@@ -104,6 +104,31 @@ Config::Config()
       defaultPlaylistPath(L"") {
 }
 
+ConfigSnapshot Config::Snapshot() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return ConfigSnapshot{
+        serverName,
+        port,
+        fileServerPort,
+        flatFolderStyle,
+        showFileNamesInsteadOfTitles,
+        proxyStreams,
+        sortByTitle,
+        doNotShowAllMediaFolders,
+        addArtistAlbumFolders,
+        debugLog,
+        ipWhiteList,
+        deviceUUID,
+        deviceManufacturer,
+        deviceModelName,
+        presentationUrl,
+        runOnBoot,
+        defaultPlaylistEnabled,
+        defaultPlaylistPath,
+        mediaSources
+    };
+}
+
 int ParsePortOrDefault(const std::string& value, int fallback) {
     int parsed = ParseIntOrDefault(value, fallback);
     return IsValidPort(parsed) ? parsed : fallback;
@@ -118,7 +143,11 @@ std::wstring Config::GenerateUUID() {
     if (rd.entropy() == 0.0) {
         LogPrint(L"UUID entropy source did not report nondeterministic entropy.");
     }
-    std::mt19937 gen(rd());
+    std::seed_seq seed{
+        rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd(),
+        rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd()
+    };
+    std::mt19937 gen(seed);
     std::uniform_int_distribution<unsigned int> dist(0, 15);
     std::uniform_int_distribution<unsigned int> dist2(8, 11);
     const char* hex = "0123456789abcdef";
@@ -142,6 +171,7 @@ void Config::SetRunOnBoot(bool) {
 }
 
 void Config::Load() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::ifstream file(WideToUtf8(GetConfigPath()), std::ios::binary);
     if (!file) {
         if (deviceUUID.empty()) deviceUUID = GenerateUUID();
@@ -203,6 +233,7 @@ void Config::Load() {
 }
 
 void Config::Save() {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::ofstream file(WideToUtf8(GetConfigPath()), std::ios::binary | std::ios::trunc);
     if (!file) return;
 

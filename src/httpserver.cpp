@@ -18,6 +18,8 @@
 #define HTTP_BUF_SIZE 8192
 
 namespace {
+constexpr size_t kMaxSoapBodyBytes = 1024 * 1024;
+
 void SendAll(SOCKET s, const char* data, int len) {
     while (len > 0) {
         int sent = send(s, data, len, 0);
@@ -30,6 +32,28 @@ void SendAll(SOCKET s, const char* data, int len) {
 void SendAll(SOCKET s, const std::string& str) {
     SendAll(s, str.c_str(), static_cast<int>(str.size()));
 }
+
+bool TrySendAll(SOCKET s, const char* data, size_t len) {
+    while (len > 0) {
+        int chunk = len > static_cast<size_t>(INT_MAX) ? INT_MAX : static_cast<int>(len);
+        int sent = send(s, data, chunk, 0);
+        if (sent == SOCKET_ERROR || sent == 0) return false;
+        data += sent;
+        len -= static_cast<size_t>(sent);
+    }
+    return true;
+}
+
+struct ScopedHandle {
+    explicit ScopedHandle(HANDLE h) : handle(h) {}
+    ~ScopedHandle() {
+        if (valid()) CloseHandle(handle);
+    }
+    bool valid() const { return handle != INVALID_HANDLE_VALUE && handle != NULL; }
+    HANDLE get() const { return handle; }
+
+    HANDLE handle;
+};
 
 void SetSocketTimeouts(SOCKET s) {
     DWORD timeoutMs = 10000;
@@ -81,7 +105,7 @@ std::string LowerAscii(std::string value) {
 }
 
 std::string EventSid() {
-    std::string uuid = WideToUtf8(AppConfig.deviceUUID);
+    std::string uuid = WideToUtf8(AppConfig.Snapshot().deviceUUID);
     return "uuid:" + (uuid.empty() ? "00000000-0000-0000-0000-000000000000" : uuid);
 }
 
@@ -226,6 +250,12 @@ void HttpServer::Stop() {
 
     m_running.store(false);
 
+    if (m_hAcceptThread) {
+        WaitForSingleObject(m_hAcceptThread, INFINITE);
+        CloseHandle(m_hAcceptThread);
+        m_hAcceptThread = NULL;
+    }
+
     if (m_listenSocketV4 != INVALID_SOCKET) {
         closesocket(m_listenSocketV4);
         m_listenSocketV4 = INVALID_SOCKET;
@@ -234,12 +264,6 @@ void HttpServer::Stop() {
     if (m_listenSocketV6 != INVALID_SOCKET) {
         closesocket(m_listenSocketV6);
         m_listenSocketV6 = INVALID_SOCKET;
-    }
-
-    if (m_hAcceptThread) {
-        WaitForSingleObject(m_hAcceptThread, INFINITE);
-        CloseHandle(m_hAcceptThread);
-        m_hAcceptThread = NULL;
     }
 
     if (m_cleanupGroup) {
@@ -342,7 +366,8 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
     std::string method = firstLine.substr(0, space1);
     std::string path = firstLine.substr(space1 + 1, space2 - space1 - 1);
-    if (AppConfig.debugLog) {
+    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    if (cfg.debugLog) {
         LogPrint(L"HTTP request: src=%hs method=%hs path=%hs", clientIP.c_str(), method.c_str(), path.c_str());
     }
 
@@ -351,9 +376,9 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
         sockaddr_storage localAddr = {};
         int localAddrLen = sizeof(localAddr);
         if (getsockname(clientSocket, reinterpret_cast<SOCKADDR*>(&localAddr), &localAddrLen) == 0) {
-            hostUrl = SockaddrToHostPort(reinterpret_cast<const SOCKADDR*>(&localAddr), AppConfig.port);
+            hostUrl = SockaddrToHostPort(reinterpret_cast<const SOCKADDR*>(&localAddr), cfg.port);
         } else {
-            hostUrl = clientIP + ":" + std::to_string(AppConfig.port);
+            hostUrl = clientIP + ":" + std::to_string(cfg.port);
         }
     }
 
@@ -468,14 +493,13 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     return;
                 }
 
-                HANDLE hFile = CreateFileW(item.path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-                if (hFile != INVALID_HANDLE_VALUE) {
+                ScopedHandle hFile(CreateFileW(item.path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL));
+                if (hFile.valid()) {
                     LARGE_INTEGER fileSize = {};
-                    GetFileSizeEx(hFile, &fileSize);
+                    GetFileSizeEx(hFile.get(), &fileSize);
 
                     HttpByteRange parsedRange = ParseHttpRangeHeader(FindHeaderValueCaseInsensitive(req, "Range"), fileSize.QuadPart);
                     if (!parsedRange.satisfiable) {
-                        CloseHandle(hFile);
                         std::string rangeResp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(fileSize.QuadPart) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
                         SendAll(clientSocket, rangeResp);
                         return;
@@ -508,13 +532,12 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     SendAll(clientSocket, headStr);
 
                     if (!sendBody) {
-                        CloseHandle(hFile);
                         return;
                     }
 
                     LARGE_INTEGER movePos = {};
                     movePos.QuadPart = startByte;
-                    SetFilePointerEx(hFile, movePos, NULL, FILE_BEGIN);
+                    SetFilePointerEx(hFile.get(), movePos, NULL, FILE_BEGIN);
 
                     long long remaining = contentLength;
                     char fileBuf[65536];
@@ -523,23 +546,13 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
                     while (remaining > 0 && m_running.load()) {
                         bytesToRead = (remaining > static_cast<long long>(sizeof(fileBuf))) ? static_cast<DWORD>(sizeof(fileBuf)) : static_cast<DWORD>(remaining);
-                        if (!ReadFile(hFile, fileBuf, bytesToRead, &bytesReadFile, NULL) || bytesReadFile == 0) {
+                        if (!ReadFile(hFile.get(), fileBuf, bytesToRead, &bytesReadFile, NULL) || bytesReadFile == 0) {
                             break;
                         }
 
-                        const char* p = fileBuf;
-                        DWORD toSend = bytesReadFile;
-                        while (toSend > 0) {
-                            int sent = send(clientSocket, p, toSend, 0);
-                            if (sent == SOCKET_ERROR || sent == 0) goto done_streaming;
-                            p += sent;
-                            toSend -= sent;
-                        }
-
+                        if (!TrySendAll(clientSocket, fileBuf, bytesReadFile)) break;
                         remaining -= bytesReadFile;
                     }
-                    done_streaming:
-                    CloseHandle(hFile);
                     return;
                 }
             }
@@ -559,47 +572,36 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
             }
             MediaItem item = AppMedia.GetItem(fileId);
             if (item.id != -1 && !item.subtitlePath.empty()) {
-                HANDLE hFile = CreateFileW(item.subtitlePath.c_str(), GENERIC_READ,
-                    FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-                if (hFile != INVALID_HANDLE_VALUE) {
+                ScopedHandle hFile(CreateFileW(item.subtitlePath.c_str(), GENERIC_READ,
+                    FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL));
+                if (hFile.valid()) {
                     LPCWSTR subExtW = PathFindExtensionW(item.subtitlePath.c_str());
                     std::string subMime = SubtitleMimeForExtension(subExtW);
 
                     LARGE_INTEGER fileSize = {};
-                    GetFileSizeEx(hFile, &fileSize);
+                    GetFileSizeEx(hFile.get(), &fileSize);
                     long long totalBytes = fileSize.QuadPart;
 
                     std::stringstream subHeaders;
                     subHeaders << "HTTP/1.1 200 OK\r\n"
                                << "Content-Type: " << subMime << "\r\n"
                                << "Content-Length: " << totalBytes << "\r\n"
-                               << "Accept-Ranges: bytes\r\n"
+                               << "Accept-Ranges: none\r\n"
                                << "Connection: close\r\n"
                                << "\r\n";
                     SendAll(clientSocket, subHeaders.str());
                     if (!sendBody) {
-                        CloseHandle(hFile);
                         return;
                     }
 
-                    // stream subtitle bytes to client
                     char subBuf[16384];
                     DWORD subRead = 0;
                     while (m_running.load()) {
-                        if (!ReadFile(hFile, subBuf, sizeof(subBuf), &subRead, NULL) ||
+                        if (!ReadFile(hFile.get(), subBuf, sizeof(subBuf), &subRead, NULL) ||
                             subRead == 0)
                             break;
-                        const char* p = subBuf;
-                        DWORD toSend = subRead;
-                        while (toSend > 0) {
-                            int sent = send(clientSocket, p, toSend, 0);
-                            if (sent == SOCKET_ERROR || sent == 0) goto done_subtitle;
-                            p += sent;
-                            toSend -= sent;
-                        }
+                        if (!TrySendAll(clientSocket, subBuf, subRead)) break;
                     }
-                    done_subtitle:
-                    CloseHandle(hFile);
                     return;
                 }
             }
@@ -615,11 +617,11 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
             }
             MediaItem item = AppMedia.GetItem(fileId);
             if (item.id != -1 && !item.albumArtPath.empty()) {
-                HANDLE hFile = CreateFileW(item.albumArtPath.c_str(), GENERIC_READ,
-                    FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL);
-                if (hFile != INVALID_HANDLE_VALUE) {
+                ScopedHandle hFile(CreateFileW(item.albumArtPath.c_str(), GENERIC_READ,
+                    FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL));
+                if (hFile.valid()) {
                     LARGE_INTEGER fileSize = {};
-                    GetFileSizeEx(hFile, &fileSize);
+                    GetFileSizeEx(hFile.get(), &fileSize);
                     std::stringstream artHeaders;
                     artHeaders << "HTTP/1.1 200 OK\r\n"
                                << "Content-Type: " << WideToUtf8(item.albumArtMime.empty() ? L"image/jpeg" : item.albumArtMime) << "\r\n"
@@ -627,25 +629,15 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                                << "Connection: close\r\n\r\n";
                     SendAll(clientSocket, artHeaders.str());
                     if (!sendBody) {
-                        CloseHandle(hFile);
                         return;
                     }
 
                     char artBuf[16384];
                     DWORD artRead = 0;
                     while (m_running.load()) {
-                        if (!ReadFile(hFile, artBuf, sizeof(artBuf), &artRead, NULL) || artRead == 0) break;
-                        const char* p = artBuf;
-                        DWORD toSend = artRead;
-                        while (toSend > 0) {
-                            int sent = send(clientSocket, p, toSend, 0);
-                            if (sent == SOCKET_ERROR || sent == 0) goto done_album_art;
-                            p += sent;
-                            toSend -= sent;
-                        }
+                        if (!ReadFile(hFile.get(), artBuf, sizeof(artBuf), &artRead, NULL) || artRead == 0) break;
+                        if (!TrySendAll(clientSocket, artBuf, artRead)) break;
                     }
-                    done_album_art:
-                    CloseHandle(hFile);
                     return;
                 }
             }
@@ -667,17 +659,20 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
             std::string contentLengthHeader = FindHeaderValueCaseInsensitive(req, "Content-Length");
             if (!contentLengthHeader.empty()) {
-                int contentLength = 0;
-                if (!TryParseIntStrict(contentLengthHeader, contentLength) || contentLength < 0) {
+                long long contentLength = 0;
+                if (!TryParseNonNegativeLongLong(contentLengthHeader, contentLength) ||
+                    contentLength < 0 ||
+                    static_cast<unsigned long long>(contentLength) > kMaxSoapBodyBytes) {
                     SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }
-                while (static_cast<int>(body.length()) < contentLength && m_running.load()) {
+                const size_t expectedBodyLength = static_cast<size_t>(contentLength);
+                while (body.length() < expectedBodyLength && m_running.load()) {
                     int r = recv(clientSocket, buf, HTTP_BUF_SIZE, 0);
                     if (r <= 0) break;
                     body.append(buf, r);
                 }
-                if (static_cast<int>(body.length()) < contentLength) {
+                if (body.length() < expectedBodyLength) {
                     SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }

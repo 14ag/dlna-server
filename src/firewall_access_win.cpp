@@ -1,12 +1,11 @@
 #include "firewall_access.h"
+#include "dlna_utils.h"
 #include "log.h"
 
 #include <windows.h>
 #include <netfw.h>
 #include <shellapi.h>
 #include <oleauto.h>
-#include <algorithm>
-#include <cwctype>
 #include <string>
 #include <vector>
 
@@ -51,13 +50,6 @@ std::wstring GetModulePath() {
         return L"";
     }
     return path;
-}
-
-std::wstring ToLowerWide(std::wstring value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
-        return static_cast<wchar_t>(towlower(ch));
-    });
-    return value;
 }
 
 std::wstring BstrToWide(BSTR value) {
