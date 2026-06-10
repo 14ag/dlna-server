@@ -15,11 +15,11 @@ def get_source_bundle(*paths: str) -> str:
 
 
 def get_review_blueprint_text() -> str:
-    return (WORKSPACE / "dlna-server-review-6-6-26-implementation-blueprint.md").read_text(encoding="utf-8")
+    return (WORKSPACE / "misc" / "patches" / "dlna-server-review-6-6-26-implementation-blueprint.md").read_text(encoding="utf-8")
 
 
 class ReviewSixJuneSourceContracts(unittest.TestCase):
-    def test_blueprint_written_at_workspace_root(self):
+    def test_blueprint_written_to_patches_folder(self):
         blueprint = get_review_blueprint_text()
 
         self.assertIn("DLNA Server Review 2026-06-06 Implementation Blueprint", blueprint)

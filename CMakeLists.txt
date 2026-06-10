@@ -35,6 +35,7 @@ if(WIN32)
         src/network_sources.cpp
         src/source_watcher.cpp
         src/media_database.cpp
+        src/modal_focus.cpp
         src/media_sources.cpp
         src/config.cpp
         src/ipwhitelist.cpp
@@ -56,6 +57,7 @@ if(WIN32)
         src/network_sources.h
         src/source_watcher.h
         src/media_database.h
+        src/modal_focus.h
         src/media_sources.h
         src/config.h
         src/ipwhitelist.h
