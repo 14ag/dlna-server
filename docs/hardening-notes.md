@@ -5,6 +5,9 @@
 - Remote playlist and network-share IO uses libcurl-backed requests instead of shell-based remote source fetching.
 - HTTP request handling bounds headers and SOAP body size before routing requests.
 - Media scanning runs in the background and swaps completed indexes atomically.
+- Completed scans persist stable file IDs and scan-error cache records after the new index is swapped.
+- Local media-source watch mode queues rescans through the same build-then-swap scan path.
+- GENA `SystemUpdateID` notifications run on a worker thread instead of scan or request paths.
 - IP whitelist handling supports exact addresses and CIDR ranges.
 - SSDP discovery uses delayed response scheduling, strict MX parsing, and safer shutdown ordering.
 - Album art and subtitle discovery avoid advertising broken resources where the scanner cannot confirm a companion file.

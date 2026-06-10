@@ -1,0 +1,112 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def read(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def test_server_scan_lifecycle_does_not_join_under_scan_mutex():
+    server = read("src/server.cpp")
+    posix = read("src/posix_server.cpp")
+    header = read("src/server.h")
+
+    for source in (server, posix):
+        assert "std::thread previousScan" in source
+        assert "ShouldStartScan()" in source
+        assert "m_stopping.store(true" in source
+        assert "m_endpointMutex" in source
+    assert "std::atomic<bool> m_running" in header
+    assert "mutable std::mutex m_endpointMutex" in header
+
+
+def test_media_database_identity_and_atomic_save_contracts():
+    db_h = read("src/media_database.h")
+    db = read("src/media_database.cpp")
+    media = read("src/media_sources.cpp") + read("src/posix_media_sources.cpp")
+
+    assert "GetOrCreateStableContainerId" in db_h
+    assert "MarkScanSuccess" in db_h
+    assert "ReplaceFileAtomic" in db
+    assert ".tmp" in db
+    assert "ScopedScanSuccess" in media
+    assert "BuildStableMediaKey" in media
+    assert "BuildStableContainerKey" in media
+    assert "perStemAlbumArt" in media
+    assert "folderAlbumArt" in media
+    assert 'L"[media:scan-depth]"' in media
+
+
+def test_http_routes_validate_query_host_post_and_send_all_binary():
+    http = read("src/httpserver.cpp")
+    posix = read("src/posix_httpserver.cpp")
+
+    for source in (http, posix):
+        assert "SplitRequestTarget" in source
+        assert "ValidateHostHeader" in source
+        assert "Content-Length header required" in source
+        assert "Accept-Ranges: none" in source
+    assert "if (!GetFileSizeEx" in http
+    assert "TrySendAll(clientSocket, buf" in posix
+
+
+def test_xml_extraction_handles_attributes_and_escapes_uuid():
+    content = read("src/contentdirectory.cpp")
+
+    assert "FindStartTagWithAttributes" in content
+    assert "ExtractTagValue" in content
+    assert "std::string deviceUUID = XMLEscapeUtf8" in content
+    assert "ApplyDidlFilter" in content
+    assert "upnp:class =" in content
+
+
+def test_remote_parsers_reject_truncation_sparse_pls_and_bad_roots():
+    network = read("src/network_sources.cpp")
+
+    assert "truncated" in network
+    assert "kMaxPlsIndex" in network
+    assert "ParseUnixListName" in network
+    assert "ClassifyRemoteDirectoryEntry" in network
+    assert "ParseUrlForJoin" in network
+    assert "[remote:auth]" in network
+    assert "HTTP directory listing is not supported" in network
+
+
+def test_gena_queue_bounded_initial_notify_and_response_status():
+    event_h = read("src/upnp_eventing.h")
+    event = read("src/upnp_eventing.cpp")
+
+    assert "m_generation" in event_h
+    assert "kMaxQueuedNotifyJobs" in event
+    assert "QueueInitialNotifyLocked" in event
+    assert "CURLINFO_RESPONSE_CODE" in event
+    assert "ExpireSubscription" in event
+    assert "coalesced" in event
+
+
+def test_ssdp_queue_bounded_send_errors_and_empty_drop():
+    ssdp = read("src/ssdp.cpp") + read("src/posix_ssdp.cpp") + read("src/ssdp.h")
+
+    assert "kMaxDelayedResponses" in ssdp
+    assert "CoalesceDelayedResponse" in ssdp
+    assert "responses.empty()" in ssdp
+    assert "SSDP send failed" in ssdp
+    assert "IP_MULTICAST_IF failed" in ssdp
+
+
+def test_release_scripts_enforce_platform_output_contracts():
+    ps1 = read("scripts/build-release-assets.ps1")
+    linux = read("scripts/build-linux-desktop-assets.sh")
+    bat = read("build-assets.bat")
+    cmake = read("CMakeLists.txt")
+
+    assert "Test-SelectedPlatformPrerequisites" in ps1
+    assert "DLNA_NO_CLEAN" in ps1 and "DLNA_MACOS_PLATFORM_DIR" in ps1
+    assert "New-SourceReleaseArchive" in ps1
+    assert "release_stage_dir" in linux
+    assert "find \"$output_dir\" -maxdepth 1 -type f -name '*.AppImage' -delete" in linux
+    assert "usr/bin/curl" not in linux
+    assert "where wsl.exe" in bat
+    assert "find_package(CURL REQUIRED)" in cmake

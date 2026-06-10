@@ -2,8 +2,10 @@
 #include "config.h"
 #include "dlna_utils.h"
 #include "log.h"
+#include "media_database.h"
 #include "netutils.h"
 #include "network_sources.h"
+#include "upnp_eventing.h"
 
 #include <algorithm>
 #include <cctype>
@@ -13,6 +15,8 @@
 namespace fs = std::filesystem;
 
 namespace {
+constexpr const wchar_t* kScanDepthLogCode = L"[media:scan-depth]";
+
 bool IsHiddenPath(const fs::path& path) {
     const std::string name = path.filename().u8string();
     return !name.empty() && name[0] == '.';
@@ -40,34 +44,90 @@ std::wstring CanonicalMediaKey(const std::wstring& pathText) {
 }
 
 std::wstring BuildDuplicateMediaKey(int parentId, const std::wstring& path) {
-    return std::to_wstring(parentId) + L"\n" + CanonicalMediaKey(path);
+    return L"media\n" + std::to_wstring(parentId) + L"\n" + CanonicalMediaKey(path);
+}
+
+std::wstring BuildStableMediaKey(int parentId, const std::wstring& path) {
+    return BuildDuplicateMediaKey(parentId, path);
 }
 
 std::wstring ContainerLookupKey(int parentId, const std::wstring& title, const std::wstring& keyPath) {
     return std::to_wstring(parentId) + L"\n" + title + L"\n" + keyPath;
 }
 
+std::wstring BuildStableContainerKey(int parentId, const std::wstring& title, const std::wstring& keyPath) {
+    return L"container\n" + ContainerLookupKey(parentId, title, CanonicalMediaKey(keyPath));
+}
+
+int AllocateContainerId(MediaIndexState& state, int parentId, const std::wstring& title, const std::wstring& keyPath) {
+    if (state.mediaDatabase) {
+        return state.mediaDatabase->GetOrCreateStableContainerId(BuildStableContainerKey(parentId, title, keyPath));
+    }
+    return state.nextId++;
+}
+
+struct ScopedScanSuccess {
+    ScopedScanSuccess(MediaDatabase* database, std::wstring key) : database(database), key(std::move(key)), marked(false) {}
+    void Mark() {
+        if (database && !marked) {
+            database->MarkScanSuccess(key);
+            marked = true;
+        }
+    }
+    MediaDatabase* database;
+    std::wstring key;
+    bool marked;
+};
+
 void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
     if (IsRemoteMediaUrl(item.path)) return;
     fs::path path(WideToUtf8(item.path));
     const std::wstring directoryKey = Utf8ToWide(path.parent_path().u8string());
-    auto cached = state.albumArtByDirectory.find(directoryKey);
-    if (cached != state.albumArtByDirectory.end()) {
-        item.albumArtPath = cached->second.first;
-        item.albumArtMime = cached->second.second;
+    const std::wstring stem = Utf8ToWide(path.stem().u8string());
+    const std::wstring stemKey = directoryKey + L"\n" + stem;
+
+    auto stemCached = state.perStemAlbumArt.find(stemKey);
+    if (stemCached != state.perStemAlbumArt.end()) {
+        item.albumArtPath = stemCached->second.first;
+        item.albumArtMime = stemCached->second.second;
         return;
     }
 
-    for (const auto& candidate : BuildAlbumArtCandidateNames(Utf8ToWide(path.stem().u8string()))) {
+    std::vector<AlbumArtCandidate> perStemCandidates = {
+        { stem + L".jpg", L"image/jpeg" },
+        { stem + L".jpeg", L"image/jpeg" },
+        { stem + L".png", L"image/png" },
+    };
+    for (const auto& candidate : perStemCandidates) {
         fs::path candidatePath = path.parent_path() / WideToUtf8(candidate.fileName);
         std::error_code ec;
         if (fs::is_regular_file(candidatePath, ec)) {
             item.albumArtPath = Utf8ToWide(candidatePath.u8string());
             item.albumArtMime = candidate.mimeType;
+            state.perStemAlbumArt[stemKey] = { item.albumArtPath, item.albumArtMime };
+            return;
+        }
+    }
+    state.perStemAlbumArt[stemKey] = { L"", L"" };
+
+    auto folderCached = state.folderAlbumArt.find(directoryKey);
+    if (folderCached != state.folderAlbumArt.end()) {
+        item.albumArtPath = folderCached->second.first;
+        item.albumArtMime = folderCached->second.second;
+        return;
+    }
+    for (const auto& candidate : BuildAlbumArtCandidateNames(L"")) {
+        fs::path candidatePath = path.parent_path() / WideToUtf8(candidate.fileName);
+        std::error_code ec;
+        if (fs::is_regular_file(candidatePath, ec)) {
+            item.albumArtPath = Utf8ToWide(candidatePath.u8string());
+            item.albumArtMime = candidate.mimeType;
+            state.folderAlbumArt[directoryKey] = { item.albumArtPath, item.albumArtMime };
             state.albumArtByDirectory[directoryKey] = { item.albumArtPath, item.albumArtMime };
             return;
         }
     }
+    state.folderAlbumArt[directoryKey] = { L"", L"" };
     state.albumArtByDirectory[directoryKey] = { L"", L"" };
 }
 
@@ -79,7 +139,7 @@ int FindOrAddContainer(MediaIndexState& state, int parentId, const std::wstring&
     }
 
     MediaItem folder{};
-    folder.id = state.nextId++;
+    folder.id = AllocateContainerId(state, parentId, title, keyPath);
     folder.parentId = parentId;
     folder.path = keyPath;
     folder.title = title;
@@ -91,7 +151,7 @@ int FindOrAddContainer(MediaIndexState& state, int parentId, const std::wstring&
 }
 
 void AddArtistAlbumMirrorIfPresent(MediaIndexState& state, const ConfigSnapshot& cfg, const MediaItem& item, int sourceParentId) {
-    if (!cfg.addArtistAlbumFolders || !cfg.flatFolderStyle || IsRemoteMediaUrl(item.path)) return;
+    if (!cfg.addArtistAlbumFolders || IsRemoteMediaUrl(item.path)) return;
     if (item.upnpClass != L"object.item.audioItem.musicTrack" && item.upnpClass != L"object.item.videoItem") return;
 
     fs::path path(WideToUtf8(item.path));
@@ -106,7 +166,9 @@ void AddArtistAlbumMirrorIfPresent(MediaIndexState& state, const ConfigSnapshot&
     if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(albumId, item.path)).second) return;
 
     MediaItem mirror = item;
-    mirror.id = state.nextId++;
+    mirror.id = state.mediaDatabase
+        ? state.mediaDatabase->GetOrCreateStableId(BuildStableMediaKey(albumId, item.path))
+        : state.nextId++;
     mirror.parentId = albumId;
     state.items.push_back(mirror);
 }
@@ -155,16 +217,23 @@ bool MediaSources::IsAllowedExtension(const std::wstring& ext, std::wstring& mim
 
 void MediaSources::Scan() {
     const ConfigSnapshot cfg = AppConfig.Snapshot();
+    MediaDatabase database;
+    database.Load(MediaDatabase::DefaultDatabasePath());
     MediaIndexState state;
+    state.mediaDatabase = &database;
     state.items.push_back({0, -1, L"", L"Root", true, L"", L"object.container.storageFolder", 0, L"", L"", L""});
     for (const auto& source : cfg.mediaSources) {
         if (!source.enabled) continue;
         if (!IsPlaylistSourcePath(source.path) && !IsNetworkShareUrl(source.path)) {
             fs::path path(WideToUtf8(source.path));
-            if (!fs::exists(path)) continue;
+            if (!fs::exists(path)) {
+                database.RecordScanError(CanonicalMediaKey(source.path), L"Source unavailable");
+                LogPrint(L"Skipping missing source: %ls", source.path.c_str());
+                continue;
+            }
         }
         MediaItem folder{};
-        folder.id = state.nextId++;
+            folder.id = AllocateContainerId(state, 0, SourceDisplayName(source.path), source.path);
         folder.parentId = 0;
         folder.path = source.path;
         folder.title = SourceDisplayName(source.path);
@@ -185,7 +254,7 @@ void MediaSources::Scan() {
         std::error_code ec;
         if (fs::is_regular_file(path, ec)) {
             MediaItem playlistFolder{};
-            playlistFolder.id = state.nextId++;
+            playlistFolder.id = AllocateContainerId(state, 0, L"Default playlist", cfg.defaultPlaylistPath);
             playlistFolder.parentId = 0;
             playlistFolder.path = cfg.defaultPlaylistPath;
             playlistFolder.title = L"Default playlist";
@@ -200,7 +269,11 @@ void MediaSources::Scan() {
     }));
     BuildIndexes(state);
     SwapScannedState(std::move(state));
-    m_systemUpdateId.fetch_add(1, std::memory_order_release);
+    const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
+    AppEvents.NotifySystemUpdateId(newUpdateId);
+    if (!database.Save(MediaDatabase::DefaultDatabasePath())) {
+        LogPrint(L"Media database save failed: %ls", MediaDatabase::DefaultDatabasePath().c_str());
+    }
     LogPrint(L"Scanned %d media items.", mediaItemCount);
 }
 
@@ -219,7 +292,11 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
     if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, pathText)).second) return;
 
     MediaItem file{};
-    file.id = state.nextId++;
+    const std::wstring stableKey = BuildStableMediaKey(parentId, pathText);
+    ScopedScanSuccess scanSuccess(state.mediaDatabase, stableKey);
+    file.id = state.mediaDatabase
+        ? state.mediaDatabase->GetOrCreateStableId(stableKey)
+        : state.nextId++;
     file.parentId = parentId;
     file.path = pathText;
     file.isFolder = false;
@@ -232,7 +309,12 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
         fs::path path(WideToUtf8(pathText));
         std::error_code ec;
         if (!fs::is_regular_file(path, ec)) return;
-        file.sizeBytes = static_cast<long long>(fs::file_size(path, ec));
+        const uintmax_t fileSize = fs::file_size(path, ec);
+        if (ec) {
+            LogPrint(L"[media:file-size] Skipping file with unreadable size: %ls", pathText.c_str());
+            return;
+        }
+        file.sizeBytes = static_cast<long long>(fileSize);
     }
 
     if (cfg.showFileNamesInsteadOfTitles) file.title = SourceDisplayName(pathText);
@@ -256,6 +338,7 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
 
     SetAlbumArtIfExists(state, file);
     state.items.push_back(file);
+    scanSuccess.Mark();
     if (allowArtistAlbumMirror) {
         AddArtistAlbumMirrorIfPresent(state, cfg, file, parentId);
     }
@@ -268,12 +351,15 @@ void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cf
 }
 
 void MediaSources::ScanNetworkFolder(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& folderUrl, int parentId, int depth) {
-    if (depth > 8) return;
+    if (depth > 8) {
+        LogPrint(L"%ls Skipping network folder due to recursion depth limit: %ls", kScanDepthLogCode, folderUrl.c_str());
+        return;
+    }
 
     for (const auto& entry : ListRemoteDirectory(folderUrl)) {
         if (IsPlaylistSourcePath(entry.url)) {
             MediaItem playlistFolder{};
-            playlistFolder.id = state.nextId++;
+            playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.name), entry.url);
             playlistFolder.parentId = parentId;
             playlistFolder.path = entry.url;
             playlistFolder.title = SourceStemName(entry.name);
@@ -295,7 +381,7 @@ void MediaSources::ScanNetworkFolder(MediaIndexState& state, const ConfigSnapsho
                 ScanNetworkFolder(state, cfg, entry.url, parentId, depth + 1);
             } else {
                 MediaItem folder{};
-                folder.id = state.nextId++;
+                folder.id = AllocateContainerId(state, parentId, SourceDisplayName(entry.name), entry.url);
                 folder.parentId = parentId;
                 folder.path = entry.url;
                 folder.title = SourceDisplayName(entry.name);
@@ -310,7 +396,7 @@ void MediaSources::ScanNetworkFolder(MediaIndexState& state, const ConfigSnapsho
 
 void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& rootPath, int parentId, int depth) {
     if (depth > 64) {
-        LogPrint(L"Skipping folder due to recursion depth limit: %ls", rootPath.c_str());
+        LogPrint(L"%ls Skipping folder due to recursion depth limit: %ls", kScanDepthLogCode, rootPath.c_str());
         return;
     }
     fs::path root(WideToUtf8(rootPath));
@@ -318,6 +404,9 @@ void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg,
     fs::directory_iterator it(root, fs::directory_options::skip_permission_denied, ec);
     fs::directory_iterator end;
     if (ec) {
+        if (state.mediaDatabase) {
+            state.mediaDatabase->RecordScanError(BuildStableContainerKey(parentId, SourceDisplayName(rootPath), rootPath), L"Folder unavailable");
+        }
         LogPrint(L"Skipping unreadable folder: %ls", rootPath.c_str());
         return;
     }
@@ -331,7 +420,7 @@ void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg,
                 ScanFolder(state, cfg, Utf8ToWide(path.u8string()), parentId, depth + 1);
             } else {
                 MediaItem folder{};
-                folder.id = state.nextId++;
+                folder.id = AllocateContainerId(state, parentId, Utf8ToWide(path.filename().u8string()), Utf8ToWide(path.u8string()));
                 folder.parentId = parentId;
                 folder.path = Utf8ToWide(path.u8string());
                 folder.title = Utf8ToWide(path.filename().u8string());
@@ -344,7 +433,7 @@ void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg,
             std::wstring fullPath = Utf8ToWide(path.u8string());
             if (IsPlaylistSourcePath(fullPath)) {
                 MediaItem playlistFolder{};
-                playlistFolder.id = state.nextId++;
+                playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(fullPath), fullPath);
                 playlistFolder.parentId = parentId;
                 playlistFolder.path = fullPath;
                 playlistFolder.title = SourceStemName(fullPath);
@@ -365,12 +454,14 @@ void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg,
 }
 
 std::vector<MediaItem> MediaSources::GetChildren(int parentId) {
-    std::lock_guard<std::mutex> lock(m_mutex);
     std::vector<MediaItem> result;
-    auto found = m_childrenByParent.find(parentId);
-    if (found != m_childrenByParent.end()) {
-        for (size_t index : found->second) {
-            if (index < m_items.size()) result.push_back(m_items[index]);
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto found = m_childrenByParent.find(parentId);
+        if (found != m_childrenByParent.end()) {
+            for (size_t index : found->second) {
+                if (index < m_items.size()) result.push_back(m_items[index]);
+            }
         }
     }
     const bool sortByTitle = AppConfig.Snapshot().sortByTitle;

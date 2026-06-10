@@ -17,10 +17,25 @@
 #define SSDP_MULTICAST_IPV6 "ff02::c"
 
 namespace {
+constexpr size_t kMaxDelayedResponses = 256;
+
 struct SSDPTarget {
     std::string st;
     std::string usn;
 };
+
+bool CoalesceDelayedResponse(std::vector<DelayedSearchResponse>& queue, DelayedSearchResponse&& response) {
+    for (auto& queued : queue) {
+        if (queued.remoteLen == response.remoteLen &&
+            std::memcmp(&queued.remoteAddr, &response.remoteAddr, static_cast<size_t>(response.remoteLen)) == 0 &&
+            queued.logUsn == response.logUsn &&
+            queued.logSt == response.logSt) {
+            queued = std::move(response);
+            return true;
+        }
+    }
+    return false;
+}
 
 void DiscoveryLog(const wchar_t* fmt, ...) {
     if (!AppConfig.Snapshot().debugLog) {
@@ -308,7 +323,11 @@ void SSDP::SendNotifyRound(const char* nts) {
                     "\r\n";
             }
 
-            sendto(socket, message.c_str(), static_cast<int>(message.size()), 0, reinterpret_cast<const SOCKADDR*>(&dest), destLen);
+            int sent = sendto(socket, message.c_str(), static_cast<int>(message.size()), 0, reinterpret_cast<const SOCKADDR*>(&dest), destLen);
+            if (sent == SOCKET_ERROR) {
+                DiscoveryLog(L"SSDP send failed: nts=%hs target=%hs err=%d", nts, target.st.c_str(), WSAGetLastError());
+                continue;
+            }
             DiscoveryLog(L"SSDP notify sent: nts=%hs target=%hs location=%hs if=%lu", nts, target.st.c_str(), endpoint.locationUrl.c_str(), endpoint.interfaceIndex);
         }
     }
@@ -324,8 +343,15 @@ void SSDP::SendNotifyBurst(const char* nts, int rounds, DWORD delayMs) {
 }
 
 void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
+    if (response.messages.empty()) return;
     {
         std::lock_guard<std::mutex> lock(m_responseMutex);
+        if (CoalesceDelayedResponse(m_delayedResponses, std::move(response))) {
+            return;
+        }
+        if (m_delayedResponses.size() >= kMaxDelayedResponses) {
+            m_delayedResponses.erase(m_delayedResponses.begin());
+        }
         m_delayedResponses.push_back(std::move(response));
     }
     m_responseCondition.notify_one();
@@ -343,15 +369,19 @@ void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
 
     for (size_t i = 0; i < response.messages.size(); ++i) {
         const std::string& message = response.messages[i];
-        sendto(response.socket,
-               message.c_str(),
-               static_cast<int>(message.size()),
-               0,
-               reinterpret_cast<const SOCKADDR*>(&response.remoteAddr),
-               response.remoteLen);
+        int sent = sendto(response.socket,
+                          message.c_str(),
+                          static_cast<int>(message.size()),
+                          0,
+                          reinterpret_cast<const SOCKADDR*>(&response.remoteAddr),
+                          response.remoteLen);
         const std::string st = i < response.logSt.size() ? response.logSt[i] : std::string();
         const std::string usn = i < response.logUsn.size() ? response.logUsn[i] : std::string();
         std::string destination = SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&response.remoteAddr));
+        if (sent == SOCKET_ERROR) {
+            DiscoveryLog(L"SSDP send failed: dst=%hs st=%hs usn=%hs err=%d", destination.c_str(), st.c_str(), usn.c_str(), WSAGetLastError());
+            continue;
+        }
         DiscoveryLog(L"SSDP response sent: dst=%hs st=%hs usn=%hs location=%hs", destination.c_str(), st.c_str(), usn.c_str(), response.endpoint.locationUrl.c_str());
     }
 }

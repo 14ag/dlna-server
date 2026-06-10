@@ -91,11 +91,13 @@ class UmsHardeningSourceTests(unittest.TestCase):
             self.assertIn("/upnp/control/connection_manager", source)
             self.assertIn("HandleConnectionManagerControl", source)
             self.assertIn('method == "SUBSCRIBE" || method == "UNSUBSCRIBE"', source)
-            self.assertIn("/upnp/event/content_directory", source)
-            self.assertIn("/upnp/event/connection_manager", source)
-            self.assertIn("EventSubscriptionResponse", source)
-            self.assertIn("412 Precondition Failed", source)
+            self.assertIn("AppEvents.HandleEventSubscription", source)
+            self.assertNotIn("EventSubscriptionResponse", source)
 
+        eventing = self.read("src/upnp_eventing.cpp")
+        self.assertIn("/upnp/event/content_directory", eventing)
+        self.assertIn("/upnp/event/connection_manager", eventing)
+        self.assertIn("412 Precondition Failed", eventing)
         utils = self.read("src/dlna_utils.cpp")
         self.assertIn("fileSize <= 0", utils)
 

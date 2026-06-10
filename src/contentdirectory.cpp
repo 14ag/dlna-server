@@ -94,39 +94,52 @@ std::string ExtractSoapActionName(const std::string& xml, bool& malformed) {
     return {};
 }
 
-bool ExtractTag(const std::string& req, const char* tag, std::string& value) {
-    const std::string open = std::string("<") + tag + ">";
-    const std::string close = std::string("</") + tag + ">";
-    size_t pos = req.find(open);
-    size_t valueStart = 0;
-    if (pos != std::string::npos) {
-        valueStart = pos + open.size();
-    } else {
-        const std::string suffix = std::string(":") + tag + ">";
-        pos = req.find(suffix);
-        if (pos == std::string::npos) return false;
-        if (req.rfind('<', pos) == std::string::npos) return false;
-        valueStart = pos + suffix.size();
-    }
-    size_t endPos = req.find(close, valueStart);
-    if (endPos == std::string::npos) {
-        const std::string tagSuffix = std::string(":") + tag + ">";
-        size_t closeStart = req.find("</", valueStart);
-        while (closeStart != std::string::npos) {
-            size_t closeEnd = req.find('>', closeStart);
-            if (closeEnd == std::string::npos) break;
-            std::string closeTag = req.substr(closeStart, closeEnd - closeStart + 1);
-            if (closeTag.size() >= tagSuffix.size() &&
-                closeTag.compare(closeTag.size() - tagSuffix.size(), tagSuffix.size(), tagSuffix) == 0) {
-                endPos = closeStart;
-                break;
-            }
-            closeStart = req.find("</", closeEnd + 1);
+bool FindStartTagWithAttributes(const std::string& req, const char* tag, size_t from, size_t& tagStart, size_t& valueStart) {
+    size_t pos = from;
+    while (pos < req.size()) {
+        tagStart = req.find('<', pos);
+        if (tagStart == std::string::npos) return false;
+        const size_t tagEnd = FindXmlTagEnd(req, tagStart);
+        if (tagEnd == std::string::npos) return false;
+        std::string body = TrimAscii(req.substr(tagStart + 1, tagEnd - tagStart - 1));
+        pos = tagEnd + 1;
+        if (body.empty() || body[0] == '/' || body[0] == '!' || body[0] == '?') continue;
+        const size_t nameEnd = body.find_first_of(" \t\r\n/");
+        const std::string name = LocalXmlName(nameEnd == std::string::npos ? body : body.substr(0, nameEnd));
+        if (name == tag) {
+            if (!body.empty() && body.back() == '/') return false;
+            valueStart = tagEnd + 1;
+            return true;
         }
     }
-    if (endPos == std::string::npos) return false;
-    value = req.substr(valueStart, endPos - valueStart);
-    return true;
+    return false;
+}
+
+bool ExtractTagValue(const std::string& req, const char* tag, std::string& value) {
+    size_t tagStart = 0;
+    size_t valueStart = 0;
+    if (!FindStartTagWithAttributes(req, tag, 0, tagStart, valueStart)) return false;
+
+    size_t pos = valueStart;
+    while (pos < req.size()) {
+        const size_t closeStart = req.find("</", pos);
+        if (closeStart == std::string::npos) return false;
+        const size_t closeEnd = FindXmlTagEnd(req, closeStart);
+        if (closeEnd == std::string::npos) return false;
+        std::string body = TrimAscii(req.substr(closeStart + 2, closeEnd - closeStart - 2));
+        const size_t nameEnd = body.find_first_of(" \t\r\n");
+        const std::string name = LocalXmlName(nameEnd == std::string::npos ? body : body.substr(0, nameEnd));
+        if (name == tag) {
+            value = req.substr(valueStart, closeStart - valueStart);
+            return true;
+        }
+        pos = closeEnd + 1;
+    }
+    return false;
+}
+
+bool ExtractTag(const std::string& req, const char* tag, std::string& value) {
+    return ExtractTagValue(req, tag, value);
 }
 
 std::string SoapEnvelope(const std::string& body) {
@@ -215,16 +228,32 @@ bool MatchesSearchCriteria(const MediaItem& item, const std::string& criteria) {
         std::string value = ExtractQuotedCriteriaValue(criteria);
         return value.empty() ? true : StartsWithNoCase(item.upnpClass, Utf8ToWide(value));
     }
+    const bool classEquals = normalized.find("upnp:class =") != std::string::npos ||
+                             normalized.find("upnp:class=") != std::string::npos;
+    if (classEquals) {
+        std::string value = ExtractQuotedCriteriaValue(criteria);
+        return value.empty() ? true : ToLowerWide(item.upnpClass) == ToLowerWide(Utf8ToWide(value));
+    }
     return false;
 }
 
-std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, int requestedCount, const std::string& hostUrl, int& returnCount) {
+bool ApplyDidlFilter(const std::string& filter, const char* field) {
+    const std::string normalized = ToLowerAscii(TrimAscii(filter));
+    if (normalized.empty() || normalized == "*") return true;
+    return normalized.find(ToLowerAscii(field)) != std::string::npos;
+}
+
+std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, int requestedCount, const std::string& hostUrl, const std::string& filter, int& returnCount) {
     returnCount = 0;
     const int safeStart = (std::max)(0, startingIndex);
     const int available = safeStart >= static_cast<int>(items.size()) ? 0 : static_cast<int>(items.size()) - safeStart;
     const int requested = requestedCount == 0 ? available : (std::min)(requestedCount, available);
     const auto childCounts = AppMedia.GetChildCounts(items);
     const ConfigSnapshot cfg = AppConfig.Snapshot();
+    const bool includeTitle = ApplyDidlFilter(filter, "dc:title");
+    const bool includeClass = ApplyDidlFilter(filter, "upnp:class");
+    const bool includeAlbumArt = ApplyDidlFilter(filter, "upnp:albumArtURI");
+    const bool includeResource = ApplyDidlFilter(filter, "res");
     std::string didl = "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" xmlns:dlna=\"urn:schemas-dlna-org:metadata-1-0/\" xmlns:sec=\"http://www.sec.co.kr/dlna\">";
     didl.reserve(256 + (static_cast<size_t>((std::max)(0, requested)) * 512));
     std::ostringstream entry;
@@ -237,24 +266,26 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
             auto countIt = childCounts.find(it.id);
             int childCount = countIt == childCounts.end() ? 0 : countIt->second;
             entry << "<container id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" childCount=\"" << childCount << "\" restricted=\"1\">"
-                  << "<dc:title>" << EscapeWide(it.title) << "</dc:title>"
-                  << "<upnp:class>" << EscapeWide(it.upnpClass) << "</upnp:class>"
+                  << (includeTitle ? ("<dc:title>" + EscapeWide(it.title) + "</dc:title>") : std::string())
+                  << (includeClass ? ("<upnp:class>" + EscapeWide(it.upnpClass) + "</upnp:class>") : std::string())
                   << "</container>";
             didl += entry.str();
         } else {
             const bool hasKnownSize = it.sizeBytes > 0;
             entry << "<item id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" restricted=\"1\">"
-                  << "<dc:title>" << EscapeWide(it.title) << "</dc:title>"
-                  << "<upnp:class>" << EscapeWide(it.upnpClass) << "</upnp:class>";
-            if (!it.albumArtPath.empty()) {
+                  << (includeTitle ? ("<dc:title>" + EscapeWide(it.title) + "</dc:title>") : std::string())
+                  << (includeClass ? ("<upnp:class>" + EscapeWide(it.upnpClass) + "</upnp:class>") : std::string());
+            if (includeAlbumArt && !it.albumArtPath.empty()) {
                 entry << "<upnp:albumArtURI dlna:profileID=\"JPEG_TN\">http://" << hostUrl << "/albumart/" << it.id << "</upnp:albumArtURI>";
             }
-            entry << "<res protocolInfo=\"" << ItemProtocolInfo(it) << "\"";
-            if (hasKnownSize) {
-                entry << " size=\"" << it.sizeBytes << "\"";
+            if (includeResource) {
+                entry << "<res protocolInfo=\"" << ItemProtocolInfo(it) << "\"";
+                if (hasKnownSize) {
+                    entry << " size=\"" << it.sizeBytes << "\"";
+                }
+                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !cfg.proxyStreams;
+                entry << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id))) << "</res>";
             }
-            const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !cfg.proxyStreams;
-            entry << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id))) << "</res>";
             if (!it.subtitlePath.empty()) {
                 size_t dot = it.subtitlePath.rfind(L'.');
                 std::wstring subExtW = dot == std::wstring::npos ? L"" : it.subtitlePath.substr(dot + 1);
@@ -272,9 +303,9 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
     return didl;
 }
 
-std::string BrowseSearchResponse(const std::string& actionName, const std::vector<MediaItem>& items, int startingIndex, int requestedCount, const std::string& hostUrl, int totalMatches) {
+std::string BrowseSearchResponse(const std::string& actionName, const std::vector<MediaItem>& items, int startingIndex, int requestedCount, const std::string& hostUrl, const std::string& filter, int totalMatches) {
     int returnCount = 0;
-    std::string didl = BuildDIDL(items, startingIndex, requestedCount, hostUrl, returnCount);
+    std::string didl = BuildDIDL(items, startingIndex, requestedCount, hostUrl, filter, returnCount);
     std::stringstream ss;
     ss << "    <u:" << actionName << "Response xmlns:u=\"urn:schemas-upnp-org:service:ContentDirectory:1\">\n"
        << "      <Result>" << XMLEscapeUtf8(didl) << "</Result>\n"
@@ -297,7 +328,7 @@ std::string ContentDirectory::XMLEscape(const std::wstring& wstr) {
 
 std::string ContentDirectory::GetDeviceDescriptionXML() {
     const ConfigSnapshot cfg = AppConfig.Snapshot();
-    std::string deviceUUID = WideToUtf8(cfg.deviceUUID);
+    std::string deviceUUID = XMLEscapeUtf8(WideToUtf8(cfg.deviceUUID));
     std::string serverName = XMLEscapeUtf8(WideToUtf8(cfg.serverName));
     std::string manufacturer = XMLEscapeUtf8(WideToUtf8(cfg.deviceManufacturer));
     std::string modelName = XMLEscapeUtf8(WideToUtf8(cfg.deviceModelName));
@@ -521,6 +552,7 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
     if (action == "Search") {
         std::string containerIdStr;
         std::string searchCriteria;
+        std::string filter;
         std::string startingIndexStr;
         std::string requestedCountStr;
         if (!ExtractTag(req, "ContainerID", containerIdStr) ||
@@ -529,6 +561,7 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
             !ExtractTag(req, "RequestedCount", requestedCountStr)) {
             return SoapFault(402, "Invalid Args");
         }
+        ExtractTag(req, "Filter", filter);
 
         int containerId = 0;
         int startingIndex = 0;
@@ -552,7 +585,7 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         std::string sortCriteria;
         ExtractTag(req, "SortCriteria", sortCriteria);
         SortItems(results, sortCriteria);
-        return BrowseSearchResponse("Search", results, startingIndex, requestedCount, hostUrl, static_cast<int>(results.size()));
+        return BrowseSearchResponse("Search", results, startingIndex, requestedCount, hostUrl, filter, static_cast<int>(results.size()));
     }
 
     if (action != "Browse") {
@@ -561,6 +594,7 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
 
     std::string objIdStr;
     std::string browseFlag;
+    std::string filter;
     std::string startingIndexStr;
     std::string requestedCountStr;
     if (!ExtractTag(req, "ObjectID", objIdStr) ||
@@ -571,6 +605,7 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         !ExtractTag(req, "RequestedCount", requestedCountStr)) {
         return SoapFault(402, "Invalid Args");
     }
+    ExtractTag(req, "Filter", filter);
 
     int objId = 0;
     int startingIndex = 0;
@@ -599,5 +634,5 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
     ExtractTag(req, "SortCriteria", sortCriteria);
     SortItems(results, sortCriteria);
     int totalMatches = browseFlag == "BrowseMetadata" ? 1 : static_cast<int>(results.size());
-    return BrowseSearchResponse("Browse", results, startingIndex, requestedCount, hostUrl, totalMatches);
+    return BrowseSearchResponse("Browse", results, startingIndex, requestedCount, hostUrl, filter, totalMatches);
 }

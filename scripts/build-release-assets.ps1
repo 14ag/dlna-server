@@ -126,6 +126,75 @@ function Initialize-PlatformOutput {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
 }
 
+function Test-SelectedPlatformPrerequisites {
+    param([Parameter(Mandatory = $true)][string[]]$Names)
+
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        throw "git not found. Source release archive requires git."
+    }
+    if (($Names -contains "winx64" -or $Names -contains "winx86") -and -not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+        throw "cmake not found. Windows assets require CMake."
+    }
+    if (($Names -contains "linux") -and -not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+        throw "wsl.exe not found. Linux assets require WSL."
+    }
+    if (($Names -contains "linux") -and -not (Get-Command tar.exe -ErrorAction SilentlyContinue)) {
+        throw "tar.exe not found. Linux release tool extraction requires tar."
+    }
+    if (($Names -contains "macos-x64" -or $Names -contains "macos-arm64") -and $env:OS -eq "Windows_NT") {
+        throw "macOS assets must be built on macOS."
+    }
+}
+
+function Resolve-VcpkgRoot {
+    $candidateRoots = New-Object System.Collections.Generic.List[string]
+    if ($env:VCPKG_ROOT) {
+        $candidateRoots.Add($env:VCPKG_ROOT)
+    }
+    if ($env:USERPROFILE) {
+        $candidateRoots.Add((Join-Path $env:USERPROFILE "vcpkg"))
+    }
+
+    foreach ($candidateRoot in ($candidateRoots | Select-Object -Unique)) {
+        $toolchain = Join-Path $candidateRoot "scripts\buildsystems\vcpkg.cmake"
+        if (Test-Path -LiteralPath $toolchain) {
+            return $candidateRoot
+        }
+    }
+
+    throw "vcpkg toolchain not found. Windows assets require VCPKG_ROOT or $env:USERPROFILE\vcpkg with curl installed."
+}
+
+function Get-VcpkgTripletForArch {
+    param([Parameter(Mandatory = $true)][string]$Arch)
+
+    switch ($Arch) {
+        "x64" { return "x64-windows-static" }
+        "Win32" { return "x86-windows-static" }
+        default { throw "No vcpkg triplet configured for Windows architecture '$Arch'." }
+    }
+}
+
+function Assert-VcpkgCurlInstalled {
+    param(
+        [Parameter(Mandatory = $true)][string]$VcpkgRoot,
+        [Parameter(Mandatory = $true)][string]$Triplet
+    )
+
+    $curlConfig = Join-Path $VcpkgRoot "installed\$Triplet\share\curl\CURLConfig.cmake"
+    if (-not (Test-Path -LiteralPath $curlConfig)) {
+        throw "curl:$Triplet not installed in vcpkg. Run: vcpkg install curl:$Triplet"
+    }
+}
+
+function New-SourceReleaseArchive {
+    param(
+        [Parameter(Mandatory = $true)][string]$ArchivePath
+    )
+
+    Invoke-NativeChecked "git" @("-C", $repo, "archive", "--format", "zip", "--output", $ArchivePath, "HEAD")
+}
+
 function Invoke-CmakeBuild {
     param(
         [Parameter(Mandatory = $true)][string]$BuildDir,
@@ -134,8 +203,20 @@ function Invoke-CmakeBuild {
     )
 
     $fullBuildDir = Join-Path $repo $BuildDir
+    $vcpkgRoot = Resolve-VcpkgRoot
+    $vcpkgToolchain = Join-Path $vcpkgRoot "scripts\buildsystems\vcpkg.cmake"
+    $vcpkgTriplet = Get-VcpkgTripletForArch -Arch $Arch
+    Assert-VcpkgCurlInstalled -VcpkgRoot $vcpkgRoot -Triplet $vcpkgTriplet
+
     Remove-DirectoryInsideRepo -Path $fullBuildDir
-    Invoke-NativeChecked "cmake" @("-S", $repo, "-B", $fullBuildDir, "-A", $Arch, "-DCMAKE_INSTALL_PREFIX=$InstallDir")
+    Invoke-NativeChecked "cmake" @(
+        "-S", $repo,
+        "-B", $fullBuildDir,
+        "-A", $Arch,
+        "-DCMAKE_INSTALL_PREFIX=$InstallDir",
+        "-DCMAKE_TOOLCHAIN_FILE=$vcpkgToolchain",
+        "-DVCPKG_TARGET_TRIPLET=$vcpkgTriplet"
+    )
     Invoke-NativeChecked "cmake" @("--build", $fullBuildDir, "--config", "Release", "--target", "install", "--", "/m")
 }
 
@@ -148,12 +229,13 @@ if (-not $Version) {
 }
 
 $selectedPlatforms = Resolve-SelectedPlatforms -Value $Platform
+Test-SelectedPlatformPrerequisites -Names $selectedPlatforms
 New-Item -ItemType Directory -Force -Path $output | Out-Null
 foreach ($selectedPlatform in $selectedPlatforms) {
     Initialize-PlatformOutput -Name $selectedPlatform
 }
 $sourceZip = Join-Path $output "dlna-server-$Version-source.zip"
-Invoke-NativeChecked "git" @("-C", $repo, "archive", "--format", "zip", "--output", $sourceZip, "HEAD")
+New-SourceReleaseArchive -ArchivePath $sourceZip
 
 if ($selectedPlatforms -contains "winx64") {
     Invoke-CmakeBuild -BuildDir "build-release-winx64" -Arch "x64" -InstallDir $platformDirs["winx64"]
@@ -175,10 +257,6 @@ $fltkSource = Join-Path $toolsDir "fltk-$fltkTag"
 $fltkArchive = Join-Path $toolsDir "fltk-$fltkTag.tar.gz"
 
 if ($selectedPlatforms -contains "linux") {
-    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
-        throw "wsl.exe not found. Linux assets require WSL. Rerun with --platform winx64,winx86 or install WSL."
-    }
-
     if (-not (Test-Path -LiteralPath (Join-Path $fltkSource "CMakeLists.txt"))) {
         New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
         $fltkUrl = "https://github.com/fltk/fltk/archive/refs/tags/$fltkTag.tar.gz"
@@ -208,16 +286,18 @@ if ($selectedPlatforms -contains "linux") {
     $linuxdeployWsl = "/mnt/$drive" + $linuxdeployPath.Substring(2).Replace("\", "/")
     $runtimeWsl = "/mnt/$drive" + $runtimePath.Substring(2).Replace("\", "/")
     $linuxOutputWsl = "/mnt/$drive" + $platformDirs["linux"].Substring(2).Replace("\", "/")
+    $linuxStageWsl = "$repoWsl/build-release-linux-stage"
     $releaseToolsWsl = "/mnt/$drive" + (Join-Path $releaseTools "linux").Substring(2).Replace("\", "/")
     $noCleanValue = if ($NoClean) { "1" } else { "0" }
     $bashTemplate = @'
 cd '__REPO_WSL__' &&
 tr -d '\r' < scripts/build-linux-desktop-assets.sh > /tmp/dlna-server-build-linux-desktop-assets.sh &&
 chmod +x /tmp/dlna-server-build-linux-desktop-assets.sh &&
-DLNA_REPO_ROOT='__REPO_WSL__' DLNA_OUTPUT_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_PLATFORM_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_INSTALL_DIR='__LINUX_OUTPUT_WSL__/install' DLNA_RELEASE_TOOLS_DIR='__TOOLS_WSL__' DLNA_NO_CLEAN='__NO_CLEAN__' DLNA_FLTK_SOURCE_DIR='__FLTK_WSL__' LINUXDEPLOY='__LINUXDEPLOY_WSL__' APPIMAGE_RUNTIME='__RUNTIME_WSL__' DLNA_SERVER_VERSION='__VERSION__' bash /tmp/dlna-server-build-linux-desktop-assets.sh
+DLNA_REPO_ROOT='__REPO_WSL__' DLNA_OUTPUT_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_PLATFORM_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_STAGE_DIR='__LINUX_STAGE_WSL__' DLNA_RELEASE_TOOLS_DIR='__TOOLS_WSL__' DLNA_NO_CLEAN='__NO_CLEAN__' DLNA_FLTK_SOURCE_DIR='__FLTK_WSL__' LINUXDEPLOY='__LINUXDEPLOY_WSL__' APPIMAGE_RUNTIME='__RUNTIME_WSL__' DLNA_SERVER_VERSION='__VERSION__' bash /tmp/dlna-server-build-linux-desktop-assets.sh
 '@
     $bashCommand = $bashTemplate.Replace("__REPO_WSL__", $repoWslEscaped)
     $bashCommand = $bashCommand.Replace("__LINUX_OUTPUT_WSL__", $linuxOutputWsl.Replace("'", "'\''"))
+    $bashCommand = $bashCommand.Replace("__LINUX_STAGE_WSL__", $linuxStageWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__TOOLS_WSL__", $releaseToolsWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__NO_CLEAN__", $noCleanValue)
     $bashCommand = $bashCommand.Replace("__FLTK_WSL__", $fltkWsl.Replace("'", "'\''"))
@@ -245,11 +325,13 @@ foreach ($macPlatform in @("macos-x64", "macos-arm64")) {
         $arch = if ($macPlatform -eq "macos-x64") { "x86_64" } else { "arm64" }
         $env:DLNA_MACOS_ARCH = $arch
         $env:DLNA_MACOS_PLATFORM_DIR = $platformDirs[$macPlatform]
+        $env:DLNA_NO_CLEAN = if ($NoClean) { "1" } else { "0" }
         try {
             Invoke-NativeChecked "bash" @("scripts/build-macos-dmg.sh")
         } finally {
             Remove-Item Env:\DLNA_MACOS_ARCH -ErrorAction SilentlyContinue
             Remove-Item Env:\DLNA_MACOS_PLATFORM_DIR -ErrorAction SilentlyContinue
+            Remove-Item Env:\DLNA_NO_CLEAN -ErrorAction SilentlyContinue
         }
     }
 }

@@ -7,10 +7,10 @@
 #include "media_sources.h"
 #include "netutils.h"
 #include "network_sources.h"
+#include "upnp_eventing.h"
 
 #include <algorithm>
 #include <cerrno>
-#include <cctype>
 #include <cstring>
 #include <fcntl.h>
 #include <arpa/inet.h>
@@ -104,8 +104,31 @@ void SendAll(int fd, const std::string& bytes) {
     }
 }
 
+bool TrySendAll(int fd, const char* data, size_t remaining) {
+    while (remaining > 0) {
+        ssize_t sent = send(fd, data, remaining, MSG_NOSIGNAL);
+        if (sent <= 0) return false;
+        data += sent;
+        remaining -= static_cast<size_t>(sent);
+    }
+    return true;
+}
+
 std::string ConnectionHeader(bool keepAlive) {
     return keepAlive ? "Connection: keep-alive\r\n" : "Connection: close\r\n";
+}
+
+std::string SplitRequestTarget(const std::string& requestTarget) {
+    const size_t query = requestTarget.find('?');
+    return query == std::string::npos ? requestTarget : requestTarget.substr(0, query);
+}
+
+bool ValidateHostHeader(const std::string& host) {
+    if (host.empty()) return false;
+    for (unsigned char ch : host) {
+        if (ch <= 32 || ch == '/' || ch == '\\') return false;
+    }
+    return true;
 }
 
 bool ReadHttpRequestHeaders(int fd, std::string& req) {
@@ -173,48 +196,6 @@ bool LoadServerIconPng(const std::string& fileName, std::string& bytes) {
     return false;
 }
 
-std::string LowerAscii(std::string value) {
-    for (char& ch : value) {
-        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    }
-    return value;
-}
-
-std::string EventSid() {
-    std::string uuid = WideToUtf8(AppConfig.Snapshot().deviceUUID);
-    return "uuid:" + (uuid.empty() ? "00000000-0000-0000-0000-000000000000" : uuid);
-}
-
-bool IsEventPath(const std::string& path) {
-    return path == "/upnp/event/content_directory" || path == "/upnp/event/connection_manager";
-}
-
-std::string EventSubscriptionResponse(const std::string& method, const std::string& path, const std::string& req) {
-    if (!IsEventPath(path)) {
-        return "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-    }
-
-    const std::string sid = FindHeaderValueCaseInsensitive(req, "SID");
-    if (method == "UNSUBSCRIBE") {
-        if (sid.empty()) {
-            return "HTTP/1.1 412 Precondition Failed\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-        }
-        return "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-    }
-
-    const std::string callback = FindHeaderValueCaseInsensitive(req, "CALLBACK");
-    const std::string nt = LowerAscii(FindHeaderValueCaseInsensitive(req, "NT"));
-    if (sid.empty() && (callback.empty() || nt != "upnp:event")) {
-        return "HTTP/1.1 412 Precondition Failed\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-    }
-
-    const std::string responseSid = sid.empty() ? EventSid() : sid;
-    return "HTTP/1.1 200 OK\r\n"
-           "SID: " + responseSid + "\r\n"
-           "TIMEOUT: Second-1800\r\n"
-           "Connection: close\r\n"
-           "Content-Length: 0\r\n\r\n";
-}
 }
 
 HttpServer& HttpServer::Get() {
@@ -238,6 +219,7 @@ bool HttpServer::Start(int port) {
 
 void HttpServer::Stop() {
     m_running = false;
+    AppEvents.ClearSubscriptions();
     if (m_listenSocketV4 >= 0) { shutdown(m_listenSocketV4, SHUT_RDWR); close(m_listenSocketV4); m_listenSocketV4 = -1; }
     if (m_listenSocketV6 >= 0) { shutdown(m_listenSocketV6, SHUT_RDWR); close(m_listenSocketV6); m_listenSocketV6 = -1; }
     for (auto& thread : m_threads) if (thread.joinable()) thread.join();
@@ -314,12 +296,16 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
     const size_t space2 = firstLine.rfind(' ');
     if (space1 == std::string::npos || space2 <= space1) return;
     const std::string method = firstLine.substr(0, space1);
-    const std::string path = firstLine.substr(space1 + 1, space2 - space1 - 1);
+    const std::string path = SplitRequestTarget(firstLine.substr(space1 + 1, space2 - space1 - 1));
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     if (cfg.debugLog) {
         LogPrint(L"HTTP request: src=%hs method=%hs path=%hs", clientIp.c_str(), method.c_str(), path.c_str());
     }
     std::string hostUrl = FindHeaderValueCaseInsensitive(req, "Host");
+    if (!hostUrl.empty() && !ValidateHostHeader(hostUrl)) {
+        SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        return;
+    }
     if (hostUrl.empty()) hostUrl = "127.0.0.1:" + std::to_string(cfg.port);
 
     const bool sendBody = method != "HEAD";
@@ -329,8 +315,8 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
         SendAll(clientSocket, response);
     };
 
-    if ((method == "SUBSCRIBE" || method == "UNSUBSCRIBE") && IsEventPath(path)) {
-        SendAll(clientSocket, EventSubscriptionResponse(method, path, req));
+    if (method == "SUBSCRIBE" || method == "UNSUBSCRIBE") {
+        SendAll(clientSocket, AppEvents.HandleEventSubscription(method, path, req));
         return;
     }
 
@@ -433,7 +419,7 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
                     while (remaining > 0) {
                         ssize_t chunk = read(fd.get(), buf, std::min<long long>(sizeof(buf), remaining));
                         if (chunk <= 0) break;
-                        if (send(clientSocket, buf, chunk, MSG_NOSIGNAL) <= 0) break;
+                        if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
                         remaining -= chunk;
                     }
                 }
@@ -469,7 +455,7 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
                 while (true) {
                     ssize_t chunk = read(fd.get(), buf, sizeof(buf));
                     if (chunk <= 0) break;
-                    if (send(clientSocket, buf, chunk, MSG_NOSIGNAL) <= 0) break;
+                    if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
                 }
             }
         } else if (path.rfind("/albumart/", 0) == 0) {
@@ -493,13 +479,14 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
             headers << "HTTP/1.1 200 OK\r\n"
                     << "Content-Type: " << WideToUtf8(item.albumArtMime.empty() ? L"image/jpeg" : item.albumArtMime) << "\r\n"
                     << "Content-Length: " << static_cast<long long>(st.st_size) << "\r\n"
+                    << "Accept-Ranges: none\r\n"
                     << "Connection: close\r\n\r\n";
             SendAll(clientSocket, headers.str());
             if (sendBody) {
                 while (true) {
                     ssize_t chunk = read(fd.get(), buf, sizeof(buf));
                     if (chunk <= 0) break;
-                    if (send(clientSocket, buf, chunk, MSG_NOSIGNAL) <= 0) break;
+                    if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
                 }
             }
         } else {
@@ -509,24 +496,27 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
         const size_t headersEnd = req.find("\r\n\r\n");
         std::string body = headersEnd == std::string::npos ? std::string() : req.substr(headersEnd + 4);
         const std::string lengthText = FindHeaderValueCaseInsensitive(req, "Content-Length");
-        if (!lengthText.empty()) {
-            long long contentLength = 0;
-            if (!TryParseNonNegativeLongLong(lengthText, contentLength) ||
-                contentLength < 0 ||
-                static_cast<unsigned long long>(contentLength) > kMaxSoapBodyBytes) {
-                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
-            const size_t expectedBodyLength = static_cast<size_t>(contentLength);
-            while (body.size() < expectedBodyLength) {
-                ssize_t r = recv(clientSocket, buf, sizeof(buf), 0);
-                if (r <= 0) break;
-                body.append(buf, static_cast<size_t>(r));
-            }
-            if (body.size() < expectedBodyLength) {
-                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
+        if (lengthText.empty()) {
+            LogPrint(L"Content-Length header required for SOAP POST.");
+            SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+            return;
+        }
+        long long contentLength = 0;
+        if (!TryParseNonNegativeLongLong(lengthText, contentLength) ||
+            contentLength < 0 ||
+            static_cast<unsigned long long>(contentLength) > kMaxSoapBodyBytes) {
+            SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+            return;
+        }
+        const size_t expectedBodyLength = static_cast<size_t>(contentLength);
+        while (body.size() < expectedBodyLength) {
+            ssize_t r = recv(clientSocket, buf, sizeof(buf), 0);
+            if (r <= 0) break;
+            body.append(buf, static_cast<size_t>(r));
+        }
+        if (body.size() < expectedBodyLength) {
+            SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+            return;
         }
         sendText("200 OK", "text/xml; charset=\"utf-8\"", path == "/upnp/control/connection_manager"
             ? AppContent.HandleConnectionManagerControl(body)

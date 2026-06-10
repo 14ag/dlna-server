@@ -5,14 +5,16 @@ repo_root=${DLNA_REPO_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pw
 version=${DLNA_SERVER_VERSION:-$(grep -E '^project\(dlna-server VERSION ' "$repo_root/CMakeLists.txt" | sed -E 's/.*VERSION ([0-9.]+).*/\1/')}
 platform_dir=${DLNA_LINUX_PLATFORM_DIR:-"$repo_root/output/linux"}
 build_dir=${DLNA_LINUX_BUILD_DIR:-"$repo_root/build-release-linux"}
-install_dir=${DLNA_LINUX_INSTALL_DIR:-"$platform_dir/install"}
+release_stage_dir=${DLNA_LINUX_STAGE_DIR:-"$repo_root/build-release-linux-stage"}
+install_dir=${DLNA_LINUX_INSTALL_DIR:-"$release_stage_dir/install"}
 output_dir=${DLNA_OUTPUT_DIR:-"$platform_dir"}
 
 case "$platform_dir" in /*) ;; *) platform_dir="$repo_root/$platform_dir" ;; esac
 case "$build_dir" in /*) ;; *) build_dir="$repo_root/$build_dir" ;; esac
+case "$release_stage_dir" in /*) ;; *) release_stage_dir="$repo_root/$release_stage_dir" ;; esac
 case "$install_dir" in /*) ;; *) install_dir="$repo_root/$install_dir" ;; esac
 case "$output_dir" in /*) ;; *) output_dir="$repo_root/$output_dir" ;; esac
-appdir="$output_dir/dlna-server.AppDir"
+appdir="$release_stage_dir/dlna-server.AppDir"
 tools_dir=${DLNA_RELEASE_TOOLS_DIR:-"$repo_root/build-release-tools/linux"}
 case "$tools_dir" in /*) ;; *) tools_dir="$repo_root/$tools_dir" ;; esac
 linuxdeploy_version="1-alpha-20251107-1"
@@ -60,8 +62,9 @@ if [ "${DLNA_NO_CLEAN:-0}" != "1" ]; then
         "$repo_root"/output/*) rm -rf "$platform_dir" ;;
         *) echo "Refusing to clean non-output platform dir: $platform_dir" >&2; exit 1 ;;
     esac
+    rm -rf "$release_stage_dir"
 fi
-mkdir -p "$output_dir" "$tools_dir"
+mkdir -p "$output_dir" "$tools_dir" "$release_stage_dir"
 
 cmake_args=(
     -S "$repo_root"
@@ -87,9 +90,6 @@ rm -rf "$appdir"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/share"
 cp -a "$install_dir/bin/." "$appdir/usr/bin/"
 cp -a "$install_dir/share/." "$appdir/usr/share/"
-if command -v curl >/dev/null 2>&1; then
-    cp "$(command -v curl)" "$appdir/usr/bin/curl"
-fi
 cp "$repo_root/packaging/linux/AppRun" "$appdir/AppRun"
 tr -d '\r' < "$repo_root/packaging/linux/dlna-server.appimage.desktop" > "$appdir/dlna-server.desktop"
 tr -d '\r' < "$repo_root/packaging/linux/dlna-server.appimage.desktop" > "$appdir/usr/share/applications/dlna-server.desktop"
@@ -102,6 +102,7 @@ if [ ! -s "$linuxdeploy" ]; then
 fi
 chmod +x "$linuxdeploy"
 
+find "$output_dir" -maxdepth 1 -type f -name '*.AppImage' -delete
 (cd "$output_dir" && APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" --appdir "$appdir" --desktop-file "$appdir/dlna-server.desktop" --icon-file "$appdir/dlna-server.svg" --output appimage)
 appimage=$(find "$output_dir" -maxdepth 1 -type f -name '*.AppImage' | head -n 1)
 if [ -z "$appimage" ]; then
@@ -117,8 +118,8 @@ if [ -z "$flatpak_builder" ] || [ -z "$flatpak" ]; then
     exit 1
 fi
 
-flatpak_repo="$output_dir/flatpak-repo"
-flatpak_build="$output_dir/flatpak-build"
+flatpak_repo="$release_stage_dir/flatpak-repo"
+flatpak_build="$release_stage_dir/flatpak-build"
 flatpak_bundle="$output_dir/dlna-server-${version}-linux-x86_64.flatpak"
 rm -rf "$flatpak_build" "$flatpak_repo" "$flatpak_bundle"
 "$flatpak_builder" --force-clean --repo="$flatpak_repo" "$flatpak_build" "$repo_root/packaging/flatpak/com.github.14ag.dlna_server.yml"

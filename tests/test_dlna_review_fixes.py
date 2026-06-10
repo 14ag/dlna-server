@@ -58,7 +58,7 @@ class DlnaReviewFixSourceTests(unittest.TestCase):
         posix_log = read_text("src/posix_log.cpp")
 
         for token in (
-            "find_package(CURL QUIET)",
+            "find_package(CURL REQUIRED)",
             "DLNA_HAS_LIBCURL",
             "CURL::libcurl",
             "curl_easy_perform",

@@ -11,6 +11,7 @@
 #include <unordered_set>
 
 struct ConfigSnapshot;
+class MediaDatabase;
 
 struct MediaItem {
     int id;
@@ -34,7 +35,10 @@ struct MediaIndexState {
     std::unordered_map<int, std::vector<size_t>> childrenByParent;
     std::unordered_map<std::wstring, int> containerKeys;
     std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> albumArtByDirectory;
+    std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> folderAlbumArt;
+    std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> perStemAlbumArt;
     std::unordered_set<std::wstring> duplicateKeys;
+    MediaDatabase* mediaDatabase = nullptr;
     int nextId = 1;
 };
 
