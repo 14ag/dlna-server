@@ -131,8 +131,9 @@ class UiSpecTests(unittest.TestCase):
         self.assertIn('wcscpy_s(nid.szTip, L"DLNA Server")', main)
         self.assertIn("AppendMenuW(hMenu", main)
         self.assertNotIn("InsertMenuW(hMenu, -1", main)
-        self.assertIn('linearGradient id="plate"', svg)
-        self.assertIn('filter id="shadow"', svg)
+        self.assertIn("xmlns:xlink=", svg)
+        self.assertIn('xlink:href="data:img/png;base64,', svg)
+        self.assertIn('width="996px" height="994px"', svg)
 
         data = (ROOT / "resources/app.ico").read_bytes()
         self.assertEqual(data[:4], b"\x00\x00\x01\x00")
