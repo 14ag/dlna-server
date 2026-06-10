@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help us improve WinDLNAServer
+about: Create a report to help us improve DLNA Server
 title: '[BUG] '
 labels: bug
 assignees: ''
@@ -26,7 +26,7 @@ A clear and concise description of what you expected to happen.
  - Network connection: [e.g. Wifi, Wired]
 
 **Logs**
-If applicable, turn on Debug Log in the settings, reproduce the issue, and paste the relevant lines from `%APPDATA%\WinDLNAServer\debug.log` here:
+If applicable, turn on Debug Log in the settings, reproduce the issue, and paste the relevant lines from `debug.log` here.:
 ```
 [Paste log here]
 ```

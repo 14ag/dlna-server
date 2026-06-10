@@ -1,16 +1,21 @@
 #include "log.h"
+#include "config.h"
 
 #include <cstdarg>
 #include <cstddef>
 #include <cstdio>
 #include <ctime>
 #include <deque>
+#include <locale>
 #include <mutex>
 #include <string>
+#include <codecvt>
 
 namespace {
 std::mutex g_logMutex;
 std::deque<std::wstring> g_lines;
+std::FILE* g_debugLogFile = nullptr;
+std::string g_debugLogPath;
 constexpr size_t kMaxLogLines = 1000;
 
 std::wstring TimestampPrefix() {
@@ -31,6 +36,30 @@ std::wstring TimestampPrefix() {
                   ts.tv_nsec / 1000000);
     return buffer;
 }
+
+std::string WideToUtf8Local(const std::wstring& value) {
+    std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+    return converter.to_bytes(value);
+}
+
+std::FILE* GetDebugLogFile() {
+    std::string path = WideToUtf8Local(AppConfig.GetConfigPath());
+    const size_t slash = path.find_last_of('/');
+    path = (slash == std::string::npos ? std::string() : path.substr(0, slash + 1)) + "debug.log";
+
+    if (g_debugLogFile && g_debugLogPath == path) {
+        return g_debugLogFile;
+    }
+    if (g_debugLogFile) {
+        std::fclose(g_debugLogFile);
+        g_debugLogFile = nullptr;
+    }
+    g_debugLogFile = std::fopen(path.c_str(), "a");
+    if (g_debugLogFile) {
+        g_debugLogPath = path;
+    }
+    return g_debugLogFile;
+}
 }
 
 void LogPrint(const wchar_t* fmt, ...) {
@@ -48,6 +77,13 @@ void LogPrint(const wchar_t* fmt, ...) {
         g_lines.pop_front();
     }
     std::fwprintf(stderr, L"%ls\n", line.c_str());
+    if (AppConfig.Snapshot().debugLog) {
+        std::FILE* file = GetDebugLogFile();
+        if (file) {
+            std::fprintf(file, "%s\n", WideToUtf8Local(line).c_str());
+            std::fflush(file);
+        }
+    }
 }
 
 std::wstring GetSystemLog() {

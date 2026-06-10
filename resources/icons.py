@@ -2,10 +2,9 @@
 from pathlib import Path
 from PIL import Image
 
-root = Path(r'C:\Users\philip\sauce\dlna-server')
-source = root / 'Gemini_Generated_Image_kxspoykxspoykxsp copy.png'
-resources = root / 'code' / 'resources'
-icon = Image.open(source).convert('RGBA')
+resources = Path(__file__).parent
+iconSource = resources / 'dlna-server-icon.png'
+icon = Image.open(iconSource).convert('RGBA')
 
 for size in (48, 120, 256):
     resized = icon.resize((size, size), Image.Resampling.LANCZOS)

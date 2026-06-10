@@ -9,9 +9,8 @@ if (-not (Test-Path -LiteralPath $exePath)) {
     throw "Expected Windows x64 build at $exePath. Run cmake install with --prefix output\winx64 or build-assets.bat --platform winx64."
 }
 $vlcPath = "C:\Program Files\VideoLAN\VLC\vlc.exe"
-$appDataDir = Join-Path $env:APPDATA "dlna-server"
 $configPath = Join-Path $outputDir "config.ini"
-$debugLogPath = Join-Path $appDataDir "debug.log"
+$debugLogPath = Join-Path $outputDir "debug.log"
 $resultsPath = Join-Path $outputDir "verification-results.txt"
 $debugCopyPath = Join-Path $outputDir "verification-debug.log"
 $testMediaDir = Join-Path $env:TEMP "dlna-server-TestMedia"
@@ -317,7 +316,6 @@ try {
 
     Stop-RepoDlnaProcesses
 
-    New-Item -ItemType Directory -Path $appDataDir -Force | Out-Null
     if (Test-Path $configPath) {
         $backupPath = Join-Path $env:TEMP ("dlna-server-config-backup-" + [guid]::NewGuid().ToString() + ".ini")
         Copy-Item -LiteralPath $configPath -Destination $backupPath -Force

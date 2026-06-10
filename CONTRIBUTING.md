@@ -3,7 +3,7 @@
 dlna-server has two supported build surfaces:
 
 - A native Win32 GUI application for Windows.
-- A headless POSIX `dlna-server` target for Linux, macOS, and Termux-style environments.
+- A headless POSIX `dlna-server` target for Linux and macOS
 
 Keep changes small, test the protocol behavior they affect, and avoid adding third-party dependencies unless the benefit is clear.
 

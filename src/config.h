@@ -65,10 +65,10 @@ public:
     
     std::vector<MediaSource> mediaSources;
     std::wstring GetDefaultPlaylistPath();
+    std::wstring GetConfigPath();
 
 private:
     Config();
-    std::wstring GetConfigPath();
     std::wstring GenerateUUID();
     void SetRunOnBoot(bool enable);
 
