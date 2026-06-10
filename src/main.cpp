@@ -7,6 +7,21 @@
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 namespace {
+bool HasCommandLineToken(const wchar_t* token) {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) return false;
+    bool found = false;
+    for (int i = 1; i < argc; ++i) {
+        if (wcscmp(argv[i], token) == 0) {
+            found = true;
+            break;
+        }
+    }
+    LocalFree(argv);
+    return found;
+}
+
 bool TryRunFirewallHelper(int& exitCode) {
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -41,6 +56,8 @@ bool TryRunFirewallHelper(int& exitCode) {
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
+    (void)hPrevInstance;
+    (void)pCmdLine;
     int helperExitCode = 0;
     if (TryRunFirewallHelper(helperExitCode)) {
         return helperExitCode;
@@ -59,10 +76,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     }
 
     // Parse command line for --minimized
-    bool startMinimized = false;
-    if (wcsstr(pCmdLine, L"--minimized") != NULL) {
-        startMinimized = true;
-    }
+    bool startMinimized = HasCommandLineToken(L"--minimized");
 
     AppConfig.Load();
 

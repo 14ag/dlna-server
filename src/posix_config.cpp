@@ -34,6 +34,53 @@ std::string Trim(const std::string& value) {
     return result;
 }
 
+std::wstring EscapeConfigListField(const std::wstring& value) {
+    std::wstring escaped;
+    for (wchar_t ch : value) {
+        if (ch == L'\\' || ch == L'|' || ch == L'\r' || ch == L'\n') {
+            escaped.push_back(L'\\');
+            if (ch == L'\r') escaped.push_back(L'r');
+            else if (ch == L'\n') escaped.push_back(L'n');
+            else escaped.push_back(ch);
+        } else {
+            escaped.push_back(ch);
+        }
+    }
+    return escaped;
+}
+
+std::vector<std::wstring> SplitConfigList(const std::wstring& value) {
+    std::vector<std::wstring> fields;
+    std::wstring current;
+    bool escaping = false;
+    for (wchar_t ch : value) {
+        if (escaping) {
+            if (ch == L'r') current.push_back(L'\r');
+            else if (ch == L'n') current.push_back(L'\n');
+            else if (ch == L'|' || ch == L'\\') current.push_back(ch);
+            else {
+                current.push_back(L'\\');
+                current.push_back(ch);
+            }
+            escaping = false;
+            continue;
+        }
+        if (ch == L'\\') {
+            escaping = true;
+            continue;
+        }
+        if (ch == L'|') {
+            fields.push_back(current);
+            current.clear();
+            continue;
+        }
+        current.push_back(ch);
+    }
+    if (escaping) current.push_back(L'\\');
+    fields.push_back(current);
+    return fields;
+}
+
 std::string AppRootConfigPath() {
 #ifdef __APPLE__
     char path[PATH_MAX];
@@ -214,10 +261,8 @@ void Config::Load() {
         else if (key == "PresentationURL") presentationUrl = Utf8ToWide(value);
         else if (key == "MediaSources") {
             mediaSources.clear();
-            std::stringstream ss(value);
-            std::string token;
-            while (std::getline(ss, token, '|')) {
-                if (!token.empty()) mediaSources.push_back({Utf8ToWide(token), true});
+            for (const auto& token : SplitConfigList(Utf8ToWide(value))) {
+                if (!token.empty()) mediaSources.push_back({token, true});
             }
         }
     }
@@ -239,7 +284,7 @@ void Config::Save() {
 
     std::wstring sourcesStr;
     for (size_t i = 0; i < mediaSources.size(); ++i) {
-        sourcesStr += mediaSources[i].path;
+        sourcesStr += EscapeConfigListField(mediaSources[i].path);
         if (i + 1 < mediaSources.size()) sourcesStr += L"|";
     }
 

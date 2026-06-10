@@ -12,13 +12,11 @@ function(dlna_enable_warnings target_name)
     endif()
 endfunction()
 
-find_package(CURL QUIET)
+find_package(CURL REQUIRED)
 
-function(dlna_link_optional_curl target_name)
-    if(CURL_FOUND AND TARGET CURL::libcurl)
-        target_link_libraries(${target_name} PRIVATE CURL::libcurl)
-        target_compile_definitions(${target_name} PRIVATE DLNA_HAS_LIBCURL=1)
-    endif()
+function(dlna_link_required_curl target_name)
+    target_link_libraries(${target_name} CURL::libcurl)
+    target_compile_definitions(${target_name} PRIVATE DLNA_HAS_LIBCURL=1)
 endfunction()
 
 if(WIN32)
@@ -32,8 +30,11 @@ if(WIN32)
         src/netutils.cpp
         src/httpserver.cpp
         src/contentdirectory.cpp
+        src/upnp_eventing.cpp
         src/dlna_utils.cpp
         src/network_sources.cpp
+        src/source_watcher.cpp
+        src/media_database.cpp
         src/media_sources.cpp
         src/config.cpp
         src/ipwhitelist.cpp
@@ -50,8 +51,11 @@ if(WIN32)
         src/netutils.h
         src/httpserver.h
         src/contentdirectory.h
+        src/upnp_eventing.h
         src/dlna_utils.h
         src/network_sources.h
+        src/source_watcher.h
+        src/media_database.h
         src/media_sources.h
         src/config.h
         src/ipwhitelist.h
@@ -63,7 +67,7 @@ if(WIN32)
     add_executable(dlna-server WIN32 ${SOURCES} ${HEADERS} resources/app.rc)
     set_target_properties(dlna-server PROPERTIES OUTPUT_NAME "DLNA Server")
     dlna_enable_warnings(dlna-server)
-    dlna_link_optional_curl(dlna-server)
+    dlna_link_required_curl(dlna-server)
     target_link_libraries(dlna-server
         ws2_32
         shell32
@@ -98,11 +102,14 @@ else()
         src/posix_log.cpp
         src/ipwhitelist.cpp
         src/contentdirectory.cpp
+        src/upnp_eventing.cpp
         src/dlna_utils.cpp
         src/network_sources.cpp
+        src/source_watcher.cpp
+        src/media_database.cpp
     )
     dlna_enable_warnings(dlna-server)
-    dlna_link_optional_curl(dlna-server)
+    dlna_link_required_curl(dlna-server)
     target_include_directories(dlna-server PRIVATE src)
     target_compile_definitions(dlna-server PRIVATE DLNA_POSIX=1)
     if(APPLE)
@@ -111,7 +118,7 @@ else()
         target_compile_definitions(dlna-server PRIVATE DLNA_PLATFORM_NAME=\"Linux\")
     endif()
     find_package(Threads REQUIRED)
-    target_link_libraries(dlna-server PRIVATE Threads::Threads)
+    target_link_libraries(dlna-server Threads::Threads)
 
     install(TARGETS dlna-server RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
@@ -149,12 +156,15 @@ else()
             src/posix_log.cpp
             src/ipwhitelist.cpp
             src/contentdirectory.cpp
+            src/upnp_eventing.cpp
             src/dlna_utils.cpp
             src/network_sources.cpp
+            src/source_watcher.cpp
+            src/media_database.cpp
         )
         set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
         dlna_enable_warnings(dlna-server-gui-native)
-        dlna_link_optional_curl(dlna-server-gui-native)
+        dlna_link_required_curl(dlna-server-gui-native)
         target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_POSIX=1)
         if(APPLE)
             target_compile_definitions(dlna-server-gui-native PRIVATE DLNA_PLATFORM_NAME=\"macOS\")

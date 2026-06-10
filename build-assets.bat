@@ -19,6 +19,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
+if "%~1"=="" goto :check_wsl
+echo %* | findstr /I "linux" >nul 2>nul
+if errorlevel 1 goto :run_build
+
+:check_wsl
+where wsl.exe >nul 2>nul
+if errorlevel 1 (
+    echo ERROR: wsl.exe missing. Linux assets require WSL.
+    exit /b 1
+)
+
+:run_build
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\build-release-assets.ps1" %*
 exit /b %ERRORLEVEL%
 

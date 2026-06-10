@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Media indexing now builds lookup maps off-lock and swaps completed scans into place.
 - Server startup now begins HTTP and SSDP before the background media scan completes.
+- Running servers now watch local media sources and rescan after file changes without a manual restart.
+- Media scans now persist stable file IDs, scan errors, and metadata cache records in `media-cache.tsv` beside `config.ini`.
+- GENA ContentDirectory subscribers now receive async `SystemUpdateID` `NOTIFY` callbacks after successful scan swaps.
 - Remote media access now uses an optional `libcurl` backend instead of spawning `curl` per request.
 - SSDP M-SEARCH MX delays now run on response workers instead of blocking receive loops.
 - Scan, HTTP, SSDP, and description workers now read immutable config snapshots for request-time behavior.
@@ -25,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - IP whitelist checks now support CIDR ranges and exact-match hash lookup.
 - POSIX HTTP client threads and in-memory logs are bounded.
 - Remote source failures now produce clearer logs, companion album art lookup covers `thumb` names, and Browse no longer advertises missing album art.
+- Background rescans are now serialized so watch-triggered and manual rescans cannot race on the scan thread handle.
+- Watch mode now reads current config snapshots each poll so source changes are monitored without restart.
+- Watch mode no longer ignores local media entries after a fixed scan-signature cap.
 
 ## [1.4.0] - 2026-05-29
 
