@@ -1,15 +1,14 @@
 #include "log.h"
 #include "config.h"
+#include "netutils.h"
 
 #include <cstdarg>
 #include <cstddef>
 #include <cstdio>
 #include <ctime>
 #include <deque>
-#include <locale>
 #include <mutex>
 #include <string>
-#include <codecvt>
 
 namespace {
 std::mutex g_logMutex;
@@ -37,13 +36,8 @@ std::wstring TimestampPrefix() {
     return buffer;
 }
 
-std::string WideToUtf8Local(const std::wstring& value) {
-    std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-    return converter.to_bytes(value);
-}
-
 std::FILE* GetDebugLogFile() {
-    std::string path = WideToUtf8Local(AppConfig.GetConfigPath());
+    std::string path = WideToUtf8(AppConfig.GetConfigPath());
     const size_t slash = path.find_last_of('/');
     path = (slash == std::string::npos ? std::string() : path.substr(0, slash + 1)) + "debug.log";
 
@@ -70,6 +64,7 @@ void LogPrint(const wchar_t* fmt, ...) {
     va_end(args);
 
     std::wstring line = TimestampPrefix() + buffer;
+    const bool writeDebugLog = AppConfig.Snapshot().debugLog;
 
     std::lock_guard<std::mutex> lock(g_logMutex);
     g_lines.push_back(line);
@@ -77,10 +72,10 @@ void LogPrint(const wchar_t* fmt, ...) {
         g_lines.pop_front();
     }
     std::fwprintf(stderr, L"%ls\n", line.c_str());
-    if (AppConfig.Snapshot().debugLog) {
+    if (writeDebugLog) {
         std::FILE* file = GetDebugLogFile();
         if (file) {
-            std::fprintf(file, "%s\n", WideToUtf8Local(line).c_str());
+            std::fprintf(file, "%s\n", WideToUtf8(line).c_str());
             std::fflush(file);
         }
     }

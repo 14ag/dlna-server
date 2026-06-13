@@ -120,6 +120,10 @@ void Server::WatchLoop() {
 void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
     std::vector<NetworkEndpoint> endpoints;
     if (!EnumerateNetworkEndpoints(cfg.port, endpoints)) {
+        LogPrint(L"Network endpoint enumeration failed.");
+        std::lock_guard<std::mutex> lock(m_endpointMutex);
+        m_endpoint = L"";
+        m_endpoints.clear();
         return;
     }
 
@@ -142,7 +146,6 @@ bool Server::Start() {
     if (m_running.load(std::memory_order_acquire)) return true;
     m_stopping.store(false, std::memory_order_release);
 
-    AppConfig.Load();
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     IPWhitelist::Get().Load(cfg.ipWhiteList);
     if (!IsValidPort(cfg.port)) {

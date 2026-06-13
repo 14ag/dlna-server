@@ -50,17 +50,14 @@ void LogPrint(const wchar_t* fmt, ...) {
         st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
 
     std::wstring line = std::wstring(timeBuf) + msg + L"\r\n";
+    const bool writeDebugLog = AppConfig.Snapshot().debugLog;
 
-    {
-        std::lock_guard<std::mutex> lock(g_logMutex);
-        g_logLines.push_back(line);
-        if (g_logLines.size() > MAX_LOG_LINES) {
-            g_logLines.pop_front();
-        }
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    g_logLines.push_back(line);
+    if (g_logLines.size() > MAX_LOG_LINES) {
+        g_logLines.pop_front();
     }
-
-    if (AppConfig.Snapshot().debugLog) {
-        std::lock_guard<std::mutex> lock(g_logMutex);
+    if (writeDebugLog) {
         FILE* fp = GetDebugLogFile();
         if (fp) {
             fwprintf(fp, L"%s", line.c_str());

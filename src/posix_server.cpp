@@ -112,7 +112,13 @@ void Server::WatchLoop() {
 
 void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
     std::vector<NetworkEndpoint> endpoints;
-    EnumerateNetworkEndpoints(cfg.port, endpoints);
+    if (!EnumerateNetworkEndpoints(cfg.port, endpoints)) {
+        LogPrint(L"Network endpoint enumeration failed.");
+        std::lock_guard<std::mutex> lock(m_endpointMutex);
+        m_endpoint.clear();
+        m_endpoints.clear();
+        return;
+    }
     if (cfg.debugLog) {
         for (const auto& endpoint : endpoints) {
             LogPrint(L"Discovery endpoint selected: family=%d addr=%hs if=%lu prefix=%lu location=%hs",

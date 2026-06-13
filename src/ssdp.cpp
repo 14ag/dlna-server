@@ -140,6 +140,15 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     m_serverName = WideToUtf8(serverName);
     m_uuidStr = WideToUtf8(uuid);
 
+    int ipv4EndpointCount = 0;
+    int ipv6EndpointCount = 0;
+    int ipv4JoinCount = 0;
+    int ipv6JoinCount = 0;
+    for (const auto& endpoint : m_endpoints) {
+        if (endpoint.family == AF_INET) ++ipv4EndpointCount;
+        else if (endpoint.family == AF_INET6) ++ipv6EndpointCount;
+    }
+
     m_ipv4Socket = WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, 0);
     if (m_ipv4Socket != INVALID_SOCKET) {
         BOOL reuse = TRUE;
@@ -151,7 +160,7 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
         localAddr.sin_addr.s_addr = INADDR_ANY;
 
         if (bind(m_ipv4Socket, reinterpret_cast<SOCKADDR*>(&localAddr), sizeof(localAddr)) == SOCKET_ERROR) {
-            DiscoveryLog(L"SSDP IPv4 bind failed: %d", WSAGetLastError());
+            LogPrint(L"SSDP IPv4 bind failed: %d", WSAGetLastError());
             closesocket(m_ipv4Socket);
             m_ipv4Socket = INVALID_SOCKET;
         } else {
@@ -162,15 +171,16 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
 
                 ip_mreq membership = {};
                 if (InetPtonA(AF_INET, SSDP_MULTICAST_IPV4, &membership.imr_multiaddr) != 1) {
-                    DiscoveryLog(L"SSDP IPv4 multicast address parse failed");
+                    LogPrint(L"SSDP IPv4 multicast address parse failed");
                     continue;
                 }
                 membership.imr_interface = reinterpret_cast<const SOCKADDR_IN*>(&endpoint.sockaddr)->sin_addr;
 
                 if (setsockopt(m_ipv4Socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, reinterpret_cast<const char*>(&membership), sizeof(membership)) == 0) {
+                    ++ipv4JoinCount;
                     DiscoveryLog(L"SSDP IPv4 multicast join ok: if=%lu addr=%hs", endpoint.interfaceIndex, endpoint.address.c_str());
                 } else {
-                    DiscoveryLog(L"SSDP IPv4 multicast join failed: if=%lu addr=%hs err=%d", endpoint.interfaceIndex, endpoint.address.c_str(), WSAGetLastError());
+                    LogPrint(L"SSDP IPv4 multicast join failed: if=%lu addr=%hs err=%d", endpoint.interfaceIndex, endpoint.address.c_str(), WSAGetLastError());
                 }
             }
         }
@@ -189,7 +199,7 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
         localAddr6.sin6_addr = in6addr_any;
 
         if (bind(m_ipv6Socket, reinterpret_cast<SOCKADDR*>(&localAddr6), sizeof(localAddr6)) == SOCKET_ERROR) {
-            DiscoveryLog(L"SSDP IPv6 bind failed: %d", WSAGetLastError());
+            LogPrint(L"SSDP IPv6 bind failed: %d", WSAGetLastError());
             closesocket(m_ipv6Socket);
             m_ipv6Socket = INVALID_SOCKET;
         } else {
@@ -203,15 +213,22 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
                 membership6.ipv6mr_interface = endpoint.interfaceIndex;
 
                 if (setsockopt(m_ipv6Socket, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, reinterpret_cast<const char*>(&membership6), sizeof(membership6)) == 0) {
+                    ++ipv6JoinCount;
                     DiscoveryLog(L"SSDP IPv6 multicast join ok: if=%lu addr=%hs", endpoint.interfaceIndex, endpoint.address.c_str());
                 } else {
-                    DiscoveryLog(L"SSDP IPv6 multicast join failed: if=%lu addr=%hs err=%d", endpoint.interfaceIndex, endpoint.address.c_str(), WSAGetLastError());
+                    LogPrint(L"SSDP IPv6 multicast join failed: if=%lu addr=%hs err=%d", endpoint.interfaceIndex, endpoint.address.c_str(), WSAGetLastError());
                 }
             }
         }
     }
 
     if (m_ipv4Socket == INVALID_SOCKET && m_ipv6Socket == INVALID_SOCKET) {
+        CloseSockets();
+        return false;
+    }
+    if (ipv4JoinCount == 0 && ipv6JoinCount == 0) {
+        LogPrint(L"SSDP multicast join failed on all endpoints: ipv4=%d/%d ipv6=%d/%d",
+                 ipv4JoinCount, ipv4EndpointCount, ipv6JoinCount, ipv6EndpointCount);
         CloseSockets();
         return false;
     }
@@ -232,8 +249,8 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
 void SSDP::Stop() {
     if (!m_running.load()) return;
 
-    SendNotifyBurst("ssdp:byebye", 1, 0);
     m_running.store(false);
+    SendNotifyBurst("ssdp:byebye", 1, 0);
     if (m_ipv4Socket != INVALID_SOCKET) shutdown(m_ipv4Socket, SD_BOTH);
     if (m_ipv6Socket != INVALID_SOCKET) shutdown(m_ipv6Socket, SD_BOTH);
     m_responseCondition.notify_all();
@@ -273,7 +290,7 @@ void SSDP::SendNotifyRound(const char* nts) {
 
         std::lock_guard<std::mutex> socketLock(m_socketMutex);
         if (!SetOutboundInterface(socket, endpoint, true)) {
-            DiscoveryLog(L"SSDP notify interface select failed: family=%d if=%lu err=%d", endpoint.family, endpoint.interfaceIndex, WSAGetLastError());
+            LogPrint(L"SSDP notify interface select failed: family=%d if=%lu err=%d", endpoint.family, endpoint.interfaceIndex, WSAGetLastError());
             continue;
         }
 
@@ -325,7 +342,7 @@ void SSDP::SendNotifyRound(const char* nts) {
 
             int sent = sendto(socket, message.c_str(), static_cast<int>(message.size()), 0, reinterpret_cast<const SOCKADDR*>(&dest), destLen);
             if (sent == SOCKET_ERROR) {
-                DiscoveryLog(L"SSDP send failed: nts=%hs target=%hs err=%d", nts, target.st.c_str(), WSAGetLastError());
+                LogPrint(L"SSDP send failed: nts=%hs target=%hs err=%d", nts, target.st.c_str(), WSAGetLastError());
                 continue;
             }
             DiscoveryLog(L"SSDP notify sent: nts=%hs target=%hs location=%hs if=%lu", nts, target.st.c_str(), endpoint.locationUrl.c_str(), endpoint.interfaceIndex);
@@ -363,7 +380,7 @@ void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
     }
     std::lock_guard<std::mutex> socketLock(m_socketMutex);
     if (!SetOutboundInterface(response.socket, response.endpoint, false)) {
-        DiscoveryLog(L"SSDP response interface select failed: if=%lu err=%d", response.endpoint.interfaceIndex, WSAGetLastError());
+        LogPrint(L"SSDP response interface select failed: if=%lu err=%d", response.endpoint.interfaceIndex, WSAGetLastError());
         return;
     }
 
@@ -379,7 +396,7 @@ void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
         const std::string usn = i < response.logUsn.size() ? response.logUsn[i] : std::string();
         std::string destination = SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&response.remoteAddr));
         if (sent == SOCKET_ERROR) {
-            DiscoveryLog(L"SSDP send failed: dst=%hs st=%hs usn=%hs err=%d", destination.c_str(), st.c_str(), usn.c_str(), WSAGetLastError());
+            LogPrint(L"SSDP send failed: dst=%hs st=%hs usn=%hs err=%d", destination.c_str(), st.c_str(), usn.c_str(), WSAGetLastError());
             continue;
         }
         DiscoveryLog(L"SSDP response sent: dst=%hs st=%hs usn=%hs location=%hs", destination.c_str(), st.c_str(), usn.c_str(), response.endpoint.locationUrl.c_str());
