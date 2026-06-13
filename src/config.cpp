@@ -1,5 +1,6 @@
 #include "config.h"
 #include "dlna_utils.h"
+#include "log.h"
 #include "netutils.h"
 #include <shlwapi.h>
 #include <shlobj.h>
@@ -361,6 +362,8 @@ void Config::Save() {
         std::string content = ss.str();
         fwrite(content.data(), 1, content.size(), fp);
         fclose(fp);
+    } else {
+        LogPrint(L"Config save failed: %ls", path.c_str());
     }
 
     SetRunOnBoot(runOnBoot);

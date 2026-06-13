@@ -253,6 +253,9 @@ bool EnumerateNetworkEndpoints(int port, std::vector<NetworkEndpoint>& endpoints
         if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK || adapter->OperStatus != IfOperStatusUp) {
             continue;
         }
+        if (adapter->Flags & IP_ADAPTER_NO_MULTICAST) {
+            continue;
+        }
 
         const IP_ADAPTER_UNICAST_ADDRESS* chosenV6 = NULL;
         int chosenV6Rank = 0;

@@ -26,7 +26,7 @@ A clear and concise description of what you expected to happen.
  - Network connection: [e.g. Wifi, Wired]
 
 **Logs**
-If applicable, turn on Debug Log in the settings, reproduce the issue, and paste the relevant lines from `debug.log` here.:
+If applicable, turn on Debug Log in the settings, reproduce the issue, and paste the relevant lines from `debug.log` beside `config.ini` here:
 ```
 [Paste log here]
 ```
