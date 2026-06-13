@@ -39,5 +39,6 @@
 
 // Log Dialog Controls
 #define IDC_EDT_LOG_TEXT                501
+#define IDC_BTN_REFRESH_LOG             502
 
 #endif // RESOURCE_H

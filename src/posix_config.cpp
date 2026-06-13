@@ -279,8 +279,12 @@ void Config::Load() {
 
 void Config::Save() {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
-    std::ofstream file(WideToUtf8(GetConfigPath()), std::ios::binary | std::ios::trunc);
-    if (!file) return;
+    const std::wstring configPath = GetConfigPath();
+    std::ofstream file(WideToUtf8(configPath), std::ios::binary | std::ios::trunc);
+    if (!file) {
+        LogPrint(L"Config save failed: %ls", configPath.c_str());
+        return;
+    }
 
     std::wstring sourcesStr;
     for (size_t i = 0; i < mediaSources.size(); ++i) {
