@@ -682,7 +682,6 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             titleRight = kGutter;
         }
         RECT rcTitle = { kGutter, 0, titleRight, kToolbarHeight };
-        DrawTextW(hdc, L"DLNA Server", -1, &rcTitle, DT_SINGLELINE | DT_VCENTER);
         SelectObject(hdc, hOldFont);
 
         RECT rcStatus = { 0, kToolbarHeight, rcClient.right, kToolbarHeight + kStatusHeight };
