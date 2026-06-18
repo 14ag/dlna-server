@@ -64,6 +64,7 @@ INT_PTR LogDialog::Show(HWND hParent) {
 }
 
 INT_PTR CALLBACK LogDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    (void)lParam;
     switch (uMsg) {
     case WM_INITDIALOG: {
         ApplyDarkFrame(hwndDlg);

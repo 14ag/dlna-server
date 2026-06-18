@@ -374,6 +374,7 @@ void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
 }
 
 INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    (void)lParam;
     switch (uMsg) {
     case WM_INITDIALOG:
         ApplyDarkFrame(hwndDlg);
