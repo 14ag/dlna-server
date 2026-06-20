@@ -7,7 +7,6 @@
 #include "media_sources.h"
 #include "netutils.h"
 #include "network_sources.h"
-#include "upnp_eventing.h"
 #include "../resources/resource.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -220,7 +219,6 @@ void HttpServer::Stop() {
     if (!m_running.load() && m_listenSocketV4 == INVALID_SOCKET && m_listenSocketV6 == INVALID_SOCKET) return;
 
     m_running.store(false);
-    AppEvents.ClearSubscriptions();
 
     if (m_hAcceptThread) {
         WaitForSingleObject(m_hAcceptThread, INFINITE);
@@ -344,6 +342,10 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
     }
 
     std::string hostUrl = FindHeaderValueCaseInsensitive(req, "Host");
+        LogPrint(L"HTTP request: src=%hs method=%hs path=%hs", clientIP.c_str(), method.c_str(), path.c_str());
+    }
+
+    std::string hostUrl = FindHeaderValueCaseInsensitive(req, "Host");
     if (!hostUrl.empty() && !ValidateHostHeader(hostUrl)) {
         SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
         return;
@@ -356,11 +358,6 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
         } else {
             hostUrl = clientIP + ":" + std::to_string(cfg.port);
         }
-    }
-
-    if (method == "SUBSCRIBE" || method == "UNSUBSCRIBE") {
-        SendAll(clientSocket, AppEvents.HandleEventSubscription(method, path, req));
-        return;
     }
 
     if (method == "GET" || method == "HEAD") {
@@ -634,46 +631,6 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
         response = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
         SendAll(clientSocket, response);
         return;
-    }
-
-    if (method == "POST" && (path == "/upnp/control/content_directory" || path == "/upnp/control/connection_manager")) {
-        size_t headersEnd = req.find("\r\n\r\n");
-        std::string body;
-        if (headersEnd != std::string::npos) {
-            size_t bodyStart = headersEnd + 4;
-            body = req.substr(bodyStart);
-
-            std::string contentLengthHeader = FindHeaderValueCaseInsensitive(req, "Content-Length");
-            if (contentLengthHeader.empty()) {
-                LogPrint(L"Content-Length header required for SOAP POST.");
-                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
-            long long contentLength = 0;
-            if (!TryParseNonNegativeLongLong(contentLengthHeader, contentLength) ||
-                contentLength < 0 ||
-                static_cast<unsigned long long>(contentLength) > kMaxSoapBodyBytes) {
-                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
-            const size_t expectedBodyLength = static_cast<size_t>(contentLength);
-            while (body.length() < expectedBodyLength && m_running.load()) {
-                int r = recv(clientSocket, buf, HTTP_BUF_SIZE, 0);
-                if (r <= 0) break;
-                body.append(buf, r);
-            }
-            if (body.length() < expectedBodyLength) {
-                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
-
-            std::string browseResp = path == "/upnp/control/connection_manager"
-                ? AppContent.HandleConnectionManagerControl(body)
-                : AppContent.HandleContentDirectoryControl(body, hostUrl);
-            std::string fullResp = "HTTP/1.1 200 OK\r\nContent-Type: text/xml; charset=\"utf-8\"\r\nContent-Length: " + std::to_string(browseResp.length()) + "\r\nConnection: close\r\n\r\n" + browseResp;
-            SendAll(clientSocket, fullResp);
-            return;
-        }
     }
 
     static const char* badRequest = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";

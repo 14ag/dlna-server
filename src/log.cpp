@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <deque>
 #include <shlwapi.h>
+#include <share.h>
 #include <mutex>
 
 static std::deque<std::wstring> g_logLines;
@@ -30,7 +31,8 @@ FILE* GetDebugLogFile() {
         fclose(g_debugLogFile);
         g_debugLogFile = NULL;
     }
-    if (_wfopen_s(&g_debugLogFile, path.c_str(), L"a,ccs=UTF-8") == 0 && g_debugLogFile) {
+    g_debugLogFile = _wfsopen(path.c_str(), L"w,ccs=UTF-8", _SH_DENYNO);
+    if (g_debugLogFile) {
         g_debugLogPath = path;
     }
     return g_debugLogFile;
