@@ -3,7 +3,9 @@
 
 #ifdef _WIN32
 
+#include <upnp/upnp.h>
 #include "netutils.h"
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -15,15 +17,16 @@ public:
     void Stop();
 
     std::string GetHttpAddr() const;
+    UpnpDevice_Handle GetDeviceHandle() const { return m_deviceHandle; }
     void NotifyUpdateId(int updateId);
 
 private:
     LibUPnPWrapper() {}
     ~LibUPnPWrapper() { Stop(); }
 
-    std::string m_tempDir;
+    std::filesystem::path m_tempDir;
     std::string m_httpAddr;
-    int m_deviceHandle = -1;
+    UpnpDevice_Handle m_deviceHandle = -1;
 };
 
 #endif // _WIN32
