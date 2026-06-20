@@ -2,8 +2,8 @@ name: Update Banner
 
 on:
   schedule:
-    # runs every 48 hours
-    - cron: '0 */48 * * *'
+    # runs every 24 hours
+    - cron: '0 */24 * * *'
   workflow_dispatch:
   push:
     branches:
@@ -37,9 +37,9 @@ jobs:
           BANNER_KEY: ${{ secrets.BANNER_KEY }}
         run: |
           VERCEL_URL="${{ vars.VERCEL_URL }}"
-          VERCEL_URL="$(printf '%s' "$VERCEL_URL" | sed 's:/*$::')"
           curl -sf \
             -H "X-Banner-Key: ${BANNER_KEY}" \
+            -H "repo-name: ${{ github.event.repository.name }}" \
             "${VERCEL_URL}/banner" \
             --output assets/banner.webp
 
