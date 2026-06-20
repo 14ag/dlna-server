@@ -18,6 +18,7 @@ struct NetworkEndpoint {
     ULONG interfaceIndex;
     ULONG prefixLength;
     bool isLinkLocal;
+    std::string interfaceName;
     std::string address;
     std::string host;
     std::string locationUrl;

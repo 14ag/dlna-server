@@ -111,6 +111,7 @@ void AddEndpointForUnicast(std::vector<NetworkEndpoint>& endpoints,
         endpoint.isLinkLocal = false;
     }
 
+    endpoint.interfaceName = WideToUtf8(std::wstring(adapter->FriendlyName ? adapter->FriendlyName : L""));
     endpoint.address = SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&endpoint.sockaddr));
     endpoint.host = BuildEndpointHost(reinterpret_cast<const SOCKADDR*>(&endpoint.sockaddr), endpoint.interfaceIndex);
     endpoint.locationUrl = "http://" + endpoint.host + ":" + std::to_string(port) + "/description.xml";
