@@ -13,6 +13,11 @@ function(dlna_enable_warnings target_name)
 endfunction()
 
 find_package(CURL REQUIRED)
+if(WIN32)
+    find_package(IXML CONFIG REQUIRED PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/libupnp" NO_DEFAULT_PATH)
+    find_package(PThreads4W CONFIG REQUIRED PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/PThreads4W" NO_DEFAULT_PATH)
+    find_package(UPNP CONFIG REQUIRED PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/libupnp" NO_DEFAULT_PATH)
+endif()
 
 function(dlna_link_required_curl target_name)
     target_link_libraries(${target_name} CURL::libcurl)
@@ -26,11 +31,11 @@ if(WIN32)
         src/settingsdlg.cpp
         src/logdlg.cpp
         src/server.cpp
-        src/ssdp.cpp
         src/netutils.cpp
         src/httpserver.cpp
         src/contentdirectory.cpp
         src/upnp_eventing.cpp
+        src/upnp_libupnp_win.cpp
         src/dlna_utils.cpp
         src/network_sources.cpp
         src/source_watcher.cpp
@@ -48,11 +53,11 @@ if(WIN32)
         src/settingsdlg.h
         src/logdlg.h
         src/server.h
-        src/ssdp.h
         src/netutils.h
         src/httpserver.h
         src/contentdirectory.h
         src/upnp_eventing.h
+        src/upnp_libupnp_win.h
         src/dlna_utils.h
         src/network_sources.h
         src/source_watcher.h
@@ -71,6 +76,7 @@ if(WIN32)
     dlna_enable_warnings(dlna-server)
     dlna_link_required_curl(dlna-server)
     target_link_libraries(dlna-server
+        UPNP::Static
         ws2_32
         shell32
         ole32
