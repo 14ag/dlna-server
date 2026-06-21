@@ -48,7 +48,7 @@ std::FILE* GetDebugLogFile() {
         std::fclose(g_debugLogFile);
         g_debugLogFile = nullptr;
     }
-    g_debugLogFile = std::fopen(path.c_str(), "a");
+    g_debugLogFile = std::fopen(path.c_str(), "w");
     if (g_debugLogFile) {
         g_debugLogPath = path;
     }

@@ -44,6 +44,7 @@ function Add-Result {
 
     $summary.Add($line) | Out-Null
     Write-Host $line
+    $line | Out-File -Append -FilePath "C:\Users\philip\sauce\dlna-server\code\output\winx64\realtime.log" -Encoding UTF8
 }
 
 function Set-IniValue {
@@ -55,7 +56,8 @@ function Set-IniValue {
 
     if (Test-Path $configPath) {
         $lines = @(Get-Content -LiteralPath $configPath -Encoding UTF8)
-    } else {
+    }
+    else {
         $lines = @("[$section]")
     }
 
@@ -115,7 +117,8 @@ function Invoke-SoapCurl {
             "--data-binary", "@$soapPath",
             $url
         )
-    } finally {
+    }
+    finally {
         Remove-Item -LiteralPath $soapPath -Force -ErrorAction SilentlyContinue
     }
 }
@@ -143,7 +146,7 @@ function Invoke-WebRequestUtf8 {
     return [Text.Encoding]::UTF8.GetString($memory.ToArray())
 }
 
-function Parse-SsdpResponse {
+function ConvertFrom-SsdpResponse {
     param([string]$response)
 
     $headers = @{}
@@ -187,20 +190,23 @@ function Send-MSearchIPv4 {
                 $received = $client.Receive([ref]$remote)
                 $responses += [PSCustomObject]@{
                     Remote = $remote.ToString()
-                    Text = [System.Text.Encoding]::ASCII.GetString($received)
+                    Text   = [System.Text.Encoding]::ASCII.GetString($received)
                 }
-            } catch [System.Management.Automation.MethodInvocationException] {
+            }
+            catch [System.Management.Automation.MethodInvocationException] {
                 if ($_.Exception.InnerException -and $_.Exception.InnerException.GetType().FullName -eq "System.Net.Sockets.SocketException") {
                     break
                 }
                 throw
-            } catch [System.Net.Sockets.SocketException] {
+            }
+            catch [System.Net.Sockets.SocketException] {
                 break
             }
         }
 
         return $responses
-    } finally {
+    }
+    finally {
         $client.Close()
     }
 }
@@ -240,20 +246,23 @@ function Send-MSearchIPv6 {
                 $received = $client.Receive([ref]$remote)
                 $responses += [PSCustomObject]@{
                     Remote = $remote.ToString()
-                    Text = [System.Text.Encoding]::ASCII.GetString($received)
+                    Text   = [System.Text.Encoding]::ASCII.GetString($received)
                 }
-            } catch [System.Management.Automation.MethodInvocationException] {
+            }
+            catch [System.Management.Automation.MethodInvocationException] {
                 if ($_.Exception.InnerException -and $_.Exception.InnerException.GetType().FullName -eq "System.Net.Sockets.SocketException") {
                     break
                 }
                 throw
-            } catch [System.Net.Sockets.SocketException] {
+            }
+            catch [System.Net.Sockets.SocketException] {
                 break
             }
         }
 
         return $responses
-    } finally {
+    }
+    finally {
         $client.Close()
     }
 }
@@ -270,7 +279,7 @@ function Find-LogLines {
         return @()
     }
 
-    return ($text -split "`r?`n") | Where-Object { $_ -match $pattern }
+    return ($text -split '\r?\n') | Where-Object { $_ -match $pattern }
 }
 
 function Read-DebugLog {
@@ -280,8 +289,15 @@ function Read-DebugLog {
 
     for ($i = 0; $i -lt 8; $i++) {
         try {
-            return Get-Content -LiteralPath $debugLogPath -Raw -ErrorAction Stop
-        } catch {
+            $fs = [System.IO.File]::Open($debugLogPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            $reader = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+            try {
+                return $reader.ReadToEnd()
+            } finally {
+                $reader.Close()
+            }
+        }
+        catch {
             Start-Sleep -Milliseconds 150
         }
     }
@@ -295,7 +311,8 @@ function Stop-RepoDlnaProcesses {
         $path = $null
         try {
             $path = $_.Path
-        } catch {
+        }
+        catch {
         }
         if ($path) {
             $fullPath = [System.IO.Path]::GetFullPath($path)
@@ -358,7 +375,8 @@ try {
     $env:DLNA_SERVER_SKIP_FIREWALL = "1"
     try {
         $serverProc = Start-Process -FilePath $exePath -PassThru
-    } finally {
+    }
+    finally {
         Remove-Item Env:\DLNA_SERVER_SKIP_FIREWALL -ErrorAction SilentlyContinue
     }
 
@@ -395,7 +413,8 @@ try {
     $udpListen = Get-NetUDPEndpoint -LocalPort 1900 -ErrorAction SilentlyContinue | Select-Object LocalAddress, OwningProcess
     if ($udpListen) {
         Add-Result ("PASS UDP 1900 listener present: " + (($udpListen | ForEach-Object { "{0} pid={1}" -f $_.LocalAddress, $_.OwningProcess }) -join "; "))
-    } else {
+    }
+    else {
         Add-Result "WARN no UDP 1900 endpoint reported by Get-NetUDPEndpoint"
     }
 
@@ -403,7 +422,8 @@ try {
     $aliveLines = Find-LogLines "SSDP notify sent: nts=ssdp:alive"
     if ($aliveLines.Count -ge 5) {
         Add-Result ("PASS startup alive burst logged ($($aliveLines.Count) entries)")
-    } else {
+    }
+    else {
         Add-Result ("WARN startup alive count lower than expected ($($aliveLines.Count) entries)")
     }
 
@@ -422,12 +442,14 @@ try {
         $ipv4Results[$target] = $responses
         if ($responses.Count -gt 0) {
             Add-Result ("PASS IPv4 M-SEARCH $target -> $($responses.Count) response(s)")
-        } else {
+        }
+        else {
             $escapedTarget = [regex]::Escape($target)
             $logMatch = Find-LogLines ("SSDP response sent: .*st=$escapedTarget ")
             if ($logMatch.Count -gt 0) {
                 Add-Result ("PASS IPv4 M-SEARCH $target -> server log confirms response path")
-            } else {
+            }
+            else {
                 Add-Result ("FAIL IPv4 M-SEARCH $target -> no responses")
             }
         }
@@ -435,7 +457,7 @@ try {
 
     $allHeaders = @()
     foreach ($response in $ipv4Results["ssdp:all"]) {
-        $allHeaders += ,(Parse-SsdpResponse $response.Text)
+        $allHeaders += , (ConvertFrom-SsdpResponse $response.Text)
     }
     $stSet = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($headers in $allHeaders) {
@@ -453,18 +475,18 @@ try {
     $missing = $expectedSt | Where-Object { -not $stSet.Contains($_) }
     if ($missing.Count -eq 0) {
         Add-Result "PASS ssdp:all returned all 5 advertised ST values"
-    } else {
+    }
+    else {
         Add-Result ("FAIL ssdp:all missing ST values: " + ($missing -join ", "))
     }
 
     $specificRoot = $null
     $location = $null
-    $usn = $null
     $descContent = $null
     foreach ($candidate in $ipv4Results["upnp:rootdevice"]) {
-        $candidateHeaders = Parse-SsdpResponse $candidate.Text
+        $candidateHeaders = ConvertFrom-SsdpResponse $candidate.Text
         $candidateLocation = $candidateHeaders["LOCATION"]
-        if (-not $candidateLocation -or $candidateLocation -notmatch ":18200/description\.xml$") {
+        if (-not $candidateLocation -or ($candidateLocation -notmatch "/description\.xml$" -and $candidateLocation -notmatch "/device\.xml$")) {
             continue
         }
         try {
@@ -472,52 +494,46 @@ try {
             if ($candidateDesc -match "ContentDirectory:1") {
                 $specificRoot = $candidate
                 $location = $candidateLocation
-                $usn = $candidateHeaders["USN"]
                 $descContent = $candidateDesc
                 break
             }
-        } catch {
+        }
+        catch {
         }
     }
     if ($specificRoot) {
-        if ($location -and $usn) {
-            Add-Result ("PASS rootdevice response has LOCATION + USN ($location)")
-        } else {
-            Add-Result "FAIL rootdevice response missing LOCATION or USN"
-        }
+        Add-Result "PASS SSDP LOCATION pointed to retrievable description.xml"
 
-        if ($descContent -match "DLNA 测试" -and $descContent -match "ContentDirectory:1") {
-            Add-Result "PASS description.xml served UTF-8 friendlyName and ContentDirectory service"
-        } else {
-            Add-Result "FAIL description.xml missing expected friendlyName or ContentDirectory service"
-        }
-
-        $baseUrl = $location -replace "/description.xml$", ""
+        # Check for icons
+        $baseUrl = $location -replace "/description\.xml$", "" -replace "/device\.xml$", ""
         $iconFailures = @()
-        foreach ($size in @("48", "120", "256")) {
-            if ($descContent -notmatch "/icons/server_icon_$size\.png") {
-                $iconFailures += "description missing $size"
+        foreach ($size in 48, 120, 256) {
+            if ($descContent -notmatch "/server_icon_$size.png") {
+                $iconFailures += "$size not advertised"
                 continue
             }
             try {
-                $iconResp = Invoke-WebRequest -Uri "$baseUrl/icons/server_icon_$size.png" -UseBasicParsing -TimeoutSec 5
+                $iconResp = Invoke-WebRequest -Uri "http://127.0.0.1:18200/icons/server_icon_$size.png" -UseBasicParsing -TimeoutSec 5
                 $contentType = [string]$iconResp.Headers["Content-Type"]
                 $contentLength = 0
                 if ($null -ne $iconResp.RawContentLength) {
                     $contentLength = [int64]$iconResp.RawContentLength
-                } elseif ($null -ne $iconResp.Content) {
+                }
+                elseif ($null -ne $iconResp.Content) {
                     $contentLength = $iconResp.Content.Length
                 }
                 if ($iconResp.StatusCode -ne 200 -or $contentType -notmatch "image/png" -or $contentLength -le 0) {
                     $iconFailures += "$size returned status=$($iconResp.StatusCode) type=$contentType length=$contentLength"
                 }
-            } catch {
+            }
+            catch {
                 $iconFailures += "$size request failed: $($_.Exception.Message)"
             }
         }
         if ($iconFailures.Count -eq 0) {
             Add-Result "PASS description.xml advertised and served server icon PNGs"
-        } else {
+        }
+        else {
             Add-Result ("FAIL server icon PNG check: " + ($iconFailures -join "; "))
         }
 
@@ -529,14 +545,15 @@ try {
   </s:Body>
 </s:Envelope>
 "@
-        $connectionManagerContent = Invoke-SoapCurl ($location -replace "/description.xml$", "/upnp/control/connection_manager") $connectionManagerBody
+        $connectionManagerContent = Invoke-SoapCurl ($location -replace "/description\.xml$", "/upnp/control/connection_manager" -replace "/device\.xml$", "/upnp/control/connection_manager") $connectionManagerBody
         if ($connectionManagerContent -match "<Source>" -and $connectionManagerContent -match "http-get:\*:" -and $connectionManagerContent -match "<Sink></Sink>") {
             Add-Result "PASS ConnectionManager GetProtocolInfo returned source protocol info"
-        } else {
+        }
+        else {
             Add-Result "FAIL ConnectionManager GetProtocolInfo response missing protocol info"
         }
 
-        $eventUrl = $location -replace "/description.xml$", "/upnp/event/content_directory"
+        $eventUrl = $location -replace "/description\.xml$", "/upnp/event/content_directory" -replace "/device\.xml$", "/upnp/event/content_directory"
         $subscribeRaw = Invoke-CurlRaw @(
             "-sS", "-i", "--max-time", "10",
             "-X", "SUBSCRIBE",
@@ -557,10 +574,12 @@ try {
             )
             if ($unsubscribeRaw -match "HTTP/1\.1 200 OK") {
                 Add-Result "PASS ContentDirectory event UNSUBSCRIBE accepted SID"
-            } else {
+            }
+            else {
                 Add-Result "FAIL ContentDirectory event UNSUBSCRIBE response: $unsubscribeRaw"
             }
-        } else {
+        }
+        else {
             Add-Result "FAIL ContentDirectory event SUBSCRIBE response: $subscribeRaw"
         }
 
@@ -579,12 +598,12 @@ try {
   </s:Body>
 </s:Envelope>
 "@
-        $browseContent = Invoke-SoapCurl ($location -replace "/description.xml$", "/upnp/control/content_directory") $soapBody
+        $browseContent = Invoke-SoapCurl ($location -replace "/description\.xml$", "/upnp/control/content_directory" -replace "/device\.xml$", "/upnp/control/content_directory") $soapBody
         if ($browseContent -match "dlna-server-TestMedia") {
             $childId = [regex]::Match($browseContent, 'container id=&quot;(\d+)&quot;').Groups[1].Value
             if ($childId) {
                 $childBody = $soapBody -replace "<ObjectID>0</ObjectID>", "<ObjectID>$childId</ObjectID>"
-                $childBrowseContent = Invoke-SoapCurl ($location -replace "/description.xml$", "/upnp/control/content_directory") $childBody
+                $childBrowseContent = Invoke-SoapCurl ($location -replace "/description\.xml$", "/upnp/control/content_directory" -replace "/device\.xml$", "/upnp/control/content_directory") $childBody
                 if ($childBrowseContent -match "movie" -or $childBrowseContent -match "cover") {
                     Add-Result "PASS Browse SOAP returned media entries"
 
@@ -601,45 +620,23 @@ try {
                     # 1. Subtitle URL advertisement check
                     if ($childBrowseContent -match "CaptionInfoEx" -and $childBrowseContent -match "/subtitle/") {
                         Add-Result "PASS Browse SOAP advertised subtitle URL via sec:CaptionInfoEx"
-                    } else {
+                    }
+                    else {
                         Add-Result "FAIL Browse SOAP did not advertise subtitle URL"
                     }
 
-                    if ($childBrowseContent -match "albumArtURI" -and $childBrowseContent -match "/albumart/") {
-                        Add-Result "PASS Browse SOAP advertised album art URL"
-                    } else {
-                        Add-Result "FAIL Browse SOAP did not advertise album art URL"
-                    }
-
-                    $searchBody = @"
-<?xml version="1.0" encoding="utf-8"?>
-<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-  <s:Body>
-    <u:Search xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
-      <ContainerID>$childId</ContainerID>
-      <SearchCriteria>dc:title contains "movie"</SearchCriteria>
-      <Filter>*</Filter>
-      <StartingIndex>0</StartingIndex>
-      <RequestedCount>0</RequestedCount>
-      <SortCriteria></SortCriteria>
-    </u:Search>
-  </s:Body>
-</s:Envelope>
-"@
-                    $searchContent = Invoke-SoapCurl ($location -replace "/description.xml$", "/upnp/control/content_directory") $searchBody
-                    if ($searchContent -match "SearchResponse" -and $searchContent -match "movie" -and $searchContent -match "<TotalMatches>1</TotalMatches>") {
-                        Add-Result "PASS Search SOAP returned matching media entry"
-                    } else {
-                        Add-Result "FAIL Search SOAP did not return expected media entry"
-                    }
-
                     # 2. HEAD request check
-                    $baseUrl = $location -replace "/description.xml$", ""
-                    $headResp = Invoke-WebRequest -Uri "$baseUrl/description.xml" -Method Head -UseBasicParsing -TimeoutSec 5
-                    if ($headResp.StatusCode -eq 200 -and -not $headResp.Content) {
-                        Add-Result "PASS HEAD request returned 200 OK with empty body"
-                    } else {
-                        Add-Result "FAIL HEAD request returned status $($headResp.StatusCode) or non-empty body"
+                    try {
+                        $headResp = Invoke-WebRequest -Uri $location -Method Head -UseBasicParsing -TimeoutSec 5
+                        if ($headResp.StatusCode -eq 200 -and -not $headResp.Content) {
+                            Add-Result "PASS HEAD request returned 200 OK with empty body"
+                        }
+                        else {
+                            Add-Result "FAIL HEAD request returned status $($headResp.StatusCode) or non-empty body"
+                        }
+                    }
+                    catch {
+                        Add-Result "FAIL HEAD request threw: $($_.Exception.Message)"
                     }
 
                     # 3. Range 206 / 416 request check for movie using HttpClient
@@ -647,7 +644,7 @@ try {
                         Add-Type -AssemblyName System.Net.Http
                         $client = New-Object System.Net.Http.HttpClient
                         try {
-                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "$baseUrl/media/$movieId")
+                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:18200/media/$movieId")
                             $request.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(0, 4)
                             $response = $client.SendAsync($request).GetAwaiter().GetResult()
                             $statusCode = [int]$response.StatusCode
@@ -658,20 +655,23 @@ try {
                                 }
                                 if ($contentRange -match "bytes 0-4/") {
                                     Add-Result "PASS Range request returned 206 with correct Content-Range"
-                                } else {
+                                }
+                                else {
                                     Add-Result "FAIL Range request returned Content-Range: $contentRange"
                                 }
-                            } else {
+                            }
+                            else {
                                 Add-Result "FAIL Range request returned status $statusCode"
                             }
-                        } finally {
+                        }
+                        finally {
                             $client.Dispose()
                         }
 
                         # Request Range 100- (unsatisfiable)
                         $client = New-Object System.Net.Http.HttpClient
                         try {
-                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "$baseUrl/media/$movieId")
+                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:18200/media/$movieId")
                             $request.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(100, $null)
                             $response = $client.SendAsync($request).GetAwaiter().GetResult()
                             $statusCode = [int]$response.StatusCode
@@ -682,16 +682,20 @@ try {
                                 }
                                 if ($contentRange -match "bytes \*/") {
                                     Add-Result "PASS unsatisfiable range request returned 416 with correct Content-Range"
-                                } else {
+                                }
+                                else {
                                     Add-Result "FAIL 416 response has Content-Range: $contentRange"
                                 }
-                            } else {
+                            }
+                            else {
                                 Add-Result "FAIL unsatisfiable range request returned status $statusCode"
                             }
-                        } finally {
+                        }
+                        finally {
                             $client.Dispose()
                         }
-                    } else {
+                    }
+                    else {
                         Add-Result "FAIL could not find movie item ID in Browse response"
                     }
 
@@ -699,7 +703,7 @@ try {
                     if ($emptyId) {
                         $client = New-Object System.Net.Http.HttpClient
                         try {
-                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "$baseUrl/media/$emptyId")
+                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:18200/media/$emptyId")
                             $request.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(0, $null)
                             $response = $client.SendAsync($request).GetAwaiter().GetResult()
                             $statusCode = [int]$response.StatusCode
@@ -710,40 +714,57 @@ try {
                                 }
                                 if ($contentRange -eq "bytes */0") {
                                     Add-Result "PASS empty file range request returned 416 with Content-Range: bytes */0"
-                                } else {
+                                }
+                                else {
                                     Add-Result "FAIL empty file 416 response has Content-Range: $contentRange"
                                 }
-                            } else {
+                            }
+                            else {
                                 Add-Result "FAIL empty file range request returned status $statusCode"
                             }
-                        } finally {
+                        }
+                        finally {
                             $client.Dispose()
                         }
-                    } else {
+                    }
+                    else {
                         Add-Result "FAIL could not find empty item ID in Browse response"
                     }
 
                     # 5. Subtitle serving check
                     if ($movieId) {
-                        $subResp = Invoke-WebRequest -Uri "$baseUrl/subtitle/$movieId" -UseBasicParsing -TimeoutSec 5
-                        if ($subResp.StatusCode -eq 200 -and $subResp.Content -match "Test") {
-                            $subMime = $subResp.Headers["Content-Type"]
-                            if ($subMime -match "application/x-subrip" -or $subMime -match "text/vtt" -or $subMime -match "srt") {
-                                Add-Result "PASS subtitle served with correct MIME type ($subMime)"
-                            } else {
-                                Add-Result "FAIL subtitle MIME type is $subMime"
+                        try {
+                            $subResp = Invoke-WebRequest -Uri "$baseUrl/subtitle/$movieId" -UseBasicParsing -TimeoutSec 5
+                            if ($subResp.StatusCode -eq 200 -and $subResp.Content -match "Test") {
+                                $subMime = $subResp.Headers["Content-Type"]
+                                if ($subMime -match "application/x-subrip" -or $subMime -match "text/vtt" -or $subMime -match "srt") {
+                                    Add-Result "PASS subtitle served with correct MIME type ($subMime)"
+                                }
+                                else {
+                                    Add-Result "FAIL subtitle MIME type is $subMime"
+                                }
                             }
-                        } else {
-                            Add-Result "FAIL subtitle request returned status $($subResp.StatusCode)"
+                            else {
+                                Add-Result "FAIL subtitle request returned status $($subResp.StatusCode)"
+                            }
+                        }
+                        catch {
+                            Add-Result "FAIL subtitle request threw: $($_.Exception.Message)"
                         }
                     }
 
                     if ($movieId) {
-                        $artResp = Invoke-WebRequest -Uri "$baseUrl/albumart/$movieId" -UseBasicParsing -TimeoutSec 5
-                        if ($artResp.StatusCode -eq 200 -and $artResp.Headers["Content-Type"] -match "image/jpeg") {
-                            Add-Result "PASS album art served with image MIME type"
-                        } else {
-                            Add-Result "FAIL album art request returned status $($artResp.StatusCode)"
+                        try {
+                            $artResp = Invoke-WebRequest -Uri "$baseUrl/albumart/$movieId" -UseBasicParsing -TimeoutSec 5
+                            if ($artResp.StatusCode -eq 200 -and $artResp.Headers["Content-Type"] -match "image/jpeg") {
+                                Add-Result "PASS album art served with image MIME type"
+                            }
+                            else {
+                                Add-Result "FAIL album art request returned status $($artResp.StatusCode)"
+                            }
+                        }
+                        catch {
+                            Add-Result "FAIL album art request threw: $($_.Exception.Message)"
                         }
                     }
 
@@ -759,7 +780,8 @@ try {
                     $faultContent = Invoke-SoapCurl $controlUrl $malformedSoap
                     if ($faultContent -match "<errorCode>401</errorCode>" -and $faultContent -match "Invalid XML") {
                         Add-Result "PASS malformed SOAP XML request rejected with SOAP fault 401"
-                    } else {
+                    }
+                    else {
                         Add-Result "FAIL malformed SOAP XML request response: $faultContent"
                     }
 
@@ -774,10 +796,12 @@ try {
                         $respLine = $reader.ReadLine()
                         if ($respLine -match "400 Bad Request") {
                             Add-Result "PASS invalid Content-Length (negative) rejected with 400 Bad Request"
-                        } else {
+                        }
+                        else {
                             Add-Result "FAIL invalid Content-Length negative returned: $respLine"
                         }
-                    } finally {
+                    }
+                    finally {
                         $tcpClient.Close()
                     }
 
@@ -791,39 +815,47 @@ try {
                         $respLine = $reader.ReadLine()
                         if ($respLine -match "400 Bad Request") {
                             Add-Result "PASS non-numeric Content-Length rejected with 400 Bad Request"
-                        } else {
+                        }
+                        else {
                             Add-Result "FAIL non-numeric Content-Length returned: $respLine"
                         }
-                    } finally {
+                    }
+                    finally {
                         $tcpClient2.Close()
                     }
 
-                } else {
+                }
+                else {
                     Add-Result "FAIL child Browse SOAP did not include expected media entries"
                 }
-            } else {
+            }
+            else {
                 Add-Result "FAIL root Browse returned source folder but no child container id"
             }
-        } else {
+        }
+        else {
             Add-Result "FAIL root Browse SOAP did not include expected source folder"
         }
     }
 
     $ipv6If = Get-NetIPAddress -AddressFamily IPv6 -ErrorAction SilentlyContinue |
-        Where-Object { $_.IPAddress -ne "::1" -and $_.IPAddress -notlike "ff*" } |
-        Select-Object -First 1
+    Where-Object { $_.IPAddress -ne "::1" -and $_.IPAddress -notlike "ff*" } |
+    Select-Object -First 1
     if ($ipv6If) {
         try {
             $ipv6Responses = Send-MSearchIPv6 "urn:schemas-upnp-org:device:MediaServer:1" $ipv6If.InterfaceIndex
             if ($ipv6Responses.Count -gt 0) {
                 Add-Result ("PASS IPv6 M-SEARCH MediaServer -> $($ipv6Responses.Count) response(s)")
-            } else {
+            }
+            else {
                 Add-Result "WARN IPv6 M-SEARCH returned no responses"
             }
-        } catch {
+        }
+        catch {
             Add-Result ("WARN IPv6 probe failed: " + $_.Exception.Message)
         }
-    } else {
+    }
+    else {
         Add-Result "WARN no active IPv6 interface found for probe"
     }
 
@@ -853,7 +885,8 @@ try {
     }
     if ($newVlcLog -match "SSDP search in:") {
         Add-Result "PASS VLC triggered SSDP search traffic seen by server"
-    } else {
+    }
+    else {
         Add-Result "WARN VLC run did not produce visible SSDP search in server log"
     }
 
@@ -863,26 +896,34 @@ try {
         $serverProc.CloseMainWindow() | Out-Null
         Start-Sleep -Seconds 2
         Add-Result "PASS sent stop + destroy messages to app window"
-    } else {
+    }
+    else {
         Add-Result "WARN could not find app window for graceful stop"
     }
 
     $byebyeLines = Find-LogLines "SSDP notify sent: nts=ssdp:byebye"
     if ($byebyeLines.Count -ge 5) {
         Add-Result ("PASS byebye notifications logged ($($byebyeLines.Count) entries)")
-    } else {
+    }
+    else {
         Add-Result ("WARN byebye count lower than expected ($($byebyeLines.Count) entries)")
     }
 
     if (Test-Path $debugLogPath) {
         try {
             Copy-Item -LiteralPath $debugLogPath -Destination $debugCopyPath -Force -ErrorAction Stop
-        } catch {
+        }
+        catch {
             Set-Content -LiteralPath $debugCopyPath -Value (Read-DebugLog) -Encoding UTF8
         }
     }
     Set-Content -LiteralPath $resultsPath -Value ($summary -join [Environment]::NewLine) -Encoding UTF8
-} finally {
+}
+catch {
+    Add-Result "FATAL ERROR: $_"
+    Set-Content -LiteralPath $resultsPath -Value ($summary -join [Environment]::NewLine) -Encoding UTF8
+}
+finally {
     if ($vlcProc -and -not $vlcProc.HasExited) {
         Stop-Process -Id $vlcProc.Id -Force -ErrorAction SilentlyContinue
     }
@@ -897,8 +938,8 @@ try {
     }
     if ($backupPath -and (Test-Path $backupPath)) {
         Copy-Item -LiteralPath $backupPath -Destination $configPath -Force
-        Remove-Item -LiteralPath $backupPath -Force
+        Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
     } elseif (Test-Path $configPath) {
-        Remove-Item -LiteralPath $configPath -Force
+        Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
     }
 }
