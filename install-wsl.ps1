@@ -74,7 +74,7 @@ if [ -n "$missing_commands" ]; then
     exit 1
 fi
 
-required_packages="libx11-dev libxft-dev libxext-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpng-dev libjpeg-dev zlib1g-dev"
+required_packages="libx11-dev libxft-dev libxext-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpng-dev libjpeg-dev zlib1g-dev libupnp-dev"
 missing_packages=""
 if command -v dpkg >/dev/null 2>&1; then
     for package_name in $required_packages; do

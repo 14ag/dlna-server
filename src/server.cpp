@@ -4,11 +4,7 @@
 #include "log.h"
 #include "media_sources.h"
 #include "source_watcher.h"
-#ifdef _WIN32
-#include "upnp_libupnp_win.h"
-#else
-#include "ssdp.h"
-#endif
+#include "upnp_libupnp.h"
 #include "httpserver.h"
 #include "ipwhitelist.h"
 #include "firewall_access.h"
@@ -190,13 +186,7 @@ bool Server::Start() {
         return false;
     }
 
-    const NetworkEndpoint* displayEndpoint = NULL;
-    for (const auto& endpoint : endpoints) {
-        if (endpoint.family == AF_INET) {
-            displayEndpoint = &endpoint;
-            break;
-        }
-    }
+    const NetworkEndpoint* displayEndpoint = SelectHostingEndpoint(endpoints);
     if (displayEndpoint == NULL) {
         displayEndpoint = &endpoints.front();
     }
@@ -213,19 +203,11 @@ bool Server::Start() {
         return false;
     }
 
-#ifdef _WIN32
     if (!LibUPnPWrapper::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
         LogPrint(L"Failed to start UPnP.");
         HttpServer::Get().Stop();
         return false;
     }
-#else
-    if (!SSDP::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
-        LogPrint(L"Failed to start SSDP.");
-        HttpServer::Get().Stop();
-        return false;
-    }
-#endif
 
     m_running.store(true, std::memory_order_release);
     StartBackgroundScan();
@@ -249,11 +231,7 @@ void Server::Stop() {
     LogPrint(L"Stopping server...");
 
     StopWatchMode();
-#ifdef _WIN32
     LibUPnPWrapper::Get().Stop();
-#else
-    SSDP::Get().Stop();
-#endif
     HttpServer::Get().Stop();
     JoinBackgroundScan();
     

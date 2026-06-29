@@ -7,7 +7,7 @@
 #include "log.h"
 #include "media_sources.h"
 #include "source_watcher.h"
-#include "ssdp.h"
+#include "upnp_libupnp.h"
 
 #include <chrono>
 
@@ -172,7 +172,7 @@ bool Server::Start() {
         LogPrint(L"Failed to start HTTP server.");
         return false;
     }
-    if (!SSDP::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
+    if (!LibUPnPWrapper::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
         LogPrint(L"Failed to start SSDP.");
         HttpServer::Get().Stop();
         return false;
@@ -197,7 +197,7 @@ void Server::Stop() {
     if (!m_running.exchange(false, std::memory_order_acq_rel)) return;
     m_stopping.store(true, std::memory_order_release);
     StopWatchMode();
-    SSDP::Get().Stop();
+    LibUPnPWrapper::Get().Stop();
     HttpServer::Get().Stop();
     JoinBackgroundScan();
     {

@@ -374,7 +374,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
     if (method == "GET" || method == "HEAD") {
         if (path == "/description.xml") {
-            sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetDeviceDescriptionXML());
+            sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetDeviceDescriptionXML(hostUrl));
             return;
         }
 

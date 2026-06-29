@@ -167,7 +167,10 @@ function Send-MSearchIPv4 {
 
     $client = New-Object System.Net.Sockets.UdpClient([System.Net.Sockets.AddressFamily]::InterNetwork)
     try {
+        $client.Client.SetSocketOption([System.Net.Sockets.SocketOptionLevel]::Socket, [System.Net.Sockets.SocketOptionName]::ReuseAddress, $true)
+        $client.Client.Bind((New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Any, 0)))
         $client.Client.ReceiveTimeout = 2500
+        
         $message = @(
             "M-SEARCH * HTTP/1.1",
             "HOST: 239.255.255.250:1900",
@@ -177,10 +180,20 @@ function Send-MSearchIPv4 {
             "",
             ""
         ) -join "`r`n"
-
         $bytes = [System.Text.Encoding]::ASCII.GetBytes($message)
         $endpoint = New-Object System.Net.IPEndPoint([System.Net.IPAddress]::Parse("239.255.255.250"), 1900)
-        [void]$client.Send($bytes, $bytes.Length, $endpoint)
+
+        $interfaces = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() | Where-Object { $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -ne 'Loopback' }
+        foreach ($iface in $interfaces) {
+            $props = $iface.GetIPProperties()
+            $ipv4Props = $props.GetIPv4Properties()
+            if ($null -ne $ipv4Props) {
+                try {
+                    $client.Client.SetSocketOption([System.Net.Sockets.SocketOptionLevel]::IP, [System.Net.Sockets.SocketOptionName]::MulticastInterface, [System.Net.IPAddress]::HostToNetworkOrder($ipv4Props.Index))
+                    [void]$client.Send($bytes, $bytes.Length, $endpoint)
+                } catch {}
+            }
+        }
 
         $deadline = (Get-Date).AddSeconds(5)
         $responses = @()

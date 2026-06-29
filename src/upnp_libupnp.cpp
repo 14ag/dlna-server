@@ -1,45 +1,18 @@
-#include "upnp_libupnp_win.h"
-
-#ifdef _WIN32
+#include "upnp_libupnp.h"
+#include "contentdirectory.h"
 
 #include "config.h"
-#include "contentdirectory.h"
 #include "dlna_utils.h"
 #include "log.h"
-
+#include <string>
+#include <vector>
+#include <thread>
+#include <chrono>
 #include <upnp/upnp.h>
 
 namespace {
 int LibUpnpCallback(Upnp_EventType, void*, void*) {
     return 0;
-}
-
-const NetworkEndpoint* PickBestEndpoint(const std::vector<NetworkEndpoint>& endpoints) {
-    const NetworkEndpoint* best = nullptr;
-    ULONG bestPrefix = 0;
-    for (const auto& endpoint : endpoints) {
-        if (endpoint.family != AF_INET || endpoint.host.empty() || endpoint.isLinkLocal) {
-            continue;
-        }
-        if (best == nullptr || endpoint.prefixLength > bestPrefix) {
-            best = &endpoint;
-            bestPrefix = endpoint.prefixLength;
-        }
-    }
-    if (best != nullptr) {
-        return best;
-    }
-    for (const auto& endpoint : endpoints) {
-        if (endpoint.family == AF_INET && !endpoint.host.empty()) {
-            return &endpoint;
-        }
-    }
-    for (const auto& endpoint : endpoints) {
-        if (!endpoint.host.empty()) {
-            return &endpoint;
-        }
-    }
-    return nullptr;
 }
 } // namespace
 
@@ -56,29 +29,40 @@ bool LibUPnPWrapper::Start(const std::vector<NetworkEndpoint>& endpoints,
         return true;
     }
 
-    const std::string ifName = [&]() -> std::string {
-        const NetworkEndpoint* best = PickBestEndpoint(endpoints);
-        if (best && !best->interfaceName.empty()) {
-            return best->interfaceName;
-        }
-        return {};
-    }();
+    const NetworkEndpoint* bindEndpoint = SelectHostingEndpoint(endpoints);
+    if (bindEndpoint == nullptr || bindEndpoint->interfaceName.empty()) {
+        LogPrint(L"LibUPnPWrapper: no usable interface for UpnpInit2.");
+        return false;
+    }
 
-    const NetworkEndpoint* bestEndpoint = PickBestEndpoint(endpoints);
-    const std::string host = (bestEndpoint && !bestEndpoint->host.empty()) ? bestEndpoint->host : "127.0.0.1";
-    m_httpAddr = host + ":" + std::to_string(httpPort);
+    const std::string ifName = bindEndpoint->interfaceName;
+    const std::string ifAddr = bindEndpoint->address;
+    m_httpAddr = ifAddr + ":" + std::to_string(httpPort);
 
-    LogPrint(L"LibUPnPWrapper: init if=%hs http=%hs server=%ls uuid=%ls",
+    LogPrint(L"LibUPnPWrapper: init if=%hs addr=%hs http=%hs server=%ls uuid=%ls",
              ifName.c_str(),
+             ifAddr.c_str(),
              m_httpAddr.c_str(),
              serverName.c_str(),
              deviceUUID.c_str());
 
-    const int initResult = UpnpInit2(ifName.empty() ? nullptr : ifName.c_str(), 0);
+    // Try the friendly interface name first; fall back to NULL (let libupnp pick)
+    // if the name lookup fails. On Windows, libupnp resolves by friendly name.
+    int initResult = UpnpInit2(ifName.c_str(), 0);
+    if (initResult == UPNP_E_INVALID_INTERFACE) {
+        LogPrint(L"LibUPnPWrapper: named interface failed, retrying with NULL");
+        initResult = UpnpInit2(nullptr, 0);
+    }
     if (initResult != UPNP_E_SUCCESS) {
         LogPrint(L"LibUPnPWrapper: UpnpInit2 failed: %d", initResult);
+        m_httpAddr.clear();
         return false;
     }
+
+    const char* actualIp = UpnpGetServerIpAddress();
+    const unsigned short actualPort = UpnpGetServerPort();
+    LogPrint(L"LibUPnPWrapper: server ip=%hs port=%hu",
+             actualIp ? actualIp : "(null)", actualPort);
 
     const std::string descUrl = "http://" + m_httpAddr + "/description.xml";
     const int regResult = UpnpRegisterRootDevice2(UPNPREG_URL_DESC,
@@ -109,8 +93,9 @@ void LibUPnPWrapper::Stop() {
     if (m_deviceHandle != -1) {
         UpnpUnRegisterRootDevice(m_deviceHandle);
         m_deviceHandle = -1;
+        UpnpFinish();
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
-    UpnpFinish();
     m_httpAddr.clear();
 }
 
@@ -125,5 +110,3 @@ void LibUPnPWrapper::NotifyUpdateId(int updateId) {
         UpnpSendAdvertisement(m_deviceHandle, 1800);
     }
 }
-
-#endif // _WIN32

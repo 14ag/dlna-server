@@ -90,6 +90,89 @@ bool PrefixMatch(const NetworkEndpoint& endpoint, const SOCKADDR* remoteAddr) {
     return PrefixMatchBits(local6->sin6_addr.u.Byte, remote6->sin6_addr.u.Byte, prefix);
 }
 
+bool ContainsAsciiToken(const std::string& text, const char* token) {
+    return ToLowerAscii(text).find(ToLowerAscii(token)) != std::string::npos;
+}
+
+bool IsPrivateIPv4(const std::string& address) {
+    return address.rfind("10.", 0) == 0 ||
+           address.rfind("192.168.", 0) == 0 ||
+           address.rfind("172.16.", 0) == 0 ||
+           address.rfind("172.17.", 0) == 0 ||
+           address.rfind("172.18.", 0) == 0 ||
+           address.rfind("172.19.", 0) == 0 ||
+           address.rfind("172.20.", 0) == 0 ||
+           address.rfind("172.21.", 0) == 0 ||
+           address.rfind("172.22.", 0) == 0 ||
+           address.rfind("172.23.", 0) == 0 ||
+           address.rfind("172.24.", 0) == 0 ||
+           address.rfind("172.25.", 0) == 0 ||
+           address.rfind("172.26.", 0) == 0 ||
+           address.rfind("172.27.", 0) == 0 ||
+           address.rfind("172.28.", 0) == 0 ||
+           address.rfind("172.29.", 0) == 0 ||
+           address.rfind("172.30.", 0) == 0 ||
+           address.rfind("172.31.", 0) == 0;
+}
+
+bool SameIPv4Subnet24(const std::string& a, const std::string& b) {
+    const size_t lastDotA = a.rfind('.');
+    const size_t lastDotB = b.rfind('.');
+    if (lastDotA == std::string::npos || lastDotB == std::string::npos) {
+        return false;
+    }
+    return a.substr(0, lastDotA) == b.substr(0, lastDotB);
+}
+
+bool IsVirtualAdapter(const NetworkEndpoint& endpoint) {
+    return ContainsAsciiToken(endpoint.interfaceName, "vethernet") ||
+           ContainsAsciiToken(endpoint.interfaceName, "virtual") ||
+           ContainsAsciiToken(endpoint.interfaceName, "loopback") ||
+           ContainsAsciiToken(endpoint.interfaceName, "docker") ||
+           ContainsAsciiToken(endpoint.interfaceName, "wsl") ||
+           ContainsAsciiToken(endpoint.interfaceName, "tunnel") ||
+           ContainsAsciiToken(endpoint.adapterDescription, "virtual") ||
+           ContainsAsciiToken(endpoint.adapterDescription, "loopback") ||
+           ContainsAsciiToken(endpoint.adapterDescription, "hyper-v") ||
+           ContainsAsciiToken(endpoint.adapterDescription, "default switch") ||
+           ContainsAsciiToken(endpoint.adapterDescription, "teredo") ||
+           ContainsAsciiToken(endpoint.adapterDescription, "tunnel");
+}
+
+int HostingEndpointScore(const NetworkEndpoint& endpoint) {
+    if (endpoint.host.empty()) {
+        return -10000;
+    }
+
+    int score = 0;
+    if (endpoint.family == AF_INET) {
+        score += 100;
+        if (IsPrivateIPv4(endpoint.address)) score += 40;
+        if (endpoint.hasDefaultGateway) score += 120;
+        if (!endpoint.gatewayAddress.empty() && SameIPv4Subnet24(endpoint.address, endpoint.gatewayAddress)) {
+            score += 15;
+        }
+    } else if (endpoint.family == AF_INET6) {
+        score += 50;
+        if (endpoint.isLinkLocal) score -= 20;
+    }
+
+    if (IsVirtualAdapter(endpoint)) {
+        score -= 200;
+    }
+
+    if (endpoint.isLinkLocal) {
+        score -= 50;
+    }
+
+    if (endpoint.ifType == IF_TYPE_ETHERNET_CSMACD || endpoint.ifType == IF_TYPE_IEEE80211) {
+        score += 30;
+    }
+
+    score += static_cast<int>(endpoint.prefixLength / 8);
+    return score;
+}
+
 void AddEndpointForUnicast(std::vector<NetworkEndpoint>& endpoints,
                            const IP_ADAPTER_ADDRESSES* adapter,
                            const IP_ADAPTER_UNICAST_ADDRESS* unicast,
@@ -98,6 +181,8 @@ void AddEndpointForUnicast(std::vector<NetworkEndpoint>& endpoints,
     endpoint.family = unicast->Address.lpSockaddr->sa_family;
     endpoint.interfaceIndex = (endpoint.family == AF_INET6) ? adapter->Ipv6IfIndex : adapter->IfIndex;
     endpoint.prefixLength = unicast->OnLinkPrefixLength;
+    endpoint.hasDefaultGateway = adapter->FirstGatewayAddress != NULL;
+    endpoint.ifType = adapter->IfType;
     endpoint.sockaddrLen = unicast->Address.iSockaddrLength;
     memcpy(&endpoint.sockaddr, unicast->Address.lpSockaddr, endpoint.sockaddrLen);
 
@@ -111,7 +196,12 @@ void AddEndpointForUnicast(std::vector<NetworkEndpoint>& endpoints,
         endpoint.isLinkLocal = false;
     }
 
+    endpoint.adapterName = adapter->AdapterName ? adapter->AdapterName : "";
     endpoint.interfaceName = WideToUtf8(std::wstring(adapter->FriendlyName ? adapter->FriendlyName : L""));
+    endpoint.adapterDescription = WideToUtf8(std::wstring(adapter->Description ? adapter->Description : L""));
+    if (adapter->FirstGatewayAddress && adapter->FirstGatewayAddress->Address.lpSockaddr) {
+        endpoint.gatewayAddress = SockaddrToLiteral(adapter->FirstGatewayAddress->Address.lpSockaddr);
+    }
     endpoint.address = SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&endpoint.sockaddr));
     endpoint.host = BuildEndpointHost(reinterpret_cast<const SOCKADDR*>(&endpoint.sockaddr), endpoint.interfaceIndex);
     endpoint.locationUrl = "http://" + endpoint.host + ":" + std::to_string(port) + "/description.xml";
@@ -335,4 +425,17 @@ const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& en
     }
 
     return endpoints.empty() ? NULL : &endpoints.front();
+}
+
+const NetworkEndpoint* SelectHostingEndpoint(const std::vector<NetworkEndpoint>& endpoints) {
+    const NetworkEndpoint* best = nullptr;
+    int bestScore = -10000;
+    for (const auto& endpoint : endpoints) {
+        const int score = HostingEndpointScore(endpoint);
+        if (score > bestScore) {
+            best = &endpoint;
+            bestScore = score;
+        }
+    }
+    return best;
 }

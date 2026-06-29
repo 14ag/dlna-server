@@ -326,18 +326,32 @@ std::string ContentDirectory::XMLEscape(const std::wstring& wstr) {
     return XMLEscapeUtf8(WideToUtf8(wstr));
 }
 
-std::string ContentDirectory::GetDeviceDescriptionXML() {
+std::string ContentDirectory::GetDeviceDescriptionXML(const std::string& hostUrl) {
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     std::string deviceUUID = XMLEscapeUtf8(WideToUtf8(cfg.deviceUUID));
     std::string serverName = XMLEscapeUtf8(WideToUtf8(cfg.serverName));
     std::string manufacturer = XMLEscapeUtf8(WideToUtf8(cfg.deviceManufacturer));
     std::string modelName = XMLEscapeUtf8(WideToUtf8(cfg.deviceModelName));
     std::string presentationUrl = XMLEscapeUtf8(WideToUtf8(cfg.presentationUrl));
+    if (!presentationUrl.empty() && presentationUrl.front() == '/') {
+        presentationUrl.erase(0, 1);
+    }
+    const bool absoluteUrls = !hostUrl.empty();
+    const std::string baseUrl = absoluteUrls ? ("http://" + hostUrl) : std::string();
+    const std::string iconBaseUrl = absoluteUrls ? baseUrl : std::string();
+    const std::string presentationValue = absoluteUrls ? (presentationUrl.empty() ? baseUrl : (baseUrl + "/" + presentationUrl)) : presentationUrl;
+    const std::string contentDirectoryUrl = absoluteUrls ? (baseUrl + "/ContentDirectory.xml") : std::string("/ContentDirectory.xml");
+    const std::string connectionManagerUrl = absoluteUrls ? (baseUrl + "/ConnectionManager.xml") : std::string("/ConnectionManager.xml");
+    const std::string contentDirectoryControl = absoluteUrls ? (baseUrl + "/upnp/control/content_directory") : std::string("/upnp/control/content_directory");
+    const std::string contentDirectoryEvent = absoluteUrls ? (baseUrl + "/upnp/event/content_directory") : std::string("/upnp/event/content_directory");
+    const std::string connectionManagerControl = absoluteUrls ? (baseUrl + "/upnp/control/connection_manager") : std::string("/upnp/control/connection_manager");
+    const std::string connectionManagerEvent = absoluteUrls ? (baseUrl + "/upnp/event/connection_manager") : std::string("/upnp/event/connection_manager");
 
     std::stringstream ss;
     ss << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
-       << "<root xmlns=\"urn:schemas-upnp-org:device-1-0\" xmlns:dlna=\"urn:schemas-dlna-org:device-1-0\">\n"
+       << "<root xmlns=\"urn:schemas-upnp-org:device-1-0\">\n"
        << "  <specVersion><major>1</major><minor>0</minor></specVersion>\n"
+       << (absoluteUrls ? ("  <URLBase>" + baseUrl + "</URLBase>\n") : std::string())
        << "  <device>\n"
        << "    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>\n"
        << "    <friendlyName>" << serverName << "</friendlyName>\n"
@@ -350,26 +364,26 @@ std::string ContentDirectory::GetDeviceDescriptionXML() {
        << "    <UPC></UPC>\n"
        << "    <UDN>uuid:" << deviceUUID << "</UDN>\n"
        << "    <dlna:X_DLNADOC xmlns:dlna=\"urn:schemas-dlna-org:device-1-0\">DMS-1.50</dlna:X_DLNADOC>\n"
-       << "    <presentationURL>" << presentationUrl << "</presentationURL>\n"
+       << "    <presentationURL>" << presentationValue << "</presentationURL>\n"
        << "    <iconList>\n"
-       << "      <icon><mimetype>image/png</mimetype><width>48</width><height>48</height><depth>24</depth><url>/icons/server_icon_48.png</url></icon>\n"
-       << "      <icon><mimetype>image/png</mimetype><width>120</width><height>120</height><depth>24</depth><url>/icons/server_icon_120.png</url></icon>\n"
-       << "      <icon><mimetype>image/png</mimetype><width>256</width><height>256</height><depth>24</depth><url>/icons/server_icon_256.png</url></icon>\n"
+       << "      <icon><mimetype>image/png</mimetype><width>48</width><height>48</height><depth>24</depth><url>" << (absoluteUrls ? (iconBaseUrl + "/icons/server_icon_48.png") : std::string("/icons/server_icon_48.png")) << "</url></icon>\n"
+       << "      <icon><mimetype>image/png</mimetype><width>120</width><height>120</height><depth>24</depth><url>" << (absoluteUrls ? (iconBaseUrl + "/icons/server_icon_120.png") : std::string("/icons/server_icon_120.png")) << "</url></icon>\n"
+       << "      <icon><mimetype>image/png</mimetype><width>256</width><height>256</height><depth>24</depth><url>" << (absoluteUrls ? (iconBaseUrl + "/icons/server_icon_256.png") : std::string("/icons/server_icon_256.png")) << "</url></icon>\n"
        << "    </iconList>\n"
        << "    <serviceList>\n"
        << "      <service>\n"
        << "        <serviceType>urn:schemas-upnp-org:service:ContentDirectory:1</serviceType>\n"
        << "        <serviceId>urn:upnp-org:serviceId:ContentDirectory</serviceId>\n"
-       << "        <SCPDURL>/ContentDirectory.xml</SCPDURL>\n"
-       << "        <controlURL>/upnp/control/content_directory</controlURL>\n"
-       << "        <eventSubURL>/upnp/event/content_directory</eventSubURL>\n"
+       << "        <SCPDURL>" << contentDirectoryUrl << "</SCPDURL>\n"
+       << "        <controlURL>" << contentDirectoryControl << "</controlURL>\n"
+       << "        <eventSubURL>" << contentDirectoryEvent << "</eventSubURL>\n"
        << "      </service>\n"
        << "      <service>\n"
        << "        <serviceType>urn:schemas-upnp-org:service:ConnectionManager:1</serviceType>\n"
        << "        <serviceId>urn:upnp-org:serviceId:ConnectionManager</serviceId>\n"
-       << "        <SCPDURL>/ConnectionManager.xml</SCPDURL>\n"
-       << "        <controlURL>/upnp/control/connection_manager</controlURL>\n"
-       << "        <eventSubURL>/upnp/event/connection_manager</eventSubURL>\n"
+       << "        <SCPDURL>" << connectionManagerUrl << "</SCPDURL>\n"
+       << "        <controlURL>" << connectionManagerControl << "</controlURL>\n"
+       << "        <eventSubURL>" << connectionManagerEvent << "</eventSubURL>\n"
        << "      </service>\n"
        << "    </serviceList>\n"
        << "  </device>\n"

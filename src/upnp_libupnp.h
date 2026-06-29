@@ -1,11 +1,8 @@
-#ifndef UPNP_LIBUPNP_WIN_H
-#define UPNP_LIBUPNP_WIN_H
-
-#ifdef _WIN32
+#ifndef UPNP_LIBUPNP_H
+#define UPNP_LIBUPNP_H
 
 #include <upnp/upnp.h>
 #include "netutils.h"
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -24,10 +21,8 @@ private:
     LibUPnPWrapper() {}
     ~LibUPnPWrapper() { Stop(); }
 
-    std::filesystem::path m_tempDir;
     std::string m_httpAddr;
     UpnpDevice_Handle m_deviceHandle = -1;
 };
 
-#endif // _WIN32
-#endif // UPNP_LIBUPNP_WIN_H
+#endif // UPNP_LIBUPNP_H

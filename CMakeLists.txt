@@ -17,6 +17,9 @@ if(WIN32)
     find_package(IXML CONFIG REQUIRED PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/libupnp" NO_DEFAULT_PATH)
     find_package(PThreads4W CONFIG REQUIRED PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/PThreads4W" NO_DEFAULT_PATH)
     find_package(UPNP CONFIG REQUIRED PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/libupnp" NO_DEFAULT_PATH)
+else()
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(UPNP REQUIRED libupnp)
 endif()
 
 function(dlna_link_required_curl target_name)
@@ -35,7 +38,7 @@ if(WIN32)
         src/httpserver.cpp
         src/contentdirectory.cpp
         src/upnp_eventing.cpp
-        src/upnp_libupnp_win.cpp
+        src/upnp_libupnp.cpp
         src/dlna_utils.cpp
         src/network_sources.cpp
         src/source_watcher.cpp
@@ -57,7 +60,7 @@ if(WIN32)
         src/httpserver.h
         src/contentdirectory.h
         src/upnp_eventing.h
-        src/upnp_libupnp_win.h
+        src/upnp_libupnp.h
         src/dlna_utils.h
         src/network_sources.h
         src/source_watcher.h
@@ -94,6 +97,7 @@ if(WIN32)
 
     install(TARGETS dlna-server RUNTIME DESTINATION .)
 else()
+
     include(GNUInstallDirs)
     include(FetchContent)
     option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" ON)
@@ -102,7 +106,7 @@ else()
     add_executable(dlna-server
         src/posix_main.cpp
         src/posix_server.cpp
-        src/posix_ssdp.cpp
+        src/upnp_libupnp.cpp
         src/posix_httpserver.cpp
         src/posix_netutils.cpp
         src/posix_media_sources.cpp
@@ -129,7 +133,7 @@ else()
         target_compile_definitions(dlna-server PRIVATE DLNA_PLATFORM_NAME=\"Linux\")
     endif()
     find_package(Threads REQUIRED)
-    target_link_libraries(dlna-server Threads::Threads)
+    target_link_libraries(dlna-server Threads::Threads ${UPNP_LIBRARIES})
 
     install(TARGETS dlna-server RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
@@ -159,7 +163,7 @@ else()
         add_executable(dlna-server-gui-native
             src/fltk_gui_main.cpp
             src/posix_server.cpp
-            src/posix_ssdp.cpp
+            src/upnp_libupnp.cpp
             src/posix_httpserver.cpp
             src/posix_netutils.cpp
             src/posix_media_sources.cpp
@@ -189,7 +193,7 @@ else()
         if(FLTK_FOUND)
             target_include_directories(dlna-server-gui-native PRIVATE ${FLTK_INCLUDE_DIR})
         endif()
-        target_link_libraries(dlna-server-gui-native PRIVATE ${DLNA_FLTK_TARGET} Threads::Threads)
+        target_link_libraries(dlna-server-gui-native PRIVATE ${DLNA_FLTK_TARGET} Threads::Threads ${UPNP_LIBRARIES})
         install(TARGETS dlna-server-gui-native RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
     endif()

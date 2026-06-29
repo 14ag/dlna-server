@@ -18,7 +18,12 @@ struct NetworkEndpoint {
     ULONG interfaceIndex;
     ULONG prefixLength;
     bool isLinkLocal;
+    bool hasDefaultGateway;
+    ULONG ifType;
+    std::string adapterName;
     std::string interfaceName;
+    std::string adapterDescription;
+    std::string gatewayAddress;
     std::string address;
     std::string host;
     std::string locationUrl;
@@ -36,5 +41,6 @@ std::string BuildHttpDateHeaderValue();
 
 bool EnumerateNetworkEndpoints(int port, std::vector<NetworkEndpoint>& endpoints);
 const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& endpoints, const SOCKADDR* remoteAddr);
+const NetworkEndpoint* SelectHostingEndpoint(const std::vector<NetworkEndpoint>& endpoints);
 
 #endif // NETUTILS_H

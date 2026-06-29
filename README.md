@@ -53,7 +53,7 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 On Debian or Ubuntu, native GUI and AppImage builds need:
 
 ```sh
-sudo apt install build-essential cmake libx11-dev libxft-dev libxext-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpng-dev libjpeg-dev zlib1g-dev
+sudo apt install build-essential cmake libcurl4-openssl-dev libupnp-dev libx11-dev libxft-dev libxext-dev libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev libpng-dev libjpeg-dev zlib1g-dev
 ```
 
 On Termux, the test setup uses:
