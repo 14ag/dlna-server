@@ -114,16 +114,4 @@ void LibUPnPWrapper::Stop() {
     m_httpAddr.clear();
 }
 
-std::string LibUPnPWrapper::GetHttpAddr() const {
-    return m_httpAddr;
-}
-
-void LibUPnPWrapper::NotifyUpdateId(int updateId) {
-    const ConfigSnapshot cfg = AppConfig.Snapshot();
-    LogPrint(L"LibUPnPWrapper: system update id=%d uuid=%ls", updateId, cfg.deviceUUID.c_str());
-    if (m_deviceHandle != -1) {
-        UpnpSendAdvertisement(m_deviceHandle, 1800);
-    }
-}
-
 #endif // _WIN32
