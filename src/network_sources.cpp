@@ -19,6 +19,8 @@ namespace {
 constexpr int kMaxCurlOutputBytes = 4 * 1024 * 1024;
 constexpr int kMaxPlsIndex = 10000;
 constexpr long kCurlCaptureTimeoutSeconds = 30L;
+constexpr long kCurlLowSpeedLimitBytes = 1L;
+constexpr long kCurlLowSpeedTimeSeconds = 30L;
 
 std::wstring TrimWide(const std::wstring& value);
 
@@ -169,8 +171,11 @@ CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutS
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "DLNA-Server/1.4");
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSeconds);
+    curl_easy_setopt(curl, CURLOPT_FTP_RESPONSE_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_FTP_USE_EPSV, 1L);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errorBuffer);
     return curl;
 }
@@ -193,7 +198,7 @@ RemoteFetchResult CurlCapture(const std::wstring& url, bool headOnly, bool listO
     long responseCode = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &responseCode);
     if (result.truncated) {
-        LogPrint(L"[remote:parse] Remote content truncated after %d bytes: %ls", kMaxCurlOutputBytes, url.c_str());
+        LogPrint(L"[remote:parse] Remote content truncated after %d bytes: %ls", kMaxCurlOutputBytes, RedactUrlForLog(url).c_str());
     } else if (code == CURLE_OK) {
         curl_off_t length = -1;
         curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &length);
@@ -201,7 +206,7 @@ RemoteFetchResult CurlCapture(const std::wstring& url, bool headOnly, bool listO
         result.ok = true;
     } else {
         if (responseCode == 401 || responseCode == 403 || code == CURLE_LOGIN_DENIED) {
-            LogPrint(L"[remote:auth] Remote content unavailable: authentication failed for %ls", url.c_str());
+            LogPrint(L"[remote:auth] Remote content unavailable: authentication failed for %ls", RedactUrlForLog(url).c_str());
         } else {
             LogPrint(L"[remote:network] Remote content unavailable: %hs", errorBuffer[0] ? errorBuffer : curl_easy_strerror(code));
         }
@@ -228,6 +233,8 @@ bool CurlStream(const std::wstring& url,
         curl_easy_setopt(curl, CURLOPT_RANGE, rangeText.c_str());
     }
 
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, kCurlLowSpeedLimitBytes);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, kCurlLowSpeedTimeSeconds);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteStream);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &writeChunk);
     CURLcode code = curl_easy_perform(curl);
@@ -378,7 +385,7 @@ std::vector<PlaylistEntry> ParsePls(const std::wstring& playlistPath, const std:
         }
 
         if (index <= 0 || index > kMaxPlsIndex) {
-            LogPrint(L"[remote:parse] Ignoring out-of-range PLS index %d in %ls", index, playlistPath.c_str());
+            LogPrint(L"[remote:parse] Ignoring out-of-range PLS index %d in %ls", index, RedactUrlForLog(playlistPath).c_str());
             continue;
         }
         if (parsed.size() < static_cast<size_t>(index)) {
@@ -461,6 +468,20 @@ bool IsNetworkShareUrl(const std::wstring& value) {
            HasScheme(text, "ftp") || HasScheme(text, "ftps");
 }
 
+std::wstring RedactUrlForLog(const std::wstring& value) {
+    std::string text = WideToUtf8(value);
+    size_t schemeEnd = text.find("://");
+    if (schemeEnd == std::string::npos) return value;
+    size_t authorityStart = schemeEnd + 3;
+    size_t authorityEnd = text.find_first_of("/?#", authorityStart);
+    size_t at = text.find('@', authorityStart);
+    if (at == std::string::npos || (authorityEnd != std::string::npos && at > authorityEnd)) {
+        return value;
+    }
+    std::string redacted = text.substr(0, authorityStart) + "[redacted]@" + text.substr(at + 1);
+    return Utf8ToWide(redacted);
+}
+
 std::wstring SourceExtension(const std::wstring& value) {
     std::wstring clean = StripQueryExtensionSource(value);
     size_t slash = clean.find_last_of(L"\\/");
@@ -506,7 +527,7 @@ std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath)
 std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& directoryUrl) {
     if (!IsNetworkShareUrl(directoryUrl)) {
         if (IsRemoteMediaUrl(directoryUrl)) {
-            LogPrint(L"[remote:parse] HTTP directory listing is not supported: %ls", directoryUrl.c_str());
+            LogPrint(L"[remote:parse] HTTP directory listing is not supported: %ls", RedactUrlForLog(directoryUrl).c_str());
         }
         return {};
     }
@@ -515,7 +536,7 @@ std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& direct
     RemoteFetchResult fetch = CurlCapture(url, false, true);
     if (!fetch.ok) return {};
     if (fetch.body.empty()) {
-        LogPrint(L"Remote directory listing empty: %ls", url.c_str());
+        LogPrint(L"Remote directory listing empty: %ls", RedactUrlForLog(url).c_str());
     }
     std::string text = fetch.body;
 

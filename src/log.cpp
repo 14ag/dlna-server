@@ -31,7 +31,7 @@ FILE* GetDebugLogFile() {
         fclose(g_debugLogFile);
         g_debugLogFile = NULL;
     }
-    g_debugLogFile = _wfsopen(path.c_str(), L"w,ccs=UTF-8", _SH_DENYNO);
+    g_debugLogFile = _wfsopen(path.c_str(), L"a,ccs=UTF-8", _SH_DENYNO);
     if (g_debugLogFile) {
         g_debugLogPath = path;
     }
