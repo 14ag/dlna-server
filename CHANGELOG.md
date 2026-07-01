@@ -16,6 +16,7 @@
 - `FileServerPort` remains accepted in `config.ini`; media file serving uses `Port`.
 
 ### Fixed
+- FTP-hosted playlists now recurse into nested `.m3u8` manifests, log rejected entries, and redact credentials in remote URL logs.
 - POSIX endpoint discovery now skips APIPA IPv4 addresses; Windows advertises all usable IPv4 aliases.
 - Device description metadata can now be configured, including manufacturer, model name, and presentation URL.
 - SOAP control dispatch now uses action-element matching and bounded POST body reads.

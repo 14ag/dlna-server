@@ -20,6 +20,7 @@ struct RemoteDirectoryEntry {
 bool IsRemoteMediaUrl(const std::wstring& value);
 bool IsNetworkShareUrl(const std::wstring& value);
 bool IsPlaylistSourcePath(const std::wstring& value);
+std::wstring RedactUrlForLog(const std::wstring& value);
 std::wstring SourceExtension(const std::wstring& value);
 std::wstring SourceDisplayName(const std::wstring& value);
 std::wstring SourceStemName(const std::wstring& value);

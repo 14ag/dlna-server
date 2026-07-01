@@ -288,6 +288,7 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
             mime = L"audio/mpeg";
             uclass = L"object.item.audioItem.musicTrack";
         } else {
+            LogPrint(L"[media:reject-extension] Skipping media with unsupported extension '%ls': %ls", ext.c_str(), RedactUrlForLog(path).c_str());
             return;
         }
     }
@@ -356,15 +357,31 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
     }
 }
 
-void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& playlistPath, int parentId) {
+void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& playlistPath, int parentId, int depth) {
+    if (depth > 8) {
+        LogPrint(L"%ls Skipping playlist due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(playlistPath).c_str());
+        return;
+    }
     for (const auto& entry : LoadPlaylistEntries(playlistPath)) {
+        if (IsPlaylistSourcePath(entry.location)) {
+            MediaItem playlistFolder;
+            playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.location), entry.location);
+            playlistFolder.parentId = parentId;
+            playlistFolder.path = entry.location;
+            playlistFolder.title = entry.title.empty() ? SourceStemName(entry.location) : entry.title;
+            playlistFolder.isFolder = true;
+            playlistFolder.upnpClass = L"object.container.storageFolder";
+            state.items.push_back(playlistFolder);
+            ScanPlaylist(state, cfg, entry.location, playlistFolder.id, depth + 1);
+            continue;
+        }
         AddMediaFile(state, cfg, entry.location, parentId, entry.title, entry.subtitlePath);
     }
 }
 
 void MediaSources::ScanNetworkFolder(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& folderUrl, int parentId, int depth) {
     if (depth > 8) {
-        LogPrint(L"%ls Skipping network folder due to recursion depth limit: %ls", kScanDepthLogCode, folderUrl.c_str());
+        LogPrint(L"%ls Skipping network folder due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(folderUrl).c_str());
         return;
     }
 
