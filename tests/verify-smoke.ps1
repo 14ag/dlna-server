@@ -44,7 +44,7 @@ function Add-Result {
 
     $summary.Add($line) | Out-Null
     Write-Host $line
-    $line | Out-File -Append -FilePath "C:\Users\philip\sauce\dlna-server\code\output\winx64\realtime.log" -Encoding UTF8
+    $line | Out-File -Append -FilePath "C:\Users\philip\sauce\dlna-server\output\winx64\realtime.log" -Encoding UTF8
 }
 
 function Set-IniValue {

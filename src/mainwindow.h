@@ -26,7 +26,6 @@ private:
     static LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     LRESULT HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
-    void RenderToolbar(HDC hdc, RECT& rect);
     void AddTrayIcon();
     void RemoveTrayIcon();
     void ShowTrayMenu();
