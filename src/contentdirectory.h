@@ -18,8 +18,6 @@ public:
 
 private:
     ContentDirectory() {}
-    
-    std::string XMLEscape(const std::wstring& str);
 };
 
 #define AppContent ContentDirectory::Get()

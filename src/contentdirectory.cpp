@@ -138,10 +138,6 @@ bool ExtractTagValue(const std::string& req, const char* tag, std::string& value
     return false;
 }
 
-bool ExtractTag(const std::string& req, const char* tag, std::string& value) {
-    return ExtractTagValue(req, tag, value);
-}
-
 std::string SoapEnvelope(const std::string& body) {
     return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
            "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\n"
@@ -172,6 +168,21 @@ bool IsDescendingSort(const std::string& criteria) {
 
 std::string EscapeWide(const std::wstring& value) {
     return XMLEscapeUtf8(WideToUtf8(value));
+}
+
+bool ShouldProxyRemoteUrl(const std::wstring& url) {
+    std::string text = WideToUtf8(url);
+    size_t schemeEnd = text.find("://");
+    if (schemeEnd == std::string::npos) return true;
+    std::string scheme = text.substr(0, schemeEnd);
+    if (scheme != "http" && scheme != "https") return true;
+    size_t authorityStart = schemeEnd + 3;
+    size_t authorityEnd = text.find_first_of("?/#", authorityStart);
+    size_t at = text.find('@', authorityStart);
+    if (at != std::string::npos && (authorityEnd == std::string::npos || at < authorityEnd)) {
+        return true;
+    }
+    return false;
 }
 
 std::string ItemProtocolInfo(const MediaItem& item) {
@@ -283,7 +294,7 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
                 if (hasKnownSize) {
                     entry << " size=\"" << it.sizeBytes << "\"";
                 }
-                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !cfg.proxyStreams;
+                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !cfg.proxyStreams && !ShouldProxyRemoteUrl(it.path);
                 entry << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id))) << "</res>";
             }
             if (!it.subtitlePath.empty()) {
@@ -320,10 +331,6 @@ std::string BrowseSearchResponse(const std::string& actionName, const std::vecto
 ContentDirectory& ContentDirectory::Get() {
     static ContentDirectory instance;
     return instance;
-}
-
-std::string ContentDirectory::XMLEscape(const std::wstring& wstr) {
-    return XMLEscapeUtf8(WideToUtf8(wstr));
 }
 
 std::string ContentDirectory::GetDeviceDescriptionXML() {
@@ -512,7 +519,7 @@ std::string ContentDirectory::HandleConnectionManagerControl(const std::string& 
 
     if (action == "GetCurrentConnectionInfo") {
         std::string idText;
-        if (!ExtractTag(req, "ConnectionID", idText)) {
+        if (!ExtractTagValue(req, "ConnectionID", idText)) {
             return SoapFault(402, "Invalid Args");
         }
         int connectionId = 0;
@@ -560,13 +567,13 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         std::string filter;
         std::string startingIndexStr;
         std::string requestedCountStr;
-        if (!ExtractTag(req, "ContainerID", containerIdStr) ||
-            !ExtractTag(req, "SearchCriteria", searchCriteria) ||
-            !ExtractTag(req, "StartingIndex", startingIndexStr) ||
-            !ExtractTag(req, "RequestedCount", requestedCountStr)) {
+        if (!ExtractTagValue(req, "ContainerID", containerIdStr) ||
+            !ExtractTagValue(req, "SearchCriteria", searchCriteria) ||
+            !ExtractTagValue(req, "StartingIndex", startingIndexStr) ||
+            !ExtractTagValue(req, "RequestedCount", requestedCountStr)) {
             return SoapFault(402, "Invalid Args");
         }
-        ExtractTag(req, "Filter", filter);
+        ExtractTagValue(req, "Filter", filter);
 
         int containerId = 0;
         int startingIndex = 0;
@@ -588,7 +595,7 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
             }
         }
         std::string sortCriteria;
-        ExtractTag(req, "SortCriteria", sortCriteria);
+        ExtractTagValue(req, "SortCriteria", sortCriteria);
         SortItems(results, sortCriteria);
         return BrowseSearchResponse("Search", results, startingIndex, requestedCount, hostUrl, filter, static_cast<int>(results.size()));
     }
@@ -602,15 +609,15 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
     std::string filter;
     std::string startingIndexStr;
     std::string requestedCountStr;
-    if (!ExtractTag(req, "ObjectID", objIdStr) ||
-        !ExtractTag(req, "BrowseFlag", browseFlag)) {
+    if (!ExtractTagValue(req, "ObjectID", objIdStr) ||
+        !ExtractTagValue(req, "BrowseFlag", browseFlag)) {
         return SoapFault(401, "Invalid XML");
     }
-    if (!ExtractTag(req, "StartingIndex", startingIndexStr) ||
-        !ExtractTag(req, "RequestedCount", requestedCountStr)) {
+    if (!ExtractTagValue(req, "StartingIndex", startingIndexStr) ||
+        !ExtractTagValue(req, "RequestedCount", requestedCountStr)) {
         return SoapFault(402, "Invalid Args");
     }
-    ExtractTag(req, "Filter", filter);
+    ExtractTagValue(req, "Filter", filter);
 
     int objId = 0;
     int startingIndex = 0;
@@ -636,7 +643,7 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
     }
 
     std::string sortCriteria;
-    ExtractTag(req, "SortCriteria", sortCriteria);
+    ExtractTagValue(req, "SortCriteria", sortCriteria);
     SortItems(results, sortCriteria);
     int totalMatches = browseFlag == "BrowseMetadata" ? 1 : static_cast<int>(results.size());
     return BrowseSearchResponse("Browse", results, startingIndex, requestedCount, hostUrl, filter, totalMatches);

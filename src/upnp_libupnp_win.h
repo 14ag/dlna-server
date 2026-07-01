@@ -16,10 +16,6 @@ public:
     bool Start(const std::vector<NetworkEndpoint>& endpoints, int httpPort, const std::wstring& serverName, const std::wstring& deviceUUID);
     void Stop();
 
-    std::string GetHttpAddr() const;
-    UpnpDevice_Handle GetDeviceHandle() const { return m_deviceHandle; }
-    void NotifyUpdateId(int updateId);
-
 private:
     LibUPnPWrapper() {}
     ~LibUPnPWrapper() { Stop(); }
