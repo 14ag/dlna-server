@@ -345,13 +345,6 @@ std::string GetDlnaServerHeader() {
 #endif
 }
 
-bool IsSubtitleExtension(const std::wstring& ext) {
-    std::wstring lower = ToLowerWide(ext);
-    return lower == L".srt" || lower == L".vtt" || lower == L".sub" ||
-           lower == L".ass" || lower == L".ssa" || lower == L".smi" ||
-           lower == L".txt";
-}
-
 std::string SubtitleMimeForExtension(const std::wstring& ext) {
     std::wstring lower = ToLowerWide(ext);
     if (lower == L".srt") return "text/srt; charset=utf-8";

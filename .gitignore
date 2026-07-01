@@ -82,3 +82,5 @@ vlc-help.txt
 scratch/
 .pytest_cache/
 tests/__pycache__/*
+AGENTS.MD
+.codex/config.toml
