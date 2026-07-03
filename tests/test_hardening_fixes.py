@@ -62,7 +62,7 @@ class HardeningFixSourceTests(unittest.TestCase):
         self.assertIn("TryParsePortStrict", utils)
         self.assertIn("ParsePortOrDefault", config)
         self.assertIn("Invalid port", win_settings)
-        self.assertIn("Ports must be between 1 and 65535", fltk)
+        self.assertIn("HTTP port must be between 1 and 65535", fltk)
         self.assertIn("*.bak", gitignore)
         self.assertFalse(list((ROOT / "src").glob("*.bak")))
         self.assertIn("dlna_enable_warnings", cmake)

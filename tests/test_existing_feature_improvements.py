@@ -16,11 +16,12 @@ class ExistingFeatureImprovementTests(unittest.TestCase):
             self.assertIn("cfg.flatFolderStyle", source)
             self.assertIn("AppConfig.Snapshot().sortByTitle", source)
             self.assertIn("cfg.showFileNamesInsteadOfTitles", source)
-            self.assertIn("cfg.addArtistAlbumFolders", source)
-            self.assertIn("AddArtistAlbumMirrorIfPresent", source)
-            self.assertIn("FindOrAddContainer", source)
             self.assertIn("ScanFolder(state,", source)
             self.assertIn("ScanNetworkFolder(state,", source)
+        common = self.read("src/media_scan_common.cpp")
+        self.assertIn("cfg.addArtistAlbumFolders", common)
+        self.assertIn("AddArtistAlbumMirrorIfPresent", common)
+        self.assertIn("FindOrAddContainer", common)
 
     def test_playlist_order_preserved_until_sort_requested(self):
         for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):

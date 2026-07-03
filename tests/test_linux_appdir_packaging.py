@@ -189,7 +189,6 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
             "DLNA Server Settings",
             "Server Name:",
             "HTTP Port:",
-            "File Port:",
             "IP Whitelist:",
             "Run on startup",
             "Debug Log (Write to file)",

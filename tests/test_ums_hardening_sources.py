@@ -71,6 +71,7 @@ class UmsHardeningSourceTests(unittest.TestCase):
             self.assertIn("albumArtPath", source)
             self.assertIn("/upnp/control/connection_manager", source)
             self.assertIn("HandleConnectionManagerControl", source)
+            self.assertNotIn('headers << "Connection: close\\r\\n"', source)
             self.assertIn('method == "SUBSCRIBE" || method == "UNSUBSCRIBE"', source)
             self.assertIn("AppEvents.HandleEventSubscription", source)
             self.assertNotIn("EventSubscriptionResponse", source)

@@ -8,12 +8,21 @@ def read_source(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def test_m3u8_is_registered_as_streamable_playlist_media():
+def test_m3u8_is_never_added_as_a_playable_media_item():
     source = read_source("src/dlna_utils.cpp")
+    assert 'L".m3u8"' not in source
 
-    assert 'L".m3u8"' in source
-    assert 'L"application/vnd.apple.mpegurl"' in source
-    assert 'L"object.item.videoItem"' in source
+    for path, add_media_call in (
+        ("src/media_sources.cpp", "void MediaSources::AddMediaFile"),
+        ("src/posix_media_sources.cpp", "void MediaSources::AddMediaFile"),
+    ):
+        scan_source = read_source(path)
+        for call_site in ("void MediaSources::ScanFolder", "void MediaSources::ScanPlaylist", "void MediaSources::ScanNetworkFolder"):
+            start = scan_source.index(call_site)
+            end = scan_source.index("\n}\n", start)
+            body = scan_source[start:end]
+            if "AddMediaFile(state" in body:
+                assert "IsPlaylistSourcePath" in body
 
 
 def test_playlist_scanners_recurse_into_nested_m3u8_with_depth_guard():
