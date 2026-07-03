@@ -78,7 +78,7 @@ bool PrefixMatch(const NetworkEndpoint& endpoint, const SOCKADDR* remoteAddr) {
     if (endpoint.family == AF_INET) {
         const SOCKADDR_IN* local4 = reinterpret_cast<const SOCKADDR_IN*>(&endpoint.sockaddr);
         const SOCKADDR_IN* remote4 = reinterpret_cast<const SOCKADDR_IN*>(remoteAddr);
-        ULONG prefix = std::min<ULONG>(endpoint.prefixLength, 32);
+        ULONG prefix = (std::min)(endpoint.prefixLength, static_cast<ULONG>(32));
         return PrefixMatchBits(reinterpret_cast<const unsigned char*>(&local4->sin_addr),
                                reinterpret_cast<const unsigned char*>(&remote4->sin_addr),
                                prefix);
@@ -86,7 +86,7 @@ bool PrefixMatch(const NetworkEndpoint& endpoint, const SOCKADDR* remoteAddr) {
 
     const SOCKADDR_IN6* local6 = reinterpret_cast<const SOCKADDR_IN6*>(&endpoint.sockaddr);
     const SOCKADDR_IN6* remote6 = reinterpret_cast<const SOCKADDR_IN6*>(remoteAddr);
-    ULONG prefix = std::min<ULONG>(endpoint.prefixLength, 128);
+    ULONG prefix = (std::min)(endpoint.prefixLength, static_cast<ULONG>(128));
     return PrefixMatchBits(local6->sin6_addr.u.Byte, remote6->sin6_addr.u.Byte, prefix);
 }
 
