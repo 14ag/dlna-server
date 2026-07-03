@@ -636,8 +636,14 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         if (item.id == -1) return SoapFault(701, "No such object");
         results.push_back(item);
     } else if (browseFlag == "BrowseDirectChildren") {
-        if (AppMedia.GetItem(objId).id == -1) return SoapFault(701, "No such object");
-        results = AppMedia.GetChildren(objId);
+        std::vector<MediaItem> childrenResult;
+        auto status = AppMedia.TryGetChildren(objId, childrenResult);
+        if (status == MediaSources::GetChildrenResult::NotFound) {
+            return SoapFault(701, "No such object");
+        } else if (status == MediaSources::GetChildrenResult::NotAContainer) {
+            return SoapFault(706, "Not a container");
+        }
+        results = std::move(childrenResult);
     } else {
         return SoapFault(402, "Invalid Args");
     }

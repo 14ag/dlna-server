@@ -491,6 +491,35 @@ std::vector<MediaItem> MediaSources::GetChildren(int parentId) {
     return result;
 }
 
+MediaSources::GetChildrenResult MediaSources::TryGetChildren(int objId, std::vector<MediaItem>& out) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto found = m_idToIndex.find(objId);
+    if (found == m_idToIndex.end() || found->second >= m_items.size()) {
+        out.clear();
+        return GetChildrenResult::NotFound;
+    }
+    const MediaItem& item = m_items[found->second];
+    if (!item.isFolder) {
+        out.clear();
+        return GetChildrenResult::NotAContainer;
+    }
+    out.clear();
+    auto childrenFound = m_childrenByParent.find(objId);
+    if (childrenFound != m_childrenByParent.end()) {
+        for (size_t index : childrenFound->second) {
+            if (index < m_items.size()) out.push_back(m_items[index]);
+        }
+    }
+    const bool sortByTitle = AppConfig.Snapshot().sortByTitle;
+    if (sortByTitle) {
+        std::sort(out.begin(), out.end(), [](const MediaItem& a, const MediaItem& b) {
+            if (a.isFolder != b.isFolder) return a.isFolder && !b.isFolder;
+            return NaturalLessWide(a.title, b.title);
+        });
+    }
+    return GetChildrenResult::Success;
+}
+
 std::vector<MediaItem> MediaSources::GetDescendants(int parentId) {
     std::vector<MediaItem> items;
     std::unordered_map<int, std::vector<size_t>> childrenByParent;
