@@ -490,7 +490,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                         } else {
                             headers << "Accept-Ranges: none\r\n";
                         }
-                        headers << "Connection: close\r\n"
+                        headers << ConnectionHeader(keepAlive)
                                 << "transferMode.dlna.org: Streaming\r\n"
                                 << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize) << "\r\n"
                                 << "\r\n";
@@ -499,7 +499,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                         if (!sendBody) return;
 
                         SetSocketStreamTimeouts(clientSocket);
-                        StreamRemoteContent(item.path, isPartial, startByte, endByte, [&](const char* data, size_t length) {
+                        bool remoteOk = StreamRemoteContent(item.path, isPartial, startByte, endByte, [&](const char* data, size_t length) {
                             const char* p = data;
                             size_t remaining = length;
                             while (remaining > 0) {
@@ -511,7 +511,8 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             }
                             return m_running.load();
                         });
-                        return;
+                        if (!remoteOk || !keepAlive) return;
+                        continue;
                     }
 
                     ScopedHandle hFile(CreateFileW(item.path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL));
@@ -547,7 +548,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                         headers << "Content-Type: " << mime << "\r\n"
                                 << "Content-Length: " << contentLength << "\r\n"
                                 << "Accept-Ranges: bytes\r\n"
-                                << "Connection: close\r\n"
+                                << ConnectionHeader(keepAlive)
                                 << "transferMode.dlna.org: Streaming\r\n"
                                 << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n"
                                 << "\r\n";
@@ -578,7 +579,8 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             if (!TrySendAll(clientSocket, fileBuf, bytesReadFile)) break;
                             remaining -= bytesReadFile;
                         }
-                        return;
+                        if (remaining > 0 || !keepAlive) return;
+                        continue;
                     }
                 }
 

@@ -174,9 +174,8 @@ class SettingsDialog : public Fl_Window {
 public:
     SettingsDialog()
         : Fl_Window(500, 370, "DLNA Server Settings"),
-          m_serverName(120, 14, 190, 24, "Server Name:"),
-          m_httpPort(120, 44, 70, 24, "HTTP Port:"),
-          m_filePort(270, 44, 70, 24, "File Port:"),
+m_serverName(120, 14, 190, 24, "Server Name:"),
+          m_httpPort(120, 44, 190, 24, "HTTP Port:"),
           m_ipWhitelist(120, 74, 350, 24, "IP Whitelist:"),
           m_runOnStartup(16, 112, 190, 24, "Run on startup"),
           m_debugLog(16, 138, 190, 24, "Debug Log (Write to file)"),
@@ -225,7 +224,6 @@ private:
     void LoadFromConfig() {
         m_serverName.value(ToUtf8(AppConfig.serverName).c_str());
         m_httpPort.value(std::to_string(AppConfig.port).c_str());
-        m_filePort.value(std::to_string(AppConfig.fileServerPort).c_str());
         m_ipWhitelist.value(ToUtf8(AppConfig.ipWhiteList).c_str());
         m_runOnStartup.value(AppConfig.runOnBoot ? 1 : 0);
         m_debugLog.value(AppConfig.debugLog ? 1 : 0);
@@ -238,17 +236,14 @@ private:
         m_proxyStreams.value(AppConfig.proxyStreams ? 1 : 0);
     }
 
-    bool SaveToConfig() {
+bool SaveToConfig() {
         int httpPort = 0;
-        int filePort = 0;
-        if (!TryParsePortStrict(m_httpPort.value() ? m_httpPort.value() : "", httpPort) ||
-            !TryParsePortStrict(m_filePort.value() ? m_filePort.value() : "", filePort)) {
-            fl_alert("Ports must be between 1 and 65535.");
+        if (!TryParsePortStrict(m_httpPort.value() ? m_httpPort.value() : "", httpPort)) {
+            fl_alert("HTTP port must be between 1 and 65535.");
             return false;
         }
         AppConfig.serverName = ToWide(m_serverName.value());
         AppConfig.port = httpPort;
-        AppConfig.fileServerPort = filePort;
         AppConfig.ipWhiteList = ToWide(m_ipWhitelist.value());
         AppConfig.runOnBoot = m_runOnStartup.value() != 0;
         AppConfig.debugLog = m_debugLog.value() != 0;
@@ -304,7 +299,6 @@ private:
 
     Fl_Input m_serverName;
     Fl_Int_Input m_httpPort;
-    Fl_Int_Input m_filePort;
     Fl_Input m_ipWhitelist;
     Fl_Check_Button m_runOnStartup;
     Fl_Check_Button m_debugLog;
