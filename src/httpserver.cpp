@@ -195,7 +195,7 @@ bool HttpServer::Start(int port) {
     }
 
     SetThreadpoolThreadMinimum(m_threadPool, 4);
-    SetThreadpoolThreadMaximum(m_threadPool, 8);
+    SetThreadpoolThreadMaximum(m_threadPool, 64);
     InitializeThreadpoolEnvironment(&m_cbe);
     m_cleanupGroup = CreateThreadpoolCleanupGroup();
     if (!m_cleanupGroup) {

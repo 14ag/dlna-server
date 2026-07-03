@@ -179,6 +179,14 @@ def test_join_url_optimized_no_str_back_in_loop():
     assert "needsSlash = true" in network
 
 
+def test_http_worker_limits_aligned():
+    win_http = read("src/httpserver.cpp")
+    posix_http = read("src/posix_httpserver.cpp")
+
+    assert "SetThreadpoolThreadMaximum(m_threadPool, 64)" in win_http
+    assert "constexpr size_t kMaxClientThreads = 64" in posix_http
+
+
 def test_release_scripts_enforce_platform_output_contracts():
     ps1 = read("scripts/build-release-assets.ps1")
     linux = read("scripts/build-linux-desktop-assets.sh")
