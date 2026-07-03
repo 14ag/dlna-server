@@ -96,6 +96,15 @@ def test_ssdp_queue_bounded_send_errors_and_empty_drop():
     assert "IP_MULTICAST_IF failed" in ssdp
 
 
+def test_narrow_ascii_uses_utf8_conversion():
+    utils = read("src/dlna_utils.cpp")
+
+    assert "#include \"netutils.h\"" in utils
+    assert "std::string NarrowAscii(const std::wstring& value)" in utils
+    assert "return WideToUtf8(value);" in utils
+    assert "static_cast<char>(ch)" not in utils
+
+
 def test_release_scripts_enforce_platform_output_contracts():
     ps1 = read("scripts/build-release-assets.ps1")
     linux = read("scripts/build-linux-desktop-assets.sh")
