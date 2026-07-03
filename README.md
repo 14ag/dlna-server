@@ -18,9 +18,9 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - Can maintain a default `.m3u` playlist from the desktop settings dialog.
 - Reads media from SMB and FTP shares such as `smb://user:pass@server/share` and `ftp://user:pass@server:21/media`.
 - Supports byte-range requests so DLNA clients can seek within media files.
-- Starts HTTP and SSDP before the background media scan finishes, so slow libraries do not block initial reachability.
+- Blocks HTTP and SSDP startup until the initial background media scan completes, then starts serving requests.
 - Supports explicit rescans from the server layer; completed scans replace the old index only after a full scan succeeds.
-- Watches local media sources while running and rescans after local file changes without a manual restart.
+- Watches local media sources while running and rescans after local file changes without a manual restart. Remote sources (`ftp://`, `smb://`, `http://`, `https://`) are only scanned at server start and do not participate in the automatic file watch loop. Adding or removing a remote source at runtime requires a server restart.
 - Keeps a `media-cache.tsv` beside `config.ini` for stable media IDs, cached scan errors, and metadata groundwork.
 - Advertises the server with SSDP multicast `NOTIFY` messages.
 - Handles UPnP `ContentDirectory:1` Browse and Search SOAP requests with exact action dispatch.
