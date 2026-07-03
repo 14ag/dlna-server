@@ -158,6 +158,18 @@ def test_remote_source_rescan_behavior_documented():
     assert "IsRemoteMediaUrl(source.path)" in source_watcher
 
 
+def test_remote_content_length_probing_notes_parallelization():
+    win_media = read("src/media_sources.cpp")
+    posix_media = read("src/posix_media_sources.cpp")
+    httpserver = read("src/httpserver.cpp")
+    posix_httpserver = read("src/posix_httpserver.cpp")
+
+    assert "TODO W-14 perf parallelize remote content length probing" in win_media
+    assert "TODO W-14 perf parallelize remote content length probing" in posix_media
+    assert "item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength" in httpserver
+    assert "item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength" in posix_httpserver
+
+
 def test_release_scripts_enforce_platform_output_contracts():
     ps1 = read("scripts/build-release-assets.ps1")
     linux = read("scripts/build-linux-desktop-assets.sh")
