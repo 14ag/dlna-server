@@ -314,8 +314,7 @@ void HttpServer::AcceptLoop(int listenSocket) {
 }
 
 void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
-void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
-    ScopedFd client(clientSocket);
+ScopedFd client(clientSocket);
     char buf[kBufferSize];
     bool firstRequest = true;
 
@@ -424,13 +423,13 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
                     } else {
                         headers << "Accept-Ranges: none\r\n";
                     }
-                    headers << "Connection: close\r\n"
+                    headers << ConnectionHeader(keepAlive)
                             << "transferMode.dlna.org: Streaming\r\n"
                             << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize) << "\r\n\r\n";
                     SendAll(clientSocket, headers.str());
                     if (method == "GET") {
                         SetSocketStreamTimeouts(clientSocket);
-                        StreamRemoteContent(item.path, partial, start, end, [&](const char* data, size_t length) {
+                        bool remoteOk = StreamRemoteContent(item.path, partial, start, end, [&](const char* data, size_t length) {
                             const char* p = data;
                             size_t remaining = length;
                             while (remaining > 0) {
@@ -441,8 +440,11 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
                             }
                             return m_running.load();
                         });
+                        if (!remoteOk || !keepAlive) return;
+                        continue;
                     }
-                    return;
+                    if (!keepAlive) return;
+                    continue;
                 }
                 ScopedFd fd(item.id == -1 ? -1 : open(WideToUtf8(item.path).c_str(), O_RDONLY));
                 if (fd.get() < 0) {
@@ -467,7 +469,8 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
                 if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << st.st_size << "\r\n";
                 headers << "Content-Type: " << WideToUtf8(item.mimeType) << "\r\n"
                         << "Content-Length: " << (end - start + 1) << "\r\n"
-                        << "Accept-Ranges: bytes\r\nConnection: close\r\n"
+                        << "Accept-Ranges: bytes\r\n"
+                        << ConnectionHeader(keepAlive)
                         << "transferMode.dlna.org: Streaming\r\n"
                         << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n\r\n";
                 SendAll(clientSocket, headers.str());
@@ -481,8 +484,12 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
                         if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
                         remaining -= chunk;
                     }
-                }
-                return;
+                    if (method == "GET") {
+                        if (remaining > 0 || !keepAlive) return;
+                        continue;
+                    }
+                    if (!keepAlive) return;
+                    continue;
             }
             if (path.rfind("/subtitle/", 0) == 0) {
                 int mediaId = -1;

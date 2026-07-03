@@ -3,6 +3,7 @@
 #include "dlna_utils.h"
 #include "log.h"
 #include "media_database.h"
+#include "media_scan_common.h"
 #include "netutils.h"
 #include "network_sources.h"
 #include "upnp_eventing.h"
@@ -43,40 +44,18 @@ std::wstring CanonicalMediaKey(const std::wstring& pathText) {
     return Utf8ToWide((ec ? path : canonical).u8string());
 }
 
-std::wstring BuildDuplicateMediaKey(int parentId, const std::wstring& path) {
-    return L"media\n" + std::to_wstring(parentId) + L"\n" + CanonicalMediaKey(path);
-}
+const auto g_canonicalize = [](const std::wstring& path) -> std::wstring {
+    return CanonicalMediaKey(path);
+};
 
-std::wstring BuildStableMediaKey(int parentId, const std::wstring& path) {
-    return BuildDuplicateMediaKey(parentId, path);
-}
+const auto posixParentPathOf = [](const std::wstring& p) -> std::wstring {
+    fs::path path(WideToUtf8(p));
+    return Utf8ToWide(path.parent_path().u8string());
+};
 
-std::wstring ContainerLookupKey(int parentId, const std::wstring& title, const std::wstring& keyPath) {
-    return std::to_wstring(parentId) + L"\n" + title + L"\n" + keyPath;
-}
-
-std::wstring BuildStableContainerKey(int parentId, const std::wstring& title, const std::wstring& keyPath) {
-    return L"container\n" + ContainerLookupKey(parentId, title, CanonicalMediaKey(keyPath));
-}
-
-int AllocateContainerId(MediaIndexState& state, int parentId, const std::wstring& title, const std::wstring& keyPath) {
-    if (state.mediaDatabase) {
-        return state.mediaDatabase->GetOrCreateStableContainerId(BuildStableContainerKey(parentId, title, keyPath));
-    }
-    return state.nextId++;
-}
-
-struct ScopedScanSuccess {
-    ScopedScanSuccess(MediaDatabase* database, std::wstring key) : database(database), key(std::move(key)), marked(false) {}
-    void Mark() {
-        if (database && !marked) {
-            database->MarkScanSuccess(key);
-            marked = true;
-        }
-    }
-    MediaDatabase* database;
-    std::wstring key;
-    bool marked;
+const auto posixNameOfPath = [](const std::wstring& p) -> std::wstring {
+    fs::path path(WideToUtf8(p));
+    return Utf8ToWide(path.filename().u8string());
 };
 
 void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
@@ -131,74 +110,6 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
     state.albumArtByDirectory[directoryKey] = { L"", L"" };
 }
 
-int FindOrAddContainer(MediaIndexState& state, int parentId, const std::wstring& title, const std::wstring& keyPath) {
-    const std::wstring lookupKey = ContainerLookupKey(parentId, title, keyPath);
-    auto found = state.containerKeys.find(lookupKey);
-    if (found != state.containerKeys.end()) {
-        return found->second;
-    }
-
-    MediaItem folder{};
-    folder.id = AllocateContainerId(state, parentId, title, keyPath);
-    folder.parentId = parentId;
-    folder.path = keyPath;
-    folder.title = title;
-    folder.isFolder = true;
-    folder.upnpClass = L"object.container.storageFolder";
-    state.items.push_back(folder);
-    state.containerKeys[lookupKey] = folder.id;
-    return folder.id;
-}
-
-void AddArtistAlbumMirrorIfPresent(MediaIndexState& state, const ConfigSnapshot& cfg, const MediaItem& item, int sourceParentId) {
-    if (!cfg.addArtistAlbumFolders || IsRemoteMediaUrl(item.path)) return;
-    if (item.upnpClass != L"object.item.audioItem.musicTrack" && item.upnpClass != L"object.item.videoItem") return;
-
-    fs::path path(WideToUtf8(item.path));
-    fs::path albumPath = path.parent_path();
-    fs::path artistPath = albumPath.parent_path();
-    std::wstring album = Utf8ToWide(albumPath.filename().u8string());
-    std::wstring artist = Utf8ToWide(artistPath.filename().u8string());
-    if (artist.empty() || album.empty()) return;
-
-    int artistId = FindOrAddContainer(state, sourceParentId, artist, Utf8ToWide(artistPath.u8string()));
-    int albumId = FindOrAddContainer(state, artistId, album, Utf8ToWide(albumPath.u8string()));
-    if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(albumId, item.path)).second) return;
-
-    MediaItem mirror = item;
-    mirror.id = state.mediaDatabase
-        ? state.mediaDatabase->GetOrCreateStableId(BuildStableMediaKey(albumId, item.path))
-        : state.nextId++;
-    mirror.parentId = albumId;
-    state.items.push_back(mirror);
-}
-
-void AppendDescendants(const std::vector<MediaItem>& items,
-                       const std::unordered_map<int, std::vector<size_t>>& childrenByParent,
-                       int parentId,
-                       bool sortByTitle,
-                       std::vector<MediaItem>& result) {
-    auto found = childrenByParent.find(parentId);
-    if (found == childrenByParent.end()) return;
-
-    std::vector<MediaItem> children;
-    for (size_t index : found->second) {
-        if (index < items.size()) children.push_back(items[index]);
-    }
-    if (sortByTitle) {
-        std::sort(children.begin(), children.end(), [](const MediaItem& a, const MediaItem& b) {
-            if (a.isFolder != b.isFolder) return a.isFolder && !b.isFolder;
-            return NaturalLessWide(a.title, b.title);
-        });
-    }
-
-    for (const auto& child : children) {
-        result.push_back(child);
-        if (child.isFolder) AppendDescendants(items, childrenByParent, child.id, sortByTitle, result);
-    }
-}
-}
-
 MediaSources& MediaSources::Get() {
     static MediaSources instance;
     return instance;
@@ -232,8 +143,10 @@ void MediaSources::Scan() {
                 continue;
             }
         }
+        LogPrint(L"Scanning media source: %ls", RedactUrlForLog(source.path).c_str());
+        const int itemsBefore = static_cast<int>(state.items.size());
         MediaItem folder{};
-            folder.id = AllocateContainerId(state, 0, SourceDisplayName(source.path), source.path);
+            folder.id = AllocateContainerId(state, 0, SourceDisplayName(source.path), source.path, g_canonicalize);
         folder.parentId = 0;
         folder.path = source.path;
         folder.title = SourceDisplayName(source.path);
@@ -248,13 +161,16 @@ void MediaSources::Scan() {
         } else {
             ScanFolder(state, cfg, source.path, folder.id);
         }
+        const int sourceItemCount = static_cast<int>(state.items.size()) - itemsBefore;
+        LogPrint(L"Scanned %d media items from %ls", sourceItemCount, SourceDisplayName(source.path).c_str());
     }
     if (cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty()) {
         fs::path path(WideToUtf8(cfg.defaultPlaylistPath));
         std::error_code ec;
         if (fs::is_regular_file(path, ec)) {
+            const int itemsBefore = static_cast<int>(state.items.size());
             MediaItem playlistFolder{};
-            playlistFolder.id = AllocateContainerId(state, 0, L"Default playlist", cfg.defaultPlaylistPath);
+            playlistFolder.id = AllocateContainerId(state, 0, L"Default playlist", cfg.defaultPlaylistPath, g_canonicalize);
             playlistFolder.parentId = 0;
             playlistFolder.path = cfg.defaultPlaylistPath;
             playlistFolder.title = L"Default playlist";
@@ -262,6 +178,8 @@ void MediaSources::Scan() {
             playlistFolder.upnpClass = L"object.container.storageFolder";
             state.items.push_back(playlistFolder);
             ScanPlaylist(state, cfg, cfg.defaultPlaylistPath, playlistFolder.id);
+            const int sourceItemCount = static_cast<int>(state.items.size()) - itemsBefore;
+            LogPrint(L"Scanned %d media items from Default playlist", sourceItemCount);
         }
     }
     int mediaItemCount = static_cast<int>(std::count_if(state.items.begin(), state.items.end(), [](const MediaItem& item) {
@@ -290,10 +208,10 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
         }
     }
 
-    if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, pathText)).second) return;
+    if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, pathText, g_canonicalize)).second) return;
 
     MediaItem file{};
-    const std::wstring stableKey = BuildStableMediaKey(parentId, pathText);
+    const std::wstring stableKey = BuildStableMediaKey(parentId, pathText, g_canonicalize);
     ScopedScanSuccess scanSuccess(state.mediaDatabase, stableKey);
     file.id = state.mediaDatabase
         ? state.mediaDatabase->GetOrCreateStableId(stableKey)
@@ -341,7 +259,7 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
     state.items.push_back(file);
     scanSuccess.Mark();
     if (allowArtistAlbumMirror) {
-        AddArtistAlbumMirrorIfPresent(state, cfg, file, parentId);
+        AddArtistAlbumMirrorIfPresent(state, cfg, file, parentId, posixParentPathOf, posixNameOfPath, g_canonicalize);
     }
 }
 
@@ -353,7 +271,7 @@ void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cf
     for (const auto& entry : LoadPlaylistEntries(playlistPath)) {
         if (IsPlaylistSourcePath(entry.location)) {
             MediaItem playlistFolder{};
-            playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.location), entry.location);
+            playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.location), entry.location, g_canonicalize);
             playlistFolder.parentId = parentId;
             playlistFolder.path = entry.location;
             playlistFolder.title = entry.title.empty() ? SourceStemName(entry.location) : entry.title;
@@ -376,7 +294,7 @@ void MediaSources::ScanNetworkFolder(MediaIndexState& state, const ConfigSnapsho
     for (const auto& entry : ListRemoteDirectory(folderUrl)) {
         if (IsPlaylistSourcePath(entry.url)) {
             MediaItem playlistFolder{};
-            playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.name), entry.url);
+            playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.name), entry.url, g_canonicalize);
             playlistFolder.parentId = parentId;
             playlistFolder.path = entry.url;
             playlistFolder.title = SourceStemName(entry.name);
@@ -398,7 +316,7 @@ void MediaSources::ScanNetworkFolder(MediaIndexState& state, const ConfigSnapsho
                 ScanNetworkFolder(state, cfg, entry.url, parentId, depth + 1);
             } else {
                 MediaItem folder{};
-                folder.id = AllocateContainerId(state, parentId, SourceDisplayName(entry.name), entry.url);
+                folder.id = AllocateContainerId(state, parentId, SourceDisplayName(entry.name), entry.url, g_canonicalize);
                 folder.parentId = parentId;
                 folder.path = entry.url;
                 folder.title = SourceDisplayName(entry.name);
@@ -422,7 +340,7 @@ void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg,
     fs::directory_iterator end;
     if (ec) {
         if (state.mediaDatabase) {
-            state.mediaDatabase->RecordScanError(BuildStableContainerKey(parentId, SourceDisplayName(rootPath), rootPath), L"Folder unavailable");
+            state.mediaDatabase->RecordScanError(BuildStableContainerKey(parentId, SourceDisplayName(rootPath), rootPath, g_canonicalize), L"Folder unavailable");
         }
         LogPrint(L"Skipping unreadable folder: %ls", rootPath.c_str());
         return;
@@ -437,7 +355,7 @@ void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg,
                 ScanFolder(state, cfg, Utf8ToWide(path.u8string()), parentId, depth + 1);
             } else {
                 MediaItem folder{};
-                folder.id = AllocateContainerId(state, parentId, Utf8ToWide(path.filename().u8string()), Utf8ToWide(path.u8string()));
+                folder.id = AllocateContainerId(state, parentId, Utf8ToWide(path.filename().u8string()), Utf8ToWide(path.u8string()), g_canonicalize);
                 folder.parentId = parentId;
                 folder.path = Utf8ToWide(path.u8string());
                 folder.title = Utf8ToWide(path.filename().u8string());
@@ -450,7 +368,7 @@ void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg,
             std::wstring fullPath = Utf8ToWide(path.u8string());
             if (IsPlaylistSourcePath(fullPath)) {
                 MediaItem playlistFolder{};
-                playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(fullPath), fullPath);
+                playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(fullPath), fullPath, g_canonicalize);
                 playlistFolder.parentId = parentId;
                 playlistFolder.path = fullPath;
                 playlistFolder.title = SourceStemName(fullPath);
@@ -534,11 +452,6 @@ std::vector<MediaItem> MediaSources::GetDescendants(int parentId) {
     return result;
 }
 
-std::vector<MediaItem> MediaSources::GetAllItems() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_items;
-}
-
 MediaItem MediaSources::GetItem(int id) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto found = m_idToIndex.find(id);
@@ -548,12 +461,6 @@ MediaItem MediaSources::GetItem(int id) {
     MediaItem missing{};
     missing.id = -1;
     return missing;
-}
-
-int MediaSources::GetChildCount(int parentId) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    auto found = m_childrenByParent.find(parentId);
-    return found == m_childrenByParent.end() ? 0 : static_cast<int>(found->second.size());
 }
 
 std::unordered_map<int, int> MediaSources::GetChildCounts(const std::vector<MediaItem>& items) {
