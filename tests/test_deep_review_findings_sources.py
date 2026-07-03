@@ -224,6 +224,8 @@ def test_ssdp_ttl_complies_with_upnp_spec():
     assert "IPV6_MULTICAST_HOPS" in win_ssdp
     assert "unsigned char ttl = 4" in posix_ssdp
     assert "int hops = 4" in posix_ssdp
+    assert "SSDP_ALIVE_INTERVAL_MS 900000" in win_ssdp
+    assert "kAliveInterval = std::chrono::minutes(15)" in posix_ssdp
 
 
 def test_release_scripts_enforce_platform_output_contracts():

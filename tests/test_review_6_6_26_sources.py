@@ -28,6 +28,12 @@ class ReviewSixJuneSourceContracts(unittest.TestCase):
         self.assertNotIn("HandleBrowse", content_header)
         self.assertNotIn("GetMimeType", content_header)
         self.assertNotIn("GetUPnPClass", content_header)
+        win_media = read_source("src/media_sources.cpp")
+        posix_media = read_source("src/posix_media_sources.cpp")
+        self.assertNotIn("std::wstring ContainerLookupKey(", win_media)
+        self.assertNotIn("std::wstring ContainerLookupKey(", posix_media)
+        self.assertIn("src/media_scan_common.cpp", read_source("CMakeLists.txt"))
+        self.assertIn("src/media_scan_common.h", read_source("CMakeLists.txt"))
 
     def test_soap_dispatch_uses_exact_action_names_and_bounded_post_bodies(self):
         content = read_source("src/contentdirectory.cpp")

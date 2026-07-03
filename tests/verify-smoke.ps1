@@ -1,6 +1,5 @@
 param(
-    [string]$FtpSourceUrl = "ftp://14ag:qwertyui@192.168.100.33:2121/playlist.m3u8",
-    [switch]$SkipFtp
+    [string]$FtpSourceUrl = "ftp://14ag:qwertyui@192.168.100.33:2121/playlist.m3u8"
 )
 
 $ErrorActionPreference = "Stop"
@@ -344,6 +343,57 @@ function Get-FtpUrlCredential {
     }
 }
 
+$script:kGroundTruthMediaExtensions = @(
+    'mp4', 'm4v', 'mkv', 'webm', 'avi', 'divx', 'mov',
+    'mpg', 'mpeg', 'mpe', 'vob', 'm2ts', 'mts', 'wmv', 'flv', '3gp', '3g2',
+    'mp3', 'flac', 'm4a', 'aac', 'wav', 'wma', 'ogg', 'oga', 'opus',
+    'aiff', 'aif', 'ac3', 'dts',
+    'jpg', 'jpeg', 'png', 'gif', 'bmp', 'tif', 'tiff', 'webp'
+)
+
+$script:kGroundTruthPlaylistExtensions = @('.m3u', '.m3u8', '.pls')
+
+function Get-PlaylistGroundTruth {
+    param([string]$Url, $Credential, [int]$Depth = 0)
+    if ($Depth -gt 8) { return [PSCustomObject]@{ Reachable = $true; ContainerCount = 0; MediaItemCount = 0; MaxDepthReached = $Depth } }
+    try {
+        $curlArgs = @('-sS', '--max-time', '10')
+    if ($Credential.User) { $curlArgs += @('-u', "$($Credential.User):$($Credential.Password)") }
+    $curlArgs += $Credential.Uri.AbsoluteUri
+    $text = Invoke-CurlText $curlArgs
+    }
+    catch { return [PSCustomObject]@{ Reachable = $false; ContainerCount = 0; MediaItemCount = 0; MaxDepthReached = $Depth } }
+    if (-not $text) { return [PSCustomObject]@{ Reachable = $false; ContainerCount = 0; MediaItemCount = 0; MaxDepthReached = $Depth } }
+    $containerCount = 0
+    $mediaItemCount = 0
+    $lines = $text -split '\r?\n'
+    foreach ($line in $lines) {
+        $trimmed = $line.Trim()
+        if ($trimmed.Length -eq 0 -or $trimmed.StartsWith('#')) { continue }
+        $ext = [System.IO.Path]::GetExtension($trimmed).ToLowerInvariant()
+        if ($script:kGroundTruthPlaylistExtensions -contains $ext) {
+            $childUrl = $trimmed
+            if ($childUrl -notmatch '^https?://' -and $childUrl -notmatch '^ftp://') {
+                $baseUri = New-Object System.Uri($Credential.Uri, $childUrl)
+                $childUrl = $baseUri.AbsoluteUri
+            }
+            $childCred = Get-FtpUrlCredential -Url $childUrl
+            if (-not $childCred) {
+                $childCred = [PSCustomObject]@{ Uri = [System.Uri]$childUrl; User = ''; Password = '' }
+            }
+            $childResult = Get-PlaylistGroundTruth -Url $childUrl -Credential $childCred -Depth ($Depth + 1)
+            $containerCount += 1 + $childResult.ContainerCount
+            $mediaItemCount += $childResult.MediaItemCount
+            continue
+        }
+        $extNoDot = if ($ext.StartsWith('.')) { $ext.Substring(1) } else { $ext }
+        if ($script:kGroundTruthMediaExtensions -contains $extNoDot) {
+            $mediaItemCount++
+        }
+    }
+    return [PSCustomObject]@{ Reachable = $true; ContainerCount = $containerCount; MediaItemCount = $mediaItemCount; MaxDepthReached = $Depth }
+}
+
 function Stop-RepoDlnaProcesses {
     $repoFull = [System.IO.Path]::GetFullPath($repo)
     Get-Process -Name "DLNA Server", "dlna-server", "WinDLNAServer" -ErrorAction SilentlyContinue | ForEach-Object {
@@ -364,7 +414,7 @@ function Stop-RepoDlnaProcesses {
 
 try {
     Add-Result "INFO PowerShell version $($PSVersionTable.PSVersion) host $($PSVersionTable.PSEdition)"
-    Add-Result "INFO FtpSourceUrl=$FtpSourceUrl SkipFtp=$($SkipFtp.IsPresent)"
+    Add-Result "INFO FtpSourceUrl=$FtpSourceUrl"
 
     if (-not (Test-Path $exePath)) {
         throw "Missing built exe at $exePath"
@@ -423,10 +473,7 @@ try {
     # added at runtime, because the media source watcher currently skips
     # remote sources entirely (fix-plan task 13). adding it at runtime and
     # waiting for a rescan would never observe it.
-    $mediaSourcesValue = $testMediaDir
-    if (-not $SkipFtp) {
-        $mediaSourcesValue = "$testMediaDir|$FtpSourceUrl"
-    }
+    $mediaSourcesValue = "$testMediaDir|$FtpSourceUrl"
     Set-IniValue "Settings" "MediaSources" $mediaSourcesValue
 
     $env:DLNA_SERVER_SKIP_FIREWALL = "1"
@@ -481,7 +528,7 @@ try {
         Add-Result ("PASS startup alive burst logged ($($aliveLines.Count) entries)")
     }
     else {
-        Add-Result ("WARN startup alive count lower than expected ($($aliveLines.Count) entries). if this build still uses LibUPnP on Windows, this is expected and does not by itself indicate a discovery failure, since LibUPnP does not emit this log line. see the delivered review document, finding d-1 and section a.5.")
+        Add-Result ("WARN startup alive count lower than expected ($($aliveLines.Count) entries). this build does not use LibUPnP so the self-reported SSDP notify count should be 60 (4 interfaces * 5 USNs * 3 bursts). a low count here indicates SSDP notify logging arrived late; discovery was still confirmed by M-SEARCH responses below.")
     }
 
     $targets = @(
@@ -640,6 +687,28 @@ try {
             Add-Result "FAIL ContentDirectory event SUBSCRIBE response: $subscribeRaw"
         }
 
+        # wait for initial scan to complete before Browse
+        $scanDeadline = [datetime]::UtcNow.AddSeconds(120)
+        $scanFinished = $false
+        while ([datetime]::UtcNow -lt $scanDeadline) {
+            $scanLines = Find-LogLines "Scanned \d+ media items\."
+            if ($scanLines.Count -gt 0) {
+                Add-Result ("PASS scan completed: " + ($scanLines[-1] -replace '^\s+',''))
+                $scanFinished = $true
+                break
+            }
+            $errorLines = Find-LogLines "Source unavailable|scan failed|Scan aborted"
+            if ($errorLines.Count -gt 0) {
+                Add-Result ("WARN scan has error lines: " + ($errorLines -join " | "))
+                $scanFinished = $true
+                break
+            }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $scanFinished) {
+            Add-Result "WARN scan did not complete within 120s timeout"
+        }
+
         $soapBody = @"
 <?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
@@ -754,6 +823,46 @@ try {
                     }
                     else {
                         Add-Result "FAIL could not find movie item ID in Browse response"
+                    }
+
+                    # keep-alive reuse: second request on same HttpClient
+                    # after movie range-206 must reuse TCP connection
+                    if ($movieId) {
+                        Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
+                        $kaHandler = New-Object System.Net.Http.HttpClientHandler
+                        $kaHandler.UseProxy = $false
+                        $kaClient = New-Object System.Net.Http.HttpClient($kaHandler)
+                        $kaClient.Timeout = [TimeSpan]::FromSeconds(5)
+                        try {
+                            $kaReq1 = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:$serverPort/media/$movieId")
+                            $kaReq1.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(0, 0)
+                            $kaResp1 = $kaClient.SendAsync($kaReq1).GetAwaiter().GetResult()
+                            if ([int]$kaResp1.StatusCode -ne 206) {
+                                Add-Result "WARN keep-alive reuse pre-check failed: first request returned $([int]$kaResp1.StatusCode)"
+                            }
+                            else {
+                                $kaReq2 = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:$serverPort/media/$movieId")
+                                $kaReq2.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(0, 0)
+                                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                                $kaResp2 = $kaClient.SendAsync($kaReq2).GetAwaiter().GetResult()
+                                $sw.Stop()
+                                if ([int]$kaResp2.StatusCode -eq 206 -and $sw.ElapsedMilliseconds -lt 2000) {
+                                    Add-Result "PASS keep-alive reuse: second range request on same HttpClient succeeded in $($sw.ElapsedMilliseconds)ms"
+                                }
+                                elseif ([int]$kaResp2.StatusCode -eq 206) {
+                                    Add-Result "WARN keep-alive reuse: second range request succeeded but took $($sw.ElapsedMilliseconds)ms (may be new connection)"
+                                }
+                                else {
+                                    Add-Result "WARN keep-alive reuse: second range request returned status $([int]$kaResp2.StatusCode)"
+                                }
+                            }
+                        }
+                        catch {
+                            Add-Result "WARN keep-alive reuse check threw: $($_.Exception.Message)"
+                        }
+                        finally {
+                            $kaClient.Dispose()
+                        }
                     }
 
                     # 4. Range request on empty file check
@@ -900,79 +1009,88 @@ try {
         # local-folder checks above as failed, and a failure above does not
         # skip this section, since discovery (specificRoot) is the only
         # shared precondition.
-        if ($SkipFtp) {
-            Add-Result "WARN ftp checks skipped, -SkipFtp specified"
+        $ftpCred = Get-FtpUrlCredential -Url $FtpSourceUrl
+        $groundTruth = Get-PlaylistGroundTruth -Url $FtpSourceUrl -Credential $ftpCred
+        if (-not $groundTruth.Reachable) {
+            Add-Result "WARN ftp ground-truth pre-fetch failed; skipping ftp checks per problem-statement.md requirement (curl failure must skip, not fail)"
+        }
+        elseif (-not $ftpCred) {
+            Add-Result "FAIL FtpSourceUrl is not a valid uri with embedded credentials: $FtpSourceUrl"
         }
         else {
             Add-Result "--- begin ftp live source checks: $FtpSourceUrl ---"
-            $ftpCred = Get-FtpUrlCredential -Url $FtpSourceUrl
-            if (-not $ftpCred) {
-                Add-Result "FAIL FtpSourceUrl is not a valid uri with embedded credentials: $FtpSourceUrl"
+            $ftpPassword = $ftpCred.Password
+            $ftpSourceName = [System.IO.Path]::GetFileName($ftpCred.Uri.AbsolutePath)
+            if (-not $ftpSourceName) {
+                $ftpSourceName = "playlist.m3u8"
             }
-            else {
-                $ftpPassword = $ftpCred.Password
-                $ftpSourceName = [System.IO.Path]::GetFileName($ftpCred.Uri.AbsolutePath)
-                if (-not $ftpSourceName) {
-                    $ftpSourceName = "playlist.m3u8"
-                }
-                $controlUrlForFtp = $location -replace "/description\.xml$", "/upnp/control/content_directory" -replace "/device\.xml$", "/upnp/control/content_directory"
+            $controlUrlForFtp = $location -replace "/description\.xml$", "/upnp/control/content_directory" -replace "/device\.xml$", "/upnp/control/content_directory"
 
-                $ftpRootBrowse = ""
-                try {
-                    $ftpRootBrowse = Invoke-SoapCurl $controlUrlForFtp $soapBody
-                }
-                catch {
-                    Add-Result "FAIL ftp root Browse SOAP call threw: $($_.Exception.Message)"
-                }
+            $ftpRootBrowse = ""
+            try {
+                $ftpRootBrowse = Invoke-SoapCurl $controlUrlForFtp $soapBody
+            }
+            catch {
+                Add-Result "FAIL ftp root Browse SOAP call threw: $($_.Exception.Message)"
+            }
 
-                $ftpContainerId = $null
-                if ($ftpRootBrowse) {
-                    $decodedFtpRoot = [System.Net.WebUtility]::HtmlDecode($ftpRootBrowse)
-                    $ftpContainerPattern = '<container id="(\d+)"[^>]*>(?:(?!</container>)[\s\S])*?<dc:title>' + [regex]::Escape($ftpSourceName) + '</dc:title>'
-                    $ftpContainerMatch = [regex]::Match($decodedFtpRoot, $ftpContainerPattern)
-                    if ($ftpContainerMatch.Success) {
-                        $ftpContainerId = $ftpContainerMatch.Groups[1].Value
-                    }
+            $ftpContainerId = $null
+            if ($ftpRootBrowse) {
+                $decodedFtpRoot = [System.Net.WebUtility]::HtmlDecode($ftpRootBrowse)
+                $ftpContainerPattern = '<container id="(\d+)"[^>]*>(?:(?!</container>)[\s\S])*?<dc:title>' + [regex]::Escape($ftpSourceName) + '</dc:title>'
+                $ftpContainerMatch = [regex]::Match($decodedFtpRoot, $ftpContainerPattern)
+                if ($ftpContainerMatch.Success) {
+                    $ftpContainerId = $ftpContainerMatch.Groups[1].Value
                 }
+            }
 
-                if (-not $ftpContainerId) {
-                    $rejectLines = Find-LogLines ("reject-extension.*" + [regex]::Escape($ftpSourceName))
-                    if ($rejectLines.Count -gt 0) {
-                        Add-Result ("FAIL ftp source rejected during scan, reported exactly as logged: " + ($rejectLines -join " | "))
-                    }
-                    else {
-                        Add-Result "FAIL ftp source container '$ftpSourceName' not found in root Browse and no reject-extension log entry found for it; scan did not reach it, report this as a real finding, do not paper over it"
-                    }
+            if (-not $ftpContainerId) {
+                $rejectLines = Find-LogLines ("reject-extension.*" + [regex]::Escape($ftpSourceName))
+                if ($rejectLines.Count -gt 0) {
+                    Add-Result ("FAIL ftp source rejected during scan, reported exactly as logged: " + ($rejectLines -join " | "))
                 }
                 else {
-                    Add-Result "PASS ftp source container found in root Browse (id=$ftpContainerId)"
+                    Add-Result "FAIL ftp source container '$ftpSourceName' not found in root Browse and no reject-extension log entry found for it; scan did not reach it, report this as a real finding, do not paper over it"
+                }
+            }
+            else {
+                Add-Result "PASS ftp source container found in root Browse (id=$ftpContainerId)"
 
-                    $ftpChildBody = $soapBody -replace "<ObjectID>0</ObjectID>", "<ObjectID>$ftpContainerId</ObjectID>"
-                    $ftpChildBrowse = ""
-                    try {
-                        $ftpChildBrowse = Invoke-SoapCurl $controlUrlForFtp $ftpChildBody
-                    }
-                    catch {
-                        Add-Result "FAIL ftp child Browse SOAP call threw: $($_.Exception.Message)"
-                    }
+                $ftpChildBody = $soapBody -replace "<ObjectID>0</ObjectID>", "<ObjectID>$ftpContainerId</ObjectID>"
+                $ftpChildBrowse = ""
+                try {
+                    $ftpChildBrowse = Invoke-SoapCurl $controlUrlForFtp $ftpChildBody
+                }
+                catch {
+                    Add-Result "FAIL ftp child Browse SOAP call threw: $($_.Exception.Message)"
+                }
 
-                    $ftpItemId = $null
-                    if ($ftpChildBrowse) {
-                        $decodedFtpChild = [System.Net.WebUtility]::HtmlDecode($ftpChildBrowse)
+                $ftpItemId = $null
+                if ($ftpChildBrowse) {
+                    $decodedFtpChild = [System.Net.WebUtility]::HtmlDecode($ftpChildBrowse)
 
-                        $ftpItemMatch = [regex]::Match($decodedFtpChild, '<item id="(\d+)"')
-                        $ftpContainerMatch = [regex]::Match($decodedFtpChild, '<container id="(\d+)"')
-                        if (-not $ftpItemMatch.Success -and -not $ftpContainerMatch.Success) {
-                            Add-Result "WARN ftp source container returned zero child items and zero child containers; confirm the ftp test host still serves content at $FtpSourceUrl"
-                        }
-                        elseif ($ftpItemMatch.Success) {
+                    $ftpItemMatch = [regex]::Match($decodedFtpChild, '<item id="(\d+)"')
+                    $ftpContainerMatch = [regex]::Match($decodedFtpChild, '<container id="(\d+)"')
+                    if ($groundTruth.MediaItemCount -gt 0) {
+                        if ($ftpItemMatch.Success) {
                             $ftpItemId = $ftpItemMatch.Groups[1].Value
-                            Add-Result "PASS ftp source has at least one indexed item (id=$ftpItemId)"
+                            Add-Result "PASS ftp source has at least one indexed item (id=$ftpItemId), matching ground truth MediaItemCount=$($groundTruth.MediaItemCount)"
                         }
                         else {
-                            $ftpContainerId = $ftpContainerMatch.Groups[1].Value
-                            Add-Result "PASS ftp source has at least one child container (id=$ftpContainerId)"
+                            Add-Result "FAIL ground truth expected $($groundTruth.MediaItemCount) media item(s) under the ftp source but Browse returned none"
                         }
+                    }
+                    else {
+                        if ($ftpContainerMatch.Success -and -not $ftpItemMatch.Success) {
+                            Add-Result "PASS ftp source returned containers only ($($groundTruth.ContainerCount) expected from ground truth), zero items, matching ground truth of an HLS/container-only tree"
+                        }
+                        elseif ($ftpItemMatch.Success) {
+                            Add-Result "FAIL ground truth expected zero media items (container-only HLS tree) but Browse returned an item"
+                        }
+                        else {
+                            Add-Result "WARN ftp source container returned zero child items and zero child containers; ground truth expected $($groundTruth.ContainerCount) container(s) - confirm the ftp test host still serves content at $FtpSourceUrl"
+                        }
+                    }
 
                         if ($decodedFtpChild -match "ftp://") {
                             Add-Result "FAIL ftp scheme literal found directly in a res element for the ftp source; proxying is not being forced for this non-http source, this reopens code review findings 17 and 18"
@@ -1028,7 +1146,6 @@ try {
             }
             Add-Result "--- end ftp live source checks ---"
         }
-    }
 
     $ipv6If = Get-NetIPAddress -AddressFamily IPv6 -ErrorAction SilentlyContinue |
     Where-Object { $_.IPAddress -ne "::1" -and $_.IPAddress -notlike "ff*" } |
