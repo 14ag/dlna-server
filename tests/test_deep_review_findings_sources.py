@@ -199,6 +199,14 @@ def test_split_header_and_stream_timeouts():
     assert "SO_SNDTIMEO" in posix_http
 
 
+def test_album_art_case_variants_reduced_on_windows():
+    utils = read("src/dlna_utils.cpp")
+
+    assert "BuildAlbumArtCandidateNames" in utils
+    assert "#if defined(_WIN32)" in utils
+    assert "Folder.jpg" not in utils.split("#if defined(_WIN32)")[1].split("#else")[0]
+
+
 def test_release_scripts_enforce_platform_output_contracts():
     ps1 = read("scripts/build-release-assets.ps1")
     linux = read("scripts/build-linux-desktop-assets.sh")
