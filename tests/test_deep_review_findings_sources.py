@@ -187,6 +187,18 @@ def test_http_worker_limits_aligned():
     assert "constexpr size_t kMaxClientThreads = 64" in posix_http
 
 
+def test_split_header_and_stream_timeouts():
+    win_http = read("src/httpserver.cpp")
+    posix_http = read("src/posix_httpserver.cpp")
+
+    assert "SetSocketStreamTimeouts" in win_http
+    assert "SetSocketStreamTimeouts" in posix_http
+    assert "kStreamTimeoutMs = 60000" in win_http
+    assert "timeval timeout{60, 0}" in posix_http
+    assert "SO_SNDTIMEO" in win_http
+    assert "SO_SNDTIMEO" in posix_http
+
+
 def test_release_scripts_enforce_platform_output_contracts():
     ps1 = read("scripts/build-release-assets.ps1")
     linux = read("scripts/build-linux-desktop-assets.sh")
