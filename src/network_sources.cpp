@@ -11,6 +11,20 @@
 #include <sstream>
 #include <vector>
 
+namespace {
+    template<typename F>
+    class ScopeGuard {
+    public:
+        explicit ScopeGuard(F f) : m_f(std::move(f)) {}
+        ~ScopeGuard() { if (m_f) m_f(); }
+        ScopeGuard(ScopeGuard&& other) noexcept : m_f(std::move(other.m_f)) { other.m_f = nullptr; }
+        ScopeGuard& operator=(ScopeGuard&& other) noexcept { if (this != &other) { m_f = std::move(other.m_f); other.m_f = nullptr; } return *this; }
+        void Dismiss() { m_f = nullptr; }
+    private:
+        F m_f;
+    };
+}
+
 #ifdef DLNA_HAS_LIBCURL
 #include <curl/curl.h>
 #endif
@@ -559,7 +573,69 @@ std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& direct
 
 long long ProbeRemoteContentLength(const std::wstring& url) {
     if (!IsRemoteMediaUrl(url)) return 0;
+    
+    auto& limiter = GetRemoteProbeLimiter();
+    limiter.Acquire();
+    
+    auto cleanup = ScopeGuard([&]() { limiter.Release(); });
     return CurlCapture(url, true, false).contentLength;
+}
+
+namespace {
+    ConcurrencyLimiter g_remoteProbeLimiter(4);
+}
+
+ConcurrencyLimiter& GetRemoteProbeLimiter() {
+    return g_remoteProbeLimiter;
+}
+
+std::vector<long long> ProbeRemoteContentLengthBatch(const std::vector<std::wstring>& urls, size_t maxConcurrency) {
+    std::vector<long long> results(urls.size(), 0);
+    if (urls.empty()) return results;
+
+    std::mutex queueMutex;
+    std::condition_variable queueCv;
+    size_t nextIndex = 0;
+    size_t completedCount = 0;
+    bool stop = false;
+
+    std::vector<std::thread> workers;
+    workers.reserve(maxConcurrency);
+
+    for (size_t i = 0; i < maxConcurrency; ++i) {
+        workers.emplace_back([&]() {
+            while (true) {
+                size_t myIndex;
+                {
+                    std::unique_lock<std::mutex> lock(queueMutex);
+                    if (stop) return;
+                    if (nextIndex >= urls.size()) {
+                        if (completedCount >= urls.size()) return;
+                        queueCv.wait(lock);
+                        continue;
+                    }
+                    myIndex = nextIndex++;
+                }
+
+                results[myIndex] = ProbeRemoteContentLength(urls[myIndex]);
+
+                {
+                    std::lock_guard<std::mutex> lock(queueMutex);
+                    ++completedCount;
+                    if (completedCount >= urls.size()) {
+                        stop = true;
+                        queueCv.notify_all();
+                    }
+                }
+            }
+        });
+    }
+
+    for (auto& worker : workers) {
+        worker.join();
+    }
+
+    return results;
 }
 
 bool StreamRemoteContent(const std::wstring& url,
