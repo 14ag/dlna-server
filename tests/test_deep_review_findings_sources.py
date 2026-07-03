@@ -143,6 +143,21 @@ def test_initial_scan_completes_before_browse_search():
     assert "Initial scan in progress" in content
 
 
+def test_remote_source_rescan_behavior_documented():
+    readme = read("README.md")
+    source_watcher = read("src/source_watcher.cpp")
+
+    assert "Remote sources" in readme
+    assert "ftp://" in readme
+    assert "smb://" in readme
+    assert "http://" in readme
+    assert "https://" in readme
+    assert "only scanned at server start" in readme
+    assert "do not participate in the automatic file watch loop" in readme
+    assert "Adding or removing a remote source at runtime requires a server restart" in readme
+    assert "IsRemoteMediaUrl(source.path)" in source_watcher
+
+
 def test_release_scripts_enforce_platform_output_contracts():
     ps1 = read("scripts/build-release-assets.ps1")
     linux = read("scripts/build-linux-desktop-assets.sh")
