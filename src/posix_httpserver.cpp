@@ -93,6 +93,11 @@ void SetSocketTimeouts(int fd) {
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 }
 
+void SetSocketStreamTimeouts(int fd) {
+    timeval timeout{60, 0};
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+}
+
 void SendAll(int fd, const std::string& bytes) {
     const char* data = bytes.data();
     size_t remaining = bytes.size();
@@ -373,6 +378,7 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
                         << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize) << "\r\n\r\n";
                 SendAll(clientSocket, headers.str());
                 if (method == "GET") {
+                    SetSocketStreamTimeouts(clientSocket);
                     StreamRemoteContent(item.path, partial, start, end, [&](const char* data, size_t length) {
                         const char* p = data;
                         size_t remaining = length;
@@ -414,6 +420,7 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
                         << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n\r\n";
                 SendAll(clientSocket, headers.str());
                 if (method == "GET") {
+                    SetSocketStreamTimeouts(clientSocket);
                     lseek(fd.get(), start, SEEK_SET);
                     long long remaining = end - start + 1;
                     while (remaining > 0) {

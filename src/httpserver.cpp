@@ -56,9 +56,14 @@ struct ScopedHandle {
 };
 
 void SetSocketTimeouts(SOCKET s) {
-    DWORD timeoutMs = 10000;
-    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
-    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof(timeoutMs));
+    constexpr DWORD kDefaultTimeoutMs = 10000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&kDefaultTimeoutMs), sizeof(kDefaultTimeoutMs));
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&kDefaultTimeoutMs), sizeof(kDefaultTimeoutMs));
+}
+
+void SetSocketStreamTimeouts(SOCKET s) {
+    constexpr DWORD kStreamTimeoutMs = 60000;
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&kStreamTimeoutMs), sizeof(kStreamTimeoutMs));
 }
 
 std::string ConnectionHeader(bool keepAlive) {
@@ -450,6 +455,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     SendAll(clientSocket, headers.str());
                     if (!sendBody) return;
 
+                    SetSocketStreamTimeouts(clientSocket);
                     StreamRemoteContent(item.path, isPartial, startByte, endByte, [&](const char* data, size_t length) {
                         const char* p = data;
                         size_t remaining = length;
@@ -510,6 +516,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                         return;
                     }
 
+                    SetSocketStreamTimeouts(clientSocket);
                     LARGE_INTEGER movePos = {};
                     movePos.QuadPart = startByte;
                     SetFilePointerEx(hFile.get(), movePos, NULL, FILE_BEGIN);
