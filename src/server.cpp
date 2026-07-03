@@ -213,19 +213,11 @@ bool Server::Start() {
         return false;
     }
 
-#ifdef _WIN32
-    if (!LibUPnPWrapper::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
-        LogPrint(L"Failed to start UPnP.");
-        HttpServer::Get().Stop();
-        return false;
-    }
-#else
     if (!SSDP::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
         LogPrint(L"Failed to start SSDP.");
         HttpServer::Get().Stop();
         return false;
     }
-#endif
 
     m_running.store(true, std::memory_order_release);
     StartBackgroundScan();
@@ -251,11 +243,7 @@ void Server::Stop() {
     LogPrint(L"Stopping server...");
 
     StopWatchMode();
-#ifdef _WIN32
-    LibUPnPWrapper::Get().Stop();
-#else
     SSDP::Get().Stop();
-#endif
     HttpServer::Get().Stop();
     JoinBackgroundScan();
     
