@@ -49,9 +49,7 @@ public:
     void Scan();
     std::vector<MediaItem> GetChildren(int parentId);
     std::vector<MediaItem> GetDescendants(int parentId);
-    std::vector<MediaItem> GetAllItems();
     MediaItem GetItem(int id);
-    int GetChildCount(int parentId);
     std::unordered_map<int, int> GetChildCounts(const std::vector<MediaItem>& items);
     int GetSystemUpdateID();
 

@@ -35,6 +35,7 @@ if(WIN32)
         src/network_sources.cpp
         src/source_watcher.cpp
         src/media_database.cpp
+        src/media_scan_common.cpp
         src/modal_focus.cpp
         src/media_sources.cpp
         src/config.cpp
@@ -57,6 +58,7 @@ if(WIN32)
         src/network_sources.h
         src/source_watcher.h
         src/media_database.h
+        src/media_scan_common.h
         src/modal_focus.h
         src/media_sources.h
         src/config.h
@@ -109,6 +111,7 @@ else()
         src/network_sources.cpp
         src/source_watcher.cpp
         src/media_database.cpp
+        src/media_scan_common.cpp
     )
     dlna_enable_warnings(dlna-server)
     dlna_link_required_curl(dlna-server)
@@ -166,6 +169,7 @@ else()
             src/network_sources.cpp
             src/source_watcher.cpp
             src/media_database.cpp
+            src/media_scan_common.cpp
         )
         set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
         dlna_enable_warnings(dlna-server-gui-native)

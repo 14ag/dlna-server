@@ -275,7 +275,6 @@ void SettingsDialog::OnInitDialog(HWND hwndDlg) {
     auto& cfg = AppConfig;
     SetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_NAME, cfg.serverName.c_str());
     SetDlgItemInt(hwndDlg, IDC_EDT_PORT, cfg.port, FALSE);
-    SetDlgItemInt(hwndDlg, IDC_EDT_FILESERVER_PORT, cfg.fileServerPort, FALSE);
     SetDlgItemTextW(hwndDlg, IDC_EDT_IP_WHITELIST, cfg.ipWhiteList.c_str());
 
     CheckDlgButton(hwndDlg, IDC_CHK_RUN_ON_BOOT, cfg.runOnBoot ? BST_CHECKED : BST_UNCHECKED);
@@ -297,14 +296,11 @@ bool SettingsDialog::OnOK(HWND hwndDlg) {
     GetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_NAME, buf, 1024);
     cfg.serverName = buf;
     
-    int httpPort = 0;
-    int fileServerPort = 0;
-    if (!ReadPortFromDialog(hwndDlg, IDC_EDT_PORT, L"HTTP port", httpPort) ||
-        !ReadPortFromDialog(hwndDlg, IDC_EDT_FILESERVER_PORT, L"File server port", fileServerPort)) {
+int httpPort = 0;
+    if (!ReadPortFromDialog(hwndDlg, IDC_EDT_PORT, L"HTTP port", httpPort)) {
         return false;
     }
     cfg.port = httpPort;
-    cfg.fileServerPort = fileServerPort;
     
     GetDlgItemTextW(hwndDlg, IDC_EDT_IP_WHITELIST, buf, 1024);
     cfg.ipWhiteList = buf;

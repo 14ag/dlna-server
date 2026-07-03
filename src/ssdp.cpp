@@ -15,6 +15,7 @@
 #define SSDP_PORT 1900
 #define SSDP_MULTICAST_IPV4 "239.255.255.250"
 #define SSDP_MULTICAST_IPV6 "ff02::c"
+#define SSDP_ALIVE_INTERVAL_MS 900000
 
 namespace {
 constexpr size_t kMaxDelayedResponses = 256;
@@ -551,7 +552,7 @@ DWORD WINAPI SSDP::ThreadWorker(LPVOID lpParam) {
         }
 
         ULONGLONG now = GetTickCount64();
-        if (now - lastNotifyTicks > 900000) {
+        if (now - lastNotifyTicks > SSDP_ALIVE_INTERVAL_MS) {
             pThis->SendNotifyRound("ssdp:alive");
             lastNotifyTicks = now;
         }
