@@ -4,11 +4,7 @@
 #include "log.h"
 #include "media_sources.h"
 #include "source_watcher.h"
-#ifdef _WIN32
-#include "upnp_libupnp_win.h"
-#else
 #include "ssdp.h"
-#endif
 #include "httpserver.h"
 #include "ipwhitelist.h"
 #include "firewall_access.h"
