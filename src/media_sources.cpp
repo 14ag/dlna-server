@@ -308,7 +308,6 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
     fileInfo.upnpClass = uclass;
 
     if (IsRemoteMediaUrl(path)) {
-        // TODO W-14 perf parallelize remote content length probing with bounded thread pool
         fileInfo.sizeBytes = ProbeRemoteContentLength(path);
     } else {
         WIN32_FILE_ATTRIBUTE_DATA data = {};
