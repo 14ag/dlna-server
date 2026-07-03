@@ -55,6 +55,13 @@ public:
     std::unordered_map<int, int> GetChildCounts(const std::vector<MediaItem>& items);
     int GetSystemUpdateID();
 
+    enum class GetChildrenResult {
+        Success,
+        NotFound,
+        NotAContainer
+    };
+    GetChildrenResult TryGetChildren(int objId, std::vector<MediaItem>& out);
+
 private:
     MediaSources();
     void AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& path, int parentId, const std::wstring& titleOverride = L"", const std::wstring& subtitleOverride = L"", bool allowArtistAlbumMirror = true);

@@ -105,6 +105,26 @@ def test_narrow_ascii_uses_utf8_conversion():
     assert "static_cast<char>(ch)" not in utils
 
 
+def test_browse_direct_children_uses_single_locked_accessor():
+    content = read("src/contentdirectory.cpp")
+    header = read("src/media_sources.h")
+    win = read("src/media_sources.cpp")
+    posix = read("src/posix_media_sources.cpp")
+
+    assert "TryGetChildren" in header
+    assert "enum class GetChildrenResult" in header
+    assert "NotFound" in header
+    assert "NotAContainer" in header
+    assert "Success" in header
+    assert "TryGetChildren(int objId, std::vector<MediaItem>& out)" in header
+    assert "TryGetChildren(int objId, std::vector<MediaItem>& out)" in win
+    assert "TryGetChildren(int objId, std::vector<MediaItem>& out)" in posix
+    assert "AppMedia.TryGetChildren(objId, childrenResult)" in content
+    assert "GetChildrenResult::NotFound" in content
+    assert "GetChildrenResult::NotAContainer" in content
+    assert "Not a container" in content
+
+
 def test_release_scripts_enforce_platform_output_contracts():
     ps1 = read("scripts/build-release-assets.ps1")
     linux = read("scripts/build-linux-desktop-assets.sh")
