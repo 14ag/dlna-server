@@ -163,11 +163,18 @@ def test_remote_content_length_probing_notes_parallelization():
     posix_media = read("src/posix_media_sources.cpp")
     httpserver = read("src/httpserver.cpp")
     posix_httpserver = read("src/posix_httpserver.cpp")
+    network = read("src/network_sources.cpp")
+    network_h = read("src/network_sources.h")
 
-    assert "TODO W-14 perf parallelize remote content length probing" in win_media
-    assert "TODO W-14 perf parallelize remote content length probing" in posix_media
+    assert "TODO W-14 perf parallelize remote content length probing" not in win_media
+    assert "TODO W-14 perf parallelize remote content length probing" not in posix_media
     assert "item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength" in httpserver
     assert "item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength" in posix_httpserver
+    assert "ConcurrencyLimiter" in network_h
+    assert "GetRemoteProbeLimiter" in network
+    assert "g_remoteProbeLimiter" in network
+    assert "ProbeRemoteContentLengthBatch" in network_h
+    assert "ProbeRemoteContentLengthBatch" in network
 
 
 def test_join_url_optimized_no_str_back_in_loop():
