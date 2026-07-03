@@ -207,6 +207,18 @@ def test_album_art_case_variants_reduced_on_windows():
     assert "Folder.jpg" not in utils.split("#if defined(_WIN32)")[1].split("#else")[0]
 
 
+def test_ssdp_ttl_complies_with_upnp_spec():
+    win_ssdp = read("src/ssdp.cpp")
+    posix_ssdp = read("src/posix_ssdp.cpp")
+
+    assert "kMulticastTTL = 4" in win_ssdp
+    assert "IP_MULTICAST_TTL" in win_ssdp
+    assert "kMulticastHops = 4" in win_ssdp
+    assert "IPV6_MULTICAST_HOPS" in win_ssdp
+    assert "unsigned char ttl = 4" in posix_ssdp
+    assert "int hops = 4" in posix_ssdp
+
+
 def test_release_scripts_enforce_platform_output_contracts():
     ps1 = read("scripts/build-release-assets.ps1")
     linux = read("scripts/build-linux-desktop-assets.sh")

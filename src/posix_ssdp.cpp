@@ -74,7 +74,7 @@ int CreateIPv4Socket(const std::vector<NetworkEndpoint>& endpoints) {
 #ifdef SO_REUSEPORT
     setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
 #endif
-    unsigned char ttl = 2;
+    unsigned char ttl = 4;
     setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
     sockaddr_in bindAddr{};
     bindAddr.sin_family = AF_INET;
@@ -105,7 +105,7 @@ int CreateIPv6Socket(const std::vector<NetworkEndpoint>& endpoints) {
     setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
 #endif
     setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &yes, sizeof(yes));
-    int hops = 2;
+    int hops = 4;
     setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &hops, sizeof(hops));
 
     sockaddr_in6 bindAddr{};
