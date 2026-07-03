@@ -170,6 +170,15 @@ def test_remote_content_length_probing_notes_parallelization():
     assert "item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength" in posix_httpserver
 
 
+def test_join_url_optimized_no_str_back_in_loop():
+    network = read("src/network_sources.cpp")
+
+    assert "std::wstring JoinUrl(const std::wstring& baseUrl, const std::wstring& entry)" in network
+    assert "joined.str().back()" not in network
+    assert "bool needsSlash" in network
+    assert "needsSlash = true" in network
+
+
 def test_release_scripts_enforce_platform_output_contracts():
     ps1 = read("scripts/build-release-assets.ps1")
     linux = read("scripts/build-linux-desktop-assets.sh")

@@ -103,13 +103,15 @@ std::wstring JoinUrl(const std::wstring& baseUrl, const std::wstring& entry) {
     std::string relative = WideToUtf8(entry);
     std::stringstream joined;
     joined << parent;
+    bool needsSlash = !parent.empty() && parent.back() != '/';
     std::stringstream parts(relative);
     std::string part;
     bool first = true;
     while (std::getline(parts, part, '/')) {
         if (part.empty() || part == ".") continue;
-        if (!first && joined.str().back() != '/') joined << '/';
+        if (!first && needsSlash) joined << '/';
         joined << UrlEncodePathSegment(part);
+        needsSlash = true;
         first = false;
     }
     return Utf8ToWide(joined.str());
