@@ -153,6 +153,8 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     if (m_ipv4Socket != INVALID_SOCKET) {
         BOOL reuse = TRUE;
         setsockopt(m_ipv4Socket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+        const DWORD kMulticastTTL = 4;
+        setsockopt(m_ipv4Socket, IPPROTO_IP, IP_MULTICAST_TTL, reinterpret_cast<const char*>(&kMulticastTTL), sizeof(kMulticastTTL));
 
         sockaddr_in localAddr = {};
         localAddr.sin_family = AF_INET;
@@ -192,6 +194,8 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
         setsockopt(m_ipv6Socket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
         DWORD v6Only = 1;
         setsockopt(m_ipv6Socket, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&v6Only), sizeof(v6Only));
+        const DWORD kMulticastHops = 4;
+        setsockopt(m_ipv6Socket, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, reinterpret_cast<const char*>(&kMulticastHops), sizeof(kMulticastHops));
 
         sockaddr_in6 localAddr6 = {};
         localAddr6.sin6_family = AF_INET6;
