@@ -27,6 +27,7 @@
 - Background rescans are now serialized so watch-triggered and manual rescans cannot race on the scan thread handle.
 - Watch mode now reads current config snapshots each poll so source changes are monitored without restart.
 - Watch mode no longer ignores local media entries after a fixed scan-signature cap.
+- Remote content-length probing now uses a concurrency limiter to bound parallel network requests during media scans.
 
 ## [1.4.0] - 2026-05-29
 
