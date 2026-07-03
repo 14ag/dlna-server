@@ -1,5 +1,6 @@
 #include "dlna_utils.h"
 
+#include "netutils.h"
 #include <algorithm>
 #include <cctype>
 #include <cwctype>
@@ -108,12 +109,7 @@ std::string ProtocolTail(const MediaFormatInfo& info, bool hasKnownSize) {
 }
 
 std::string NarrowAscii(const std::wstring& value) {
-    std::string result;
-    result.reserve(value.size());
-    for (wchar_t ch : value) {
-        result.push_back(static_cast<char>(ch));
-    }
-    return result;
+    return WideToUtf8(value);
 }
 }
 
