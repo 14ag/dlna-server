@@ -305,6 +305,7 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
     file.upnpClass = uclass;
 
     if (IsRemoteMediaUrl(pathText)) {
+        // TODO W-14 perf parallelize remote content length probing with bounded thread pool
         file.sizeBytes = ProbeRemoteContentLength(pathText);
     } else {
         fs::path path(WideToUtf8(pathText));
