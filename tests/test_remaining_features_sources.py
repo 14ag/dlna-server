@@ -59,6 +59,7 @@ def test_persistent_media_database_stores_stable_ids_and_scan_errors_without_new
     media_header = read("src/media_sources.h")
     windows = read("src/media_sources.cpp")
     posix = read("src/posix_media_sources.cpp")
+    scan_common = read("src/media_scan_common.cpp")
     cmake = read("CMakeLists.txt")
     config = read("src/config.h") + read("src/config.cpp") + read("src/posix_config.cpp")
 
@@ -80,12 +81,15 @@ def test_persistent_media_database_stores_stable_ids_and_scan_errors_without_new
         assert "database.Load(MediaDatabase::DefaultDatabasePath())" in source_text
         assert "state.mediaDatabase = &database" in source_text
         assert "database.Save(MediaDatabase::DefaultDatabasePath())" in source_text
-        assert "GetOrCreateStableId(BuildStableMediaKey(" in source_text
-        assert "GetOrCreateStableContainerId" in source_text
         assert "RecordScanError" in source_text
+
+    assert "GetOrCreateStableId(BuildStableMediaKey(" in scan_common
+    assert "GetOrCreateStableContainerId" in scan_common
 
     assert "src/media_database.cpp" in cmake
     assert "src/media_database.h" in cmake
+    assert "src/media_scan_common.cpp" in cmake
+    assert "src/media_scan_common.h" in cmake
     assert "MediaDatabasePath" not in config
 
 

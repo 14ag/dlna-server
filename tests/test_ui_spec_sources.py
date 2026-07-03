@@ -93,6 +93,9 @@ class UiSpecTests(unittest.TestCase):
         self.assertNotIn("WM_CTLCOLORDLG", settings + logdlg)
         self.assertNotIn("BS_OWNERDRAW", settings + logdlg)
         self.assertIn("PlaylistEntryProc", settings)
+        self.assertNotIn("IDC_EDT_FILESERVER_PORT", app_rc)
+        self.assertNotIn("IDC_EDT_FILESERVER_PORT", settings)
+        self.assertNotIn("m_filePort", self.read("src/fltk_gui_main.cpp"))
 
         self.assertIn('FONT 10, "Segoe UI"', app_rc)
         self.assertIn("IDD_SETTINGS DIALOGEX 0, 0, 400, 326", app_rc)
