@@ -66,6 +66,11 @@ void SetSocketStreamTimeouts(SOCKET s) {
     setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&kStreamTimeoutMs), sizeof(kStreamTimeoutMs));
 }
 
+void SetSocketNoDelay(SOCKET s) {
+    int flag = 1;
+    setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&flag), sizeof(flag));
+}
+
 std::string ConnectionHeader(bool keepAlive) {
     return keepAlive ? "Connection: keep-alive\r\n" : "Connection: close\r\n";
 }
@@ -294,6 +299,7 @@ DWORD WINAPI HttpServer::AcceptThreadWorker(LPVOID lpParam) {
                 continue;
             }
             SetSocketTimeouts(clientSocket);
+            SetSocketNoDelay(clientSocket);
 
             std::string clientIP = NormalizeIpLiteral(SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&clientAddr)));
 

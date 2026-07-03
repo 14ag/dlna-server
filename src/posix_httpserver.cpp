@@ -98,6 +98,11 @@ void SetSocketStreamTimeouts(int fd) {
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 }
 
+void SetSocketNoDelay(int fd) {
+    int flag = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+}
+
 void SendAll(int fd, const std::string& bytes) {
     const char* data = bytes.data();
     size_t remaining = bytes.size();
@@ -258,6 +263,7 @@ void HttpServer::AcceptLoop(int listenSocket) {
         int client = accept(listenSocket, reinterpret_cast<sockaddr*>(&remote), &len);
         if (client < 0) continue;
         SetSocketTimeouts(client);
+        SetSocketNoDelay(client);
 #ifdef SO_NOSIGPIPE
         { int on = 1; setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on)); }
 #endif
@@ -424,7 +430,7 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
                     lseek(fd.get(), start, SEEK_SET);
                     long long remaining = end - start + 1;
                     while (remaining > 0) {
-                        ssize_t chunk = read(fd.get(), buf, std::min<long long>(sizeof(buf), remaining));
+                        ssize_t chunk = read(fd.get(), buf, (std::min)(sizeof(buf), static_cast<size_t>(remaining)));
                         if (chunk <= 0) break;
                         if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
                         remaining -= chunk;

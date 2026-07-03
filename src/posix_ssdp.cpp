@@ -47,7 +47,7 @@ bool CoalesceDelayedResponse(std::vector<DelayedSearchResponse>& queue, DelayedS
 }
 
 unsigned int ComputeDelayMilliseconds(int mxSeconds) {
-    int boundedSeconds = std::max(0, std::min(mxSeconds, 5));
+    int boundedSeconds = (std::max)(0, (std::min)(mxSeconds, 5));
     if (boundedSeconds <= 1) return 0;
     unsigned int maxDelay = static_cast<unsigned int>(boundedSeconds * 1000);
     if (maxDelay == 0) return 0;
