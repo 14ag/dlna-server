@@ -26,7 +26,7 @@ bool ParseRangeNumber(const std::string& text, long long& value) {
             return false;
         }
         int digit = ch - '0';
-        if (result > (std::numeric_limits<long long>::max() - digit) / 10) {
+        if (result > ((std::numeric_limits<long long>::max)() - digit) / 10) {
             return false;
         }
         result = (result * 10) + digit;
@@ -185,7 +185,7 @@ bool TryParseIntStrict(const std::string& text, int& value) {
             return false;
         }
         parsed = (parsed * 10) + (ch - '0');
-        long long limit = negative ? -(static_cast<long long>(std::numeric_limits<int>::min())) : std::numeric_limits<int>::max();
+        long long limit = negative ? -(static_cast<long long>((std::numeric_limits<int>::min)())) : (std::numeric_limits<int>::max)();
         if (parsed > limit) {
             return false;
         }
@@ -266,7 +266,7 @@ HttpByteRange ParseHttpRangeHeader(const std::string& rangeHeader, long long fil
     }
 
     result.start = start;
-    result.end = std::min(end, fileSize - 1);
+    result.end = (std::min)(end, fileSize - 1);
     return result;
 }
 

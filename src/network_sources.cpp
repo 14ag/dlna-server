@@ -12,16 +12,16 @@
 #include <vector>
 
 namespace {
-    template<typename F>
     class ScopeGuard {
     public:
+        template<typename F>
         explicit ScopeGuard(F f) : m_f(std::move(f)) {}
         ~ScopeGuard() { if (m_f) m_f(); }
-        ScopeGuard(ScopeGuard&& other) noexcept : m_f(std::move(other.m_f)) { other.m_f = nullptr; }
-        ScopeGuard& operator=(ScopeGuard&& other) noexcept { if (this != &other) { m_f = std::move(other.m_f); other.m_f = nullptr; } return *this; }
+        ScopeGuard(ScopeGuard&& other) noexcept : m_f(std::move(other.m_f)) {}
+        ScopeGuard& operator=(ScopeGuard&& other) noexcept { if (this != &other) { m_f = std::move(other.m_f); } return *this; }
         void Dismiss() { m_f = nullptr; }
     private:
-        F m_f;
+        std::function<void()> m_f;
     };
 }
 

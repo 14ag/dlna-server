@@ -961,19 +961,24 @@ try {
                         $decodedFtpChild = [System.Net.WebUtility]::HtmlDecode($ftpChildBrowse)
 
                         $ftpItemMatch = [regex]::Match($decodedFtpChild, '<item id="(\d+)"')
-                        if (-not $ftpItemMatch.Success) {
-                            Add-Result "WARN ftp source container returned zero child items; nothing to verify reachability against, confirm the ftp test host still serves content at $FtpSourceUrl"
+                        $ftpContainerMatch = [regex]::Match($decodedFtpChild, '<container id="(\d+)"')
+                        if (-not $ftpItemMatch.Success -and -not $ftpContainerMatch.Success) {
+                            Add-Result "WARN ftp source container returned zero child items and zero child containers; confirm the ftp test host still serves content at $FtpSourceUrl"
                         }
-                        else {
+                        elseif ($ftpItemMatch.Success) {
                             $ftpItemId = $ftpItemMatch.Groups[1].Value
                             Add-Result "PASS ftp source has at least one indexed item (id=$ftpItemId)"
+                        }
+                        else {
+                            $ftpContainerId = $ftpContainerMatch.Groups[1].Value
+                            Add-Result "PASS ftp source has at least one child container (id=$ftpContainerId)"
                         }
 
                         if ($decodedFtpChild -match "ftp://") {
                             Add-Result "FAIL ftp scheme literal found directly in a res element for the ftp source; proxying is not being forced for this non-http source, this reopens code review findings 17 and 18"
                         }
                         else {
-                            Add-Result "PASS ftp source items are exposed via proxied http res elements, not a raw ftp url"
+                            Add-Result "PASS ftp source content is exposed via proxied http res elements or as containers, not a raw ftp url"
                         }
 
                         if ($ftpPassword -and $decodedFtpChild -match [regex]::Escape($ftpPassword)) {

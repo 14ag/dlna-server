@@ -47,8 +47,12 @@ void MediaSources::Scan() {
     state.items.push_back(rootInfo);
 
     for (const auto& src : cfg.mediaSources) {
-        if (!src.enabled) continue;
+        if (!src.enabled) {
+            LogPrint(L"Skipping disabled media source: %ls", RedactUrlForLog(src.path).c_str());
+            continue;
+        }
 
+        LogPrint(L"Scanning media source: %ls", RedactUrlForLog(src.path).c_str());
         MediaItem folderInfo;
         folderInfo.id = AllocateContainerId(state, 0, SourceDisplayName(src.path), src.path);
         folderInfo.parentId = 0;
@@ -362,7 +366,9 @@ void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cf
         LogPrint(L"%ls Skipping playlist due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(playlistPath).c_str());
         return;
     }
-    for (const auto& entry : LoadPlaylistEntries(playlistPath)) {
+    auto entries = LoadPlaylistEntries(playlistPath);
+    LogPrint(L"Loaded %d entries from playlist: %ls", static_cast<int>(entries.size()), RedactUrlForLog(playlistPath).c_str());
+    for (const auto& entry : entries) {
         if (IsPlaylistSourcePath(entry.location)) {
             MediaItem playlistFolder;
             playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.location), entry.location);
