@@ -4,6 +4,7 @@
 #include "log.h"
 #include "netutils.h"
 #include "network_sources.h"
+#include "server.h"
 #include <algorithm>
 #include <filesystem>
 #include <sstream>
@@ -562,6 +563,9 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
     }
 
     if (action == "Search") {
+        if (!DLNAServer.IsInitialScanComplete()) {
+            return SoapFault(710, "Initial scan in progress");
+        }
         std::string containerIdStr;
         std::string searchCriteria;
         std::string filter;
@@ -602,6 +606,10 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
 
     if (action != "Browse") {
         return SoapFault(401, "Invalid Action");
+    }
+
+    if (!DLNAServer.IsInitialScanComplete()) {
+        return SoapFault(710, "Initial scan in progress");
     }
 
     std::string objIdStr;

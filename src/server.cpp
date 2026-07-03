@@ -24,7 +24,7 @@ Server& Server::Get() {
     return instance;
 }
 
-Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false) {
+Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false), m_initialScanComplete(false) {
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 }
@@ -229,6 +229,8 @@ bool Server::Start() {
 
     m_running.store(true, std::memory_order_release);
     StartBackgroundScan();
+    JoinBackgroundScan();
+    m_initialScanComplete.store(true, std::memory_order_release);
     StartWatchMode();
     return true;
 }

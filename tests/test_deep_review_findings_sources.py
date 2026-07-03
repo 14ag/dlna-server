@@ -125,6 +125,24 @@ def test_browse_direct_children_uses_single_locked_accessor():
     assert "Not a container" in content
 
 
+def test_initial_scan_completes_before_browse_search():
+    server_h = read("src/server.h")
+    win_server = read("src/server.cpp")
+    posix_server = read("src/posix_server.cpp")
+    content = read("src/contentdirectory.cpp")
+
+    assert "m_initialScanComplete" in server_h
+    assert "IsInitialScanComplete" in server_h
+    assert "m_initialScanComplete(false)" in win_server
+    assert "m_initialScanComplete(false)" in posix_server
+    assert "JoinBackgroundScan();" in win_server
+    assert "m_initialScanComplete.store(true" in win_server
+    assert "JoinBackgroundScan();" in posix_server
+    assert "m_initialScanComplete.store(true" in posix_server
+    assert "DLNAServer.IsInitialScanComplete()" in content
+    assert "Initial scan in progress" in content
+
+
 def test_release_scripts_enforce_platform_output_contracts():
     ps1 = read("scripts/build-release-assets.ps1")
     linux = read("scripts/build-linux-desktop-assets.sh")

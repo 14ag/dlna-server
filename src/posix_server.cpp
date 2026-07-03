@@ -16,7 +16,7 @@ Server& Server::Get() {
     return instance;
 }
 
-Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false) {
+Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false), m_initialScanComplete(false) {
 }
 
 Server::~Server() {
@@ -179,6 +179,8 @@ bool Server::Start() {
     }
     m_running.store(true, std::memory_order_release);
     StartBackgroundScan();
+    JoinBackgroundScan();
+    m_initialScanComplete.store(true, std::memory_order_release);
     StartWatchMode();
     LogPrint(L"DLNA server running on %ls", endpointText.c_str());
     return true;
