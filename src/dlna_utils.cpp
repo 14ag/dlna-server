@@ -388,7 +388,17 @@ bool NaturalLessWide(const std::wstring& left, const std::wstring& right) {
 }
 
 std::vector<AlbumArtCandidate> BuildAlbumArtCandidateNames(const std::wstring& stem) {
-    std::vector<AlbumArtCandidate> candidates = {
+    std::vector<AlbumArtCandidate> candidates;
+#if defined(_WIN32)
+    candidates = {
+        { L"folder.jpg", L"image/jpeg" },
+        { L"cover.jpg", L"image/jpeg" },
+        { L"album.jpg", L"image/jpeg" },
+        { L"thumb.jpg", L"image/jpeg" },
+        { L"thumb.jpeg", L"image/jpeg" },
+    };
+#else
+    candidates = {
         { L"folder.jpg", L"image/jpeg" },
         { L"folder.JPG", L"image/jpeg" },
         { L"Folder.jpg", L"image/jpeg" },
@@ -403,6 +413,7 @@ std::vector<AlbumArtCandidate> BuildAlbumArtCandidateNames(const std::wstring& s
         { L"thumb.jpeg", L"image/jpeg" },
         { L"thumb.JPEG", L"image/jpeg" },
     };
+#endif
     if (!stem.empty()) {
         candidates.push_back({ stem + L".jpg", L"image/jpeg" });
         candidates.push_back({ stem + L".jpeg", L"image/jpeg" });
