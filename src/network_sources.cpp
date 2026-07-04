@@ -474,6 +474,27 @@ std::wstring ChildUrl(const std::wstring& directoryUrl, const std::wstring& chil
 }
 }
 
+bool IsHlsManifestText(const std::string& text) {
+    // RFC 8216: HLS-specific tags all start with literal "#EXT-X-"
+    // Plain M3U/IPTV compilation playlists only use #EXTM3U and #EXTINF
+    // Finding one "#EXT-X-" line is a reliable signal this is a single
+    // adaptive-bitrate stream not a compilation of separate items
+    std::istringstream stream(text);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        std::string trimmed = TrimAscii(line);
+        if (trimmed.rfind("#EXT-X-", 0) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsHlsPlaylistSource(const std::wstring& playlistPath) {
+    return IsHlsManifestText(ReadSourceText(playlistPath));
+}
+
 bool IsRemoteMediaUrl(const std::wstring& value) {
     return IsSupportedScheme(WideToUtf8(value));
 }

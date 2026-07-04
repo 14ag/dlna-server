@@ -269,11 +269,53 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
     }
 }
 
+void MediaSources::AddHlsStreamItem(MediaIndexState& state, const std::wstring& path, int parentId, const std::wstring& titleOverride) {
+    // Mirrors the bookkeeping in AddMediaFile dedupe stable id and
+    // scan-success marking but deliberately skips IsAllowedExtension/kFormats
+    // because an HLS manifest file extension is m3u8 which must never be
+    // treated as a generic playable extension
+    if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, path, g_canonicalize)).second) return;
+
+    MediaItem hlsItem;
+    const std::wstring stableKey = BuildStableMediaKey(parentId, path, g_canonicalize);
+    ScopedScanSuccess scanSuccess(state.mediaDatabase, stableKey);
+    hlsItem.id = state.mediaDatabase
+        ? state.mediaDatabase->GetOrCreateStableId(stableKey)
+        : state.nextId++;
+    hlsItem.parentId = parentId;
+    hlsItem.path = path;
+    hlsItem.isFolder = false;
+    // IANA-registered media type for HTTP Live Streaming playlists
+    // RFC 8216 section 11 1 application/vnd.apple.mpegurl
+    hlsItem.mimeType = L"application/vnd.apple.mpegurl";
+    hlsItem.upnpClass = L"object.item.videoItem";
+    // Adaptive/live HLS manifests do not have a meaningful fixed byte length
+    // and must not be advertised as byte-range seekable leaving sizeBytes at 0
+    hlsItem.sizeBytes = 0;
+    hlsItem.title = !titleOverride.empty() ? titleOverride : SourceStemName(path);
+
+    state.items.push_back(hlsItem);
+    scanSuccess.Mark();
+}
+
 void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& playlistPath, int parentId, int depth) {
     if (depth > 8) {
         LogPrint(L"%ls Skipping playlist due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(playlistPath).c_str());
         return;
     }
+
+    if (IsHlsPlaylistSource(playlistPath)) {
+        // RFC 8216: this file is a Master or Media Playlist (contains at least
+        // one #EXT-X- tag) Its Media Segments exist purely so an HLS-aware
+        // player can fetch them itself they must NOT be enumerated as separate
+        // DLNA items or a UPnP renderer will play each segment as its own
+        // track with a stall at every boundary Expose the manifest itself as
+        // one playable resource
+        LogPrint(L"Detected HLS manifest, exposing as a single stream: %ls", RedactUrlForLog(playlistPath).c_str());
+        AddHlsStreamItem(state, playlistPath, parentId);
+        return;
+    }
+
     auto entries = LoadPlaylistEntries(playlistPath);
     LogPrint(L"Loaded %d entries from playlist: %ls", static_cast<int>(entries.size()), RedactUrlForLog(playlistPath).c_str());
     for (const auto& entry : entries) {

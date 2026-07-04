@@ -263,11 +263,39 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
     }
 }
 
+void MediaSources::AddHlsStreamItem(MediaIndexState& state, const std::wstring& path, int parentId, const std::wstring& titleOverride) {
+    if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, path, g_canonicalize)).second) return;
+
+    MediaItem hlsItem{};
+    const std::wstring stableKey = BuildStableMediaKey(parentId, path, g_canonicalize);
+    ScopedScanSuccess scanSuccess(state.mediaDatabase, stableKey);
+    hlsItem.id = state.mediaDatabase
+        ? state.mediaDatabase->GetOrCreateStableId(stableKey)
+        : state.nextId++;
+    hlsItem.parentId = parentId;
+    hlsItem.path = path;
+    hlsItem.isFolder = false;
+    hlsItem.mimeType = L"application/vnd.apple.mpegurl";
+    hlsItem.upnpClass = L"object.item.videoItem";
+    hlsItem.sizeBytes = 0;
+    hlsItem.title = !titleOverride.empty() ? titleOverride : SourceStemName(path);
+
+    state.items.push_back(hlsItem);
+    scanSuccess.Mark();
+}
+
 void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& playlistPath, int parentId, int depth) {
     if (depth > 8) {
         LogPrint(L"%ls Skipping playlist due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(playlistPath).c_str());
         return;
     }
+
+    if (IsHlsPlaylistSource(playlistPath)) {
+        LogPrint(L"Detected HLS manifest, exposing as a single stream: %ls", RedactUrlForLog(playlistPath).c_str());
+        AddHlsStreamItem(state, playlistPath, parentId);
+        return;
+    }
+
     for (const auto& entry : LoadPlaylistEntries(playlistPath)) {
         if (IsPlaylistSourcePath(entry.location)) {
             MediaItem playlistFolder{};
