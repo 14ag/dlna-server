@@ -290,33 +290,41 @@ void SettingsDialog::OnInitDialog(HWND hwndDlg) {
 }
 
 bool SettingsDialog::OnOK(HWND hwndDlg) {
-    auto& cfg = AppConfig;
-    
-    wchar_t buf[1024];
-    GetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_NAME, buf, 1024);
-    cfg.serverName = buf;
-    
-int httpPort = 0;
+    int httpPort = 0;
     if (!ReadPortFromDialog(hwndDlg, IDC_EDT_PORT, L"HTTP port", httpPort)) {
         return false;
     }
-    cfg.port = httpPort;
-    
-    GetDlgItemTextW(hwndDlg, IDC_EDT_IP_WHITELIST, buf, 1024);
-    cfg.ipWhiteList = buf;
 
-    cfg.runOnBoot = (IsDlgButtonChecked(hwndDlg, IDC_CHK_RUN_ON_BOOT) == BST_CHECKED);
-    cfg.debugLog = (IsDlgButtonChecked(hwndDlg, IDC_CHK_DEBUG_LOG) == BST_CHECKED);
-    cfg.defaultPlaylistEnabled = (IsDlgButtonChecked(hwndDlg, IDC_CHK_DEFAULT_PLAYLIST) == BST_CHECKED);
-    if (cfg.defaultPlaylistPath.empty()) cfg.defaultPlaylistPath = cfg.GetDefaultPlaylistPath();
-    cfg.addArtistAlbumFolders = (IsDlgButtonChecked(hwndDlg, IDC_CHK_ADD_ARTIST_ALBUM) == BST_CHECKED);
-    cfg.doNotShowAllMediaFolders = (IsDlgButtonChecked(hwndDlg, IDC_CHK_HIDE_ALL_MEDIA) == BST_CHECKED);
-    cfg.flatFolderStyle = (IsDlgButtonChecked(hwndDlg, IDC_CHK_FLAT_FOLDERS) == BST_CHECKED);
-    cfg.showFileNamesInsteadOfTitles = (IsDlgButtonChecked(hwndDlg, IDC_CHK_SHOW_FILE_NAMES) == BST_CHECKED);
-    cfg.sortByTitle = (IsDlgButtonChecked(hwndDlg, IDC_CHK_SORT_BY_TITLE) == BST_CHECKED);
-    cfg.proxyStreams = (IsDlgButtonChecked(hwndDlg, IDC_CHK_PROXY_STREAMS) == BST_CHECKED);
-    
-    cfg.Save();
+    wchar_t nameBuf[1024];
+    GetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_NAME, nameBuf, 1024);
+    wchar_t whitelistBuf[1024];
+    GetDlgItemTextW(hwndDlg, IDC_EDT_IP_WHITELIST, whitelistBuf, 1024);
+    const bool runOnBoot = (IsDlgButtonChecked(hwndDlg, IDC_CHK_RUN_ON_BOOT) == BST_CHECKED);
+    const bool debugLog = (IsDlgButtonChecked(hwndDlg, IDC_CHK_DEBUG_LOG) == BST_CHECKED);
+    const bool defaultPlaylistEnabled = (IsDlgButtonChecked(hwndDlg, IDC_CHK_DEFAULT_PLAYLIST) == BST_CHECKED);
+    const bool addArtistAlbumFolders = (IsDlgButtonChecked(hwndDlg, IDC_CHK_ADD_ARTIST_ALBUM) == BST_CHECKED);
+    const bool doNotShowAllMediaFolders = (IsDlgButtonChecked(hwndDlg, IDC_CHK_HIDE_ALL_MEDIA) == BST_CHECKED);
+    const bool flatFolderStyle = (IsDlgButtonChecked(hwndDlg, IDC_CHK_FLAT_FOLDERS) == BST_CHECKED);
+    const bool showFileNamesInsteadOfTitles = (IsDlgButtonChecked(hwndDlg, IDC_CHK_SHOW_FILE_NAMES) == BST_CHECKED);
+    const bool sortByTitle = (IsDlgButtonChecked(hwndDlg, IDC_CHK_SORT_BY_TITLE) == BST_CHECKED);
+    const bool proxyStreams = (IsDlgButtonChecked(hwndDlg, IDC_CHK_PROXY_STREAMS) == BST_CHECKED);
+
+    AppConfig.Mutate([&](Config& cfg) {
+        cfg.serverName = nameBuf;
+        cfg.port = httpPort;
+        cfg.ipWhiteList = whitelistBuf;
+        cfg.runOnBoot = runOnBoot;
+        cfg.debugLog = debugLog;
+        cfg.defaultPlaylistEnabled = defaultPlaylistEnabled;
+        if (cfg.defaultPlaylistPath.empty()) cfg.defaultPlaylistPath = cfg.GetDefaultPlaylistPath();
+        cfg.addArtistAlbumFolders = addArtistAlbumFolders;
+        cfg.doNotShowAllMediaFolders = doNotShowAllMediaFolders;
+        cfg.flatFolderStyle = flatFolderStyle;
+        cfg.showFileNamesInsteadOfTitles = showFileNamesInsteadOfTitles;
+        cfg.sortByTitle = sortByTitle;
+        cfg.proxyStreams = proxyStreams;
+    });
+    AppConfig.Save();
     return true;
 }
 

@@ -380,8 +380,8 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
         std::string method = firstLine.substr(0, space1);
         std::string path = SplitRequestTarget(firstLine.substr(space1 + 1, space2 - space1 - 1));
-        const ConfigSnapshot cfg = AppConfig.Snapshot();
-        if (cfg.debugLog) {
+        const int listenPort = AppConfig.GetPort();
+        if (AppConfig.IsDebugLogEnabled()) {
             LogPrint(L"HTTP request: src=%hs method=%hs path=%hs", clientIP.c_str(), method.c_str(), path.c_str());
         }
 
@@ -394,9 +394,9 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
             sockaddr_storage localAddr = {};
             int localAddrLen = sizeof(localAddr);
             if (getsockname(clientSocket, reinterpret_cast<SOCKADDR*>(&localAddr), &localAddrLen) == 0) {
-                hostUrl = SockaddrToHostPort(reinterpret_cast<const SOCKADDR*>(&localAddr), cfg.port);
+                hostUrl = SockaddrToHostPort(reinterpret_cast<const SOCKADDR*>(&localAddr), listenPort);
             } else {
-                hostUrl = clientIP + ":" + std::to_string(cfg.port);
+                hostUrl = clientIP + ":" + std::to_string(listenPort);
             }
         }
 

@@ -25,7 +25,7 @@ namespace {
 constexpr int kSsdpPort = 1900;
 constexpr const char* kSsdpMulticastIPv4 = "239.255.255.250";
 constexpr const char* kSsdpMulticastIPv6 = "ff02::c";
-constexpr auto kAliveInterval = std::chrono::minutes(15);
+
 constexpr size_t kMaxDelayedResponses = 256;
 
 struct SSDPTarget {
@@ -193,6 +193,7 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     m_running.store(true);
     m_thread = std::thread(&SSDP::ThreadWorker, this);
     m_responseThread = std::thread(&SSDP::ResponseWorker, this);
+    std::this_thread::sleep_for(std::chrono::milliseconds(ComputeSsdpStartupJitterMilliseconds()));
     SendNotifyBurst("ssdp:alive", 3, 100);
     return true;
 }
@@ -381,6 +382,7 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
 
 void SSDP::ThreadWorker() {
     auto lastNotify = std::chrono::steady_clock::now();
+    auto nextAliveInterval = std::chrono::milliseconds(ComputeSsdpNextAliveIntervalMilliseconds());
     while (m_running.load()) {
         fd_set readfds;
         FD_ZERO(&readfds);
@@ -400,9 +402,10 @@ void SSDP::ThreadWorker() {
         if (!m_running.load()) break;
 
         auto now = std::chrono::steady_clock::now();
-        if (now - lastNotify >= kAliveInterval) {
+        if (now - lastNotify >= nextAliveInterval) {
             SendNotifyRound("ssdp:alive");
             lastNotify = now;
+            nextAliveInterval = std::chrono::milliseconds(ComputeSsdpNextAliveIntervalMilliseconds());
         }
 
         if (result <= 0) continue;

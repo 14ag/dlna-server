@@ -51,7 +51,7 @@ def test_windows_log_print_uses_one_debug_snapshot_and_one_log_lock():
     log = read("src/log.cpp")
     body = log[log.index("void LogPrint"):log.index("std::wstring GetSystemLog()")]
 
-    assert "const bool writeDebugLog = AppConfig.Snapshot().debugLog;" in body
+    assert "const bool writeDebugLog = AppConfig.IsDebugLogEnabled();" in body
     assert body.count("std::lock_guard<std::mutex> lock(g_logMutex);") == 1
     assert "if (writeDebugLog)" in body
 

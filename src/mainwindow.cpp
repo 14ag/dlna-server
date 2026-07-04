@@ -190,7 +190,7 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         state->edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
             WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL,
             kGutter, kSourcePromptEditTop, kSourcePromptContentWidth, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_EDIT)), NULL, NULL);
-        HWND hint = CreateWindowW(L"STATIC", L"Example: smb://user:pass@server/share or ftp://user:pass@server:21/media",
+        HWND hint = CreateWindowW(L"STATIC", L"Example: ftp://user:pass@server:21/media",
             WS_VISIBLE | WS_CHILD, kGutter, kSourcePromptHintTop, kSourcePromptContentWidth, kSourcePromptLabelHeight, hwnd, NULL, NULL, NULL);
         HWND folder = CreateWindowW(L"BUTTON", L"Folder...",
             WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_FOLDER)), NULL, NULL);
@@ -560,7 +560,9 @@ void MainWindow::RemoveSelectedSource() {
         return;
     }
 
-    AppConfig.mediaSources.erase(AppConfig.mediaSources.begin() + selected);
+    AppConfig.Mutate([selected](Config& cfg) {
+        cfg.mediaSources.erase(cfg.mediaSources.begin() + selected);
+    });
     AppConfig.Save();
     AppMedia.Scan();
     RefreshSourceList();
@@ -619,11 +621,17 @@ void MainWindow::OpenFolderPicker() {
     std::wstring selected = PromptForMediaSource(m_hwnd, m_hInstance);
     if (selected.empty()) return;
 
-    for (const auto& source : AppConfig.mediaSources) {
-        if (source.path == selected) return;
-    }
-
-    AppConfig.mediaSources.push_back({selected, true});
+    bool alreadyPresent = false;
+    AppConfig.Mutate([&selected, &alreadyPresent](Config& cfg) {
+        for (const auto& source : cfg.mediaSources) {
+            if (source.path == selected) {
+                alreadyPresent = true;
+                return;
+            }
+        }
+        cfg.mediaSources.push_back({selected, true});
+    });
+    if (alreadyPresent) return;
     AppConfig.Save();
     RefreshSourceList();
     AppMedia.Scan();

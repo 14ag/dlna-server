@@ -176,6 +176,16 @@ ConfigSnapshot Config::Snapshot() const {
     };
 }
 
+bool Config::IsDebugLogEnabled() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return debugLog;
+}
+
+int Config::GetPort() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return port;
+}
+
 int ParsePortOrDefault(const std::string& value, int fallback) {
     int parsed = ParseIntOrDefault(value, fallback);
     return IsValidPort(parsed) ? parsed : fallback;

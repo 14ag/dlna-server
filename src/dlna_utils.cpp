@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cwctype>
 #include <limits>
+#include <random>
 #include <unordered_set>
 #include <vector>
 
@@ -419,4 +420,24 @@ std::vector<AlbumArtCandidate> BuildAlbumArtCandidateNames(const std::wstring& s
         candidates.push_back({ stem + L".png", L"image/png" });
     }
     return candidates;
+}
+
+unsigned int ComputeSsdpStartupJitterMilliseconds() {
+    // UPnP Device Architecture: "Devices should wait a random interval (e.g.
+    // 0-100ms) before sending an initial set of advertisements in order to
+    // reduce the likelihood of network storms."
+    static thread_local std::mt19937 generator(std::random_device{}());
+    std::uniform_int_distribution<unsigned int> distribution(0, 100);
+    return distribution(generator);
+}
+
+unsigned int ComputeSsdpNextAliveIntervalMilliseconds() {
+    // UPnP Device Architecture: re-issue advertisements "at a
+    // randomly-distributed interval of less than one-half of the
+    // advertisement expiration time" (CACHE-CONTROL max-age=1800s here, so
+    // strictly under 900000ms). Jitter also avoids multiple restarted
+    // instances refreshing in lockstep.
+    static thread_local std::mt19937 generator(std::random_device{}());
+    std::uniform_int_distribution<unsigned int> distribution(12u * 60u * 1000u, 14u * 60u * 1000u + 30u * 1000u);
+    return distribution(generator);
 }
