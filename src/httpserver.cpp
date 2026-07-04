@@ -589,7 +589,9 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
             }
 
             // serve subtitle file by video item id
-            // the subtitle path was stored during media scan
+            // the subtitle path was stored during media scan; it may be a
+            // local filesystem path or a remote URL resolved from a
+            // playlist's #DLNA-SUBTITLE:/#EXTVLCOPT:sub-file= line
             if (path.rfind("/subtitle/", 0) == 0) {
                 int fileId = -1;
                 if (!TryParseIntStrict(path.substr(10), fileId) || fileId < 0) {
@@ -597,12 +599,39 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                     return;
                 }
                 MediaItem item = AppMedia.GetItem(fileId);
+
+                if (item.id != -1 && !item.subtitlePath.empty() && IsRemoteMediaUrl(item.subtitlePath)) {
+                    std::string subMime = SubtitleMimeForExtension(SourceExtension(item.subtitlePath));
+                    long long subtitleSize = ProbeRemoteContentLength(item.subtitlePath);
+                    bool hasKnownSize = subtitleSize > 0;
+
+                    std::stringstream subHeaders;
+                    subHeaders << "HTTP/1.1 200 OK\r\n"
+                               << "Content-Type: " << subMime << "\r\n";
+                    if (hasKnownSize) {
+                        subHeaders << "Content-Length: " << subtitleSize << "\r\n";
+                    }
+                    subHeaders << "Accept-Ranges: none\r\n"
+                               << "Connection: close\r\n\r\n";
+                    SendAll(clientSocket, subHeaders.str());
+                    if (!sendBody) {
+                        return;
+                    }
+
+                    bool streamed = StreamRemoteContent(item.subtitlePath, false, 0, 0, [&](const char* data, size_t length) {
+                        return TrySendAll(clientSocket, data, length) && m_running.load();
+                    });
+                    if (!streamed) {
+                        LogPrint(L"Remote subtitle unavailable: %ls", RedactUrlForLog(item.subtitlePath).c_str());
+                    }
+                    return;
+                }
+
                 if (item.id != -1 && !item.subtitlePath.empty()) {
                     ScopedHandle hFile(CreateFileW(item.subtitlePath.c_str(), GENERIC_READ,
                         FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, NULL));
                     if (hFile.valid()) {
-                        LPCWSTR subExtW = PathFindExtensionW(item.subtitlePath.c_str());
-                        std::string subMime = SubtitleMimeForExtension(subExtW);
+                        std::string subMime = SubtitleMimeForExtension(SourceExtension(item.subtitlePath));
 
                         LARGE_INTEGER fileSize = {};
                         if (!GetFileSizeEx(hFile.get(), &fileSize)) {
