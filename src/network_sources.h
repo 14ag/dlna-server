@@ -52,6 +52,8 @@ ConcurrencyLimiter& GetRemoteProbeLimiter();
 bool IsRemoteMediaUrl(const std::wstring& value);
 bool IsNetworkShareUrl(const std::wstring& value);
 bool IsPlaylistSourcePath(const std::wstring& value);
+bool IsHlsManifestText(const std::string& text);
+bool IsHlsPlaylistSource(const std::wstring& playlistPath);
 std::wstring RedactUrlForLog(const std::wstring& value);
 std::wstring SourceExtension(const std::wstring& value);
 std::wstring SourceDisplayName(const std::wstring& value);
