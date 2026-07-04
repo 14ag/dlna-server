@@ -70,3 +70,27 @@ def test_curl_remote_fetch_uses_user_agent_ftp_options_low_speed_and_redacted_lo
     assert "authentication failed for %ls\", RedactUrlForLog(url).c_str()" in source
     assert "Remote content truncated after %d bytes: %ls\", kMaxCurlOutputBytes, RedactUrlForLog(url).c_str()" in source
     assert "user:pass@" not in source
+
+
+def test_hls_manifest_is_exposed_as_a_single_item_not_exploded():
+    for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
+        source = read_source(path)
+        scan_start = source.index("void MediaSources::ScanPlaylist")
+        scan_end = source.index("void MediaSources::ScanNetworkFolder", scan_start)
+        scan_body = source[scan_start:scan_end]
+
+        assert "IsHlsPlaylistSource(playlistPath)" in scan_body
+        assert "AddHlsStreamItem(state, playlistPath, parentId)" in scan_body
+        # the HLS branch must return before the generic entry-walking loop runs
+        assert scan_body.index("IsHlsPlaylistSource(playlistPath)") < scan_body.index("LoadPlaylistEntries(playlistPath)")
+
+        add_hls_start = source.index("MediaSources::AddHlsStreamItem")
+        add_hls_body = source[add_hls_start:add_hls_start + 1600]
+        assert 'L"application/vnd.apple.mpegurl"' in add_hls_body
+        assert "IsAllowedExtension(" not in add_hls_body
+
+
+def test_hls_item_defaults_to_direct_exposure_when_not_proxied():
+    content = read_source("src/contentdirectory.cpp")
+    # exposeRemoteDirect must remain gated on proxyStreams / ShouldProxyRemoteUrl
+    assert "exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !cfg.proxyStreams && !ShouldProxyRemoteUrl(it.path)" in content

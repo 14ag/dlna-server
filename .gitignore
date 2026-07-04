@@ -84,3 +84,5 @@ scratch/
 tests/__pycache__/*
 AGENTS.MD
 .codex/config.toml
+*.m3u8
+*.m3u
