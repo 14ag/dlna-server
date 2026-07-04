@@ -1,5 +1,5 @@
 param(
-    [string]$FtpSourceUrl = "ftp://14ag:qwertyui@192.168.100.33:2121/playlist.m3u8"
+    [string]$FtpSourceUrl = "ftp://14ag:qwertyui@192.168.100.33:2121/playlist_remote.m3u8"
 )
 
 $ErrorActionPreference = "Stop"
@@ -111,26 +111,12 @@ try {
     if (Test-Path $configPath) { Remove-Item -LiteralPath $configPath -Force }
     if (Test-Path $debugLogPath) { Remove-Item -LiteralPath $debugLogPath -Force }
 
-    Set-IniValue "Settings" "ServerName" "DLNA Agentic Test"
-    Set-IniValue "Settings" "Port" "$serverPort"
-    Set-IniValue "Settings" "DebugLog" "1"
-    Set-IniValue "Settings" "RunOnBoot" "0"
-    Set-IniValue "Settings" "FlatFolderStyle" "0"
-    Set-IniValue "Settings" "ShowFileNamesInsteadOfTitles" "0"
-    Set-IniValue "Settings" "ProxyStreams" "0"
-    Set-IniValue "Settings" "SortByTitle" "0"
-    Set-IniValue "Settings" "DoNotShowAllMediaFolders" "0"
-    Set-IniValue "Settings" "AddArtistAlbumFolders" "0"
-    Set-IniValue "Settings" "IPWhiteList" ""
-    Set-IniValue "Settings" "MediaSources" $FtpSourceUrl
-    Set-IniValue "Settings" "DeviceUUID" "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    Add-Result "PASS config cleaned"
 
-    Add-Result "PASS config written with FTP source only"
-
-    # start server
+    # start server in headless mode with all config via command line
     $env:DLNA_SERVER_SKIP_FIREWALL = "1"
     try {
-        $serverProc = Start-Process -FilePath $exePath -PassThru
+        $serverProc = Start-Process -FilePath $exePath -ArgumentList "--headless", "--port", "$serverPort", "--name", "DLNA Agentic Test", "--uuid", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "--source", $FtpSourceUrl, "--debug" -PassThru
     } finally {
         Remove-Item Env:\DLNA_SERVER_SKIP_FIREWALL -ErrorAction SilentlyContinue
     }
@@ -152,9 +138,11 @@ try {
         Add-Result "FAIL scan did not complete within 120s"
         throw "Scan timeout"
     }
+    # give the server a moment to finish initialization
+    Start-Sleep -Seconds 2
 
     # verify per-source counts in log
-    $ftpScanLine = Find-LogLines "Scanned \d+ media items from playlist.m3u8"
+    $ftpScanLine = Find-LogLines "Scanned \d+ media items from playlist_remote.m3u8"
     if ($ftpScanLine.Count -gt 0) {
         Add-Result ("PASS per-source FTP scan logged: " + ($ftpScanLine[-1] -replace '^\s+',''))
     } else {
@@ -172,6 +160,18 @@ try {
             break
         }
         Start-Sleep -Milliseconds 500
+    }
+    # Also try the machine's IP addresses if 127.0.0.1 fails
+    if (-not $locFound) {
+        $localIPs = @("172.29.112.1", "192.168.100.163")
+        foreach ($ip in $localIPs) {
+            $locationSearch = & curl.exe -sS --max-time 5 "http://${ip}:$serverPort/description.xml" 2>&1
+            if ($LASTEXITCODE -eq 0 -and $locationSearch -match '<URLBase>([^<]+)</URLBase>') {
+                $location = $Matches[1]
+                $locFound = $true
+                break
+            }
+        }
     }
     if (-not $locFound) {
         Add-Result "FAIL could not retrieve description.xml"
@@ -200,10 +200,10 @@ try {
     $decodedRoot = [System.Net.WebUtility]::HtmlDecode($rootBrowse)
 
     # find FTP playlist container in root
-    $ftpContainerPattern = '<container id="(\d+)"[^>]*>(?:(?!</container>)[\s\S])*?<dc:title>playlist.m3u8</dc:title>'
+    $ftpContainerPattern = '<container id="(\d+)"[^>]*>(?:(?!</container>)[\s\S])*?<dc:title>playlist_remote.m3u8</dc:title>'
     $ftpContainerMatch = [regex]::Match($decodedRoot, $ftpContainerPattern)
     if (-not $ftpContainerMatch.Success) {
-        Add-Result "FAIL FTP playlist container 'playlist.m3u8' not found in root Browse"
+        Add-Result "FAIL FTP playlist container 'playlist_remote.m3u8' not found in root Browse"
         throw "FTP container missing"
     }
     $ftpContainerId = $ftpContainerMatch.Groups[1].Value

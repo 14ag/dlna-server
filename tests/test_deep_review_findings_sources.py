@@ -149,9 +149,9 @@ def test_remote_source_rescan_behavior_documented():
 
     assert "Remote sources" in readme
     assert "ftp://" in readme
-    assert "smb://" in readme
     assert "http://" in readme
     assert "https://" in readme
+    assert "smb://" not in readme
     assert "only scanned at server start" in readme
     assert "do not participate in the automatic file watch loop" in readme
     assert "Adding or removing a remote source at runtime requires a server restart" in readme
@@ -224,8 +224,23 @@ def test_ssdp_ttl_complies_with_upnp_spec():
     assert "IPV6_MULTICAST_HOPS" in win_ssdp
     assert "unsigned char ttl = 4" in posix_ssdp
     assert "int hops = 4" in posix_ssdp
-    assert "SSDP_ALIVE_INTERVAL_MS 900000" in win_ssdp
-    assert "kAliveInterval = std::chrono::minutes(15)" in posix_ssdp
+    assert "ComputeSsdpStartupJitterMilliseconds" in win_ssdp
+    assert "ComputeSsdpNextAliveIntervalMilliseconds" in win_ssdp
+    assert "ComputeSsdpStartupJitterMilliseconds" in posix_ssdp
+    assert "ComputeSsdpNextAliveIntervalMilliseconds" in posix_ssdp
+    assert "SSDP_ALIVE_INTERVAL_MS" not in win_ssdp
+    assert "kAliveInterval = std::chrono::minutes(15)" not in posix_ssdp
+
+
+def test_ssdp_jitter_helpers_are_shared_not_duplicated():
+    utils_header = read("src/dlna_utils.h")
+    utils_source = read("src/dlna_utils.cpp")
+
+    assert "unsigned int ComputeSsdpStartupJitterMilliseconds();" in utils_header
+    assert "unsigned int ComputeSsdpNextAliveIntervalMilliseconds();" in utils_header
+    assert "unsigned int ComputeSsdpStartupJitterMilliseconds() {" in utils_source
+    assert "unsigned int ComputeSsdpNextAliveIntervalMilliseconds() {" in utils_source
+    assert utils_source.count("std::uniform_int_distribution<unsigned int> distribution(0, 100)") == 1
 
 
 def test_release_scripts_enforce_platform_output_contracts():

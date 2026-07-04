@@ -16,11 +16,11 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - Streams MP4, MKV, AVI, MOV, MP3, FLAC, JPEG, and PNG files over HTTP.
 - Reads playlist files: `.m3u`, `.m3u8`, and `.pls`.
 - Can maintain a default `.m3u` playlist from the desktop settings dialog.
-- Reads media from SMB and FTP shares such as `smb://user:pass@server/share` and `ftp://user:pass@server:21/media`.
+- Reads media from FTP shares such as `ftp://user:pass@server:21/media`.
 - Supports byte-range requests so DLNA clients can seek within media files.
 - Blocks HTTP and SSDP startup until the initial background media scan completes, then starts serving requests.
 - Supports explicit rescans from the server layer; completed scans replace the old index only after a full scan succeeds.
-- Watches local media sources while running and rescans after local file changes without a manual restart. Remote sources (`ftp://`, `smb://`, `http://`, `https://`) are only scanned at server start and do not participate in the automatic file watch loop. Adding or removing a remote source at runtime requires a server restart.
+- Watches local media sources while running and rescans after local file changes without a manual restart. Remote sources (`ftp://`, `http://`, `https://`) are only scanned at server start and do not participate in the automatic file watch loop. Adding or removing a remote source at runtime requires a server restart.
 - Keeps a `media-cache.tsv` beside `config.ini` for stable media IDs, cached scan errors, and metadata groundwork.
 - Advertises the server with SSDP multicast `NOTIFY` messages.
 - Handles UPnP `ContentDirectory:1` Browse and Search SOAP requests with exact action dispatch.
@@ -47,7 +47,7 @@ On Windows, you get the native Win32 app. On Linux, release builds ship a native
 - CMake 3.20 or newer
 - A C++17 compiler such as `clang++` or `g++`
 - `make` or another CMake-supported build tool
-- `libcurl` for SMB, FTP, HTTP, and HTTPS media sources
+- `libcurl` for FTP, HTTP, and HTTPS media sources
 - X11 development headers for native FLTK GUI and AppImage builds
 
 On Debian or Ubuntu, native GUI and AppImage builds need:
@@ -261,7 +261,6 @@ Run `DLNA Server.exe`. Add one or more media sources with **Add**, remove select
 Sources can be folders, playlist files, or network shares. Playlist files can be `.m3u`, `.m3u8`, or `.pls`. Network shares use URL form:
 
 ```text
-smb://user:pass@server/share
 ftp://user:pass@server:21/media
 ```
 
@@ -279,7 +278,7 @@ The DLNA device description advertises bundled PNG icons at 48, 120, and 256 px.
 
 The server answers ContentDirectory `Browse` and `Search` probes plus ConnectionManager `GetProtocolInfo` requests. Browse, HTTP streaming, and ConnectionManager responses use the same DLNA protocol metadata table. Companion `folder.jpg`, `cover.jpg`, `album.jpg`, `thumb.jpg`, `thumb.jpeg`, and same-stem JPG/JPEG/PNG art is advertised as `upnp:albumArtURI` only while the file exists and is served from `/albumart/{id}`.
 
-Settings such as **Flat folders style**, **Show file names instead titles**, **Sort by title instead of file name**, **Proxy streams**, and **Add Artist/Album folders to audio** apply consistently to local folders, playlists, and network shares. Playlist order is preserved unless title sorting is enabled or a DLNA client sends an explicit sort request. When **Proxy streams** is disabled for remote HTTP/FTP/SMB entries, Browse can advertise the remote URL directly; otherwise media is proxied through `/media/{id}`.
+Settings such as **Flat folders style**, **Show file names instead titles**, **Sort by title instead of file name**, **Proxy streams**, and **Add Artist/Album folders to audio** apply consistently to local folders, playlists, and network shares. Playlist order is preserved unless title sorting is enabled or a DLNA client sends an explicit sort request. When **Proxy streams** is disabled for remote HTTP/FTP entries, Browse can advertise the remote URL directly; otherwise media is proxied through `/media/{id}`.
 
 The advertised ContentDirectory and ConnectionManager event URLs accept UPnP GENA `SUBSCRIBE` and `UNSUBSCRIBE` requests with stable `SID` and timeout headers. ContentDirectory subscribers receive async `SystemUpdateID` `NOTIFY` callbacks after completed media-index swaps.
 
@@ -312,13 +311,12 @@ Useful options:
 - `--name <name>` sets the friendly DLNA device name.
 - `--uuid <uuid>` sets a persistent device UUID.
 - `--debug` enables extra discovery logging.
-- `--source <path-or-url>` adds a folder, playlist file, SMB share, or FTP share. You can pass it more than once.
+- `--source <path-or-url>` adds a folder, playlist file, or FTP share. You can pass it more than once.
 
 Examples:
 
 ```sh
 ./build/dlna-server --source /srv/media --source /srv/playlists/radio.m3u
-./build/dlna-server --source 'smb://user:pass@server/share'
 ./build/dlna-server --source 'ftp://user:pass@server:21/media'
 ```
 
@@ -356,7 +354,7 @@ DeviceUUID=11111111-2222-3333-4444-555555555555
 DeviceManufacturer=dlna-server contributors
 DeviceModelName=dlna-server
 PresentationURL=/
-MediaSources=C:\Media|D:\Videos|C:\Playlists\radio.m3u|smb://user:pass@server/share|ftp://user:pass@server:21/media
+MediaSources=C:\Media|D:\Videos|C:\Playlists\radio.m3u|ftp://user:pass@server:21/media
 ```
 
 ## Testing

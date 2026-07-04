@@ -43,7 +43,6 @@ class HardeningFixSourceTests(unittest.TestCase):
             "IPV6_JOIN_GROUP",
             "IPV6_MULTICAST_IF",
             "m_ipv6Socket = CreateIPv6Socket",
-            "kAliveInterval",
             'SendNotifyRound("ssdp:alive")',
             "remoteAddr->sa_family",
         ):

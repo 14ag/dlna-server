@@ -135,6 +135,10 @@ void MediaSources::Scan() {
     state.items.push_back({0, -1, L"", L"Root", true, L"", L"object.container.storageFolder", 0, L"", L"", L""});
     for (const auto& source : cfg.mediaSources) {
         if (!source.enabled) continue;
+        if (IsRemovedSmbSourcePath(source.path)) {
+            LogPrint(L"[media:smb-removed] SMB (smb://, smbs://) media sources are no longer supported; skipping: %ls", RedactUrlForLog(source.path).c_str());
+            continue;
+        }
         if (!IsPlaylistSourcePath(source.path) && !IsNetworkShareUrl(source.path)) {
             fs::path path(WideToUtf8(source.path));
             if (!fs::exists(path)) {
@@ -299,8 +303,23 @@ void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cf
         return;
     }
 
-    for (const auto& entry : LoadPlaylistEntries(playlistPath)) {
+    bool fetchFailed = false;
+    auto entries = LoadPlaylistEntries(playlistPath, &fetchFailed);
+    if (entries.empty() && fetchFailed) {
+        LogPrint(L"[media:fetch-failed] Playlist could not be fetched; treating as unavailable rather than empty: %ls", RedactUrlForLog(playlistPath).c_str());
+        if (state.mediaDatabase) {
+            state.mediaDatabase->RecordScanError(BuildStableContainerKey(parentId, SourceStemName(playlistPath), playlistPath, g_canonicalize), L"Playlist fetch failed");
+        }
+        return;
+    }
+    LogPrint(L"Loaded %d entries from playlist: %ls", static_cast<int>(entries.size()), RedactUrlForLog(playlistPath).c_str());
+    for (const auto& entry : entries) {
         if (IsPlaylistSourcePath(entry.location)) {
+            if (IsHlsPlaylistSource(entry.location)) {
+                LogPrint(L"Detected HLS manifest, exposing as a single stream: %ls", RedactUrlForLog(entry.location).c_str());
+                AddHlsStreamItem(state, entry.location, parentId, entry.title);
+                continue;
+            }
             MediaItem playlistFolder{};
             playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.location), entry.location, g_canonicalize);
             playlistFolder.parentId = parentId;

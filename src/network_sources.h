@@ -51,6 +51,7 @@ ConcurrencyLimiter& GetRemoteProbeLimiter();
 
 bool IsRemoteMediaUrl(const std::wstring& value);
 bool IsNetworkShareUrl(const std::wstring& value);
+bool IsRemovedSmbSourcePath(const std::wstring& value);
 bool IsPlaylistSourcePath(const std::wstring& value);
 bool IsHlsManifestText(const std::string& text);
 bool IsHlsPlaylistSource(const std::wstring& playlistPath);
@@ -59,7 +60,7 @@ std::wstring SourceExtension(const std::wstring& value);
 std::wstring SourceDisplayName(const std::wstring& value);
 std::wstring SourceStemName(const std::wstring& value);
 
-std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath);
+std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath, bool* fetchFailed = nullptr);
 std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& directoryUrl);
 long long ProbeRemoteContentLength(const std::wstring& url);
 

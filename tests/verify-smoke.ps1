@@ -1,5 +1,5 @@
 param(
-    [string]$FtpSourceUrl = "ftp://14ag:qwertyui@192.168.100.33:2121/playlist.m3u8"
+    [string]$FtpSourceUrl = "ftp://14ag:qwertyui@192.168.100.33:2121/playlist_remote.m3u8"
 )
 
 $ErrorActionPreference = "Stop"

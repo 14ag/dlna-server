@@ -67,6 +67,10 @@ void MediaSources::Scan() {
             LogPrint(L"Skipping disabled media source: %ls", RedactUrlForLog(src.path).c_str());
             continue;
         }
+        if (IsRemovedSmbSourcePath(src.path)) {
+            LogPrint(L"[media:smb-removed] SMB (smb://, smbs://) media sources are no longer supported; skipping: %ls", RedactUrlForLog(src.path).c_str());
+            continue;
+        }
 
         LogPrint(L"Scanning media source: %ls", RedactUrlForLog(src.path).c_str());
         const int itemsBefore = static_cast<int>(state.items.size());
@@ -319,10 +323,28 @@ void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cf
         return;
     }
 
-    auto entries = LoadPlaylistEntries(playlistPath);
+    bool fetchFailed = false;
+    auto entries = LoadPlaylistEntries(playlistPath, &fetchFailed);
+    if (entries.empty() && fetchFailed) {
+        LogPrint(L"[media:fetch-failed] Playlist could not be fetched; treating as unavailable rather than empty: %ls", RedactUrlForLog(playlistPath).c_str());
+        if (state.mediaDatabase) {
+            state.mediaDatabase->RecordScanError(BuildStableContainerKey(parentId, SourceStemName(playlistPath), playlistPath, g_canonicalize), L"Playlist fetch failed");
+        }
+        return;
+    }
     LogPrint(L"Loaded %d entries from playlist: %ls", static_cast<int>(entries.size()), RedactUrlForLog(playlistPath).c_str());
     for (const auto& entry : entries) {
         if (IsPlaylistSourcePath(entry.location)) {
+            if (IsHlsPlaylistSource(entry.location)) {
+                // The referenced .m3u8/.m3u/.pls is itself an HLS manifest.
+                // Do not wrap it in its own container: a container whose only
+                // possible child is one manifest item with no size/duration
+                // adds a browse hop with nothing distinguishable inside it.
+                // Register the manifest directly under the CURRENT container.
+                LogPrint(L"Detected HLS manifest, exposing as a single stream: %ls", RedactUrlForLog(entry.location).c_str());
+                AddHlsStreamItem(state, entry.location, parentId, entry.title);
+                continue;
+            }
             MediaItem playlistFolder;
             playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.location), entry.location, g_canonicalize);
             playlistFolder.parentId = parentId;

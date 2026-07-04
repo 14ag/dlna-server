@@ -123,5 +123,59 @@ class DlnaReviewFixSourceTests(unittest.TestCase):
             self.assertIn(token, utils + content + readme + hardening)
 
 
+def test_config_exposes_locked_mutation_and_lightweight_accessors():
+    header = read_text("src/config.h")
+    assert "void Mutate(F&& fn) {" in header
+    assert "bool IsDebugLogEnabled() const;" in header
+    assert "int GetPort() const;" in header
+
+    for path in ("src/config.cpp", "src/posix_config.cpp"):
+        source = read_text(path)
+        assert "bool Config::IsDebugLogEnabled() const {" in source
+        assert "int Config::GetPort() const {" in source
+
+
+def test_gui_media_source_mutations_go_through_config_mutate():
+    windows_gui = read_text("src/mainwindow.cpp")
+    fltk_gui = read_text("src/fltk_gui_main.cpp")
+
+    assert "AppConfig.Mutate([selected](Config& cfg) {" in windows_gui
+    assert "AppConfig.Mutate([&selected, &alreadyPresent](Config& cfg) {" in windows_gui
+    assert "AppConfig.Mutate([this, &savedCount](Config& cfg) {" in fltk_gui
+    assert "AppConfig.mediaSources.erase(AppConfig.mediaSources.begin()" not in windows_gui
+    assert "AppConfig.mediaSources.push_back(" not in windows_gui
+    assert "AppConfig.mediaSources.push_back(" not in fltk_gui
+
+
+def test_settings_dialogs_write_config_under_a_single_mutate_call():
+    settingsdlg = read_text("src/settingsdlg.cpp")
+    fltk_gui = read_text("src/fltk_gui_main.cpp")
+
+    assert "AppConfig.Mutate([&](Config& cfg) {" in settingsdlg
+    assert "AppConfig.Mutate([&](Config& cfg) {" in fltk_gui
+
+
+def test_hot_paths_use_lightweight_config_accessors_not_full_snapshot():
+    win_log = read_text("src/log.cpp")
+    posix_log = read_text("src/posix_log.cpp")
+    win_http = read_text("src/httpserver.cpp")
+    posix_http = read_text("src/posix_httpserver.cpp")
+
+    assert "AppConfig.IsDebugLogEnabled()" in win_log
+    assert "AppConfig.Snapshot().debugLog" not in win_log
+    assert "AppConfig.IsDebugLogEnabled()" in posix_log
+    assert "AppConfig.Snapshot().debugLog" not in posix_log
+
+    http_handle_start = win_http.index("void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) {")
+    http_handle_body = win_http[http_handle_start:]
+    assert "AppConfig.GetPort()" in http_handle_body
+    assert "AppConfig.IsDebugLogEnabled()" in http_handle_body
+
+    posix_handle_start = posix_http.index("void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {")
+    posix_handle_body = posix_http[posix_handle_start:]
+    assert "AppConfig.GetPort()" in posix_handle_body
+    assert "AppConfig.IsDebugLogEnabled()" in posix_handle_body
+
+
 if __name__ == "__main__":
     unittest.main()

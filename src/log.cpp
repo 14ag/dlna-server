@@ -52,7 +52,7 @@ void LogPrint(const wchar_t* fmt, ...) {
         st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
 
     std::wstring line = std::wstring(timeBuf) + msg + L"\r\n";
-    const bool writeDebugLog = AppConfig.Snapshot().debugLog;
+    const bool writeDebugLog = AppConfig.IsDebugLogEnabled();
 
     std::lock_guard<std::mutex> lock(g_logMutex);
     g_logLines.push_back(line);
