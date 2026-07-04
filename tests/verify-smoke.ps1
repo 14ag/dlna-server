@@ -1142,8 +1142,27 @@ try {
                     catch {
                         Add-Result "FAIL ftp source item ranged GET threw: $($_.Exception.Message)"
                     }
+}
                 }
-            }
+
+                if ($ftpItemId -and $decodedFtpChild -match 'sec:CaptionInfoEx[^>]*>([^<]+)<') {
+                    $ftpSubtitleUrl = [System.Net.WebUtility]::HtmlDecode($Matches[1])
+                    try {
+                        $subResp = Invoke-WebRequest -Uri $ftpSubtitleUrl -UseBasicParsing -TimeoutSec 15
+                        if ($subResp.StatusCode -eq 200 -and $subResp.Content.Length -gt 0) {
+                            Add-Result "PASS ftp-sourced subtitle served over http at $ftpSubtitleUrl"
+                        }
+                        else {
+                            Add-Result "FAIL ftp-sourced subtitle at $ftpSubtitleUrl returned status=$($subResp.StatusCode) length=$($subResp.Content.Length)"
+                        }
+                    }
+                    catch {
+                        Add-Result "FAIL ftp-sourced subtitle GET threw: $($_.Exception.Message)"
+                    }
+                }
+                else {
+                    Add-Result "WARN no sec:CaptionInfoEx found for the ftp source item; skipping ftp subtitle hosting check (add a #DLNA-SUBTITLE: line to the ftp test playlist to exercise this path)"
+                }
             Add-Result "--- end ftp live source checks ---"
         }
 
