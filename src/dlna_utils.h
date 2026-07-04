@@ -4,6 +4,9 @@
 #include <string>
 #include <vector>
 
+unsigned int ComputeSsdpStartupJitterMilliseconds();
+unsigned int ComputeSsdpNextAliveIntervalMilliseconds();
+
 struct AlbumArtCandidate {
     std::wstring fileName;
     std::wstring mimeType;

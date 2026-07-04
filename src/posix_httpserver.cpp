@@ -337,8 +337,8 @@ ScopedFd client(clientSocket);
         if (space1 == std::string::npos || space2 <= space1) return;
         const std::string method = firstLine.substr(0, space1);
         const std::string path = SplitRequestTarget(firstLine.substr(space1 + 1, space2 - space1 - 1));
-        const ConfigSnapshot cfg = AppConfig.Snapshot();
-        if (cfg.debugLog) {
+        const int listenPort = AppConfig.GetPort();
+        if (AppConfig.IsDebugLogEnabled()) {
             LogPrint(L"HTTP request: src=%hs method=%hs path=%hs", clientIp.c_str(), method.c_str(), path.c_str());
         }
         std::string hostUrl = FindHeaderValueCaseInsensitive(req, "Host");
@@ -346,7 +346,7 @@ ScopedFd client(clientSocket);
             SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
             return;
         }
-        if (hostUrl.empty()) hostUrl = "127.0.0.1:" + std::to_string(cfg.port);
+        if (hostUrl.empty()) hostUrl = "127.0.0.1:" + std::to_string(listenPort);
 
         const bool sendBody = method != "HEAD";
         auto sendText = [&](const std::string& status, const std::string& type, const std::string& body) {

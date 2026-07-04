@@ -242,19 +242,33 @@ bool SaveToConfig() {
             fl_alert("HTTP port must be between 1 and 65535.");
             return false;
         }
-        AppConfig.serverName = ToWide(m_serverName.value());
-        AppConfig.port = httpPort;
-        AppConfig.ipWhiteList = ToWide(m_ipWhitelist.value());
-        AppConfig.runOnBoot = m_runOnStartup.value() != 0;
-        AppConfig.debugLog = m_debugLog.value() != 0;
-        AppConfig.defaultPlaylistEnabled = m_defaultPlaylist.value() != 0;
-        if (AppConfig.defaultPlaylistPath.empty()) AppConfig.defaultPlaylistPath = AppConfig.GetDefaultPlaylistPath();
-        AppConfig.addArtistAlbumFolders = m_artistAlbum.value() != 0;
-        AppConfig.doNotShowAllMediaFolders = m_hideAllMedia.value() != 0;
-        AppConfig.flatFolderStyle = m_flatFolders.value() != 0;
-        AppConfig.showFileNamesInsteadOfTitles = m_showFileNames.value() != 0;
-        AppConfig.sortByTitle = m_sortByTitle.value() != 0;
-        AppConfig.proxyStreams = m_proxyStreams.value() != 0;
+        const std::wstring serverName = ToWide(m_serverName.value());
+        const std::wstring ipWhiteList = ToWide(m_ipWhitelist.value());
+        const bool runOnBoot = m_runOnStartup.value() != 0;
+        const bool debugLog = m_debugLog.value() != 0;
+        const bool defaultPlaylistEnabled = m_defaultPlaylist.value() != 0;
+        const bool addArtistAlbumFolders = m_artistAlbum.value() != 0;
+        const bool doNotShowAllMediaFolders = m_hideAllMedia.value() != 0;
+        const bool flatFolderStyle = m_flatFolders.value() != 0;
+        const bool showFileNamesInsteadOfTitles = m_showFileNames.value() != 0;
+        const bool sortByTitle = m_sortByTitle.value() != 0;
+        const bool proxyStreams = m_proxyStreams.value() != 0;
+
+        AppConfig.Mutate([&](Config& cfg) {
+            cfg.serverName = serverName;
+            cfg.port = httpPort;
+            cfg.ipWhiteList = ipWhiteList;
+            cfg.runOnBoot = runOnBoot;
+            cfg.debugLog = debugLog;
+            cfg.defaultPlaylistEnabled = defaultPlaylistEnabled;
+            if (cfg.defaultPlaylistPath.empty()) cfg.defaultPlaylistPath = cfg.GetDefaultPlaylistPath();
+            cfg.addArtistAlbumFolders = addArtistAlbumFolders;
+            cfg.doNotShowAllMediaFolders = doNotShowAllMediaFolders;
+            cfg.flatFolderStyle = flatFolderStyle;
+            cfg.showFileNamesInsteadOfTitles = showFileNamesInsteadOfTitles;
+            cfg.sortByTitle = sortByTitle;
+            cfg.proxyStreams = proxyStreams;
+        });
         AppConfig.Save();
         LogPrint(L"Saved settings.");
         return true;
@@ -405,16 +419,20 @@ private:
     }
 
     void SaveSourcesFromList() {
-        AppConfig.mediaSources.clear();
-        for (int i = 1; i <= m_sources.size(); ++i) {
-            const char* text = m_sources.text(i);
-            if (text && *text) {
-                AppConfig.mediaSources.push_back({ToWide(text), true});
+        size_t savedCount = 0;
+        AppConfig.Mutate([this, &savedCount](Config& cfg) {
+            cfg.mediaSources.clear();
+            for (int i = 1; i <= m_sources.size(); ++i) {
+                const char* text = m_sources.text(i);
+                if (text && *text) {
+                    cfg.mediaSources.push_back({ToWide(text), true});
+                }
             }
-        }
+            savedCount = cfg.mediaSources.size();
+        });
         AppConfig.Save();
         AppMedia.Scan();
-        LogPrint(L"Saved %d media source(s).", static_cast<int>(AppConfig.mediaSources.size()));
+        LogPrint(L"Saved %d media source(s).", static_cast<int>(savedCount));
     }
 
     void RefreshEmptyState() {
@@ -560,7 +578,7 @@ private:
             }
             self->RestoreMainFocus();
         } else if (choice == 2) {
-            const char* typed = fl_input("Network share URL", "smb://user:pass@server/share");
+            const char* typed = fl_input("Network share URL", "ftp://user:pass@server:21/media");
             if (typed) selected = typed;
             self->RestoreMainFocus();
         }

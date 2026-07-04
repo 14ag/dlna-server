@@ -299,8 +299,13 @@ std::string ReadLocalTextFile(const std::wstring& path) {
 #endif
 }
 
-std::string ReadSourceText(const std::wstring& source) {
-    if (IsRemoteMediaUrl(source)) return CurlCapture(source, false, false).body;
+std::string ReadSourceText(const std::wstring& source, bool* ok = nullptr) {
+    if (IsRemoteMediaUrl(source)) {
+        RemoteFetchResult fetch = CurlCapture(source, false, false);
+        if (ok) *ok = fetch.ok;
+        return fetch.body;
+    }
+    if (ok) *ok = true;
     return ReadLocalTextFile(source);
 }
 
@@ -423,8 +428,7 @@ std::vector<PlaylistEntry> ParsePls(const std::wstring& playlistPath, const std:
 }
 
 bool IsSupportedScheme(const std::string& value) {
-    return HasScheme(value, "smb") || HasScheme(value, "smbs") ||
-           HasScheme(value, "ftp") || HasScheme(value, "ftps") ||
+    return HasScheme(value, "ftp") || HasScheme(value, "ftps") ||
            HasScheme(value, "http") || HasScheme(value, "https");
 }
 
@@ -501,8 +505,17 @@ bool IsRemoteMediaUrl(const std::wstring& value) {
 
 bool IsNetworkShareUrl(const std::wstring& value) {
     std::string text = WideToUtf8(value);
-    return HasScheme(text, "smb") || HasScheme(text, "smbs") ||
-           HasScheme(text, "ftp") || HasScheme(text, "ftps");
+    return HasScheme(text, "ftp") || HasScheme(text, "ftps");
+}
+
+bool IsRemovedSmbSourcePath(const std::wstring& value) {
+    // SMB support was removed: libcurl's smb:// backend is SMB1/CIFS-only
+    // (no SMB2/3 dialect), which most current SMB servers refuse, and has no
+    // directory-listing capability at all for any dialect. This helper only
+    // exists to detect and reject a leftover smb:// entry from an existing
+    // config.ini with an explicit log message instead of a silent failure.
+    std::string text = WideToUtf8(value);
+    return HasScheme(text, "smb") || HasScheme(text, "smbs");
 }
 
 std::wstring RedactUrlForLog(const std::wstring& value) {
@@ -547,8 +560,10 @@ std::wstring SourceStemName(const std::wstring& value) {
     return name.substr(0, dot);
 }
 
-std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath) {
-    std::string text = ReadSourceText(playlistPath);
+std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath, bool* fetchFailed) {
+    bool fetchOk = true;
+    std::string text = ReadSourceText(playlistPath, &fetchOk);
+    if (fetchFailed) *fetchFailed = !fetchOk;
     if (text.size() >= 3 &&
         static_cast<unsigned char>(text[0]) == 0xef &&
         static_cast<unsigned char>(text[1]) == 0xbb &&

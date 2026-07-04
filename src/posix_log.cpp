@@ -64,7 +64,7 @@ void LogPrint(const wchar_t* fmt, ...) {
     va_end(args);
 
     std::wstring line = TimestampPrefix() + buffer;
-    const bool writeDebugLog = AppConfig.Snapshot().debugLog;
+    const bool writeDebugLog = AppConfig.IsDebugLogEnabled();
 
     std::lock_guard<std::mutex> lock(g_logMutex);
     g_lines.push_back(line);

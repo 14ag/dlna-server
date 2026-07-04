@@ -15,7 +15,7 @@
 #define SSDP_PORT 1900
 #define SSDP_MULTICAST_IPV4 "239.255.255.250"
 #define SSDP_MULTICAST_IPV6 "ff02::c"
-#define SSDP_ALIVE_INTERVAL_MS 900000
+
 
 namespace {
 constexpr size_t kMaxDelayedResponses = 256;
@@ -247,6 +247,7 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     }
     m_responseThread = std::thread(&SSDP::ResponseWorker, this);
 
+    Sleep(ComputeSsdpStartupJitterMilliseconds());
     SendNotifyBurst("ssdp:alive", 3, 100);
     return true;
 }
@@ -527,6 +528,7 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
 DWORD WINAPI SSDP::ThreadWorker(LPVOID lpParam) {
     SSDP* pThis = reinterpret_cast<SSDP*>(lpParam);
     ULONGLONG lastNotifyTicks = GetTickCount64();
+    ULONGLONG nextAliveIntervalMs = ComputeSsdpNextAliveIntervalMilliseconds();
 
     while (pThis->m_running.load()) {
         fd_set readfds;
@@ -552,9 +554,10 @@ DWORD WINAPI SSDP::ThreadWorker(LPVOID lpParam) {
         }
 
         ULONGLONG now = GetTickCount64();
-        if (now - lastNotifyTicks > SSDP_ALIVE_INTERVAL_MS) {
+        if (now - lastNotifyTicks > nextAliveIntervalMs) {
             pThis->SendNotifyRound("ssdp:alive");
             lastNotifyTicks = now;
+            nextAliveIntervalMs = ComputeSsdpNextAliveIntervalMilliseconds();
         }
 
         if (result <= 0) {

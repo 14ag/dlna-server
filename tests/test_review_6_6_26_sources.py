@@ -120,7 +120,7 @@ class ReviewSixJuneSourceContracts(unittest.TestCase):
         self.assertIn("AppConfig.GetConfigPath()", posix_log)
         self.assertIn('"debug.log"', posix_log)
         self.assertIn("std::FILE* g_debugLogFile", posix_log)
-        self.assertIn("AppConfig.Snapshot().debugLog", posix_log)
+        self.assertIn("AppConfig.IsDebugLogEnabled()", posix_log)
 
         self.assertIn("beside `config.ini`", bug_template)
         self.assertNotIn("WinDLNAServer", bug_template)
