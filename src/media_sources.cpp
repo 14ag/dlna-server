@@ -240,6 +240,9 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
 
     if (!subtitleOverride.empty()) {
         fileInfo.subtitlePath = subtitleOverride;
+        if (IsRemoteMediaUrl(subtitleOverride)) {
+            LogPrint(L"Playlist subtitle resolved to remote URL: %ls", RedactUrlForLog(subtitleOverride).c_str());
+        }
     } else if (!IsRemoteMediaUrl(path) && uclass == L"object.item.videoItem") {
         std::wstring fileName = SourceDisplayName(path);
         wchar_t stemBuf[MAX_PATH];

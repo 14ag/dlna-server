@@ -299,8 +299,8 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
                 entry << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id))) << "</res>";
             }
             if (!it.subtitlePath.empty()) {
-                size_t dot = it.subtitlePath.rfind(L'.');
-                std::wstring subExtW = dot == std::wstring::npos ? L"" : it.subtitlePath.substr(dot + 1);
+                std::wstring subExtW = SourceExtension(it.subtitlePath);
+                if (!subExtW.empty() && subExtW.front() == L'.') subExtW.erase(0, 1);
                 std::string subExt = WideToUtf8(subExtW);
                 entry << "<sec:CaptionInfoEx sec:type=\"" << subExt << "\">"
                       << "http://" << hostUrl << "/subtitle/" << it.id

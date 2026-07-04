@@ -242,6 +242,9 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
 
     if (!subtitleOverride.empty()) {
         file.subtitlePath = subtitleOverride;
+        if (IsRemoteMediaUrl(subtitleOverride)) {
+            LogPrint(L"Playlist subtitle resolved to remote URL: %ls", RedactUrlForLog(subtitleOverride).c_str());
+        }
     } else if (!IsRemoteMediaUrl(pathText) && uclass == L"object.item.videoItem") {
         fs::path path(WideToUtf8(pathText));
         static const char* kSubExts[] = { ".srt", ".vtt", ".sub", ".ass", ".ssa", ".smi", ".txt" };

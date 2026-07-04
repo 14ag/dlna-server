@@ -498,6 +498,31 @@ ScopedFd client(clientSocket);
                     return;
                 }
                 MediaItem item = AppMedia.GetItem(mediaId);
+
+                if (item.id != -1 && !item.subtitlePath.empty() && IsRemoteMediaUrl(item.subtitlePath)) {
+                    std::string subMime = SubtitleMimeForExtension(SourceExtension(item.subtitlePath));
+                    long long subtitleSize = ProbeRemoteContentLength(item.subtitlePath);
+                    bool hasKnownSize = subtitleSize > 0;
+
+                    std::stringstream headers;
+                    headers << "HTTP/1.1 200 OK\r\n"
+                            << "Content-Type: " << subMime << "\r\n";
+                    if (hasKnownSize) {
+                        headers << "Content-Length: " << subtitleSize << "\r\n";
+                    }
+                    headers << "Accept-Ranges: none\r\nConnection: close\r\n\r\n";
+                    SendAll(clientSocket, headers.str());
+                    if (sendBody) {
+                        bool streamed = StreamRemoteContent(item.subtitlePath, false, 0, 0, [&](const char* data, size_t length) {
+                            return TrySendAll(clientSocket, data, length) && m_running.load();
+                        });
+                        if (!streamed) {
+                            LogPrint(L"Remote subtitle unavailable: %ls", RedactUrlForLog(item.subtitlePath).c_str());
+                        }
+                    }
+                    return;
+                }
+
                 ScopedFd fd(item.id == -1 || item.subtitlePath.empty() ? -1 : open(WideToUtf8(item.subtitlePath).c_str(), O_RDONLY));
                 if (fd.get() < 0) {
                     SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
@@ -508,13 +533,10 @@ ScopedFd client(clientSocket);
                     SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }
-                std::string pathText = WideToUtf8(item.subtitlePath);
-                std::string ext;
-                size_t dot = pathText.find_last_of('.');
-                if (dot != std::string::npos) ext = pathText.substr(dot);
+                std::string subMime = SubtitleMimeForExtension(SourceExtension(item.subtitlePath));
                 std::stringstream headers;
                 headers << "HTTP/1.1 200 OK\r\n"
-                        << "Content-Type: " << SubtitleMimeForExtension(Utf8ToWide(ext)) << "\r\n"
+                        << "Content-Type: " << subMime << "\r\n"
                         << "Content-Length: " << static_cast<long long>(st.st_size) << "\r\n"
                         << "Accept-Ranges: none\r\nConnection: close\r\n\r\n";
                 SendAll(clientSocket, headers.str());
