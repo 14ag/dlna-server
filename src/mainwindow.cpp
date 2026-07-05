@@ -564,7 +564,7 @@ void MainWindow::RemoveSelectedSource() {
         cfg.mediaSources.erase(cfg.mediaSources.begin() + selected);
     });
     AppConfig.Save();
-    AppMedia.Scan();
+    DLNAServer.Rescan();
     RefreshSourceList();
 
     int count = static_cast<int>(SendMessage(m_hListSources, LB_GETCOUNT, 0, 0));
@@ -634,7 +634,7 @@ void MainWindow::OpenFolderPicker() {
     if (alreadyPresent) return;
     AppConfig.Save();
     RefreshSourceList();
-    AppMedia.Scan();
+    DLNAServer.Rescan();
 }
 
 LRESULT CALLBACK MainWindow::ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
