@@ -19,6 +19,32 @@ $results = New-Object System.Collections.Generic.List[string]
 
 function Add-Result { param([string]$line) $results.Add($line) | Out-Null }
 
+# Resolve the FTP source name once, up front, so every check that needs it
+# (log-line matching, DIDL container-title matching) uses the same value
+# derived from the actual -FtpSourceUrl parameter instead of a hardcoded
+# literal that silently stops matching if the parameter is ever changed.
+function Get-FtpUrlCredential {
+    param([string]$Url)
+    try { $uri = [System.Uri]$Url } catch { return $null }
+    if (-not $uri.UserInfo) { return $null }
+    $parts = $uri.UserInfo.Split(":", 2)
+    $password = ""
+    if ($parts.Count -gt 1) { $password = [System.Uri]::UnescapeDataString($parts[1]) }
+    return [PSCustomObject]@{
+        Uri      = $uri
+        User     = [System.Uri]::UnescapeDataString($parts[0])
+        Password = $password
+    }
+}
+
+$script:ftpCredForName = Get-FtpUrlCredential -Url $FtpSourceUrl
+$script:ftpSourceName = if ($script:ftpCredForName) {
+    [System.IO.Path]::GetFileName($script:ftpCredForName.Uri.AbsolutePath)
+} else {
+    [System.IO.Path]::GetFileName(([System.Uri]$FtpSourceUrl).AbsolutePath)
+}
+if (-not $script:ftpSourceName) { $script:ftpSourceName = "playlist_remote.m3u8" }
+
 # --- helpers (minimal, no smoke dependency) ---
 
 function Set-IniValue {
@@ -60,23 +86,38 @@ function Read-DebugLog {
 
 function Wait-PortReleased {
     param([int]$Port, [int]$TimeoutSeconds = 15)
-
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         $listeners = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue
-        if (-not $listeners) {
-            return $true
-        }
+        if (-not $listeners) { return $true }
         Start-Sleep -Milliseconds 300
     }
     return $false
 }
 
+# HARDENED: always returns @() rather than $null or a bare scalar, so every
+# call site's .Count and [-1] indexing is well-defined regardless of match
+# count (0, 1, or many).
 function Find-LogLines {
     param([string]$pattern)
     $log = Read-DebugLog
     if (-not $log) { return @() }
-    ($log -split '\r?\n') -match $pattern
+    return @(($log -split '\r?\n') -match $pattern)
+}
+
+# FIX (primary crash cause): native command output captured via 2>&1 is a
+# string[] when the response is multi-line (SOAP/DIDL/XML responses from
+# this server always are). Joining to a single string before any -match /
+# regex use is required, matching the pattern already used elsewhere in
+# this repository (tests/verify-smoke.ps1 Invoke-CurlText/Invoke-CurlRaw).
+function Invoke-NativeText {
+    param([string]$FilePath, [string[]]$ArgumentList)
+    $output = & $FilePath @ArgumentList 2>&1
+    $text = ($output | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        throw "$FilePath exited with code ${LASTEXITCODE}: $($text.Trim())"
+    }
+    return $text
 }
 
 function Invoke-SoapCurl {
@@ -84,14 +125,14 @@ function Invoke-SoapCurl {
     $tmpFile = Join-Path $env:TEMP "agentic-soap-$(Get-Random).tmp"
     try {
         Set-Content -LiteralPath $tmpFile -Value $soapBody -Encoding UTF8 -NoNewline
-        $result = & curl.exe -sS --max-time 15 -X POST $url `
-            -H "Content-Type: text/xml; charset=utf-8" `
-            -H "SOAPACTION: `"urn:schemas-upnp-org:service:ContentDirectory:1#Browse`"" `
-            --data-binary "@$tmpFile" 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "curl exit code ${LASTEXITCODE}: $result"
-        }
-        return $result
+        return Invoke-NativeText -FilePath "curl.exe" -ArgumentList @(
+            "-sS", "--max-time", "15",
+            "-X", "POST",
+            "-H", "Content-Type: text/xml; charset=utf-8",
+            "-H", 'SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#Browse"',
+            "--data-binary", "@$tmpFile",
+            $url
+        )
     } finally {
         Remove-Item -LiteralPath $tmpFile -Force -ErrorAction SilentlyContinue
     }
@@ -99,16 +140,14 @@ function Invoke-SoapCurl {
 
 function Invoke-HttpGet {
     param([string]$url)
-    $result = & curl.exe -sS --max-time 15 -o NUL -w '%{http_code}' $url 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "curl exit $LASTEXITCODE" }
-    return $result.Trim()
+    $text = Invoke-NativeText -FilePath "curl.exe" -ArgumentList @("-sS", "--max-time", "15", "-o", "NUL", "-w", "%{http_code}", $url)
+    return $text.Trim()
 }
 
 function Invoke-HttpGetRange {
     param([string]$url, [int]$rangeStart, [int]$rangeEnd)
-    $result = & curl.exe -sS --max-time 15 -o NUL -w '%{http_code} %{size_download}' -r "$rangeStart-$rangeEnd" $url 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "curl exit $LASTEXITCODE" }
-    return $result.Trim()
+    $text = Invoke-NativeText -FilePath "curl.exe" -ArgumentList @("-sS", "--max-time", "15", "-o", "NUL", "-w", "%{http_code} %{size_download}", "-r", "$rangeStart-$rangeEnd", $url)
+    return $text.Trim()
 }
 
 # --- main test ---
@@ -117,41 +156,31 @@ try {
     Add-Result "=== agentic FTP nested playlist access test ==="
     Add-Result "INFO FtpSourceUrl=$FtpSourceUrl port=$serverPort"
 
-    # stop any lingering process and wait for it to fully exit
-    # a stale listener on this exact port is the root cause this test now
-    # guards against see the accompanying root cause document for details
     $lingering = Get-Process -Name "DLNA Server" -ErrorAction SilentlyContinue
     foreach ($proc in $lingering) {
         Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-        try {
-            Wait-Process -Id $proc.Id -Timeout 10 -ErrorAction SilentlyContinue
-        } catch {
-        }
+        try { Wait-Process -Id $proc.Id -Timeout 10 -ErrorAction SilentlyContinue } catch {}
     }
 
     if (-not (Wait-PortReleased -Port $serverPort -TimeoutSeconds 15)) {
         $stale = Get-NetTCPConnection -State Listen -LocalPort $serverPort -ErrorAction SilentlyContinue
         $stalePids = ($stale | Select-Object -ExpandProperty OwningProcess -Unique) -join " "
-        throw "port $serverPort is still held by pid(s) $stalePids after stop attempt this is the stale listener conflict described in the root cause document"
+        throw "port $serverPort is still held by pid(s) $stalePids after stop attempt"
     }
 
-    # prepare config
     if (Test-Path $configPath) { Remove-Item -LiteralPath $configPath -Force }
     if (Test-Path $debugLogPath) { Remove-Item -LiteralPath $debugLogPath -Force }
 
     Add-Result "PASS config cleaned"
 
-    # start server in headless mode with all config via command line
     $env:DLNA_SERVER_SKIP_FIREWALL = "1"
     try {
         $serverProc = Start-Process -FilePath $exePath -ArgumentList "--headless", "--port", "$serverPort", "--name", "DLNA Agentic Test", "--uuid", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "--source", $FtpSourceUrl, "--debug" -PassThru
     } finally {
-        Remove-Item Env:\DLNA_SERVER_SKIP_FIREWALL -ErrorAction SilentlyContinue
+        Remove-Item Env::DLNA_SERVER_SKIP_FIREWALL -ErrorAction SilentlyContinue
     }
     Add-Result "INFO server PID=$($serverProc.Id)"
 
-    # confirm this process and only this process owns the listening socket
-    # before waiting on the scan or attempting any http call
     $ownerDeadline = (Get-Date).AddSeconds(15)
     $ownerConfirmed = $false
     while ((Get-Date) -lt $ownerDeadline) {
@@ -160,16 +189,13 @@ try {
             $others = $listeners | Where-Object { $_.OwningProcess -ne $serverProc.Id }
             if ($others) {
                 $otherPids = ($others | Select-Object -ExpandProperty OwningProcess -Unique) -join " "
-                throw "port $serverPort is also held by pid(s) $otherPids while our pid is $($serverProc.Id) this is the stale listener conflict described in the root cause document"
+                throw "port $serverPort is also held by pid(s) $otherPids while our pid is $($serverProc.Id)"
             }
             $mine = $listeners | Where-Object { $_.OwningProcess -eq $serverProc.Id }
-            if ($mine) {
-                $ownerConfirmed = $true
-                break
-            }
+            if ($mine) { $ownerConfirmed = $true; break }
         }
         if ($serverProc.HasExited) {
-            throw "server process exited before binding port $serverPort check debug log for HTTP listen bind failed or HTTP server failed to bind"
+            throw "server process exited before binding port $serverPort"
         }
         Start-Sleep -Milliseconds 300
     }
@@ -178,7 +204,6 @@ try {
     }
     Add-Result "PASS port $serverPort owned exclusively by pid $($serverProc.Id)"
 
-    # wait for scan completion (aggregate log line)
     $scanDeadline = [datetime]::UtcNow.AddSeconds(120)
     $scanDone = $false
     while ([datetime]::UtcNow -lt $scanDeadline) {
@@ -194,38 +219,46 @@ try {
         Add-Result "FAIL scan did not complete within 120s"
         throw "Scan timeout"
     }
-    # give the server a moment to finish initialization
     Start-Sleep -Seconds 2
 
-    # verify per-source counts in log
-    $ftpScanLine = Find-LogLines "Scanned \d+ media items from playlist_remote.m3u8"
+    # FIX: pattern now derived from the actual configured source name
+    # instead of the hardcoded literal "playlist_remote.m3u8".
+    $ftpScanPattern = "Scanned \d+ media items from " + [regex]::Escape($script:ftpSourceName)
+    $ftpScanLine = Find-LogLines $ftpScanPattern
     if ($ftpScanLine.Count -gt 0) {
         Add-Result ("PASS per-source FTP scan logged: " + ($ftpScanLine[-1] -replace '^\s+',''))
     } else {
         Add-Result "FAIL no per-source FTP scan count found"
     }
 
-    # discover server location
+    # FIX (crash site): join multi-line curl output before -match, and read
+    # matches from a local capture group instead of the shared $Matches
+    # automatic variable, which is only populated for scalar -match input.
     $locFound = $false
     $location = $null
     for ($attempt = 1; $attempt -le 10; $attempt++) {
-        $locationSearch = & curl.exe -sS --max-time 5 "http://127.0.0.1:$serverPort/description.xml" 2>&1
-        if ($LASTEXITCODE -eq 0 -and $locationSearch -match '<URLBase>([^<]+)</URLBase>') {
-            $location = $Matches[1]
-            $locFound = $true
-            break
+        $locationSearchText = (& curl.exe -sS --max-time 5 "http://127.0.0.1:$serverPort/description.xml" 2>&1 | Out-String)
+        if ($LASTEXITCODE -eq 0) {
+            $urlBaseMatch = [regex]::Match($locationSearchText, '<URLBase>([^<]+)</URLBase>')
+            if ($urlBaseMatch.Success) {
+                $location = $urlBaseMatch.Groups[1].Value
+                $locFound = $true
+                break
+            }
         }
         Start-Sleep -Milliseconds 500
     }
-    # Also try the machine's IP addresses if 127.0.0.1 fails
     if (-not $locFound) {
         $localIPs = @("172.29.112.1", "192.168.100.163")
         foreach ($ip in $localIPs) {
-            $locationSearch = & curl.exe -sS --max-time 5 "http://${ip}:$serverPort/description.xml" 2>&1
-            if ($LASTEXITCODE -eq 0 -and $locationSearch -match '<URLBase>([^<]+)</URLBase>') {
-                $location = $Matches[1]
-                $locFound = $true
-                break
+            $locationSearchText = (& curl.exe -sS --max-time 5 "http://${ip}:$serverPort/description.xml" 2>&1 | Out-String)
+            if ($LASTEXITCODE -eq 0) {
+                $urlBaseMatch = [regex]::Match($locationSearchText, '<URLBase>([^<]+)</URLBase>')
+                if ($urlBaseMatch.Success) {
+                    $location = $urlBaseMatch.Groups[1].Value
+                    $locFound = $true
+                    break
+                }
             }
         }
     }
@@ -233,9 +266,10 @@ try {
         Add-Result "FAIL could not retrieve description.xml"
         throw "Discovery failed"
     }
-    Add-Result "PASS description.xml retrieved, URLBase=$location"
+    # URLBase from description.xml is host:port without scheme; construct full control URL
+    $controlUrl = "http://$location/upnp/control/content_directory"
+    Add-Result "PASS description.xml retrieved, controlUrl=$controlUrl"
 
-    # Browse root for containers
     $soapBody = @"
 <?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
@@ -251,81 +285,77 @@ try {
   </s:Body>
 </s:Envelope>
 "@
-    $controlUrl = $location -replace "/description\.xml$", "/upnp/control/content_directory" -replace "/device\.xml$", "/upnp/control/content_directory"
     $rootBrowse = Invoke-SoapCurl $controlUrl $soapBody
     $decodedRoot = [System.Net.WebUtility]::HtmlDecode($rootBrowse)
 
-    # find FTP playlist container in root
-    $ftpContainerPattern = '<container id="(\d+)"[^>]*>(?:(?!</container>)[\s\S])*?<dc:title>playlist_remote.m3u8</dc:title>'
+    $ftpContainerPattern = '<container id="(\d+)"[^>]*>(?:(?!</container>)[\s\S])*?<dc:title>' + [regex]::Escape($script:ftpSourceName) + '</dc:title>'
     $ftpContainerMatch = [regex]::Match($decodedRoot, $ftpContainerPattern)
     if (-not $ftpContainerMatch.Success) {
-        Add-Result "FAIL FTP playlist container 'playlist_remote.m3u8' not found in root Browse"
+        Add-Result "FAIL FTP playlist container '$($script:ftpSourceName)' not found in root Browse"
         throw "FTP container missing"
     }
     $ftpContainerId = $ftpContainerMatch.Groups[1].Value
     Add-Result "PASS FTP playlist container found in root Browse (id=$ftpContainerId)"
 
-    # Browse into FTP container: expect nested variant playlist containers
     $ftpChildBody = $soapBody -replace "<ObjectID>0</ObjectID>", "<ObjectID>$ftpContainerId</ObjectID>"
     $ftpChildBrowse = Invoke-SoapCurl $controlUrl $ftpChildBody
     $decodedFtpChild = [System.Net.WebUtility]::HtmlDecode($ftpChildBrowse)
 
-    # extract all container IDs from FTP child browse (nested variant playlists)
+    # A source manifest detected as HLS is exposed as a single leaf <item>
+    # directly under this container (see AddHlsStreamItem in
+    # src/media_sources.cpp / src/posix_media_sources.cpp) rather than as
+    # nested variant <container> entries. Handle both shapes instead of
+    # assuming nested containers always exist.
     $childContainers = [regex]::Matches($decodedFtpChild, 'container id="(\d+)"')
-    if ($childContainers.Count -eq 0) {
-        Add-Result "FAIL no nested containers found inside FTP playlist"
-        throw "No nested containers"
-    }
-    Add-Result "PASS found $($childContainers.Count) nested container(s) inside FTP playlist"
+    $directResMatches = [regex]::Matches($decodedFtpChild, '<res[^>]*protocolInfo="[^"]*"[^>]*>([^<]+)</res>')
 
-    # walk into first nested container, recurse until we find a media item (res)
-    $currentContainerId = $childContainers[0].Groups[1].Value
-    $depth = 0
-    $maxDepth = 10
     $foundMediaId = $null
     $foundMediaUrl = $null
 
-    while ($depth -lt $maxDepth -and -not $foundMediaId) {
-        $depth++
-        $browseBody = $soapBody -replace "<ObjectID>0</ObjectID>", "<ObjectID>$currentContainerId</ObjectID>"
-        $browseResult = Invoke-SoapCurl $controlUrl $browseBody
-        $decodedResult = [System.Net.WebUtility]::HtmlDecode($browseResult)
+    if ($directResMatches.Count -gt 0) {
+        $foundMediaUrl = $directResMatches[0].Groups[1].Value
+        $itemIdMatch = [regex]::Match($decodedFtpChild, 'item id="(\d+)"')
+        if ($itemIdMatch.Success) { $foundMediaId = $itemIdMatch.Groups[1].Value }
+        Add-Result "PASS found media directly under FTP playlist container id=$ftpContainerId (single-manifest/HLS shape)"
+    } elseif ($childContainers.Count -gt 0) {
+        Add-Result "PASS found $($childContainers.Count) nested container(s) inside FTP playlist"
+        $currentContainerId = $childContainers[0].Groups[1].Value
+        $depth = 0
+        $maxDepth = 10
+        while ($depth -lt $maxDepth -and -not $foundMediaId) {
+            $depth++
+            $browseBody = $soapBody -replace "<ObjectID>0</ObjectID>", "<ObjectID>$currentContainerId</ObjectID>"
+            $browseResult = Invoke-SoapCurl $controlUrl $browseBody
+            $decodedResult = [System.Net.WebUtility]::HtmlDecode($browseResult)
 
-        # look for both containers and res items
-        $resMatches = [regex]::Matches($decodedResult, '<res[^>]*protocolInfo="[^"]*"[^>]*>([^<]+)</res>')
-        $nextContainers = [regex]::Matches($decodedResult, 'container id="(\d+)"')
+            $resMatches = [regex]::Matches($decodedResult, '<res[^>]*protocolInfo="[^"]*"[^>]*>([^<]+)</res>')
+            $nextContainers = [regex]::Matches($decodedResult, 'container id="(\d+)"')
 
-        if ($resMatches.Count -gt 0) {
-            $foundMediaUrl = $resMatches[0].Groups[1].Value
-            # extract item id from parent id pattern or id attribute
-            $itemIdMatch = [regex]::Match($decodedResult, 'item id="(\d+)"')
-            if ($itemIdMatch.Success) {
-                $foundMediaId = $itemIdMatch.Groups[1].Value
-            } else {
-                # fallback: use URL-based access
-                $foundMediaId = "url"
+            if ($resMatches.Count -gt 0) {
+                $foundMediaUrl = $resMatches[0].Groups[1].Value
+                $itemIdMatch = [regex]::Match($decodedResult, 'item id="(\d+)"')
+                if ($itemIdMatch.Success) { $foundMediaId = $itemIdMatch.Groups[1].Value }
+                Add-Result "PASS found media at depth $depth in container id=$currentContainerId"
+                Add-Result "INFO media URL: $foundMediaUrl"
+                break
             }
-            Add-Result "PASS found media at depth $depth in container id=$currentContainerId"
-            Add-Result "INFO media URL: $foundMediaUrl"
+            if ($nextContainers.Count -gt 0) {
+                $currentContainerId = $nextContainers[0].Groups[1].Value
+                Add-Result "INFO depth ${depth}: container id=$currentContainerId (descending further)"
+                continue
+            }
+            Add-Result "FAIL depth ${depth}: container id=$currentContainerId empty (no res, no sub-containers)"
             break
         }
-
-        if ($nextContainers.Count -gt 0) {
-            $currentContainerId = $nextContainers[0].Groups[1].Value
-            Add-Result "INFO depth ${depth}: container id=$currentContainerId (descending further)"
-            continue
-        }
-
-        Add-Result "FAIL depth ${depth}: container id=$currentContainerId empty (no res, no sub-containers)"
-        break
+    } else {
+        Add-Result "FAIL FTP playlist container id=$ftpContainerId has neither a direct media item nor nested containers"
     }
 
     if (-not $foundMediaId) {
-        Add-Result "FAIL could not find any playable media item in nested playlist tree"
+        Add-Result "FAIL could not find any playable media item in FTP playlist tree"
         throw "No media found"
     }
 
-    # HTTP GET the media through server proxy
     $mediaProxyUrl = "http://127.0.0.1:$serverPort/media/$foundMediaId"
     $getStatus = Invoke-HttpGet $mediaProxyUrl
     if ($getStatus -eq "200") {
@@ -334,7 +364,6 @@ try {
         Add-Result "FAIL media HTTP GET returned status $getStatus at $mediaProxyUrl"
     }
 
-    # Range request on media via proxy
     $rangeResult = Invoke-HttpGetRange $mediaProxyUrl 0 1023
     $rangeParts = $rangeResult -split ' '
     $rangeStatus = $rangeParts[0]
@@ -345,10 +374,8 @@ try {
         Add-Result "WARN media range GET returned $rangeResult at $mediaProxyUrl"
     }
 
-    # verify FTP password absent from debug log
     $ftpCredMatch = [regex]::Match($FtpSourceUrl, 'ftp://([^:]+):([^@]+)@')
     if ($ftpCredMatch.Success) {
-        $ftpUser = $ftpCredMatch.Groups[1].Value
         $ftpPass = $ftpCredMatch.Groups[2].Value
         $fullLog = Read-DebugLog
         if ($fullLog -match [regex]::Escape($ftpPass)) {
