@@ -341,12 +341,14 @@ std::string ContentDirectory::GetDeviceDescriptionXML() {
     std::string manufacturer = XMLEscapeUtf8(WideToUtf8(cfg.deviceManufacturer));
     std::string modelName = XMLEscapeUtf8(WideToUtf8(cfg.deviceModelName));
     std::string presentationUrl = XMLEscapeUtf8(WideToUtf8(cfg.presentationUrl));
+    std::string endpoint = WideToUtf8(Server::Get().GetEndpoint());
 
     std::stringstream ss;
     ss << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
        << "<root xmlns=\"urn:schemas-upnp-org:device-1-0\" xmlns:dlna=\"urn:schemas-dlna-org:device-1-0\">\n"
-       << "  <specVersion><major>1</major><minor>0</minor></specVersion>\n"
-       << "  <device>\n"
+       << "  <URLBase>" << endpoint << "</URLBase>\n";
+    ss << "  <device>\n"
+       << "    <specVersion><major>1</major><minor>0</minor></specVersion>\n"
        << "    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>\n"
        << "    <friendlyName>" << serverName << "</friendlyName>\n"
        << "    <manufacturer>" << manufacturer << "</manufacturer>\n"
