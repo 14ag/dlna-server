@@ -334,19 +334,17 @@ ContentDirectory& ContentDirectory::Get() {
     return instance;
 }
 
-std::string ContentDirectory::GetDeviceDescriptionXML() {
+std::string ContentDirectory::GetDeviceDescriptionXML(const std::string& hostUrl) {
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     std::string deviceUUID = XMLEscapeUtf8(WideToUtf8(cfg.deviceUUID));
     std::string serverName = XMLEscapeUtf8(WideToUtf8(cfg.serverName));
     std::string manufacturer = XMLEscapeUtf8(WideToUtf8(cfg.deviceManufacturer));
     std::string modelName = XMLEscapeUtf8(WideToUtf8(cfg.deviceModelName));
     std::string presentationUrl = XMLEscapeUtf8(WideToUtf8(cfg.presentationUrl));
-    std::string endpoint = WideToUtf8(Server::Get().GetEndpoint());
-
     std::stringstream ss;
     ss << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
        << "<root xmlns=\"urn:schemas-upnp-org:device-1-0\" xmlns:dlna=\"urn:schemas-dlna-org:device-1-0\">\n"
-       << "  <URLBase>" << endpoint << "</URLBase>\n";
+       << "  <URLBase>http://" << hostUrl << "</URLBase>\n";
     ss << "  <device>\n"
        << "    <specVersion><major>1</major><minor>0</minor></specVersion>\n"
        << "    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>\n"

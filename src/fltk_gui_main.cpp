@@ -431,7 +431,7 @@ private:
             savedCount = cfg.mediaSources.size();
         });
         AppConfig.Save();
-        AppMedia.Scan();
+        DLNAServer.Rescan();
         LogPrint(L"Saved %d media source(s).", static_cast<int>(savedCount));
     }
 

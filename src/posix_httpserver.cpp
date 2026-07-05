@@ -363,7 +363,7 @@ ScopedFd client(clientSocket);
 
         if (method == "GET" || method == "HEAD") {
             if (path == "/description.xml") {
-                sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetDeviceDescriptionXML());
+                sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetDeviceDescriptionXML(hostUrl));
                 if (!keepAlive) return;
                 continue;
             }
@@ -484,11 +484,7 @@ ScopedFd client(clientSocket);
                         if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
                         remaining -= chunk;
                     }
-                    if (method == "GET") {
-                        if (remaining > 0 || !keepAlive) return;
-                        continue;
-                    }
-                    if (!keepAlive) return;
+                    if (remaining > 0 || !keepAlive) return;
                     continue;
             }
             if (path.rfind("/subtitle/", 0) == 0) {
