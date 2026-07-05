@@ -153,11 +153,16 @@ namespace {
 SOCKET CreateListenSocket(int family, int port) {
     SOCKET listenSocket = socket(family, SOCK_STREAM, IPPROTO_TCP);
     if (listenSocket == INVALID_SOCKET) {
+        LogPrint(L"HTTP listen socket creation failed family=%d err=%d", family, WSAGetLastError());
         return INVALID_SOCKET;
     }
 
-    BOOL reuse = TRUE;
-    setsockopt(listenSocket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+    // exclusive flag stops a second process from silently binding over
+    // this port while this process still owns it
+    // a plain reuseaddr flag on windows would allow that and route
+    // connections to either listener with no guarantee which one wins
+    BOOL exclusive = TRUE;
+    setsockopt(listenSocket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
 
     if (family == AF_INET6) {
         DWORD v6Only = 1;
@@ -171,6 +176,7 @@ SOCKET CreateListenSocket(int family, int port) {
         addr.sin_addr.s_addr = INADDR_ANY;
 
         if (bind(listenSocket, reinterpret_cast<SOCKADDR*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+            LogPrint(L"HTTP listen bind failed family=%d port=%d err=%d", family, port, WSAGetLastError());
             closesocket(listenSocket);
             return INVALID_SOCKET;
         }
@@ -181,12 +187,14 @@ SOCKET CreateListenSocket(int family, int port) {
         addr6.sin6_addr = in6addr_any;
 
         if (bind(listenSocket, reinterpret_cast<SOCKADDR*>(&addr6), sizeof(addr6)) == SOCKET_ERROR) {
+            LogPrint(L"HTTP listen bind failed family=%d port=%d err=%d", family, port, WSAGetLastError());
             closesocket(listenSocket);
             return INVALID_SOCKET;
         }
     }
 
     if (listen(listenSocket, SOMAXCONN) == SOCKET_ERROR) {
+        LogPrint(L"HTTP listen call failed family=%d port=%d err=%d", family, port, WSAGetLastError());
         closesocket(listenSocket);
         return INVALID_SOCKET;
     }
@@ -216,7 +224,14 @@ bool HttpServer::Start(int port) {
     m_listenSocketV6 = CreateListenSocket(AF_INET6, port);
 
     if (m_listenSocketV4 == INVALID_SOCKET && m_listenSocketV6 == INVALID_SOCKET) {
+        LogPrint(L"HTTP server failed to bind on both address families for port %d", port);
         return false;
+    }
+    if (m_listenSocketV4 == INVALID_SOCKET) {
+        LogPrint(L"HTTP server bound ipv6 only on port %d ipv4 was unavailable", port);
+    }
+    if (m_listenSocketV6 == INVALID_SOCKET) {
+        LogPrint(L"HTTP server bound ipv4 only on port %d ipv6 was unavailable", port);
     }
 
     m_threadPool = CreateThreadpool(NULL);

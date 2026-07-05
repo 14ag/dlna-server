@@ -58,6 +58,20 @@ function Read-DebugLog {
     Get-Content -LiteralPath $debugLogPath -Encoding UTF8 -Raw -ErrorAction SilentlyContinue
 }
 
+function Wait-PortReleased {
+    param([int]$Port, [int]$TimeoutSeconds = 15)
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $listeners = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue
+        if (-not $listeners) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 300
+    }
+    return $false
+}
+
 function Find-LogLines {
     param([string]$pattern)
     $log = Read-DebugLog
@@ -103,9 +117,23 @@ try {
     Add-Result "=== agentic FTP nested playlist access test ==="
     Add-Result "INFO FtpSourceUrl=$FtpSourceUrl port=$serverPort"
 
-    # stop any lingering process
-    Get-Process -Name "DLNA Server" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
+    # stop any lingering process and wait for it to fully exit
+    # a stale listener on this exact port is the root cause this test now
+    # guards against see the accompanying root cause document for details
+    $lingering = Get-Process -Name "DLNA Server" -ErrorAction SilentlyContinue
+    foreach ($proc in $lingering) {
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        try {
+            Wait-Process -Id $proc.Id -Timeout 10 -ErrorAction SilentlyContinue
+        } catch {
+        }
+    }
+
+    if (-not (Wait-PortReleased -Port $serverPort -TimeoutSeconds 15)) {
+        $stale = Get-NetTCPConnection -State Listen -LocalPort $serverPort -ErrorAction SilentlyContinue
+        $stalePids = ($stale | Select-Object -ExpandProperty OwningProcess -Unique) -join " "
+        throw "port $serverPort is still held by pid(s) $stalePids after stop attempt this is the stale listener conflict described in the root cause document"
+    }
 
     # prepare config
     if (Test-Path $configPath) { Remove-Item -LiteralPath $configPath -Force }
@@ -121,6 +149,34 @@ try {
         Remove-Item Env:\DLNA_SERVER_SKIP_FIREWALL -ErrorAction SilentlyContinue
     }
     Add-Result "INFO server PID=$($serverProc.Id)"
+
+    # confirm this process and only this process owns the listening socket
+    # before waiting on the scan or attempting any http call
+    $ownerDeadline = (Get-Date).AddSeconds(15)
+    $ownerConfirmed = $false
+    while ((Get-Date) -lt $ownerDeadline) {
+        $listeners = Get-NetTCPConnection -State Listen -LocalPort $serverPort -ErrorAction SilentlyContinue
+        if ($listeners) {
+            $others = $listeners | Where-Object { $_.OwningProcess -ne $serverProc.Id }
+            if ($others) {
+                $otherPids = ($others | Select-Object -ExpandProperty OwningProcess -Unique) -join " "
+                throw "port $serverPort is also held by pid(s) $otherPids while our pid is $($serverProc.Id) this is the stale listener conflict described in the root cause document"
+            }
+            $mine = $listeners | Where-Object { $_.OwningProcess -eq $serverProc.Id }
+            if ($mine) {
+                $ownerConfirmed = $true
+                break
+            }
+        }
+        if ($serverProc.HasExited) {
+            throw "server process exited before binding port $serverPort check debug log for HTTP listen bind failed or HTTP server failed to bind"
+        }
+        Start-Sleep -Milliseconds 300
+    }
+    if (-not $ownerConfirmed) {
+        throw "server process $($serverProc.Id) never became the sole listener on port $serverPort within 15 seconds"
+    }
+    Add-Result "PASS port $serverPort owned exclusively by pid $($serverProc.Id)"
 
     # wait for scan completion (aggregate log line)
     $scanDeadline = [datetime]::UtcNow.AddSeconds(120)
