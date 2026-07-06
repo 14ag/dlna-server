@@ -486,6 +486,7 @@ ScopedFd client(clientSocket);
                     }
                     if (remaining > 0 || !keepAlive) return;
                     continue;
+                }
             }
             if (path.rfind("/subtitle/", 0) == 0) {
                 int mediaId = -1;

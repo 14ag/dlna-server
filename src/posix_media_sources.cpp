@@ -297,41 +297,86 @@ void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cf
         return;
     }
 
-    if (IsHlsPlaylistSource(playlistPath)) {
-        LogPrint(L"Detected HLS manifest, exposing as a single stream: %ls", RedactUrlForLog(playlistPath).c_str());
-        AddHlsStreamItem(state, playlistPath, parentId);
-        return;
-    }
-
-    bool fetchFailed = false;
-    auto entries = LoadPlaylistEntries(playlistPath, &fetchFailed);
-    if (entries.empty() && fetchFailed) {
+    FetchedPlaylist fetched = FetchPlaylistOnce(playlistPath);
+    if (!fetched.fetchOk) {
         LogPrint(L"[media:fetch-failed] Playlist could not be fetched; treating as unavailable rather than empty: %ls", RedactUrlForLog(playlistPath).c_str());
         if (state.mediaDatabase) {
             state.mediaDatabase->RecordScanError(BuildStableContainerKey(parentId, SourceStemName(playlistPath), playlistPath, g_canonicalize), L"Playlist fetch failed");
         }
         return;
     }
+
+    if (fetched.isHls) {
+        // RFC 8216: this file is a Master or Media Playlist (contains at least
+        // one #EXT-X- tag) Its Media Segments exist purely so an HLS-aware
+        // player can fetch them itself they must NOT be enumerated as separate
+        // DLNA items or a UPnP renderer will play each segment as its own
+        // track with a stall at every boundary Expose the manifest itself as
+        // one playable resource
+        LogPrint(L"Detected HLS manifest, exposing as a single stream: %ls", RedactUrlForLog(playlistPath).c_str());
+        AddHlsStreamItem(state, playlistPath, parentId);
+        return;
+    }
+
+    auto entries = ParseFetchedPlaylistText(playlistPath, fetched.text);
     LogPrint(L"Loaded %d entries from playlist: %ls", static_cast<int>(entries.size()), RedactUrlForLog(playlistPath).c_str());
     for (const auto& entry : entries) {
         if (IsPlaylistSourcePath(entry.location)) {
-            if (IsHlsPlaylistSource(entry.location)) {
-                LogPrint(L"Detected HLS manifest, exposing as a single stream: %ls", RedactUrlForLog(entry.location).c_str());
-                AddHlsStreamItem(state, entry.location, parentId, entry.title);
-                continue;
-            }
-            MediaItem playlistFolder{};
-            playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.location), entry.location, g_canonicalize);
-            playlistFolder.parentId = parentId;
-            playlistFolder.path = entry.location;
-            playlistFolder.title = entry.title.empty() ? SourceStemName(entry.location) : entry.title;
-            playlistFolder.isFolder = true;
-            playlistFolder.upnpClass = L"object.container.storageFolder";
-            state.items.push_back(playlistFolder);
-            ScanPlaylist(state, cfg, entry.location, playlistFolder.id, depth + 1);
+            ScanPlaylistEntry(state, cfg, entry.location, entry.title, parentId, depth + 1);
             continue;
         }
         AddMediaFile(state, cfg, entry.location, parentId, entry.title, entry.subtitlePath);
+    }
+}
+
+void MediaSources::ScanPlaylistEntry(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& location, const std::wstring& titleOverride, int parentId, int depth) {
+    if (depth > 8) {
+        LogPrint(L"%ls Skipping playlist due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(location).c_str());
+        return;
+    }
+
+    FetchedPlaylist fetched = FetchPlaylistOnce(location);
+    if (!fetched.fetchOk) {
+        LogPrint(L"[media:fetch-failed] Playlist could not be fetched; treating as unavailable rather than empty: %ls", RedactUrlForLog(location).c_str());
+        if (state.mediaDatabase) {
+            state.mediaDatabase->RecordScanError(BuildStableContainerKey(parentId, SourceStemName(location), location, g_canonicalize), L"Playlist fetch failed");
+        }
+        return;
+    }
+
+    if (fetched.isHls) {
+        // The referenced .m3u8/.m3u/.pls is itself an HLS manifest
+        // Do not wrap it in its own container a container whose only
+        // possible child is one manifest item with no size or duration
+        // adds a browse hop with nothing distinguishable inside it
+        // Register the manifest directly under the CURRENT container
+        LogPrint(L"Detected HLS manifest, exposing as a single stream: %ls", RedactUrlForLog(location).c_str());
+        AddHlsStreamItem(state, location, parentId, titleOverride);
+        return;
+    }
+
+    auto entries = ParseFetchedPlaylistText(location, fetched.text);
+    if (entries.empty()) {
+        // nothing to show do not advertise an empty folder to clients
+        LogPrint(L"Skipping nested playlist with no usable entries: %ls", RedactUrlForLog(location).c_str());
+        return;
+    }
+
+    MediaItem playlistFolder;
+    playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(location), location, g_canonicalize);
+    playlistFolder.parentId = parentId;
+    playlistFolder.path = location;
+    playlistFolder.title = titleOverride.empty() ? SourceStemName(location) : titleOverride;
+    playlistFolder.isFolder = true;
+    playlistFolder.upnpClass = L"object.container.storageFolder";
+    state.items.push_back(playlistFolder);
+
+    for (const auto& entry : entries) {
+        if (IsPlaylistSourcePath(entry.location)) {
+            ScanPlaylistEntry(state, cfg, entry.location, entry.title, playlistFolder.id, depth + 1);
+            continue;
+        }
+        AddMediaFile(state, cfg, entry.location, playlistFolder.id, entry.title, entry.subtitlePath);
     }
 }
 

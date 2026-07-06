@@ -63,7 +63,6 @@ const ExtensionFormat kFormats[] = {
     { L".flv",  L"video/x-flv",             L"object.item.videoItem",             "", true },
     { L".3gp",  L"video/3gpp",              L"object.item.videoItem",             "", true },
     { L".3g2",  L"video/3gpp2",             L"object.item.videoItem",             "", true },
-    { L".m3u",  L"audio/x-mpegurl",   L"object.item.audioItem.musicTrack",  "", false },
     { L".mp3",  L"audio/mpeg",          L"object.item.audioItem.musicTrack",  "MP3", true },
     { L".flac", L"audio/flac",              L"object.item.audioItem.musicTrack",  "", true },
     { L".m4a",  L"audio/mp4",               L"object.item.audioItem.musicTrack",  "AAC_ISO_320", true },

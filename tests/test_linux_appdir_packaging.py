@@ -180,7 +180,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("DLNAServer.Start()", gui_source)
         self.assertIn("DLNAServer.Stop()", gui_source)
         self.assertIn("AppConfig.Save()", gui_source)
-        self.assertIn("AppMedia.Scan()", gui_source)
+        self.assertIn("DLNAServer.Rescan()", gui_source)
 
     def test_fltk_settings_and_log_dialogs_have_parity_controls(self):
         gui_source = self.read("src/fltk_gui_main.cpp")
