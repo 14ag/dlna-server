@@ -394,8 +394,10 @@ ScopedFd client(clientSocket);
                     return;
                 }
                 MediaItem item = AppMedia.GetItem(mediaId);
-                if (item.id != -1 && IsRemoteMediaUrl(item.path)) {
-                    long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
+                if (item.id != -1) {
+                    LogPrint(L"HTTP media request: id=%d path=%ls", mediaId, item.path.c_str());
+                    if (IsRemoteMediaUrl(item.path)) {
+                        long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
                     std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
                     bool hasKnownSize = fileSize > 0;
                     HttpByteRange parsedRange;
@@ -405,9 +407,6 @@ ScopedFd client(clientSocket);
                             SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(fileSize) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                             return;
                         }
-                    } else if (!rangeHeader.empty()) {
-                        SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                        return;
                     }
 
                     bool partial = hasKnownSize && parsedRange.requested;
@@ -417,33 +416,81 @@ ScopedFd client(clientSocket);
                     headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
                     if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << fileSize << "\r\n";
                     headers << "Content-Type: " << WideToUtf8(item.mimeType) << "\r\n";
+                    
+                    bool spoofSamsung = false;
+                    if (!hasKnownSize) {
+                        std::string ua = FindHeaderValueCaseInsensitive(req, "User-Agent");
+                        if (ua.empty() || ua.find("SEC_HHP_") != std::string::npos) {
+                            spoofSamsung = true;
+                        }
+                    }
+
                     if (hasKnownSize) {
                         headers << "Content-Length: " << (end - start + 1) << "\r\n"
                                 << "Accept-Ranges: bytes\r\n";
+                    } else if (spoofSamsung) {
+                        headers << "Content-Length: 1073741824\r\n"
+                                << "Accept-Ranges: none\r\n";
                     } else {
                         headers << "Accept-Ranges: none\r\n";
                     }
                     headers << ConnectionHeader(keepAlive)
                             << "transferMode.dlna.org: Streaming\r\n"
-                            << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize) << "\r\n\r\n";
-                    SendAll(clientSocket, headers.str());
-                    if (method == "GET") {
-                        SetSocketStreamTimeouts(clientSocket);
-                        bool remoteOk = StreamRemoteContent(item.path, partial, start, end, [&](const char* data, size_t length) {
-                            const char* p = data;
-                            size_t remaining = length;
-                            while (remaining > 0) {
-                                ssize_t sent = send(clientSocket, p, remaining, MSG_NOSIGNAL);
-                                if (sent <= 0) return false;
-                                p += sent;
-                                remaining -= static_cast<size_t>(sent);
-                            }
-                            return m_running.load();
-                        });
-                        if (!remoteOk || !keepAlive) return;
+                            << "contentFeatures.dlna.org: " << (item.mimeType == L"application/vnd.apple.mpegurl" ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize)) << "\r\n";
+
+                    std::vector<std::string> proxyReqHeaders;
+                    if (FindHeaderValueCaseInsensitive(req, "Icy-MetaData") == "1") {
+                        proxyReqHeaders.push_back("Icy-MetaData: 1");
+                    }
+
+                    if (method != "GET") {
+                        headers << "\r\n";
+                        SendAll(clientSocket, headers.str());
+                        if (!keepAlive) return;
                         continue;
                     }
-                    if (!keepAlive) return;
+
+                    SetSocketStreamTimeouts(clientSocket);
+                    bool headersSent = false;
+                    std::string baseHeaders = headers.str();
+
+                    auto onRemoteHeader = [&](const std::string& key, const std::string& value) {
+                        if (headersSent) return;
+                        if (key.empty() && value.empty()) {
+                            baseHeaders += "\r\n";
+                            SendAll(clientSocket, baseHeaders);
+                            headersSent = true;
+                            return;
+                        }
+                        std::string lowerKey = ToLowerAscii(key);
+                        if (lowerKey.find("icy-") == 0) {
+                            baseHeaders += key + ": " + value + "\r\n";
+                        }
+                    };
+
+                    bool remoteOk = StreamRemoteContent(item.path, partial, start, end, [&](const char* data, size_t length) {
+                        if (!headersSent) {
+                            baseHeaders += "\r\n";
+                            SendAll(clientSocket, baseHeaders);
+                            headersSent = true;
+                        }
+                        const char* p = data;
+                        size_t remaining = length;
+                        while (remaining > 0) {
+                            ssize_t sent = send(clientSocket, p, remaining, MSG_NOSIGNAL);
+                            if (sent <= 0) return false;
+                            p += sent;
+                            remaining -= static_cast<size_t>(sent);
+                        }
+                        return m_running.load();
+                    }, proxyReqHeaders, onRemoteHeader);
+                    
+                    if (!headersSent) {
+                        baseHeaders += "\r\n";
+                        SendAll(clientSocket, baseHeaders);
+                    }
+
+                    if (!remoteOk || !keepAlive) return;
                     continue;
                 }
                 ScopedFd fd(item.id == -1 ? -1 : open(WideToUtf8(item.path).c_str(), O_RDONLY));
@@ -472,7 +519,7 @@ ScopedFd client(clientSocket);
                         << "Accept-Ranges: bytes\r\n"
                         << ConnectionHeader(keepAlive)
                         << "transferMode.dlna.org: Streaming\r\n"
-                        << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n\r\n";
+                        << "contentFeatures.dlna.org: " << (item.mimeType == L"application/vnd.apple.mpegurl" ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true)) << "\r\n\r\n";
                 SendAll(clientSocket, headers.str());
                 if (method == "GET") {
                     SetSocketStreamTimeouts(clientSocket);

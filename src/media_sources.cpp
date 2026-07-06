@@ -293,6 +293,7 @@ void MediaSources::AddHlsStreamItem(MediaIndexState& state, const std::wstring& 
     hlsItem.path = path;
     hlsItem.isFolder = false;
     // IANA-registered media type for HTTP Live Streaming playlists
+    // IANA-registered media type for HTTP Live Streaming playlists
     // RFC 8216 section 11 1 application/vnd.apple.mpegurl
     hlsItem.mimeType = L"application/vnd.apple.mpegurl";
     hlsItem.upnpClass = L"object.item.videoItem";
@@ -339,7 +340,18 @@ void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cf
             ScanPlaylistEntry(state, cfg, entry.location, entry.title, parentId, depth + 1);
             continue;
         }
-        AddMediaFile(state, cfg, entry.location, parentId, entry.title, entry.subtitlePath);
+        bool addedAsHls = false;
+        if (IsRemoteMediaUrl(entry.location) && SourceExtension(entry.location).empty()) {
+            FetchedPlaylist childFetch = FetchPlaylistOnce(entry.location);
+            if (childFetch.isHls) {
+                LogPrint(L"Detected HLS manifest from extensionless URL in playlist: %ls", RedactUrlForLog(entry.location).c_str());
+                AddHlsStreamItem(state, entry.location, parentId);
+                addedAsHls = true;
+            }
+        }
+        if (!addedAsHls) {
+            AddMediaFile(state, cfg, entry.location, parentId, entry.title, entry.subtitlePath);
+        }
     }
 }
 
@@ -402,15 +414,32 @@ void MediaSources::ScanNetworkFolder(MediaIndexState& state, const ConfigSnapsho
 
     for (const auto& entry : ListRemoteDirectory(folderUrl)) {
         if (IsPlaylistSourcePath(entry.url)) {
-            MediaItem playlistFolder;
-            playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.name), entry.url, g_canonicalize);
-            playlistFolder.parentId = parentId;
-            playlistFolder.path = entry.url;
-            playlistFolder.title = SourceStemName(entry.name);
-            playlistFolder.isFolder = true;
-            playlistFolder.upnpClass = L"object.container.storageFolder";
-            state.items.push_back(playlistFolder);
-            ScanPlaylist(state, cfg, entry.url, playlistFolder.id);
+            FetchedPlaylist fetched = FetchPlaylistOnce(entry.url);
+            if (!fetched.fetchOk) {
+                LogPrint(L"[media:fetch-failed] Playlist could not be fetched: %ls", RedactUrlForLog(entry.url).c_str());
+            } else if (fetched.isHls) {
+                LogPrint(L"Detected HLS manifest in network folder, exposing as single stream: %ls", RedactUrlForLog(entry.url).c_str());
+                AddHlsStreamItem(state, entry.url, parentId, SourceStemName(entry.name));
+            } else {
+                auto entries = ParseFetchedPlaylistText(entry.url, fetched.text);
+                if (!entries.empty()) {
+                    MediaItem playlistFolder;
+                    playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.name), entry.url, g_canonicalize);
+                    playlistFolder.parentId = parentId;
+                    playlistFolder.path = entry.url;
+                    playlistFolder.title = SourceStemName(entry.name);
+                    playlistFolder.isFolder = true;
+                    playlistFolder.upnpClass = L"object.container.storageFolder";
+                    state.items.push_back(playlistFolder);
+                    for (const auto& e : entries) {
+                        if (IsPlaylistSourcePath(e.location)) {
+                            ScanPlaylistEntry(state, cfg, e.location, e.title, playlistFolder.id, 1);
+                            continue;
+                        }
+                        AddMediaFile(state, cfg, e.location, playlistFolder.id, e.title, e.subtitlePath);
+                    }
+                }
+            }
             continue;
         }
 
@@ -478,15 +507,34 @@ void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg,
             }
         } else {
             if (IsPlaylistSourcePath(fullPath)) {
-                MediaItem playlistFolder;
-                playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(fullPath), fullPath, g_canonicalize);
-                playlistFolder.parentId = parentId;
-                playlistFolder.path = fullPath;
-                playlistFolder.title = SourceStemName(fullPath);
-                playlistFolder.isFolder = true;
-                playlistFolder.upnpClass = L"object.container.storageFolder";
-                state.items.push_back(playlistFolder);
-                ScanPlaylist(state, cfg, fullPath, playlistFolder.id);
+                // Peek before creating container: HLS manifests must not get
+                // wrapped in a folder (android h() method never does this).
+                FetchedPlaylist fetched = FetchPlaylistOnce(fullPath);
+                if (!fetched.fetchOk) {
+                    LogPrint(L"[media:fetch-failed] Playlist could not be fetched: %ls", fullPath.c_str());
+                } else if (fetched.isHls) {
+                    LogPrint(L"Detected HLS manifest in folder, exposing as single stream: %ls", fullPath.c_str());
+                    AddHlsStreamItem(state, fullPath, parentId);
+                } else {
+                    auto entries = ParseFetchedPlaylistText(fullPath, fetched.text);
+                    if (!entries.empty()) {
+                        MediaItem playlistFolder;
+                        playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(fullPath), fullPath, g_canonicalize);
+                        playlistFolder.parentId = parentId;
+                        playlistFolder.path = fullPath;
+                        playlistFolder.title = SourceStemName(fullPath);
+                        playlistFolder.isFolder = true;
+                        playlistFolder.upnpClass = L"object.container.storageFolder";
+                        state.items.push_back(playlistFolder);
+                        for (const auto& entry : entries) {
+                            if (IsPlaylistSourcePath(entry.location)) {
+                                ScanPlaylistEntry(state, cfg, entry.location, entry.title, playlistFolder.id, 1);
+                                continue;
+                            }
+                            AddMediaFile(state, cfg, entry.location, playlistFolder.id, entry.title, entry.subtitlePath);
+                        }
+                    }
+                }
             } else {
                 AddMediaFile(state, cfg, fullPath, parentId);
             }
