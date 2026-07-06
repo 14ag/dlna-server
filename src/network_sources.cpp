@@ -369,6 +369,11 @@ std::vector<PlaylistEntry> ParseM3u(const std::wstring& playlistPath, const std:
         pendingTitle.clear();
         pendingSubtitle.clear();
     }
+    if (!pendingTitle.empty() || !pendingSubtitle.empty()) {
+        // an EXTINF or subtitle directive was the last thing in the file with
+        // no URI line after it so it has no entry to attach to
+        LogPrint(L"[media:parse] Playlist entry metadata found with no following URI, ignored: %ls", RedactUrlForLog(playlistPath).c_str());
+    }
     return entries;
 }
 
@@ -495,8 +500,13 @@ bool IsHlsManifestText(const std::string& text) {
     return false;
 }
 
-bool IsHlsPlaylistSource(const std::wstring& playlistPath) {
-    return IsHlsManifestText(ReadSourceText(playlistPath));
+FetchedPlaylist FetchPlaylistOnce(const std::wstring& playlistPath) {
+    FetchedPlaylist result;
+    result.text = ReadSourceText(playlistPath, &result.fetchOk);
+    if (result.fetchOk) {
+        result.isHls = IsHlsManifestText(result.text);
+    }
+    return result;
 }
 
 bool IsRemoteMediaUrl(const std::wstring& value) {
@@ -560,10 +570,8 @@ std::wstring SourceStemName(const std::wstring& value) {
     return name.substr(0, dot);
 }
 
-std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath, bool* fetchFailed) {
-    bool fetchOk = true;
-    std::string text = ReadSourceText(playlistPath, &fetchOk);
-    if (fetchFailed) *fetchFailed = !fetchOk;
+std::vector<PlaylistEntry> ParseFetchedPlaylistText(const std::wstring& playlistPath, const std::string& fetchedText) {
+    std::string text = fetchedText;
     if (text.size() >= 3 &&
         static_cast<unsigned char>(text[0]) == 0xef &&
         static_cast<unsigned char>(text[1]) == 0xbb &&
@@ -574,6 +582,13 @@ std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath,
     std::wstring ext = SourceExtension(playlistPath);
     if (ext == L".pls") return ParsePls(playlistPath, text);
     return ParseM3u(playlistPath, text);
+}
+
+std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath, bool* fetchFailed) {
+    bool fetchOk = true;
+    std::string text = ReadSourceText(playlistPath, &fetchOk);
+    if (fetchFailed) *fetchFailed = !fetchOk;
+    return ParseFetchedPlaylistText(playlistPath, text);
 }
 
 std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& directoryUrl) {
