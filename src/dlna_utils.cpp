@@ -322,6 +322,16 @@ std::string BuildSourceProtocolInfoList() {
             entries.push_back(entry);
         }
     }
+    // HLS is excluded from kFormats so file scanning does not treat .m3u8 as a
+    // generic playable extension. It must still be advertised here so DLNA
+    // renderers that consult GetProtocolInfo before playback accept HLS items.
+    // Flags match contentdirectory.cpp ItemProtocolInfo() and the Android
+    // contentFeatures.dlna.org response header in j.java.
+    entries.push_back(
+        "http-get:*:application/vnd.apple.mpegurl:"
+        "DLNA.ORG_OP=01;DLNA.ORG_CI=0;"
+        "DLNA.ORG_FLAGS=01700000000000000000000000000000"
+    );
     std::string result;
     for (size_t i = 0; i < entries.size(); ++i) {
         if (i > 0) result += ",";
@@ -329,6 +339,7 @@ std::string BuildSourceProtocolInfoList() {
     }
     return result;
 }
+
 
 std::string GetDlnaServerHeader() {
 #ifdef _WIN32

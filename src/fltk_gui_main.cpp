@@ -640,7 +640,7 @@ private:
         if (DLNAServer.IsRunning()) {
             self->hide();
         } else {
-            self->hide();
+            std::exit(0);
         }
     }
 

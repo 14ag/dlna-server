@@ -83,7 +83,9 @@ bool StreamRemoteContent(const std::wstring& url,
                          bool useRange,
                          long long startByte,
                          long long endByte,
-                         const std::function<bool(const char*, size_t)>& writeChunk);
+                         const std::function<bool(const char*, size_t)>& writeChunk,
+                         const std::vector<std::string>& reqHeaders = {},
+                         const std::function<void(const std::string&, const std::string&)>& onHeader = nullptr);
 
 std::vector<long long> ProbeRemoteContentLengthBatch(const std::vector<std::wstring>& urls, size_t maxConcurrency = 4);
 
