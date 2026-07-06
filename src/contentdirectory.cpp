@@ -187,6 +187,13 @@ bool ShouldProxyRemoteUrl(const std::wstring& url) {
 }
 
 std::string ItemProtocolInfo(const MediaItem& item) {
+    // HLS manifests must not go through kFormats (which excludes .m3u8 intentionally).
+    // Emit OP=01 (time-seek available) and CI=0 matching the android proxy pattern
+    // from j.java contentFeatures.dlna.org header. OP=00 (no seek) causes strict
+    // DLNA renderers to reject the <res> element and show the item as empty.
+    if (item.mimeType == L"application/vnd.apple.mpegurl") {
+        return "http-get:*:application/vnd.apple.mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
+    }
     return BuildProtocolInfoForExtension(SourceExtension(item.path), item.mimeType, item.sizeBytes > 0);
 }
 
@@ -295,7 +302,8 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
                 if (hasKnownSize) {
                     entry << " size=\"" << it.sizeBytes << "\"";
                 }
-                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !cfg.proxyStreams && !ShouldProxyRemoteUrl(it.path);
+                bool isHls = (it.mimeType == L"application/vnd.apple.mpegurl");
+                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !cfg.proxyStreams && !ShouldProxyRemoteUrl(it.path) && !isHls;
                 entry << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id))) << "</res>";
             }
             if (!it.subtitlePath.empty()) {

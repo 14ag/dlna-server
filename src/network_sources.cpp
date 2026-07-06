@@ -177,6 +177,26 @@ size_t CurlWriteStream(char* ptr, size_t size, size_t nmemb, void* userdata) {
     return (*writeChunk)(ptr, bytes) ? bytes : 0;
 }
 
+size_t CurlHeaderStream(char* buffer, size_t size, size_t nitems, void* userdata) {
+    auto* onHeader = static_cast<const std::function<void(const std::string&, const std::string&)>*>(userdata);
+    size_t bytes = size * nitems;
+    if (onHeader && *onHeader) {
+        std::string header(buffer, bytes);
+        size_t colon = header.find(':');
+        if (colon != std::string::npos) {
+            std::string key = header.substr(0, colon);
+            std::string value = header.substr(colon + 1);
+            while (!value.empty() && (value.back() == '\r' || value.back() == '\n' || value.back() == ' ')) value.pop_back();
+            size_t valStart = value.find_first_not_of(" \t");
+            if (valStart != std::string::npos) value = value.substr(valStart);
+            (*onHeader)(key, value);
+        } else if (header == "\r\n" || header == "\n") {
+            (*onHeader)("", ""); // empty key/value signals end of headers
+        }
+    }
+    return bytes;
+}
+
 CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutSeconds) {
     static CurlGlobalInit init;
     (void)init;
@@ -235,7 +255,9 @@ bool CurlStream(const std::wstring& url,
                 bool useRange,
                 long long startByte,
                 long long endByte,
-                const std::function<bool(const char*, size_t)>& writeChunk) {
+                const std::function<bool(const char*, size_t)>& writeChunk,
+                const std::vector<std::string>& reqHeaders,
+                const std::function<void(const std::string&, const std::string&)>& onHeader) {
     char errorBuffer[CURL_ERROR_SIZE] = {};
     CURL* curl = CreateCurlHandle(url, errorBuffer, 0L);
     if (!curl) {
@@ -249,11 +271,29 @@ bool CurlStream(const std::wstring& url,
         curl_easy_setopt(curl, CURLOPT_RANGE, rangeText.c_str());
     }
 
+    struct curl_slist* chunk = nullptr;
+    for (const auto& header : reqHeaders) {
+        chunk = curl_slist_append(chunk, header.c_str());
+    }
+    if (chunk) {
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
+    }
+
+    if (onHeader) {
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, CurlHeaderStream);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &onHeader);
+    }
+
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, kCurlLowSpeedLimitBytes);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, kCurlLowSpeedTimeSeconds);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteStream);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &writeChunk);
     CURLcode code = curl_easy_perform(curl);
+    
+    if (chunk) {
+        curl_slist_free_all(chunk);
+    }
+    
     curl_easy_cleanup(curl);
     if (code != CURLE_OK) {
         LogPrint(L"Remote content unavailable: %hs", errorBuffer[0] ? errorBuffer : curl_easy_strerror(code));
@@ -693,8 +733,13 @@ bool StreamRemoteContent(const std::wstring& url,
                          bool useRange,
                          long long startByte,
                          long long endByte,
-                         const std::function<bool(const char*, size_t)>& writeChunk) {
+                         const std::function<bool(const char*, size_t)>& writeChunk,
+                         const std::vector<std::string>& reqHeaders,
+                         const std::function<void(const std::string&, const std::string&)>& onHeader) {
     if (!IsRemoteMediaUrl(url)) return false;
-
-    return CurlStream(url, useRange, startByte, endByte, writeChunk);
+#ifdef DLNA_HAS_LIBCURL
+    return CurlStream(url, useRange, startByte, endByte, writeChunk, reqHeaders, onHeader);
+#else
+    return false;
+#endif
 }

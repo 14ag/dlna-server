@@ -165,7 +165,7 @@ void FinishSourcePrompt(HWND hwnd, SourcePromptState* state, bool accepted) {
     if (accepted) {
         int length = GetWindowTextLengthW(state->edit);
         std::wstring text(length + 1, L'\0');
-        GetWindowTextW(state->edit, text.data(), length + 1);
+        GetWindowTextW(state->edit, &text[0], length + 1);
         text.resize(length);
         state->value = TrimWideInput(text);
         state->accepted = !state->value.empty();
@@ -815,7 +815,11 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         return 0;
     }
     case WM_CLOSE: {
-        ShowWindow(hwnd, SW_HIDE);
+        if (DLNAServer.IsRunning()) {
+            ShowWindow(hwnd, SW_HIDE);
+        } else {
+            DestroyWindow(hwnd);
+        }
         return 0;
     }
     case WM_DESTROY: {

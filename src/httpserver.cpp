@@ -470,6 +470,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                 }
                 MediaItem item = AppMedia.GetItem(fileId);
                 if (item.id != -1) {
+                    LogPrint(L"HTTP media request: id=%d path=%ls", fileId, item.path.c_str());
                     if (IsRemoteMediaUrl(item.path)) {
                         long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
                         std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
@@ -482,9 +483,6 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                                 SendAll(clientSocket, rangeResp);
                                 return;
                             }
-                        } else if (!rangeHeader.empty()) {
-                            SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                            return;
                         }
 
                         bool isPartial = hasKnownSize && parsedRange.requested;
@@ -499,22 +497,63 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             headers << "Content-Range: bytes " << startByte << "-" << endByte << "/" << fileSize << "\r\n";
                         }
                         headers << "Content-Type: " << mime << "\r\n";
+
+                        bool spoofSamsung = false;
+                        if (!hasKnownSize) {
+                            std::string ua = FindHeaderValueCaseInsensitive(req, "User-Agent");
+                            if (ua.empty() || ua.find("SEC_HHP_") != std::string::npos) {
+                                spoofSamsung = true;
+                            }
+                        }
+
                         if (hasKnownSize) {
                             headers << "Content-Length: " << contentLength << "\r\n"
                                     << "Accept-Ranges: bytes\r\n";
+                        } else if (spoofSamsung) {
+                            headers << "Content-Length: 1073741824\r\n"
+                                    << "Accept-Ranges: none\r\n";
                         } else {
                             headers << "Accept-Ranges: none\r\n";
                         }
                         headers << ConnectionHeader(keepAlive)
                                 << "transferMode.dlna.org: Streaming\r\n"
-                                << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize) << "\r\n"
-                                << "\r\n";
+                                << "contentFeatures.dlna.org: " << (item.mimeType == L"application/vnd.apple.mpegurl" ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize)) << "\r\n";
 
-                        SendAll(clientSocket, headers.str());
-                        if (!sendBody) return;
+                        std::vector<std::string> proxyReqHeaders;
+                        if (FindHeaderValueCaseInsensitive(req, "Icy-MetaData") == "1") {
+                            proxyReqHeaders.push_back("Icy-MetaData: 1");
+                        }
+
+                        if (!sendBody) {
+                            headers << "\r\n";
+                            SendAll(clientSocket, headers.str());
+                            return;
+                        }
 
                         SetSocketStreamTimeouts(clientSocket);
+                        bool headersSent = false;
+                        std::string baseHeaders = headers.str();
+
+                        auto onRemoteHeader = [&](const std::string& key, const std::string& value) {
+                            if (headersSent) return;
+                            if (key.empty() && value.empty()) {
+                                baseHeaders += "\r\n";
+                                SendAll(clientSocket, baseHeaders);
+                                headersSent = true;
+                                return;
+                            }
+                            std::string lowerKey = ToLowerAscii(key);
+                            if (lowerKey.find("icy-") == 0) {
+                                baseHeaders += key + ": " + value + "\r\n";
+                            }
+                        };
+
                         bool remoteOk = StreamRemoteContent(item.path, isPartial, startByte, endByte, [&](const char* data, size_t length) {
+                            if (!headersSent) {
+                                baseHeaders += "\r\n";
+                                SendAll(clientSocket, baseHeaders);
+                                headersSent = true;
+                            }
                             const char* p = data;
                             size_t remaining = length;
                             while (remaining > 0) {
@@ -525,7 +564,13 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                                 remaining -= static_cast<size_t>(sent);
                             }
                             return m_running.load();
-                        });
+                        }, proxyReqHeaders, onRemoteHeader);
+
+                        if (!headersSent) {
+                            baseHeaders += "\r\n";
+                            SendAll(clientSocket, baseHeaders);
+                        }
+
                         if (!remoteOk || !keepAlive) return;
                         continue;
                     }
@@ -565,7 +610,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                                 << "Accept-Ranges: bytes\r\n"
                                 << ConnectionHeader(keepAlive)
                                 << "transferMode.dlna.org: Streaming\r\n"
-                                << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n"
+                                << "contentFeatures.dlna.org: " << (item.mimeType == L"application/vnd.apple.mpegurl" ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true)) << "\r\n"
                                 << "\r\n";
 
                         std::string headStr = headers.str();
