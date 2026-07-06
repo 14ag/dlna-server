@@ -266,8 +266,10 @@ try {
         Add-Result "FAIL could not retrieve description.xml"
         throw "Discovery failed"
     }
-    # URLBase from description.xml is host:port without scheme; construct full control URL
-    $controlUrl = "http://$location/upnp/control/content_directory"
+    # URLBase from description.xml is "http://host:port"; construct full control URL
+    # Strip the "http://" prefix since it's already included in URLBase
+    $controlUrl = "$location" -replace '^http://', ''
+    $controlUrl = "http://${controlUrl}/upnp/control/content_directory"
     Add-Result "PASS description.xml retrieved, controlUrl=$controlUrl"
 
     $soapBody = @"
