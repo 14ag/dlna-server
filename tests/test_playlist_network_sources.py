@@ -33,7 +33,9 @@ class PlaylistNetworkSourceTests(unittest.TestCase):
             self.assertIn("ScanPlaylist", source)
             self.assertIn("IsNetworkShareUrl", source)
             self.assertIn("ScanNetworkFolder", source)
-            self.assertIn("LoadPlaylistEntries", source)
+            # scanners now use FetchPlaylistOnce/ParseFetchedPlaylistText instead of LoadPlaylistEntries directly
+            self.assertIn("ScanPlaylistEntry", source)
+            self.assertIn("ParseFetchedPlaylistText", source)
             self.assertIn("ListRemoteDirectory", source)
             self.assertIn("ProbeRemoteContentLength", source)
 

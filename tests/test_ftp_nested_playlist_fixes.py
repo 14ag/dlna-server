@@ -28,16 +28,17 @@ def test_m3u8_is_never_added_as_a_playable_media_item():
 def test_playlist_scanners_recurse_into_nested_m3u8_with_depth_guard():
     header = read_source("src/media_sources.h")
     assert "ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& playlistPath, int parentId, int depth" in header
+    assert "ScanPlaylistEntry(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& location, const std::wstring& titleOverride, int parentId, int depth)" in header
 
     for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
         source = read_source(path)
-        scan_start = source.index("void MediaSources::ScanPlaylist")
+        scan_start = source.index("void MediaSources::ScanPlaylist(")
         scan_end = source.index("void MediaSources::ScanNetworkFolder", scan_start)
         scan_body = source[scan_start:scan_end]
 
         assert "depth > 8" in scan_body
         assert "IsPlaylistSourcePath(entry.location)" in scan_body
-        assert "ScanPlaylist(state, cfg, entry.location, playlistFolder.id, depth + 1)" in scan_body
+        assert "ScanPlaylistEntry(state, cfg, entry.location, entry.title, parentId, depth + 1)" in scan_body
         assert "AddMediaFile(state, cfg, entry.location, parentId, entry.title, entry.subtitlePath)" in scan_body
 
 
@@ -79,10 +80,10 @@ def test_hls_manifest_is_exposed_as_a_single_item_not_exploded():
         scan_end = source.index("void MediaSources::ScanNetworkFolder", scan_start)
         scan_body = source[scan_start:scan_end]
 
-        assert "IsHlsPlaylistSource(playlistPath)" in scan_body
+        assert "fetched.isHls" in scan_body
         assert "AddHlsStreamItem(state, playlistPath, parentId)" in scan_body
         # the HLS branch must return before the generic entry-walking loop runs
-        assert scan_body.index("IsHlsPlaylistSource(playlistPath)") < scan_body.index("LoadPlaylistEntries(")
+        assert scan_body.index("fetched.isHls") < scan_body.index("ParseFetchedPlaylistText(playlistPath")
 
         add_hls_start = source.index("MediaSources::AddHlsStreamItem")
         add_hls_body = source[add_hls_start:add_hls_start + 1600]
@@ -103,25 +104,27 @@ def test_hls_referenced_by_another_playlist_is_not_double_wrapped():
         scan_end = source.index("void MediaSources::ScanNetworkFolder", scan_start)
         scan_body = source[scan_start:scan_end]
 
-        assert "IsHlsPlaylistSource(entry.location)" in scan_body
-        assert "AddHlsStreamItem(state, entry.location, parentId, entry.title)" in scan_body
-        assert scan_body.index("if (IsPlaylistSourcePath(entry.location)) {") < scan_body.index("IsHlsPlaylistSource(entry.location)")
-        assert scan_body.index("IsHlsPlaylistSource(entry.location)") < scan_body.index("MediaItem playlistFolder")
+        # HLS check now happens in ScanPlaylistEntry via fetched.isHls
+        assert "if (IsPlaylistSourcePath(entry.location)) {" in scan_body
+        # ScanPlaylistEntry handles both HLS detection and empty-check
+        assert "ScanPlaylistEntry(state, cfg, entry.location, entry.title, parentId, depth + 1)" in scan_body
 
 
 def test_playlist_fetch_failure_is_distinguished_from_empty_playlist():
     header = read_source("src/network_sources.h")
     network_source = read_source("src/network_sources.cpp")
 
-    assert "bool* fetchFailed = nullptr" in header
-    assert "std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath, bool* fetchFailed) {" in network_source
+    assert "FetchedPlaylist FetchPlaylistOnce(const std::wstring& playlistPath)" in header
+    assert "std::vector<PlaylistEntry> ParseFetchedPlaylistText" in header
     assert "std::string ReadSourceText(const std::wstring& source, bool* ok = nullptr) {" in network_source
 
     for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
         scan_source = read_source(path)
-        assert "LoadPlaylistEntries(playlistPath, &fetchFailed)" in scan_source
+        assert "FetchPlaylistOnce(playlistPath)" in scan_source or "FetchPlaylistOnce(location)" in scan_source
         assert "[media:fetch-failed]" in scan_source
         assert (
             'RecordScanError(BuildStableContainerKey(parentId, SourceStemName(playlistPath), playlistPath, g_canonicalize), L"Playlist fetch failed")'
+            in scan_source or
+            'RecordScanError(BuildStableContainerKey(parentId, SourceStemName(location), location, g_canonicalize), L"Playlist fetch failed")'
             in scan_source
         )

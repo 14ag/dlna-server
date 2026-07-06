@@ -54,11 +54,26 @@ bool IsNetworkShareUrl(const std::wstring& value);
 bool IsRemovedSmbSourcePath(const std::wstring& value);
 bool IsPlaylistSourcePath(const std::wstring& value);
 bool IsHlsManifestText(const std::string& text);
-bool IsHlsPlaylistSource(const std::wstring& playlistPath);
 std::wstring RedactUrlForLog(const std::wstring& value);
 std::wstring SourceExtension(const std::wstring& value);
 std::wstring SourceDisplayName(const std::wstring& value);
 std::wstring SourceStemName(const std::wstring& value);
+
+// result of fetching a playlist exactly once
+// fetchOk is false if the network or file read failed
+// isHls is only meaningful when fetchOk is true
+struct FetchedPlaylist {
+    bool fetchOk = false;
+    bool isHls = false;
+    std::string text;
+};
+
+// fetches playlistPath one time and classifies it
+// callers must not call ReadSourceText or IsHlsPlaylistSource separately after this
+FetchedPlaylist FetchPlaylistOnce(const std::wstring& playlistPath);
+
+// parses already fetched playlist text with no network or file access
+std::vector<PlaylistEntry> ParseFetchedPlaylistText(const std::wstring& playlistPath, const std::string& text);
 
 std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath, bool* fetchFailed = nullptr);
 std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& directoryUrl);

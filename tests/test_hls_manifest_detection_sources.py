@@ -13,11 +13,12 @@ class HlsManifestDetectionSourceTests(unittest.TestCase):
         source = self.read("src/network_sources.cpp")
 
         self.assertIn("bool IsHlsManifestText(const std::string& text);", header)
-        self.assertIn("bool IsHlsPlaylistSource(const std::wstring& playlistPath);", header)
+        self.assertIn("FetchedPlaylist FetchPlaylistOnce(const std::wstring& playlistPath);", header)
+        self.assertIn("std::vector<PlaylistEntry> ParseFetchedPlaylistText(const std::wstring& playlistPath, const std::string& text);", header)
         self.assertIn("bool IsHlsManifestText(const std::string& text) {", source)
         self.assertIn('trimmed.rfind("#EXT-X-", 0) == 0', source)
-        self.assertIn("bool IsHlsPlaylistSource(const std::wstring& playlistPath) {", source)
-        self.assertIn("ReadSourceText(playlistPath)", source)
+        self.assertIn("FetchedPlaylist FetchPlaylistOnce(const std::wstring& playlistPath) {", source)
+        self.assertIn("ReadSourceText(playlistPath", source)
 
     def test_m3u8_still_excluded_from_generic_playable_kformats(self):
         utils = self.read("src/dlna_utils.cpp")
