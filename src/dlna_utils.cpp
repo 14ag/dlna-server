@@ -312,6 +312,16 @@ std::string BuildContentFeaturesForExtension(const std::wstring& ext, const std:
     return BuildContentFeatures(info, hasKnownSize);
 }
 
+std::string BuildHlsContentFeatures() {
+    // op 01 means time seek is available per the android reference proxy pattern
+    // ci 0 means no content transcoding
+    return "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
+}
+
+std::string BuildHlsProtocolInfo() {
+    return "http-get:*:application/vnd.apple.mpegurl:" + BuildHlsContentFeatures();
+}
+
 std::string BuildSourceProtocolInfoList() {
     std::vector<std::string> entries;
     std::unordered_set<std::string> seen;
