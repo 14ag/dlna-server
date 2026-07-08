@@ -472,7 +472,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                 if (item.id != -1) {
                     LogPrint(L"HTTP media request: id=%d path=%ls", fileId, item.path.c_str());
                     if (IsRemoteMediaUrl(item.path)) {
-                        const bool isHlsManifest = item.mimeType == L"application/vnd.apple.mpegurl";
+                        const bool isHlsManifest = item.mimeType == L"video/mpegurl";
                         long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
                         std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
                         bool hasKnownSize = fileSize > 0;
@@ -518,7 +518,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                         }
                         headers << ConnectionHeader(keepAlive)
                                 << "transferMode.dlna.org: Streaming\r\n"
-                                << "contentFeatures.dlna.org: " << (item.mimeType == L"application/vnd.apple.mpegurl" ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize)) << "\r\n";
+                                << "contentFeatures.dlna.org: " << (item.mimeType == L"video/mpegurl" ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize)) << "\r\n";
 
                         std::vector<std::string> proxyReqHeaders;
                         if (FindHeaderValueCaseInsensitive(req, "Icy-MetaData") == "1") {
@@ -611,7 +611,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                                 << "Accept-Ranges: bytes\r\n"
                                 << ConnectionHeader(keepAlive)
                                 << "transferMode.dlna.org: Streaming\r\n"
-                                << "contentFeatures.dlna.org: " << (item.mimeType == L"application/vnd.apple.mpegurl" ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true)) << "\r\n"
+                                << "contentFeatures.dlna.org: " << (item.mimeType == L"video/mpegurl" ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true)) << "\r\n"
                                 << "\r\n";
 
                         std::string headStr = headers.str();

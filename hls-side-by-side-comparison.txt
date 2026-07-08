@@ -1,0 +1,86 @@
+HLS SIDE-BY-SIDE COMPARISON
+
+Goal
+- Direct output and server output must be indistinguishable for HLS traversal.
+- Comparison target: local wrapper -> upstream CDN master vs ContentDirectory item -> advertised server resource.
+
+Smoke Test Result
+- Command: powershell -NoProfile -ExecutionPolicy Bypass -File .\verify-hls-structure-smoke.ps1
+- Working directory: C:\Users\philip\sauce\dlna-server\tests
+- Result: PASS
+- Master tag structure: identical
+- Master child URI set: identical, 5 children
+- Child playlist structures: identical, 10 segments each
+- Byte/hash check: identical for master and each child at the resolved URL level
+
+Root Resolution
+
+| Direct path | Server path |
+| --- | --- |
+| tests\test media\test-hls-playlist.m3u8 | ContentDirectory Browse ObjectID 1000008 |
+| wrapper line 2 resolves to CDN master | <res> resolves to same CDN master |
+| https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist.m3u8 | https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist.m3u8 |
+
+Resolved Data Identity
+
+| Node | Direct bytes | Server bytes | Direct SHA256 | Server SHA256 |
+| --- | ---: | ---: | --- | --- |
+| master playlist.m3u8 | 1046 | 1046 | 61df29202578bcb1887c7b8def2cce105d777b53c8ba6f30c23193b9afa965e7 | 61df29202578bcb1887c7b8def2cce105d777b53c8ba6f30c23193b9afa965e7 |
+| playlist_1280x720.m3u8 | 657 | 657 | ac448e8a10a4160e963dc61d29fd74f4ea9191642941733084b9bb16b1bc0f6f | ac448e8a10a4160e963dc61d29fd74f4ea9191642941733084b9bb16b1bc0f6f |
+| playlist_1024x576.m3u8 | 657 | 657 | a1555377ad2aef3257d7f0a2ceac3caf939dba488d9fa25117f1b07bec8f9646 | a1555377ad2aef3257d7f0a2ceac3caf939dba488d9fa25117f1b07bec8f9646 |
+| playlist_640x360.m3u8 | 647 | 647 | ee74f7428dc86abe760ba2423afebb51adfa4222c8148ce8603ed000981df18a | ee74f7428dc86abe760ba2423afebb51adfa4222c8148ce8603ed000981df18a |
+| playlist_384x216.m3u8 | 647 | 647 | 3d85759706a8eb1dcd3202879d3544c5d86a61f697a57d52f0d1d474c3f6151c | 3d85759706a8eb1dcd3202879d3544c5d86a61f697a57d52f0d1d474c3f6151c |
+| playlist_webvtt.m3u8 | 647 | 647 | 79303854c43d8cd9becd4796927deb0c0554ba783fff4bd5ae773331ba2fe9b7 | 79303854c43d8cd9becd4796927deb0c0554ba783fff4bd5ae773331ba2fe9b7 |
+
+Server ContentDirectory Output
+- ObjectID 1000008 returns item 1000009.
+- Item title: playlist.
+- Item class: object.item.videoItem.
+- Item protocolInfo:
+  http-get:*:application/vnd.apple.mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000
+- Item res:
+  https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist.m3u8
+
+Master Playlist Structure
+
+| Direct master | Server-advertised master |
+| --- | --- |
+| #EXTM3U | #EXTM3U |
+| #EXT-X-VERSION:3 | #EXT-X-VERSION:3 |
+| #EXT-X-INDEPENDENT-SEGMENTS | #EXT-X-INDEPENDENT-SEGMENTS |
+| CLOSED-CAPTIONS media tag | CLOSED-CAPTIONS media tag |
+| 4 STREAM-INF video variants | 4 STREAM-INF video variants |
+| 1 SUBTITLES media URI | 1 SUBTITLES media URI |
+| 5 children total | 5 children total |
+
+Master Child URI Set
+
+| Direct child URI | Server child URI |
+| --- | --- |
+| https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_1280x720.m3u8 | https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_1280x720.m3u8 |
+| https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_1024x576.m3u8 | https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_1024x576.m3u8 |
+| https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_640x360.m3u8 | https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_640x360.m3u8 |
+| https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_384x216.m3u8 | https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_384x216.m3u8 |
+| https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_webvtt.m3u8 | https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_webvtt.m3u8 |
+
+Child Playlist Comparison
+
+| Child | Direct result | Server result |
+| --- | --- | --- |
+| playlist_1280x720.m3u8 | HTTP 200, structure identical, 10 segments | HTTP 200, structure identical, 10 segments |
+| playlist_1024x576.m3u8 | HTTP 200, structure identical, 10 segments | HTTP 200, structure identical, 10 segments |
+| playlist_640x360.m3u8 | HTTP 200, structure identical, 10 segments | HTTP 200, structure identical, 10 segments |
+| playlist_384x216.m3u8 | HTTP 200, structure identical, 10 segments | HTTP 200, structure identical, 10 segments |
+| playlist_webvtt.m3u8 | HTTP 200, structure identical, 10 segments | HTTP 200, structure identical, 10 segments |
+
+Naive Server-Relative Route
+
+| Route | Result |
+| --- | --- |
+| http://localhost:8200/media/playlist_1280x720.m3u8 | HTTP 400 |
+
+Interpretation
+- The server no longer advertises localhost child playlist URLs.
+- The server advertises the same CDN master URL that direct traversal uses.
+- Once the server-advertised master is fetched, all child URIs resolve to the same absolute CDN child URLs.
+- Direct and server traversal are indistinguishable at URL, byte count, SHA256, master tag, master child URI, and child playlist structure levels.

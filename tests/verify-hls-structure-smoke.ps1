@@ -47,7 +47,7 @@
 [CmdletBinding()]
 param(
     [string]$ServerBase = 'http://localhost:8200',
-    [string]$LocalWrapperPath = 'tests\test media\test-hls-playlist.m3u8',
+    [string]$LocalWrapperPath = '.\test media\test-hls-playlist.m3u8',
     [string]$ItemTitle = 'test-hls-playlist.m3u8',
     [string]$ServerRootUrl
 )

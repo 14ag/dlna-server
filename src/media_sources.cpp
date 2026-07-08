@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <shlwapi.h>
 #include <algorithm>
+#include <ctime>
 #include <utility>
 #include <vector>
 
@@ -292,15 +293,24 @@ void MediaSources::AddHlsStreamItem(MediaIndexState& state, const std::wstring& 
     hlsItem.parentId = parentId;
     hlsItem.path = path;
     hlsItem.isFolder = false;
-    // IANA-registered media type for HTTP Live Streaming playlists
-    // IANA-registered media type for HTTP Live Streaming playlists
-    // RFC 8216 section 11 1 application/vnd.apple.mpegurl
-    hlsItem.mimeType = L"application/vnd.apple.mpegurl";
+    // use video/mpegurl to match Android DLNA server output
+    // Android reference proxy uses this MIME for Didl res elements
+    hlsItem.mimeType = L"video/mpegurl";
     hlsItem.upnpClass = L"object.item.videoItem";
     // Adaptive/live HLS manifests do not have a meaningful fixed byte length
     // and must not be advertised as byte-range seekable leaving sizeBytes at 0
     hlsItem.sizeBytes = 0;
     hlsItem.title = !titleOverride.empty() ? titleOverride : SourceStemName(path);
+    // stamp scan date matching Android rawDate/dc:date fields
+    {
+        std::time_t now = std::time(nullptr);
+        struct tm utc;
+        gmtime_s(&utc, &now);
+        char buf[11];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d", &utc);
+        hlsItem.dcDate = buf;
+        hlsItem.rawDateMs = static_cast<long long>(now) * 1000LL;
+    }
 
     state.items.push_back(hlsItem);
     scanSuccess.Mark();
