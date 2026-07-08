@@ -1,0 +1,222 @@
+HLS playlist comparison for localhost:8200
+
+Scope
+- Direct source: file:///C:/Users/philip/sauce/dlna-server/tests/test%20media/test-hls-playlist.m3u8
+- Upstream playlist URL inside source file: https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist.m3u8
+- Server root object from description.xml and ContentDirectory: http://localhost:8200/media/1000010
+
+Root discovery
+- /description.xml exposes ContentDirectory at /upnp/control/content_directory
+- Browse ObjectID 0 returns container 1000008 titled test-hls-playlist.m3u8
+- Browse ObjectID 1000008 returns item 1000010 titled playlist with res URL http://localhost:8200/media/1000010
+
+Raw direct file body
+- Status via curl file://: 3 lines, 289 bytes
+- Body:
+  #EXTM3U
+  https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist.m3u8
+  #EXTINF:-1 tvg-logo="https://upload.wikimedia.org/wikipedia/commons/2/27/WWAY_logo.png" tvg-name="ABC 13 Asheville NC (WLOS) (1080p)" group-title="Undefined",ABC 13 Asheville NC (WLOS) (1080p)
+
+Upstream playlist body
+- Status via curl on upstream URL: 13 lines, 1046 bytes
+- SHA256: 61df29202578bcb1887c7b8def2cce105d777b53c8ba6f30c23193b9afa965e7
+- Body matches server root byte-for-byte
+- Root lines:
+  #EXTM3U
+  #EXT-X-VERSION:3
+  #EXT-X-INDEPENDENT-SEGMENTS
+  #EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID="CC",LANGUAGE="eng",NAME="English",INSTREAM-ID="CC1"
+  #EXT-X-STREAM-INF:BANDWIDTH=3193687,AVERAGE-BANDWIDTH=3075600,CODECS="avc1.64001f,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=29.970,CLOSED-CAPTIONS="CC",SUBTITLES="subs"
+  playlist_1280x720.m3u8
+  #EXT-X-STREAM-INF:BANDWIDTH=1363709,AVERAGE-BANDWIDTH=1315600,CODECS="avc1.64001f,mp4a.40.2",RESOLUTION=1024x576,FRAME-RATE=29.970,CLOSED-CAPTIONS="CC",SUBTITLES="subs"
+  playlist_1024x576.m3u8
+  #EXT-X-STREAM-INF:BANDWIDTH=791841,AVERAGE-BANDWIDTH=765600,CODECS="avc1.64001e,mp4a.40.2",RESOLUTION=640x360,FRAME-RATE=29.970,CLOSED-CAPTIONS="CC",SUBTITLES="subs"
+  playlist_640x360.m3u8
+  #EXT-X-STREAM-INF:BANDWIDTH=448720,AVERAGE-BANDWIDTH=435600,CODECS="avc1.64000d,mp4a.40.2",RESOLUTION=384x216,FRAME-RATE=29.970,CLOSED-CAPTIONS="CC",SUBTITLES="subs"
+  playlist_384x216.m3u8
+  #EXT-X-MEDIA:TYPE=SUBTITLES,NAME="English",DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,LANGUAGE="eng",GROUP-ID="subs",URI="playlist_webvtt.m3u8"
+
+Server root body
+- Status via curl on http://localhost:8200/media/1000010: 13 lines, 1046 bytes
+- Content-Type: application/vnd.apple.mpegurl
+- SHA256: 61df29202578bcb1887c7b8def2cce105d777b53c8ba6f30c23193b9afa965e7
+- Matches upstream root exactly
+
+Child playlist comparison
+- Upstream child http://.../playlist_1280x720.m3u8: 13 lines, populated
+  #EXTM3U
+  #EXT-X-VERSION:3
+  #EXT-X-TARGETDURATION:7
+  #EXT-X-MEDIA-SEQUENCE:581173
+  #EXT-X-PROGRAM-DATE-TIME:2026-07-08T03:42:59.864Z
+  #EXTINF:6.00600,
+  playlist_1280x720_034300__581173.ts
+  #EXTINF:6.00600,
+  playlist_1280x720_034306__581174.ts
+  #EXTINF:6.00600,
+  playlist_1280x720_034312__581175.ts
+  #EXTINF:6.00600,
+  playlist_1280x720_034318__581176.ts
+  #EXTINF:6.00600,
+  playlist_1280x720_034324__581177.ts
+  #EXTINF:6.00600,
+  playlist_1280x720_034330__581178.ts
+  #EXTINF:6.00600,
+  playlist_1280x720_034336__581179.ts
+  #EXTINF:6.00600,
+  playlist_1280x720_034342__581180.ts
+  #EXTINF:6.00600,
+  playlist_1280x720_034348__581181.ts
+  #EXTINF:6.00600,
+  playlist_1280x720_034354__581182.ts
+- Upstream child http://.../playlist_1024x576.m3u8: 13 lines, populated
+  playlist_1024x576_034300__581173.ts
+  playlist_1024x576_034306__581174.ts
+  playlist_1024x576_034312__581175.ts
+  playlist_1024x576_034318__581176.ts
+  playlist_1024x576_034324__581177.ts
+  playlist_1024x576_034330__581178.ts
+  playlist_1024x576_034336__581179.ts
+  playlist_1024x576_034342__581180.ts
+  playlist_1024x576_034348__581181.ts
+  playlist_1024x576_034354__581182.ts
+- Upstream child http://.../playlist_640x360.m3u8: 13 lines, populated
+  playlist_640x360_034300__581173.ts
+  playlist_640x360_034306__581174.ts
+  playlist_640x360_034312__581175.ts
+  playlist_640x360_034318__581176.ts
+  playlist_640x360_034324__581177.ts
+  playlist_640x360_034330__581178.ts
+  playlist_640x360_034336__581179.ts
+  playlist_640x360_034342__581180.ts
+  playlist_640x360_034348__581181.ts
+  playlist_640x360_034354__581182.ts
+- Upstream child http://.../playlist_384x216.m3u8: 13 lines, populated
+  playlist_384x216_034300__581173.ts
+  playlist_384x216_034306__581174.ts
+  playlist_384x216_034312__581175.ts
+  playlist_384x216_034318__581176.ts
+  playlist_384x216_034324__581177.ts
+  playlist_384x216_034330__581178.ts
+  playlist_384x216_034336__581179.ts
+  playlist_384x216_034342__581180.ts
+  playlist_384x216_034348__581181.ts
+  playlist_384x216_034354__581182.ts
+- Upstream subtitles playlist http://.../playlist_webvtt.m3u8: 13 lines, populated
+  playlist_webvtt_034300__581173.vtt
+  playlist_webvtt_034306__581174.vtt
+  playlist_webvtt_034312__581175.vtt
+  playlist_webvtt_034318__581176.vtt
+  playlist_webvtt_034324__581177.vtt
+  playlist_webvtt_034330__581178.vtt
+  playlist_webvtt_034336__581179.vtt
+  playlist_webvtt_034342__581180.vtt
+  playlist_webvtt_034348__581181.vtt
+  playlist_webvtt_034354__581182.vtt
+
+Server child comparison
+- http://localhost:8200/media/playlist_1280x720.m3u8 -> 400 Bad Request, 0 bytes
+- http://localhost:8200/media/playlist_1024x576.m3u8 -> 400 Bad Request, 0 bytes
+- http://localhost:8200/media/playlist_640x360.m3u8 -> 400 Bad Request, 0 bytes
+- http://localhost:8200/media/playlist_384x216.m3u8 -> 400 Bad Request, 0 bytes
+- http://localhost:8200/media/playlist_webvtt.m3u8 -> 400 Bad Request, 0 bytes
+
+Findings
+- Raw file body and server root body are not identical.
+- Server root body matches upstream root body, not raw local file body.
+- Fatal divergence: every child URI from root master playlist fails on server with 400 and empty body.
+- Direct upstream child playlists are populated and contain 10 leaf URIs each.
+- Server child playlists are empty, so HLS tree stops at root on server side.
+
+Likely failure point
+- Server resolves root media object correctly, but child HLS playlist paths are not being served.
+- The difference is at the child playlist branch level, not the root master playlist body.
+
+Traversal commands used
+- Direct source root fetch:
+  curl.exe -sS 'file:///C:/Users/philip/sauce/dlna-server/tests/test%20media/test-hls-playlist.m3u8'
+- Server root fetch:
+  curl.exe -sS http://localhost:8200/media/1000010
+- Server child fetches:
+  curl.exe -sS http://localhost:8200/media/playlist_1280x720.m3u8
+  curl.exe -sS http://localhost:8200/media/playlist_1024x576.m3u8
+  curl.exe -sS http://localhost:8200/media/playlist_640x360.m3u8
+  curl.exe -sS http://localhost:8200/media/playlist_384x216.m3u8
+  curl.exe -sS http://localhost:8200/media/playlist_webvtt.m3u8
+- Upstream child fetches:
+  curl.exe -sS https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist.m3u8
+  curl.exe -sS https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_1280x720.m3u8
+  curl.exe -sS https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_1024x576.m3u8
+  curl.exe -sS https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_640x360.m3u8
+  curl.exe -sS https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_384x216.m3u8
+  curl.exe -sS https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist_webvtt.m3u8
+
+Detailed structure, direct source
+- Level 0 file: test-hls-playlist.m3u8
+  - Line 1: #EXTM3U
+  - Line 2: master playlist URL to upstream HLS root
+  - Line 3: #EXTINF entry with title and logo metadata
+- Tree shape:
+  - root file
+    - upstream master playlist
+      - playlist_1280x720.m3u8
+      - playlist_1024x576.m3u8
+      - playlist_640x360.m3u8
+      - playlist_384x216.m3u8
+      - playlist_webvtt.m3u8
+
+Detailed structure, server source
+- Level 0 object: http://localhost:8200/media/1000010
+  - Line 1: #EXTM3U
+  - Line 2: #EXT-X-VERSION:3
+  - Line 3: #EXT-X-INDEPENDENT-SEGMENTS
+  - Line 4: closed captions media tag
+  - Lines 5-12: four video variant playlist entries
+  - Line 13: subtitles media tag
+- Tree shape:
+  - media/1000010
+    - playlist_1280x720.m3u8
+    - playlist_1024x576.m3u8
+    - playlist_640x360.m3u8
+    - playlist_384x216.m3u8
+    - playlist_webvtt.m3u8
+
+Detailed structure, upstream children
+- playlist_1280x720.m3u8
+  - #EXTM3U
+  - #EXT-X-VERSION:3
+  - #EXT-X-TARGETDURATION:7
+  - #EXT-X-MEDIA-SEQUENCE:581173
+  - #EXT-X-PROGRAM-DATE-TIME:2026-07-08T03:42:59.864Z
+  - 10 segment nodes as alternating #EXTINF and segment URI lines
+- playlist_1024x576.m3u8
+  - same header pattern
+  - 10 segment nodes
+- playlist_640x360.m3u8
+  - same header pattern
+  - 10 segment nodes
+- playlist_384x216.m3u8
+  - same header pattern
+  - 10 segment nodes
+- playlist_webvtt.m3u8
+  - same header pattern
+  - 10 subtitle cue nodes ending in .vtt
+
+Detailed structure, server children
+- playlist_1280x720.m3u8 -> empty body, 400 Bad Request
+- playlist_1024x576.m3u8 -> empty body, 400 Bad Request
+- playlist_640x360.m3u8 -> empty body, 400 Bad Request
+- playlist_384x216.m3u8 -> empty body, 400 Bad Request
+- playlist_webvtt.m3u8 -> empty body, 400 Bad Request
+
+Third server probe
+- Host: http://192.168.100.33:18192
+- GET / -> 200, text/html, 15350 bytes
+- GET /description.xml -> 403, 36 bytes
+- GET /upnp/control/content_directory -> 403, 36 bytes
+- GET /media/1000010 -> 403, 36 bytes
+- GET /media/playlist.m3u8 -> 403, 36 bytes
+- GET /media/playlist_1280x720.m3u8 -> 403, 36 bytes
+- Rendered DOM on / has title DLNAServer Files and zero anchor links
+- section.files empty in fetched HTML
+- No traversable HLS tree found with curl on this host

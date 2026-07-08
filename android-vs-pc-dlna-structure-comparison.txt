@@ -1,0 +1,231 @@
+ANDROID DLNA SERVER VS PC DLNA SERVER STRUCTURE COMPARISON
+
+Scope
+- Android host: http://192.168.100.33:18192
+- PC host: http://localhost:8200
+- Method: curl-only HTTP traversal plus rendered DOM check on Android root page
+- Rule used here: compare only what was observed. No assumption that both hosts expose same playlist or same media tree.
+
+1) High-level role
+
+PC host
+- Exposes a standard UPnP/DLNA MediaServer surface.
+- Publishes device metadata at /description.xml.
+- Publishes ContentDirectory SOAP control at /upnp/control/content_directory.
+- Returns DIDL-Lite browse results.
+- Exposes media objects under /media/<id>.
+- Uses server-side HLS object resolution for root playlist playback.
+
+Android host
+- Exposes an HTML file browser at / with title DLNAServer Files.
+- Does not expose /description.xml to plain curl.
+- Does not expose /upnp/control/content_directory to plain curl.
+- Does not expose /media/<id> or /media/*.m3u8 through the tested routes.
+- Returns 403 for every tested DLNA/media route.
+
+2) Discovery surface
+
+PC host
+- /description.xml returns a full DLNA device description.
+- description.xml declares:
+  - deviceType: MediaServer:1
+  - friendlyName: UNIT
+  - manufacturer: dlna-server contributors
+  - modelName: dlna-server
+  - modelNumber: 1.4.0
+  - presentationURL: /
+  - services:
+    - ContentDirectory
+    - ConnectionManager
+- This gives a clean DLNA service contract.
+
+Android host
+- /description.xml returns 403 Forbidden.
+- / returns HTML instead of device XML.
+- The HTML page title is DLNAServer Files.
+- The HTML contains a hidden QR code widget, a visible style block, and an empty file listing container.
+- The HTML body does not expose any anchor links in the rendered DOM.
+- section.files is empty in the fetched HTML.
+- The visible root page is closer to a file-browser shell than a DLNA device description.
+
+3) Protocol contract
+
+PC host
+- Supports UPnP SOAP browse flow.
+- Browse ObjectID 0 returns root container.
+- Browse ObjectID 1000008 returns HLS media item 1000010.
+- Returned metadata is DIDL-Lite XML.
+- Each media object contains protocolInfo and a resource URL.
+
+Android host
+- No browse flow was confirmed.
+- SOAP Browse to /upnp/control/content_directory returns 403.
+- No DIDL-Lite browse response was obtained.
+- No media object ID tree was discovered.
+
+4) Tree shape on PC host
+
+Observed nested structure
+- description.xml
+  - declares ContentDirectory
+  - declares ConnectionManager
+- Browse ObjectID 0
+  - container 1000008
+  - title: test-hls-playlist.m3u8
+- Browse ObjectID 1000008
+  - item 1000010
+  - title: playlist
+  - resource: http://localhost:8200/media/1000010
+- GET /media/1000010
+  - returns HLS master playlist
+  - references:
+    - playlist_1280x720.m3u8
+    - playlist_1024x576.m3u8
+    - playlist_640x360.m3u8
+    - playlist_384x216.m3u8
+    - playlist_webvtt.m3u8
+- GET child playlists
+  - each child route on PC server returns 400 Bad Request
+  - each child body is empty
+
+PC host structure conclusion
+- Root HLS master exists.
+- Child HLS branches exist in body text but not in server routing.
+- Structural break is at child playlist fetch layer.
+
+5) Tree shape on Android host
+
+Observed structure
+- /
+  - HTML file-browser page
+  - title: DLNAServer Files
+  - hidden QR-code generator UI
+  - `<ul><section class="files"></section></ul>`
+  - no visible anchors in rendered DOM
+- /description.xml
+  - 403 Forbidden
+- /upnp/control/content_directory
+  - 403 Forbidden
+- /media/1000010
+  - 403 Forbidden
+- /media/playlist.m3u8
+  - 403 Forbidden
+- /media/playlist_1280x720.m3u8
+  - 403 Forbidden
+
+Android host structure conclusion
+- No traversable DLNA tree was exposed to curl from the tested endpoints.
+- No HLS master playlist body was obtained.
+- No child playlist nodes were obtained.
+- No segment-level traversal was possible.
+
+6) Response-header shape
+
+PC host root media response
+- HTTP 200 OK
+- Content-Type: application/vnd.apple.mpegurl
+- Content-Length: 1047
+- Accept-Ranges: none
+- transferMode.dlna.org: Streaming
+- contentFeatures.dlna.org present
+
+PC host child media response
+- HTTP 400 Bad Request
+- Content-Length: 0
+
+Android host root page response
+- HTTP 200 OK on /
+- Content-Type: text/html
+- Content-Length: 15350
+- Server header:
+  - DLNADOC/1.50 UPnP/1.0
+  - Cybergarage/2.1.2
+  - NanoHTTPD/2.3.1
+  - DLNAServer/1
+  - Android/8.0.0
+- Other tested media or DLNA paths
+  - HTTP 403 Forbidden
+  - Content-Length: 36
+
+7) HTML vs DLNA XML difference
+
+PC host
+- Starts with DLNA XML device description.
+- Uses service nodes, control URLs, SCPD URLs, and presentationURL.
+- ContentDirectory is the main navigation contract.
+- HLS content is represented as media objects inside a DIDL-Lite tree.
+
+Android host
+- Starts with HTML.
+- UI contains styling and client-side script.
+- Root page is a browser page, not a DLNA device description.
+- No browse XML was confirmed from curl.
+- The route surface looks like a file listing app, not a direct DLNA browse contract.
+
+8) HLS behavior difference
+
+PC host
+- Root HLS master playlist is correct.
+- The master playlist body lists all variant and subtitle children.
+- Those child playlist names are visible in the body.
+- But direct fetch of each child URL on the PC host fails with 400 and empty body.
+
+Android host
+- No HLS master playlist was discovered through the tested routes.
+- No HLS variant playlist URLs were obtained.
+- No child playlist or segment fetch was possible.
+
+9) Important divergence points
+
+PC host
+- Has explicit DLNA device description.
+- Has explicit ContentDirectory browse service.
+- Returns content tree in DIDL-Lite.
+- Maps HLS object to /media/<id>.
+- Exposes a root HLS master body.
+- Fails only at child playlist retrieval.
+
+Android host
+- Does not expose description.xml to the same curl traversal.
+- Does not expose ContentDirectory browse endpoint to the same curl traversal.
+- Does not expose any /media/<id> object that can be browsed.
+- Does not expose any HLS body through the tested paths.
+- Only `/` is reachable, and it is an HTML browser page with an empty file list container.
+
+10) What is confirmed vs not confirmed
+
+Confirmed on PC host
+- DLNA device metadata exists.
+- Browse tree exists.
+- HLS root playlist exists.
+- HLS child URLs are present in root body.
+- Child fetch routing is broken.
+
+Confirmed on Android host
+- HTML file-browser shell exists at `/`.
+- No anchors in rendered DOM.
+- `section.files` is empty.
+- Tested DLNA/media routes return 403.
+
+Not confirmed on Android host
+- No description.xml body.
+- No ContentDirectory browse body.
+- No media object IDs.
+- No HLS master playlist body.
+- No child playlist URLs.
+- No segment URLs.
+
+11) Practical interpretation
+
+- PC host behaves like a DLNA MediaServer with HLS master generation but broken child route handling.
+- Android host, from the tested surface, behaves like a web file-browser shell that blocks direct DLNA/media traversal.
+- These are structurally different servers at the HTTP surface.
+- The Android host cannot be used as evidence that the PC host should behave the same way unless a different Android route or auth path is found.
+
+12) Summary
+
+- PC host: DLNA XML first, DIDL-Lite browse tree, HLS master playlist reachable, HLS children fail.
+- Android host: HTML first, empty file browser shell, DLNA/media routes return 403, no HLS tree traversable with curl.
+- Same class name in headers does not mean same structure.
+- The observed difference is route topology, not only playlist content.
+

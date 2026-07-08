@@ -1,0 +1,162 @@
+=== DIRECT HLS NESTED STRUCTURE ===
+ROOT SOURCE FILE (local):
+  C:\Users\philip\sauce\dlna-server\tests\test media\test-hls-playlist.m3u8
+  Type: Master playlist wrapper (custom EXTINF for DLNA metadata)
+  Content (3 lines):
+    #EXTM3U
+    https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist.m3u8
+    #EXTINF:-1 tvg-logo="https://upload.wikimedia.org/wikipedia/commons/2/27/WWAY_logo.png" tvg-name="ABC 13 Asheville NC (WLOS) (1080p)" group-title="Undefined",ABC 13 Asheville NC (WLOS) (1080p)
+  Notes: Remote master URI is in line 2 of the wrapper, not the final line. Line 3 is an EXTINF metadata tag with no following URI (relative to the wrapper itself). VLC/IPTV-style playlist.
+
+REMOTE MASTER (fetched with curl):
+  URL: https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist.m3u8
+  HTTP 200, Content-Type: application/vnd.apple.mpegurl, Content-Length: 1047
+  Cache-Control: no-cache, no-store
+  Declaration: #EXTM3U / #EXT-X-VERSION:3 / #EXT-X-INDEPENDENT-SEGMENTS
+
+  Children (relative to master dir):
+    [MEDIA] CLOSED-CAPTIONS, GROUP-ID="CC", LANG="eng", NAME="English", INSTREAM-ID="CC1" (no URI - embedded)
+
+    [STREAM-INF 1] BANDWIDTH=3193687 AVG=3075600 CODECS="avc1.64001f,mp4a.40.2" RES=1280x720 FPS=29.970 CC="CC" SUBS="subs"
+      -> playlist_1280x720.m3u8  (HTTP 200, Content-Type application/vnd.apple.mpegurl, 658 B)
+
+    [STREAM-INF 2] BANDWIDTH=1363709 AVG=1315600 CODECS="avc1.64001f,mp4a.40.2" RES=1024x576 FPS=29.970 CC="CC" SUBS="subs"
+      -> playlist_1024x576.m3u8  (HTTP 200, application/vnd.apple.mpegurl, 658 B)
+
+    [STREAM-INF 3] BANDWIDTH=791841  AVG=765600  CODECS="avc1.64001e,mp4a.40.2" RES=640x360  FPS=29.970 CC="CC" SUBS="subs"
+      -> playlist_640x360.m3u8   (HTTP 200, application/vnd.apple.mpegurl, 648 B)
+
+    [STREAM-INF 4] BANDWIDTH=448720  AVG=435600  CODECS="avc1.64000d,mp4a.40.2" RES=384x216  FPS=29.970 CC="CC" SUBS="subs"
+      -> playlist_384x216.m3u8   (HTTP 200, application/vnd.apple.mpegurl, 648 B)
+
+    [MEDIA SUBTITLES] NAME="English" DEFAULT=YES AUTOSELECT=YES FORCED=NO LANG="eng" GROUP-ID="subs"
+      -> playlist_webvtt.m3u8     (HTTP 200, application/vnd.apple.mpegurl, 648 B)
+
+EACH VARIANT PLAYLIST:
+  #EXTM3U / #EXT-X-VERSION:3 / #EXT-X-TARGETDURATION:7
+  #EXT-X-MEDIA-SEQUENCE:580251
+  #EXT-X-PROGRAM-DATE-TIME:2026-07-08T02:12:48.458Z
+  (Live rolling window, no #EXT-X-ENDLIST)
+  10 segments per fetch, each #EXTINF:6.00600 (~60.06s window)
+
+SEGMENT NAMING PATTERN:
+  <playlistStem>_<HHMMSS>__<seq>.ts        for video variants
+  <playlistStem>_<HHMMSS>__<seq>.vtt       for subtitle playlist
+
+  720 variant children (all .ts, binary/octet-stream):
+    playlist_1280x720_021249__580251.ts   Content-Length 1779984
+    playlist_1280x720_021255__580252.ts
+    playlist_1280x720_021301__580253.ts
+    playlist_1280x720_021307__580254.ts
+    playlist_1280x720_021313__580255.ts
+    playlist_1280x720_021319__580256.ts
+    playlist_1280x720_021325__580257.ts
+    playlist_1280x720_021331__580258.ts
+    playlist_1280x720_021337__580259.ts
+    playlist_1280x720_021343__580260.ts
+
+  576 variant children: identical pattern, stem=1024x576, segment sizes ~778696 B (sampled first)
+  360 variant children: identical pattern, stem=640x360,  first segment Content-Length 509292
+  216 variant children: identical pattern, stem=384x216,  first segment Content-Length 314524
+  Subtitle children (.vtt): playlist_webvtt_<HHMMSS>__<seq>.vtt, first Content-Length 351
+
+All segment URLs responded HTTP 200 with Accept-Ranges: bytes.
+Content-Type of segments = binary/octet-stream (ts) / binary/octet-stream (vtt, server mislabels).
+
+
+=== SERVER HLS NESTED STRUCTURE ===
+ROOT SOURCE OBJECT (server):
+  http://localhost:8200/media/1000010
+  Type: Master playlist object from DLNA ContentDirectory
+  Content (13 lines):
+    #EXTM3U
+    #EXT-X-VERSION:3
+    #EXT-X-INDEPENDENT-SEGMENTS
+    #EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID="CC",LANGUAGE="eng",NAME="English",INSTREAM-ID="CC1"
+    #EXT-X-STREAM-INF:BANDWIDTH=3193687,AVERAGE-BANDWIDTH=3075600,CODECS="avc1.64001f,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=29.970,CLOSED-CAPTIONS="CC",SUBTITLES="subs"
+    playlist_1280x720.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=1363709,AVERAGE-BANDWIDTH=1315600,CODECS="avc1.64001f,mp4a.40.2",RESOLUTION=1024x576,FRAME-RATE=29.970,CLOSED-CAPTIONS="CC",SUBTITLES="subs"
+    playlist_1024x576.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=791841,AVERAGE-BANDWIDTH=765600,CODECS="avc1.64001e,mp4a.40.2",RESOLUTION=640x360,FRAME-RATE=29.970,CLOSED-CAPTIONS="CC",SUBTITLES="subs"
+    playlist_640x360.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=448720,AVERAGE-BANDWIDTH=435600,CODECS="avc1.64000d,mp4a.40.2",RESOLUTION=384x216,FRAME-RATE=29.970,CLOSED-CAPTIONS="CC",SUBTITLES="subs"
+    playlist_384x216.m3u8
+    #EXT-X-MEDIA:TYPE=SUBTITLES,NAME="English",DEFAULT=YES,AUTOSELECT=YES,FORCED=NO,LANGUAGE="eng",GROUP-ID="subs",URI="playlist_webvtt.m3u8"
+  Notes: Server root matches upstream master byte-for-byte.
+
+REMOTE MASTER (same URLs, traversed via server route):
+  URL: http://localhost:8200/media/1000010
+  HTTP 200, Content-Type: application/vnd.apple.mpegurl, Content-Length: 1047
+  Declaration: #EXTM3U / #EXT-X-VERSION:3 / #EXT-X-INDEPENDENT-SEGMENTS
+
+  Children (relative to server root):
+    [MEDIA] CLOSED-CAPTIONS, GROUP-ID="CC", LANG="eng", NAME="English", INSTREAM-ID="CC1" (no URI - embedded)
+
+    [STREAM-INF 1] BANDWIDTH=3193687 AVG=3075600 CODECS="avc1.64001f,mp4a.40.2" RES=1280x720 FPS=29.970 CC="CC" SUBS="subs"
+      -> playlist_1280x720.m3u8  (HTTP 400, Content-Length 0)
+
+    [STREAM-INF 2] BANDWIDTH=1363709 AVG=1315600 CODECS="avc1.64001f,mp4a.40.2" RES=1024x576 FPS=29.970 CC="CC" SUBS="subs"
+      -> playlist_1024x576.m3u8  (HTTP 400, Content-Length 0)
+
+    [STREAM-INF 3] BANDWIDTH=791841  AVG=765600  CODECS="avc1.64001e,mp4a.40.2" RES=640x360  FPS=29.970 CC="CC" SUBS="subs"
+      -> playlist_640x360.m3u8   (HTTP 400, Content-Length 0)
+
+    [STREAM-INF 4] BANDWIDTH=448720  AVG=435600  CODECS="avc1.64000d,mp4a.40.2" RES=384x216  FPS=29.970 CC="CC" SUBS="subs"
+      -> playlist_384x216.m3u8   (HTTP 400, Content-Length 0)
+
+    [MEDIA SUBTITLES] NAME="English" DEFAULT=YES AUTOSELECT=YES FORCED=NO LANG="eng" GROUP-ID="subs"
+      -> playlist_webvtt.m3u8     (HTTP 400, Content-Length 0)
+
+EACH SERVER VARIANT PLAYLIST:
+  #EXTM3U / no body returned
+  GET http://localhost:8200/media/playlist_1280x720.m3u8   -> HTTP 400, 0 bytes
+  GET http://localhost:8200/media/playlist_1024x576.m3u8   -> HTTP 400, 0 bytes
+  GET http://localhost:8200/media/playlist_640x360.m3u8    -> HTTP 400, 0 bytes
+  GET http://localhost:8200/media/playlist_384x216.m3u8    -> HTTP 400, 0 bytes
+  GET http://localhost:8200/media/playlist_webvtt.m3u8     -> HTTP 400, 0 bytes
+
+SEGMENT NAMING PATTERN:
+  Upstream child playlists use the same naming shape as server expects:
+    <playlistStem>_<HHMMSS>__<seq>.ts        for video variants
+    <playlistStem>_<HHMMSS>__<seq>.vtt       for subtitle playlist
+  Server never reaches segment level because child playlist fetch fails at HTTP layer.
+
+FETCH PROCESS:
+  Server root fetch:
+    curl.exe -sS http://localhost:8200/media/1000010
+  Server child fetches:
+    curl.exe -sS http://localhost:8200/media/playlist_1280x720.m3u8
+    curl.exe -sS http://localhost:8200/media/playlist_1024x576.m3u8
+    curl.exe -sS http://localhost:8200/media/playlist_640x360.m3u8
+    curl.exe -sS http://localhost:8200/media/playlist_384x216.m3u8
+    curl.exe -sS http://localhost:8200/media/playlist_webvtt.m3u8
+  Result: root route good, child routes fail, empty body at every leaf.
+
+
+=== THIRD DLNA HOST PROBE ===
+ROOT SOURCE OBJECT (server):
+  http://192.168.100.33:18192/
+  Type: HTML file browser / DLNAServer Files page
+  Content:
+    <html><head><title>DLNAServer Files</title>...
+    <ul><section class="files"></section></ul>
+  Notes: section.files empty in fetched HTML. No anchor links found in rendered DOM.
+
+ROOT ACCESS CHECKS:
+  GET /                           -> HTTP 200, Content-Type text/html, Content-Length 15350
+  GET /description.xml            -> HTTP 403, Content-Length 36
+  GET /upnp/control/content_directory -> HTTP 403, Content-Length 36
+  GET /media/1000010              -> HTTP 403, Content-Length 36
+  GET /media/playlist.m3u8        -> HTTP 403, Content-Length 36
+  GET /media/playlist_1280x720.m3u8 -> HTTP 403, Content-Length 36
+
+REQUEST SHAPE USED:
+  curl.exe -sS -A 'Mozilla/5.0' http://192.168.100.33:18192/
+  curl.exe -sS -H 'User-Agent: VLC/3.0.0' -H 'transferMode.dlna.org: Streaming' -H 'getcontentFeatures.dlna.org: 1' http://192.168.100.33:18192/media/1000010
+  curl.exe -sS -H 'Content-Type: text/xml; charset="utf-8"' -H 'SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#Browse"' --data-binary <BrowseEnvelope> http://192.168.100.33:18192/upnp/control/content_directory
+
+RESULT:
+  This host does not expose the same accessible HLS tree through the tested DLNA/media routes.
+  Only / responds with HTML; every media or UPnP route tested returns 403 and 36-byte error body.
+  No comparable nested HLS structure could be traversed from this host with curl.
+
