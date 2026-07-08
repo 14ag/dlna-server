@@ -86,3 +86,5 @@ AGENTS.MD
 .codex/config.toml
 *.m3u8
 *.m3u
+tests/test media/test-clip.mp4
+tests/test media/test-clip.srt
