@@ -6,7 +6,7 @@ param(
     [switch]$NoClean
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "continue"
 $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $output = Join-Path $repo "output"
 $releaseTools = Join-Path $repo "build-release-tools"
