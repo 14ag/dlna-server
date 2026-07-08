@@ -27,6 +27,10 @@ struct MediaItem {
     std::wstring subtitlePath;
     std::wstring albumArtPath;
     std::wstring albumArtMime;
+    // YYYY-MM-DD date for dc:date element; empty means omit
+    std::string dcDate;
+    // millisecond epoch for rawDate attribute on <item>; 0 means omit
+    long long rawDateMs = 0;
 };
 
 struct MediaIndexState {

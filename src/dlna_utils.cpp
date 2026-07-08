@@ -319,7 +319,7 @@ std::string BuildHlsContentFeatures() {
 }
 
 std::string BuildHlsProtocolInfo() {
-    return "http-get:*:application/vnd.apple.mpegurl:" + BuildHlsContentFeatures();
+    return "http-get:*:video/mpegurl:" + BuildHlsContentFeatures();
 }
 
 std::string BuildSourceProtocolInfoList() {
@@ -338,7 +338,7 @@ std::string BuildSourceProtocolInfoList() {
     // Flags match contentdirectory.cpp ItemProtocolInfo() and the Android
     // contentFeatures.dlna.org response header in j.java.
     entries.push_back(
-        "http-get:*:application/vnd.apple.mpegurl:"
+        "http-get:*:video/mpegurl:"
         "DLNA.ORG_OP=01;DLNA.ORG_CI=0;"
         "DLNA.ORG_FLAGS=01700000000000000000000000000000"
     );
