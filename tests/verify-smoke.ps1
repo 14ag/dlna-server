@@ -1230,34 +1230,14 @@ try {
             "--data-binary", $hlsSoapBody,
             $hlsBrowseUrl
         )
-        # Find HLS playlist container (title contains "playlist" and m3u8 extension)
-        $hlsContainerId = $null
-        if ($hlsBrowseRaw -match '<container[^>]*id="(\d+)"[^>]*>[^<]*playlist[^<]*</container>') {
-            $hlsContainerId = $Matches[1]
-        }
-        
-        # If not found by title, look for container with m3u8 in title
-        if (-not $hlsContainerId -and $hlsBrowseRaw -match '<container[^>]*id="(\d+)"[^>]*>[^<]*\.m3u8[^<]*</container>') {
-            $hlsContainerId = $Matches[1]
-        }
-        
-        # Browse the HLS container to find the item
-        if ($hlsContainerId) {
-            $hlsContainerSoapBody = $hlsSoapBody -replace '<ObjectID>0</ObjectID>', "<ObjectID>$hlsContainerId</ObjectID>"
-            $hlsContainerBrowseRaw = Invoke-CurlRaw @(
-                "-sS", "--max-time", "15",
-                "-H", "Content-Type: text/xml; charset=utf-8",
-                "-H", 'SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#Browse"',
-                "--data-binary", $hlsContainerSoapBody,
-                $hlsBrowseUrl
-            )
-            # Find HLS item with application/vnd.apple.mpegurl MIME type
-            if ($hlsContainerBrowseRaw -match '<item[^>]*id="(\d+)"' -and $hlsContainerBrowseRaw -match "application/vnd.apple.mpegurl") {
-                $hlsItemId = $Matches[1]
-                Add-Result "PASS found HLS item id=$hlsItemId in Browse response"
-            } else {
-                Add-Result "WARN HLS source did not yield an m3u8 item; skipping HLS Range proxy test"
-            }
+        # Find HLS item with application/vnd.apple.mpegurl MIME type
+        # HLS items are exposed with this MIME type in the protocolInfo
+        if ($hlsBrowseRaw -match '<item[^>]*id="(\d+)"[^>]*>[^<]*<[^>]*>[^<]*<[^>]*>[^<]*application/vnd.apple.mpegurl') {
+            $hlsItemId = $Matches[1]
+            Add-Result "PASS found HLS item id=$hlsItemId in Browse response"
+        } elseif ($hlsBrowseRaw -match '<item[^>]*id="(\d+)"' -and $hlsBrowseRaw -match "application/vnd.apple.mpegurl") {
+            $hlsItemId = $Matches[1]
+            Add-Result "PASS found HLS item id=$hlsItemId in Browse response"
         } else {
             Add-Result "WARN HLS source did not yield an m3u8 item; skipping HLS Range proxy test"
         }
