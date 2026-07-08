@@ -472,11 +472,12 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                 if (item.id != -1) {
                     LogPrint(L"HTTP media request: id=%d path=%ls", fileId, item.path.c_str());
                     if (IsRemoteMediaUrl(item.path)) {
+                        const bool isHlsManifest = item.mimeType == L"application/vnd.apple.mpegurl";
                         long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
                         std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
                         bool hasKnownSize = fileSize > 0;
                         HttpByteRange parsedRange;
-                        if (hasKnownSize) {
+                        if (hasKnownSize && !isHlsManifest) {
                             parsedRange = ParseHttpRangeHeader(rangeHeader, fileSize);
                             if (!parsedRange.satisfiable) {
                                 std::string rangeResp = "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(fileSize) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
@@ -485,10 +486,10 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             }
                         }
 
-                        bool isPartial = hasKnownSize && parsedRange.requested;
-                        long long startByte = hasKnownSize ? parsedRange.start : 0;
-                        long long endByte = hasKnownSize ? parsedRange.end : 0;
-                        long long contentLength = hasKnownSize ? (endByte - startByte + 1) : 0;
+                        bool isPartial = hasKnownSize && !isHlsManifest && parsedRange.requested;
+                        long long startByte = hasKnownSize && !isHlsManifest ? parsedRange.start : 0;
+                        long long endByte = hasKnownSize && !isHlsManifest ? parsedRange.end : 0;
+                        long long contentLength = hasKnownSize ? (isHlsManifest ? fileSize : (endByte - startByte + 1)) : 0;
                         std::string mime = WideToUtf8(item.mimeType);
 
                         std::stringstream headers;
@@ -508,7 +509,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
                         if (hasKnownSize) {
                             headers << "Content-Length: " << contentLength << "\r\n"
-                                    << "Accept-Ranges: bytes\r\n";
+                                    << "Accept-Ranges: " << (isHlsManifest ? "none" : "bytes") << "\r\n";
                         } else if (spoofSamsung) {
                             headers << "Content-Length: 1073741824\r\n"
                                     << "Accept-Ranges: none\r\n";
