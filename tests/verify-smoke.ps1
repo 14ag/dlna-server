@@ -1,5 +1,6 @@
 param(
-    [string]$FtpSourceUrl = "ftp://14ag:qwertyui@192.168.100.33:2121/playlist_remote.m3u8"
+    [string]$FtpSourceUrl = "ftp://14ag:qwertyui@192.168.100.33:2121/playlist_remote.m3u8",
+    [string]$HlsSourceUrl = "C:\Users\philip\sauce\dlna-server\tests\test media\test-hls-playlist.m3u8"
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,21 +18,44 @@ $resultsPath = Join-Path $outputDir "verification-results.txt"
 $debugCopyPath = Join-Path $outputDir "verification-debug.log"
 $transcriptPath = Join-Path $outputDir "verification-transcript.txt"
 $serverPort = 18200
-$testMediaDir = Join-Path $env:TEMP "dlna-server-TestMedia"
-$backupPath = $null
-$serverProc = $null
-$vlcProc = $null
-$summary = New-Object System.Collections.Generic.List[string]
-$transcriptStarted = $false
+    $testMediaDir = Join-Path $env:TEMP "dlna-server-TestMedia"
+    $backupPath = $null
+    $serverProc = $null
+    $vlcProc = $null
+    $hlsHttpProc = $null
+    $hlsHttpServerUrl = ""
+    $hlsLocalPath = ""
+    $summary = New-Object System.Collections.Generic.List[string]
+    $transcriptStarted = $false
 
 New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-try {
-    Start-Transcript -Path $transcriptPath -Force | Out-Null
-    $transcriptStarted = $true
-}
-catch {
-    Write-Host "WARN could not start transcript at $transcriptPath : $_"
-}
+    try {
+        Start-Transcript -Path $transcriptPath -Force | Out-Null
+        $transcriptStarted = $true
+    }
+    catch {
+        Write-Host "WARN could not start transcript at $transcriptPath : $_"
+    }
+
+    # -------------------------------------------------------------------
+    # HLS source: use tests\test media folder and start HTTP server
+    # The DLNA server can scan local files, so we use the existing test media.
+    # We start an HTTP server to serve the playlist for proxy testing.
+    # -------------------------------------------------------------------
+    $hlsLocalPath = ""
+    if ($HlsSourceUrl -and $HlsSourceUrl -ne "" -and (Test-Path $HlsSourceUrl)) {
+        $hlsSourceDir = Split-Path $HlsSourceUrl -Parent
+        $hlsSourceName = Split-Path $HlsSourceUrl -Leaf
+        
+        # Use the source directory as the test media directory
+        $hlsLocalPath = $HlsSourceUrl
+        
+        # Start HTTP server to serve it for proxy testing
+        $hlsHttpPort = 18080
+        $hlsHttpServerUrl = "http://127.0.0.1:$hlsHttpPort/$hlsSourceName"
+        $hlsHttpProc = Start-Process -FilePath python -ArgumentList @("-m", "http.server", $hlsHttpPort, "--directory", "`"$hlsSourceDir`"") -PassThru -NoNewWindow
+        Start-Sleep -Seconds 2
+    }
 
 Add-Type @"
 using System;
@@ -473,7 +497,11 @@ try {
     # added at runtime, because the media source watcher currently skips
     # remote sources entirely (fix-plan task 13). adding it at runtime and
     # waiting for a rescan would never observe it.
-    $mediaSourcesValue = "$testMediaDir|$FtpSourceUrl"
+    $testMediaSource = Join-Path $repo "tests\test media"
+    $mediaSourcesValue = "$testMediaSource|$FtpSourceUrl"
+    if ($hlsLocalPath -and $hlsLocalPath -ne "") {
+        $mediaSourcesValue += "|" + $hlsLocalPath
+    }
     Set-IniValue "Settings" "MediaSources" $mediaSourcesValue
 
     $env:DLNA_SERVER_SKIP_FIREWALL = "1"
@@ -1166,6 +1194,140 @@ try {
             Add-Result "--- end ftp live source checks ---"
         }
 
+    # -------------------------------------------------------------------
+    # HLS manifest proxy Range request test
+    # -------------------------------------------------------------------
+    # Verifies that Range requests against HLS manifests return 200 with
+    # Accept-Ranges: none, not 206 Partial Content.
+    # This prevents the "blank playlist" defect where CDN byte-range slicing
+    # produces truncated manifests.
+    if ($hlsHttpServerUrl -and $hlsHttpServerUrl -ne "") {
+        Add-Result "--- begin HLS manifest proxy checks: $hlsHttpServerUrl ---"
+
+        # find HLS item via Browse
+        # HLS playlists are exposed as containers with a single HLS item inside
+        $hlsItemId = $null
+        $hlsSoapBody = @"
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:Browse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
+      <ObjectID>0</ObjectID>
+      <BrowseFlag>BrowseDirectChildren</BrowseFlag>
+      <Filter>*</Filter>
+      <StartingIndex>0</StartingIndex>
+      <RequestedCount>0</RequestedCount>
+      <SortCriteria></SortCriteria>
+    </u:Browse>
+  </s:Body>
+</s:Envelope>
+"@
+        $hlsBrowseUrl = "http://127.0.0.1:$serverPort/upnp/control/content_directory"
+        $hlsBrowseRaw = Invoke-CurlRaw @(
+            "-sS", "--max-time", "15",
+            "-H", "Content-Type: text/xml; charset=utf-8",
+            "-H", 'SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#Browse"',
+            "--data-binary", $hlsSoapBody,
+            $hlsBrowseUrl
+        )
+        # Find HLS playlist container (title contains "playlist" and m3u8 extension)
+        $hlsContainerId = $null
+        if ($hlsBrowseRaw -match '<container[^>]*id="(\d+)"[^>]*>[^<]*playlist[^<]*</container>') {
+            $hlsContainerId = $Matches[1]
+        }
+        
+        # If not found by title, look for container with m3u8 in title
+        if (-not $hlsContainerId -and $hlsBrowseRaw -match '<container[^>]*id="(\d+)"[^>]*>[^<]*\.m3u8[^<]*</container>') {
+            $hlsContainerId = $Matches[1]
+        }
+        
+        # Browse the HLS container to find the item
+        if ($hlsContainerId) {
+            $hlsContainerSoapBody = $hlsSoapBody -replace '<ObjectID>0</ObjectID>', "<ObjectID>$hlsContainerId</ObjectID>"
+            $hlsContainerBrowseRaw = Invoke-CurlRaw @(
+                "-sS", "--max-time", "15",
+                "-H", "Content-Type: text/xml; charset=utf-8",
+                "-H", 'SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#Browse"',
+                "--data-binary", $hlsContainerSoapBody,
+                $hlsBrowseUrl
+            )
+            # Find HLS item with application/vnd.apple.mpegurl MIME type
+            if ($hlsContainerBrowseRaw -match '<item[^>]*id="(\d+)"' -and $hlsContainerBrowseRaw -match "application/vnd.apple.mpegurl") {
+                $hlsItemId = $Matches[1]
+                Add-Result "PASS found HLS item id=$hlsItemId in Browse response"
+            } else {
+                Add-Result "WARN HLS source did not yield an m3u8 item; skipping HLS Range proxy test"
+            }
+        } else {
+            Add-Result "WARN HLS source did not yield an m3u8 item; skipping HLS Range proxy test"
+        }
+
+        if ($hlsItemId) {
+            # Test 1: GET without Range header
+            $hlsGetNoRange = Invoke-CurlRaw @(
+                "-sS", "-i", "--max-time", "15",
+                "http://127.0.0.1:$serverPort/media/$hlsItemId"
+            )
+            $hlsStatus = $hlsGetNoRange -split "`r?`n" | Select-Object -First 1
+            if ($hlsStatus -match "HTTP/1\.1 200") {
+                Add-Result "PASS HLS GET no-Range returned 200"
+            } else {
+                Add-Result "FAIL HLS GET no-Range returned: $hlsStatus"
+            }
+            if ($hlsGetNoRange -match "Accept-Ranges:\s*none") {
+                Add-Result "PASS HLS GET no-Range has Accept-Ranges: none"
+            } else {
+                Add-Result "FAIL HLS GET no-Range missing or wrong Accept-Ranges"
+            }
+            if ($hlsGetNoRange -match "#EXTM3U") {
+                Add-Result "PASS HLS GET no-Range body starts with #EXTM3U"
+            } else {
+                Add-Result "FAIL HLS GET no-Range body does not start with #EXTM3U"
+            }
+
+            # Test 2: GET with Range header (the regression test)
+            $hlsGetWithRange = Invoke-CurlRaw @(
+                "-sS", "-i", "--max-time", "15",
+                "-H", "Range: bytes=0-1",
+                "http://127.0.0.1:$serverPort/media/$hlsItemId"
+            )
+            $hlsRangeStatus = $hlsGetWithRange -split "`r?`n" | Select-Object -First 1
+            if ($hlsRangeStatus -match "HTTP/1\.1 200") {
+                Add-Result "PASS HLS GET with Range returned 200 (not 206)"
+            } else {
+                Add-Result "FAIL HLS GET with Range returned: $hlsRangeStatus (expected 200)"
+            }
+            if ($hlsGetWithRange -match "Accept-Ranges:\s*none") {
+                Add-Result "PASS HLS GET with Range has Accept-Ranges: none"
+            } else {
+                Add-Result "FAIL HLS GET with Range missing Accept-Ranges: none"
+            }
+            if ($hlsGetWithRange -match "#EXTM3U") {
+                Add-Result "PASS HLS GET with Range body starts with #EXTM3U (full manifest, not truncated)"
+            } else {
+                Add-Result "FAIL HLS GET with Range body does not start with #EXTM3U (truncated?)"
+            }
+
+            # Test 3: HEAD request
+            $hlsHeadResp = Invoke-CurlRaw @(
+                "-sS", "-I", "--max-time", "10",
+                "http://127.0.0.1:$serverPort/media/$hlsItemId"
+            )
+            $hlsHeadStatus = $hlsHeadResp -split "`r?`n" | Select-Object -First 1
+            if ($hlsHeadStatus -match "HTTP/1\.1 200") {
+                Add-Result "PASS HLS HEAD returned 200"
+            } else {
+                Add-Result "FAIL HLS HEAD returned: $hlsHeadStatus"
+            }
+            if ($hlsHeadResp -match "Accept-Ranges:\s*none") {
+                Add-Result "PASS HLS HEAD has Accept-Ranges: none"
+            } else {
+                Add-Result "FAIL HLS HEAD missing Accept-Ranges: none"
+            }
+        }
+        Add-Result "--- end HLS manifest proxy checks ---"
+    }
+
     $ipv6If = Get-NetIPAddress -AddressFamily IPv6 -ErrorAction SilentlyContinue |
     Where-Object { $_.IPAddress -ne "::1" -and $_.IPAddress -notlike "ff*" } |
     Select-Object -First 1
@@ -1257,6 +1419,9 @@ catch {
     Set-Content -LiteralPath $resultsPath -Value ($summary -join [Environment]::NewLine) -Encoding UTF8
 }
 finally {
+    if ($hlsHttpProc -and -not $hlsHttpProc.HasExited) {
+        Stop-Process -Id $hlsHttpProc.Id -Force -ErrorAction SilentlyContinue
+    }
     if ($vlcProc -and -not $vlcProc.HasExited) {
         Stop-Process -Id $vlcProc.Id -Force -ErrorAction SilentlyContinue
     }

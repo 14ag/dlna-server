@@ -397,11 +397,12 @@ ScopedFd client(clientSocket);
                 if (item.id != -1) {
                     LogPrint(L"HTTP media request: id=%d path=%ls", mediaId, item.path.c_str());
                     if (IsRemoteMediaUrl(item.path)) {
-                        long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
+                        const bool isHlsManifest = item.mimeType == L"application/vnd.apple.mpegurl";
+                    long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
                     std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
                     bool hasKnownSize = fileSize > 0;
                     HttpByteRange parsedRange;
-                    if (hasKnownSize) {
+                    if (hasKnownSize && !isHlsManifest) {
                         parsedRange = ParseHttpRangeHeader(rangeHeader, fileSize);
                         if (!parsedRange.satisfiable) {
                             SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(fileSize) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
@@ -409,9 +410,10 @@ ScopedFd client(clientSocket);
                         }
                     }
 
-                    bool partial = hasKnownSize && parsedRange.requested;
-                    long long start = hasKnownSize ? parsedRange.start : 0;
-                    long long end = hasKnownSize ? parsedRange.end : 0;
+                    bool partial = hasKnownSize && !isHlsManifest && parsedRange.requested;
+                    long long start = hasKnownSize && !isHlsManifest ? parsedRange.start : 0;
+                    long long end = hasKnownSize && !isHlsManifest ? parsedRange.end : 0;
+                    long long bodyLength = hasKnownSize ? (isHlsManifest ? fileSize : (end - start + 1)) : 0;
                     std::stringstream headers;
                     headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
                     if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << fileSize << "\r\n";
@@ -426,8 +428,8 @@ ScopedFd client(clientSocket);
                     }
 
                     if (hasKnownSize) {
-                        headers << "Content-Length: " << (end - start + 1) << "\r\n"
-                                << "Accept-Ranges: bytes\r\n";
+                        headers << "Content-Length: " << bodyLength << "\r\n"
+                                << "Accept-Ranges: " << (isHlsManifest ? "none" : "bytes") << "\r\n";
                     } else if (spoofSamsung) {
                         headers << "Content-Length: 1073741824\r\n"
                                 << "Accept-Ranges: none\r\n";
