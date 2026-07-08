@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <ctime>
 #include <filesystem>
 #include <utility>
 
@@ -109,6 +110,8 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
     state.folderAlbumArt[directoryKey] = { L"", L"" };
     state.albumArtByDirectory[directoryKey] = { L"", L"" };
 }
+
+} // namespace
 
 MediaSources& MediaSources::Get() {
     static MediaSources instance;
@@ -282,10 +285,20 @@ void MediaSources::AddHlsStreamItem(MediaIndexState& state, const std::wstring& 
     hlsItem.parentId = parentId;
     hlsItem.path = path;
     hlsItem.isFolder = false;
-    hlsItem.mimeType = L"application/vnd.apple.mpegurl";
+    hlsItem.mimeType = L"video/mpegurl";
     hlsItem.upnpClass = L"object.item.videoItem";
     hlsItem.sizeBytes = 0;
     hlsItem.title = !titleOverride.empty() ? titleOverride : SourceStemName(path);
+    // stamp scan date matching Android rawDate/dc:date fields
+    {
+        std::time_t now = std::time(nullptr);
+        struct tm utc;
+        gmtime_r(&now, &utc);
+        char buf[11];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d", &utc);
+        hlsItem.dcDate = buf;
+        hlsItem.rawDateMs = static_cast<long long>(now) * 1000LL;
+    }
 
     state.items.push_back(hlsItem);
     scanSuccess.Mark();
