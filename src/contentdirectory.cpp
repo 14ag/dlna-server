@@ -192,7 +192,7 @@ std::string ItemProtocolInfo(const MediaItem& item) {
     // from j.java contentFeatures.dlna.org header. OP=00 (no seek) causes strict
     // DLNA renderers to reject the <res> element and show the item as empty.
     if (item.mimeType == L"application/vnd.apple.mpegurl") {
-        return "http-get:*:application/vnd.apple.mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
+        return BuildHlsProtocolInfo();
     }
     return BuildProtocolInfoForExtension(SourceExtension(item.path), item.mimeType, item.sizeBytes > 0);
 }
