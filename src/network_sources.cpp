@@ -523,6 +523,10 @@ std::wstring ChildUrl(const std::wstring& directoryUrl, const std::wstring& chil
 }
 }
 
+std::wstring ResolveRelativeUrl(const std::wstring &baseUrl, const std::wstring &relativeUrl) {
+    return JoinUrl(baseUrl, relativeUrl);
+}
+
 bool IsHlsManifestText(const std::string& text) {
     // RFC 8216: HLS-specific tags all start with literal "#EXT-X-"
     // Plain M3U/IPTV compilation playlists only use #EXTM3U and #EXTINF
@@ -622,6 +626,46 @@ std::vector<PlaylistEntry> ParseFetchedPlaylistText(const std::wstring& playlist
     std::wstring ext = SourceExtension(playlistPath);
     if (ext == L".pls") return ParsePls(playlistPath, text);
     return ParseM3u(playlistPath, text);
+}
+
+std::string RewriteHlsManifestUrisToAbsolute(const std::wstring &manifestUrl, const std::string &manifestText) {
+    std::string result;
+    result.reserve(manifestText.size() + 64);
+    std::istringstream stream(manifestText);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) {
+            result += "\n";
+            continue;
+        }
+        if (line[0] != '#') {
+            // bare uri line gets resolved as a whole against manifestUrl
+            std::wstring resolved = ResolveRelativeUrl(manifestUrl, Utf8ToWide(TrimAscii(line)));
+            result += WideToUtf8(resolved);
+            result += "\n";
+            continue;
+        }
+        size_t uriAttr = line.find("URI=\"");
+        if (uriAttr == std::string::npos) {
+            result += line;
+            result += "\n";
+            continue;
+        }
+        size_t valueStart = uriAttr + 5;
+        size_t valueEnd = line.find('"', valueStart);
+        if (valueEnd == std::string::npos) {
+            result += line;
+            result += "\n";
+            continue;
+        }
+        std::wstring resolvedAttr = ResolveRelativeUrl(manifestUrl, Utf8ToWide(line.substr(valueStart, valueEnd - valueStart)));
+        result += line.substr(0, valueStart);
+        result += WideToUtf8(resolvedAttr);
+        result += line.substr(valueEnd);
+        result += "\n";
+    }
+    return result;
 }
 
 std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath, bool* fetchFailed) {
