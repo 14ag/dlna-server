@@ -410,9 +410,16 @@ std::vector<PlaylistEntry> ParseM3u(const std::wstring& playlistPath, const std:
         pendingSubtitle.clear();
     }
     if (!pendingTitle.empty() || !pendingSubtitle.empty()) {
-        // an EXTINF or subtitle directive was the last thing in the file with
-        // no URI line after it so it has no entry to attach to
-        LogPrint(L"[media:parse] Playlist entry metadata found with no following URI, ignored: %ls", RedactUrlForLog(playlistPath).c_str());
+        // trailing EXTINF or subtitle directive after last URI
+        // apply to last entry so playlist metadata is not lost
+        if (!entries.empty()) {
+            if (!pendingTitle.empty()) {
+                entries.back().title = pendingTitle;
+            }
+            if (!pendingSubtitle.empty()) {
+                entries.back().subtitlePath = pendingSubtitle;
+            }
+        }
     }
     return entries;
 }

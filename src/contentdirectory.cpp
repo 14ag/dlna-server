@@ -191,7 +191,7 @@ std::string ItemProtocolInfo(const MediaItem& item) {
     // Emit OP=01 (time-seek available) and CI=0 matching the android proxy pattern
     // from j.java contentFeatures.dlna.org header. OP=00 (no seek) causes strict
     // DLNA renderers to reject the <res> element and show the item as empty.
-    if (item.mimeType == L"application/vnd.apple.mpegurl") {
+    if (item.mimeType == L"video/mpegurl") {
         return BuildHlsProtocolInfo();
     }
     return BuildProtocolInfoForExtension(SourceExtension(item.path), item.mimeType, item.sizeBytes > 0);
@@ -273,6 +273,7 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
     const bool includeClass = ApplyDidlFilter(filter, "upnp:class");
     const bool includeAlbumArt = ApplyDidlFilter(filter, "upnp:albumArtURI");
     const bool includeResource = ApplyDidlFilter(filter, "res");
+    const bool includeDate = ApplyDidlFilter(filter, "dc:date");
     std::string didl = "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" xmlns:dlna=\"urn:schemas-dlna-org:metadata-1-0/\" xmlns:sec=\"http://www.sec.co.kr/dlna\">";
     didl.reserve(256 + (static_cast<size_t>((std::max)(0, requested)) * 512));
     std::ostringstream entry;
@@ -291,9 +292,16 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
             didl += entry.str();
         } else {
             const bool hasKnownSize = it.sizeBytes > 0;
-            entry << "<item id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" restricted=\"1\">"
+            entry << "<item id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" restricted=\"1\"";
+            if (!it.dcDate.empty() && it.rawDateMs > 0) {
+                entry << " rawDate=\"" << it.rawDateMs << "\"";
+            }
+            entry << ">"
                   << (includeTitle ? ("<dc:title>" + EscapeWide(it.title) + "</dc:title>") : std::string())
                   << (includeClass ? ("<upnp:class>" + EscapeWide(it.upnpClass) + "</upnp:class>") : std::string());
+            if (includeDate && !it.dcDate.empty()) {
+                entry << "<dc:date>" << it.dcDate << "</dc:date>";
+            }
             if (includeAlbumArt && !it.albumArtPath.empty()) {
                 entry << "<upnp:albumArtURI dlna:profileID=\"JPEG_TN\">http://" << hostUrl << "/albumart/" << it.id << "</upnp:albumArtURI>";
             }
@@ -302,8 +310,7 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
                 if (hasKnownSize) {
                     entry << " size=\"" << it.sizeBytes << "\"";
                 }
-                bool isHls = (it.mimeType == L"application/vnd.apple.mpegurl");
-                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !cfg.proxyStreams && !ShouldProxyRemoteUrl(it.path) && !isHls;
+                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !cfg.proxyStreams && !ShouldProxyRemoteUrl(it.path);
                 entry << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id))) << "</res>";
             }
             if (!it.subtitlePath.empty()) {
