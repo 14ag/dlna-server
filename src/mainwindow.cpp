@@ -22,6 +22,7 @@
 #endif
 
 #define WM_TRAYICON (WM_USER + 1)
+#define WM_SCAN_DONE (WM_USER + 2)
 #define WM_SERVER_OPERATION_DONE (WM_APP + 10)
 #define WM_SERVER_OPERATION_PROGRESS (WM_APP + 11)
 #define TRAY_ID 1
@@ -291,7 +292,7 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
 
 MainWindow::MainWindow() : m_hwnd(NULL), m_hInstance(NULL), m_state(ServerUiState::Stopped),
 m_hBtnAdd(NULL), m_hBtnDelete(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL), m_listOldProc(NULL),
-m_startedHeadless(false), m_scanInProgress(false), m_scanningStatusActive(false), m_pendingRescanAfterBusy(false) {
+m_startedHeadless(false), m_scanInProgress(false), m_scanningStatusActive(false), m_pendingRescanAfterBusy(false), m_lastSelectedIndex(-1) {
     m_hBgBrush = CreateSolidBrush(kPageColor);
     m_hDarkBrush = CreateSolidBrush(kControlColor);
     m_hToolbarBrush = CreateSolidBrush(kToolbarColor);
@@ -415,9 +416,9 @@ void MainWindow::UpdateWakeLock() {
 }
 
 void MainWindow::SetControlsForState() {
-    BOOL enabled = IsBusy() ? FALSE : TRUE;
-    EnableWindow(m_hBtnAdd, enabled);
-    EnableWindow(m_hBtnStartStop, enabled);
+    BOOL busyOrScanning = (IsBusy() || m_scanInProgress.load()) ? FALSE : TRUE;
+    EnableWindow(m_hBtnAdd, busyOrScanning);
+    EnableWindow(m_hBtnStartStop, busyOrScanning);
     EnableWindow(m_hBtnSettings, TRUE);
     SendMessage(m_hBtnAdd, WM_SETTEXT, 0, (LPARAM)(IsRunning() ? L"Scan" : L"Add"));
     UpdateDeleteButton();
@@ -569,11 +570,15 @@ int MainWindow::SelectedSourceIndex() const {
 
 void MainWindow::UpdateDeleteButton() {
     if (!m_hBtnDelete) return;
-    EnableWindow(m_hBtnDelete, SelectedSourceIndex() >= 0 ? TRUE : FALSE);
+    int idx = SelectedSourceIndex();
+    if (idx < 0) idx = m_lastSelectedIndex;
+    EnableWindow(m_hBtnDelete, idx >= 0 ? TRUE : FALSE);
 }
 
 void MainWindow::RemoveSelectedSource() {
     int selected = SelectedSourceIndex();
+    if (selected < 0) selected = m_lastSelectedIndex;
+    m_lastSelectedIndex = -1;
     if (selected < 0 || selected >= static_cast<int>(AppConfig.mediaSources.size())) {
         UpdateDeleteButton();
         return;
@@ -665,12 +670,12 @@ void MainWindow::BeginRescan() {
     if (IsBusy()) return;
     if (m_scanInProgress.exchange(true)) return;
     m_scanningStatusActive = true;
+    SetControlsForState();
     InvalidateRect(m_hwnd, NULL, TRUE);
-    std::thread([this]() {
+    HWND target = m_hwnd;
+    std::thread([target]() {
         DLNAServer.Rescan();
-        m_scanInProgress.store(false);
-        m_scanningStatusActive = false;
-        InvalidateRect(m_hwnd, NULL, TRUE);
+        PostMessageW(target, WM_SCAN_DONE, 0, 0);
     }).detach();
 }
 
@@ -820,8 +825,16 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         }
         }
         if (wmId == IDC_LIST_SOURCES && HIWORD(wParam) == LBN_SELCHANGE) {
+            m_lastSelectedIndex = SelectedSourceIndex();
             UpdateDeleteButton();
         }
+        return 0;
+    }
+    case WM_SCAN_DONE: {
+        m_scanInProgress.store(false);
+        m_scanningStatusActive = false;
+        SetControlsForState();
+        InvalidateRect(m_hwnd, NULL, TRUE);
         return 0;
     }
     case WM_SERVER_OPERATION_PROGRESS: {

@@ -72,6 +72,7 @@ private:
     std::atomic<bool> m_scanInProgress;
     std::atomic<bool> m_scanningStatusActive;
     std::atomic<bool> m_pendingRescanAfterBusy;
+    int m_lastSelectedIndex;
 };
 
 #endif // MAINWINDOW_H
