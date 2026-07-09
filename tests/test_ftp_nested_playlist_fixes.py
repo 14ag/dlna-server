@@ -87,14 +87,14 @@ def test_hls_manifest_is_exposed_as_a_single_item_not_exploded():
 
         add_hls_start = source.index("MediaSources::AddHlsStreamItem")
         add_hls_body = source[add_hls_start:add_hls_start + 1600]
-        assert 'L"application/vnd.apple.mpegurl"' in add_hls_body
+        assert 'L"video/mpegurl"' in add_hls_body
         assert "IsAllowedExtension(" not in add_hls_body
 
 
 def test_hls_item_defaults_to_direct_exposure_when_not_proxied():
     content = read_source("src/contentdirectory.cpp")
     # exposeRemoteDirect must remain gated on proxyStreams / ShouldProxyRemoteUrl
-    assert "exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !cfg.proxyStreams && !ShouldProxyRemoteUrl(it.path)" in content
+    assert "exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !proxyStreams && !ShouldProxyRemoteUrl(it.path)" in content
 
 
 def test_hls_referenced_by_another_playlist_is_not_double_wrapped():
