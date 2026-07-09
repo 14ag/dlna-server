@@ -431,7 +431,7 @@ private:
             savedCount = cfg.mediaSources.size();
         });
         AppConfig.Save();
-        DLNAServer.Rescan();
+        std::thread([]() { DLNAServer.Rescan(); }).detach();
         LogPrint(L"Saved %d media source(s).", static_cast<int>(savedCount));
     }
 

@@ -3,7 +3,7 @@
 
 #include <string>
 #include <vector>
-#include <mutex>
+#include <shared_mutex>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -77,19 +77,21 @@ public:
     // fields directly, since no other thread exists yet to race with it.
     template <typename F>
     void Mutate(F&& fn) {
-        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        std::unique_lock<std::shared_mutex> lock(m_mutex);
         fn(*this);
     }
 
     bool IsDebugLogEnabled() const;
     int GetPort() const;
+    bool IsSortByTitleEnabled() const;
+    bool IsProxyStreamsEnabled() const;
 
 private:
     Config();
     std::wstring GenerateUUID();
     void SetRunOnBoot(bool enable);
 
-    mutable std::recursive_mutex m_mutex;
+    mutable std::shared_mutex m_mutex;
 };
 
 // Global config access

@@ -10,6 +10,8 @@
 #include <thread>
 #include <unordered_map>
 
+inline constexpr size_t kMaxUpnpSubscriptions = 64;
+
 class UpnpEventManager {
 public:
     static UpnpEventManager& Get();
