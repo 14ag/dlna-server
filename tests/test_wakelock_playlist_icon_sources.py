@@ -25,7 +25,7 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
             "stopping server...",
             "SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)",
             "SetThreadExecutionState(ES_CONTINUOUS)",
-            "EnableWindow(m_hBtnStartStop, busyOrScanning)",
+            "EnableWindow(m_hBtnStartStop, enableStartStop)",
         ):
             self.assertIn(token, header + source)
 
