@@ -34,6 +34,8 @@ std::string SockaddrToLiteral(const SOCKADDR* addr);
 std::string SockaddrToHostPort(const SOCKADDR* addr, int port);
 std::string BuildHttpDateHeaderValue();
 
+bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Content);
+
 bool EnumerateNetworkEndpoints(int port, std::vector<NetworkEndpoint>& endpoints);
 const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& endpoints, const SOCKADDR* remoteAddr);
 

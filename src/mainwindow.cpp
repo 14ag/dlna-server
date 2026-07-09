@@ -564,7 +564,7 @@ void MainWindow::RemoveSelectedSource() {
         cfg.mediaSources.erase(cfg.mediaSources.begin() + selected);
     });
     AppConfig.Save();
-    DLNAServer.Rescan();
+    std::thread([]() { DLNAServer.Rescan(); }).detach();
     RefreshSourceList();
 
     int count = static_cast<int>(SendMessage(m_hListSources, LB_GETCOUNT, 0, 0));
@@ -634,7 +634,7 @@ void MainWindow::OpenFolderPicker() {
     if (alreadyPresent) return;
     AppConfig.Save();
     RefreshSourceList();
-    DLNAServer.Rescan();
+    std::thread([]() { DLNAServer.Rescan(); }).detach();
 }
 
 LRESULT CALLBACK MainWindow::ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {

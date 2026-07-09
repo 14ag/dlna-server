@@ -2,6 +2,7 @@
 
 #include <arpa/inet.h>
 #include <cstring>
+#include <cstdio>
 #include <ctime>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -217,4 +218,21 @@ const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& en
         }
     }
     return best ? best : (endpoints.empty() ? nullptr : &endpoints.front());
+}
+
+bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Content) {
+    const std::wstring tempPath = path + L".tmp";
+    FILE* fp = std::fopen(WideToUtf8(tempPath).c_str(), "wb");
+    if (!fp) return false;
+    const bool wroteOk = std::fwrite(utf8Content.data(), 1, utf8Content.size(), fp) == utf8Content.size();
+    std::fclose(fp);
+    if (!wroteOk) {
+        std::remove(WideToUtf8(tempPath).c_str());
+        return false;
+    }
+    if (std::rename(WideToUtf8(tempPath).c_str(), WideToUtf8(path).c_str()) == 0) {
+        return true;
+    }
+    std::remove(WideToUtf8(tempPath).c_str());
+    return false;
 }
