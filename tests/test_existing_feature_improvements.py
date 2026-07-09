@@ -14,7 +14,7 @@ class ExistingFeatureImprovementTests(unittest.TestCase):
             source = self.read(path)
             self.assertIn("const ConfigSnapshot cfg = AppConfig.Snapshot()", source)
             self.assertIn("cfg.flatFolderStyle", source)
-            self.assertIn("AppConfig.Snapshot().sortByTitle", source)
+            self.assertIn("AppConfig.IsSortByTitleEnabled()", source)
             self.assertIn("cfg.showFileNamesInsteadOfTitles", source)
             self.assertIn("ScanFolder(state,", source)
             self.assertIn("ScanNetworkFolder(state,", source)
@@ -26,12 +26,12 @@ class ExistingFeatureImprovementTests(unittest.TestCase):
     def test_playlist_order_preserved_until_sort_requested(self):
         for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
             source = self.read(path)
-            self.assertIn("if (sortByTitle)", source)
+            self.assertIn("if (AppConfig.IsSortByTitleEnabled())", source)
             self.assertIn("std::sort", source)
             self.assertIn("NaturalLessWide(a.title, b.title)", source)
 
         content = self.read("src/contentdirectory.cpp")
-        self.assertIn("sortCriteria.empty() && cfg.sortByTitle", content)
+        self.assertIn("sortCriteria.empty() && AppConfig.IsSortByTitleEnabled()", content)
         self.assertIn("SortItems(results, sortCriteria)", content)
 
     def test_playlist_and_remote_source_hardening(self):
@@ -50,7 +50,7 @@ class ExistingFeatureImprovementTests(unittest.TestCase):
 
     def test_proxy_streams_controls_remote_didl_url(self):
         source = self.read("src/contentdirectory.cpp")
-        self.assertIn("IsRemoteMediaUrl(it.path) && !cfg.proxyStreams", source)
+        self.assertIn("IsRemoteMediaUrl(it.path) && !proxyStreams", source)
         self.assertIn('"/media/" + std::to_string(it.id)', source)
         self.assertIn("XMLEscapeUtf8(WideToUtf8(it.path))", source)
 

@@ -15,13 +15,12 @@ endfunction()
 find_package(CURL REQUIRED)
 
 function(dlna_link_required_curl target_name)
-    target_link_libraries(${target_name} CURL::libcurl)
+    target_link_libraries(${target_name} PRIVATE CURL::libcurl)
     target_compile_definitions(${target_name} PRIVATE DLNA_HAS_LIBCURL=1)
 endfunction()
 
 if(WIN32)
     set(SOURCES
-        src/main.cpp
         src/mainwindow.cpp
         src/settingsdlg.cpp
         src/logdlg.cpp
@@ -50,6 +49,7 @@ if(WIN32)
         src/logdlg.h
         src/server.h
         src/netutils.h
+        src/netutils_internal.h
         src/httpserver.h
         src/contentdirectory.h
         src/upnp_eventing.h
@@ -68,25 +68,21 @@ if(WIN32)
         resources/resource.h
     )
 
-    add_executable(dlna-server WIN32 ${SOURCES} ${HEADERS} resources/app.rc)
+    list(REMOVE_ITEM SOURCES src/main.cpp)
+    add_library(dlna_core STATIC ${SOURCES} ${HEADERS})
+    set_property(TARGET dlna_core PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    dlna_enable_warnings(dlna_core)
+    target_link_libraries(dlna_core PUBLIC CURL::libcurl)
+    target_compile_definitions(dlna_core PRIVATE DLNA_HAS_LIBCURL=1)
+    target_link_libraries(dlna_core PUBLIC
+        ws2_32 shell32 ole32 oleaut32 uuid comctl32 shlwapi dwmapi rpcrt4 iphlpapi)
+    target_compile_definitions(dlna_core PUBLIC UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN)
+    target_include_directories(dlna_core PUBLIC src)
+
+    add_executable(dlna-server WIN32 src/main.cpp resources/app.rc)
+    target_link_libraries(dlna-server PRIVATE dlna_core)
     set_target_properties(dlna-server PROPERTIES OUTPUT_NAME "DLNA Server")
-    dlna_enable_warnings(dlna-server)
-    dlna_link_required_curl(dlna-server)
-    target_link_libraries(dlna-server
-        ws2_32
-        shell32
-        ole32
-        oleaut32
-        uuid
-        comctl32
-        shlwapi
-        dwmapi
-        rpcrt4
-        iphlpapi
-    )
     set_property(TARGET dlna-server PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    target_compile_definitions(dlna-server PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN)
-    target_include_directories(dlna-server PRIVATE src)
 
     install(TARGETS dlna-server RUNTIME DESTINATION .)
 else()
@@ -95,8 +91,7 @@ else()
     option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" ON)
     set(DLNA_FLTK_VERSION "release-1.4.5" CACHE STRING "FLTK git tag used when system FLTK is unavailable")
 
-    add_executable(dlna-server
-        src/posix_main.cpp
+    add_library(dlna_core STATIC
         src/posix_server.cpp
         src/posix_ssdp.cpp
         src/posix_httpserver.cpp
@@ -113,20 +108,20 @@ else()
         src/media_database.cpp
         src/media_scan_common.cpp
     )
-    dlna_enable_warnings(dlna-server)
-    dlna_link_required_curl(dlna-server)
-    target_include_directories(dlna-server PRIVATE src)
-    target_compile_definitions(dlna-server PRIVATE
-        DLNA_POSIX=1
-        DLNA_RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources"
-    )
+    dlna_enable_warnings(dlna_core)
+    dlna_link_required_curl(dlna_core)
+    target_include_directories(dlna_core PUBLIC src)
+    target_compile_definitions(dlna_core PUBLIC DLNA_POSIX=1 DLNA_RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources")
     if(APPLE)
-        target_compile_definitions(dlna-server PRIVATE DLNA_PLATFORM_NAME=\"macOS\")
+        target_compile_definitions(dlna_core PUBLIC DLNA_PLATFORM_NAME=\"macOS\")
     else()
-        target_compile_definitions(dlna-server PRIVATE DLNA_PLATFORM_NAME=\"Linux\")
+        target_compile_definitions(dlna_core PUBLIC DLNA_PLATFORM_NAME=\"Linux\")
     endif()
     find_package(Threads REQUIRED)
-    target_link_libraries(dlna-server Threads::Threads)
+    target_link_libraries(dlna_core PUBLIC Threads::Threads)
+
+    add_executable(dlna-server src/posix_main.cpp)
+    target_link_libraries(dlna-server PRIVATE dlna_core)
 
     install(TARGETS dlna-server RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
