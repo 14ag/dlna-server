@@ -292,7 +292,7 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
 
 MainWindow::MainWindow() : m_hwnd(NULL), m_hInstance(NULL), m_state(ServerUiState::Stopped),
 m_hBtnAdd(NULL), m_hBtnDelete(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL), m_listOldProc(NULL),
-m_startedHeadless(false), m_scanInProgress(false), m_scanningStatusActive(false), m_pendingRescanAfterBusy(false), m_lastSelectedIndex(-1) {
+m_startedHeadless(false), m_scanInProgress(false), m_scanningStatusActive(false), m_pendingRescanAfterBusy(false) {
     m_hBgBrush = CreateSolidBrush(kPageColor);
     m_hDarkBrush = CreateSolidBrush(kControlColor);
     m_hToolbarBrush = CreateSolidBrush(kToolbarColor);
@@ -416,9 +416,14 @@ void MainWindow::UpdateWakeLock() {
 }
 
 void MainWindow::SetControlsForState() {
-    BOOL busyOrScanning = (IsBusy() || m_scanInProgress.load()) ? FALSE : TRUE;
-    EnableWindow(m_hBtnAdd, busyOrScanning);
-    EnableWindow(m_hBtnStartStop, busyOrScanning);
+    // start stop only waits on its own transition starting or stopping
+    // a scan in progress must not block stop
+    BOOL enableStartStop = IsBusy() ? FALSE : TRUE;
+    // add slash scan additionally waits on m_scanInProgress
+    // this prevents a second overlapping scan request
+    BOOL enableAdd = (IsBusy() || m_scanInProgress.load()) ? FALSE : TRUE;
+    EnableWindow(m_hBtnStartStop, enableStartStop);
+    EnableWindow(m_hBtnAdd, enableAdd);
     EnableWindow(m_hBtnSettings, TRUE);
     SendMessage(m_hBtnAdd, WM_SETTEXT, 0, (LPARAM)(IsRunning() ? L"Scan" : L"Add"));
     UpdateDeleteButton();
@@ -435,7 +440,7 @@ void MainWindow::BeginStartServer() {
             ok ? ServerUiState::Running : ServerUiState::Stopped,
             ok,
             ok ? DLNAServer.GetEndpoint() : L"",
-            ok ? L"" : L"Failed to start DLNA server."
+            ok ? L"" : L"could not start DLNA server."
         };
         PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
     });
@@ -570,15 +575,11 @@ int MainWindow::SelectedSourceIndex() const {
 
 void MainWindow::UpdateDeleteButton() {
     if (!m_hBtnDelete) return;
-    int idx = SelectedSourceIndex();
-    if (idx < 0) idx = m_lastSelectedIndex;
-    EnableWindow(m_hBtnDelete, idx >= 0 ? TRUE : FALSE);
+    EnableWindow(m_hBtnDelete, SelectedSourceIndex() >= 0 ? TRUE : FALSE);
 }
 
 void MainWindow::RemoveSelectedSource() {
     int selected = SelectedSourceIndex();
-    if (selected < 0) selected = m_lastSelectedIndex;
-    m_lastSelectedIndex = -1;
     if (selected < 0 || selected >= static_cast<int>(AppConfig.mediaSources.size())) {
         UpdateDeleteButton();
         return;
@@ -825,7 +826,6 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         }
         }
         if (wmId == IDC_LIST_SOURCES && HIWORD(wParam) == LBN_SELCHANGE) {
-            m_lastSelectedIndex = SelectedSourceIndex();
             UpdateDeleteButton();
         }
         return 0;
@@ -834,6 +834,11 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         m_scanInProgress.store(false);
         m_scanningStatusActive = false;
         SetControlsForState();
+        // move focus off the add slash scan button once the scan ends
+        // so it does not keep a focus rectangle after re enabling
+        if (GetFocus() == m_hBtnAdd) {
+            SetFocus(m_hListSources);
+        }
         InvalidateRect(m_hwnd, NULL, TRUE);
         return 0;
     }

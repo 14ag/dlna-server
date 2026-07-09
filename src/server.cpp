@@ -162,7 +162,7 @@ bool Server::Start() {
         if (s.enabled) { hasSource = true; break; }
     }
     if (!hasSource) {
-        MessageBoxW(NULL, L"Please add at least one media source before starting the server.", L"No sources", MB_ICONWARNING | MB_OK);
+        LogPrint(L"No media sources configured.");
         return false;
     }
 
@@ -225,7 +225,13 @@ bool Server::Start() {
 
 bool Server::Rescan() {
     if (m_running.load(std::memory_order_acquire)) {
+        // StartBackgroundScan only launches the scan thread and returns
+        // Rescan must not report completion until the scan is done
+        // JoinBackgroundScan blocks this call until that thread finishes
+        // every caller of Rescan already runs on its own worker thread
+        // see MainWindow::BeginRescan so this never blocks the UI thread
         StartBackgroundScan();
+        JoinBackgroundScan();
     } else {
         AppMedia.Scan();
     }
@@ -236,7 +242,7 @@ void Server::Stop() {
     if (!m_running.exchange(false, std::memory_order_acq_rel)) return;
     m_stopping.store(true, std::memory_order_release);
     
-    LogPrint(L"Stopping server...");
+    LogPrint(L"Stopping server");
 
     StopWatchMode();
     SSDP::Get().Stop();
