@@ -280,12 +280,12 @@ std::wstring Config::GetDefaultPlaylistPath() {
 void Config::SetRunOnBoot(bool enable) {
     HKEY hKey;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
-        if (enable) {
-            wchar_t exePath[MAX_PATH];
-            GetModuleFileNameW(NULL, exePath, MAX_PATH);
-            std::wstring val = std::wstring(L"\"") + exePath + L"\" --minimized";
-            RegSetValueExW(hKey, L"dlna-server", 0, REG_SZ, (const BYTE*)val.c_str(), (DWORD)((val.length() + 1) * sizeof(wchar_t)));
-        } else {
+if (enable) {
+        wchar_t exePath[MAX_PATH];
+        GetModuleFileNameW(NULL, exePath, MAX_PATH);
+        std::wstring val = std::wstring(L"\"") + exePath + L"\" --headless";
+        RegSetValueExW(hKey, L"dlna-server", 0, REG_SZ, (const BYTE*)val.c_str(), (DWORD)((val.length() + 1) * sizeof(wchar_t)));
+    } else {
             RegDeleteValueW(hKey, L"dlna-server");
         }
         RegCloseKey(hKey);
