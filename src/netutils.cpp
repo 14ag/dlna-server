@@ -1,4 +1,5 @@
 #include "netutils.h"
+#include "netutils_internal.h"
 #include "dlna_utils.h"
 #include <windows.h>
 #include <iphlpapi.h>
@@ -32,28 +33,6 @@ int IPv6Rank(const SOCKADDR_IN6* addr) {
     return 1;
 }
 
-std::string BuildEndpointHost(const SOCKADDR* addr, ULONG interfaceIndex) {
-    char buffer[INET6_ADDRSTRLEN + 1] = {};
-
-    if (addr->sa_family == AF_INET) {
-        const SOCKADDR_IN* addr4 = reinterpret_cast<const SOCKADDR_IN*>(addr);
-        inet_ntop(AF_INET, &addr4->sin_addr, buffer, sizeof(buffer));
-        return buffer;
-    }
-
-    const SOCKADDR_IN6* addr6 = reinterpret_cast<const SOCKADDR_IN6*>(addr);
-    inet_ntop(AF_INET6, &addr6->sin6_addr, buffer, sizeof(buffer));
-
-    std::string host = "[";
-    host += buffer;
-    if (IN6_IS_ADDR_LINKLOCAL(&addr6->sin6_addr) && interfaceIndex != 0) {
-        host += "%25";
-        host += std::to_string(interfaceIndex);
-    }
-    host += "]";
-    return host;
-}
-
 bool PrefixMatchBits(const unsigned char* a, const unsigned char* b, size_t bitCount) {
     size_t fullBytes = bitCount / 8;
     size_t partialBits = bitCount % 8;
@@ -80,8 +59,8 @@ bool PrefixMatch(const NetworkEndpoint& endpoint, const SOCKADDR* remoteAddr) {
         const SOCKADDR_IN* remote4 = reinterpret_cast<const SOCKADDR_IN*>(remoteAddr);
         ULONG prefix = (std::min)(endpoint.prefixLength, static_cast<ULONG>(32));
         return PrefixMatchBits(reinterpret_cast<const unsigned char*>(&local4->sin_addr),
-                               reinterpret_cast<const unsigned char*>(&remote4->sin_addr),
-                               prefix);
+                                 reinterpret_cast<const unsigned char*>(&remote4->sin_addr),
+                                 prefix);
     }
 
     const SOCKADDR_IN6* local6 = reinterpret_cast<const SOCKADDR_IN6*>(&endpoint.sockaddr);
@@ -113,10 +92,32 @@ void AddEndpointForUnicast(std::vector<NetworkEndpoint>& endpoints,
 
     endpoint.interfaceName = WideToUtf8(std::wstring(adapter->FriendlyName ? adapter->FriendlyName : L""));
     endpoint.address = SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&endpoint.sockaddr));
-    endpoint.host = BuildEndpointHost(reinterpret_cast<const SOCKADDR*>(&endpoint.sockaddr), endpoint.interfaceIndex);
+    endpoint.host = BuildEndpointHost(reinterpret_cast<const SOCKADDR*>(&endpoint.sockaddr));
     endpoint.locationUrl = "http://" + endpoint.host + ":" + std::to_string(port) + "/description.xml";
     endpoints.push_back(endpoint);
 }
+} // namespace
+
+std::string BuildEndpointHost(const SOCKADDR* addr) {
+    char buffer[INET6_ADDRSTRLEN + 1] = {};
+
+    if (addr->sa_family == AF_INET) {
+        const SOCKADDR_IN* addr4 = reinterpret_cast<const SOCKADDR_IN*>(addr);
+        inet_ntop(AF_INET, &addr4->sin_addr, buffer, sizeof(buffer));
+        return buffer;
+    }
+
+    const SOCKADDR_IN6* addr6 = reinterpret_cast<const SOCKADDR_IN6*>(addr);
+    inet_ntop(AF_INET6, &addr6->sin6_addr, buffer, sizeof(buffer));
+
+    // Zone/scope IDs are never embedded in an advertised URL: RFC 6874
+    // states a zone ID has purely local meaning to the node that produced
+    // it and must be stripped by any outgoing message (R2). The interface
+    // index needed for socket-level operations (bind, multicast join,
+    // scope_id) is carried separately in NetworkEndpoint::sockaddr /
+    // NetworkEndpoint::interfaceIndex and must keep being used there, not
+    // here.
+    return "[" + std::string(buffer) + "]";
 }
 
 std::string WideToUtf8(const std::wstring& value) {
@@ -203,8 +204,7 @@ std::string SockaddrToHostPort(const SOCKADDR* addr, int port) {
     }
 
     if (addr->sa_family == AF_INET6) {
-        const SOCKADDR_IN6* addr6 = reinterpret_cast<const SOCKADDR_IN6*>(addr);
-        std::string host = BuildEndpointHost(addr, addr6->sin6_scope_id);
+        std::string host = BuildEndpointHost(addr);
         return host + ":" + std::to_string(port);
     }
 
@@ -335,4 +335,21 @@ const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& en
     }
 
     return endpoints.empty() ? NULL : &endpoints.front();
+}
+
+bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Content) {
+    const std::wstring tempPath = path + L".tmp";
+    FILE* fp = nullptr;
+    if (_wfopen_s(&fp, tempPath.c_str(), L"wb") != 0 || !fp) return false;
+    const bool wroteOk = std::fwrite(utf8Content.data(), 1, utf8Content.size(), fp) == utf8Content.size();
+    std::fclose(fp);
+    if (!wroteOk) {
+        DeleteFileW(tempPath.c_str());
+        return false;
+    }
+    if (MoveFileExW(tempPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        return true;
+    }
+    DeleteFileW(tempPath.c_str());
+    return false;
 }

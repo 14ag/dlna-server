@@ -198,8 +198,7 @@ std::string ItemProtocolInfo(const MediaItem& item) {
 }
 
 void SortItems(std::vector<MediaItem>& items, const std::string& sortCriteria) {
-    const ConfigSnapshot cfg = AppConfig.Snapshot();
-    if (IsTitleSort(sortCriteria) || IsClassSort(sortCriteria) || (sortCriteria.empty() && cfg.sortByTitle)) {
+    if (IsTitleSort(sortCriteria) || IsClassSort(sortCriteria) || (sortCriteria.empty() && AppConfig.IsSortByTitleEnabled())) {
         const bool desc = IsDescendingSort(sortCriteria);
         const bool classSort = IsClassSort(sortCriteria);
         std::sort(items.begin(), items.end(), [desc, classSort](const MediaItem& a, const MediaItem& b) {
@@ -268,7 +267,7 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
     const int available = safeStart >= static_cast<int>(items.size()) ? 0 : static_cast<int>(items.size()) - safeStart;
     const int requested = requestedCount == 0 ? available : (std::min)(requestedCount, available);
     const auto childCounts = AppMedia.GetChildCounts(items);
-    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    const bool proxyStreams = AppConfig.IsProxyStreamsEnabled();
     const bool includeTitle = ApplyDidlFilter(filter, "dc:title");
     const bool includeClass = ApplyDidlFilter(filter, "upnp:class");
     const bool includeAlbumArt = ApplyDidlFilter(filter, "upnp:albumArtURI");
@@ -310,7 +309,7 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
                 if (hasKnownSize) {
                     entry << " size=\"" << it.sizeBytes << "\"";
                 }
-                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !cfg.proxyStreams && !ShouldProxyRemoteUrl(it.path);
+                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !proxyStreams && !ShouldProxyRemoteUrl(it.path);
                 entry << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id))) << "</res>";
             }
             if (!it.subtitlePath.empty()) {

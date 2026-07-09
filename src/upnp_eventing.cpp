@@ -154,12 +154,23 @@ std::string UpnpEventManager::HandleEventSubscription(const std::string& method,
 }
 
 std::string UpnpEventManager::RegisterSubscription(const std::string& servicePath,
-                                                   const std::string& callbackHeader,
-                                                   int timeoutSeconds) {
+                                                    const std::string& callbackHeader,
+                                                    int timeoutSeconds) {
     const std::string callbackUrl = ParseCallbackUrl(callbackHeader);
     if (callbackUrl.empty() || !IsEventPath(servicePath)) return {};
 
     std::lock_guard<std::mutex> lock(m_mutex);
+
+    if (m_subscriptions.size() >= kMaxUpnpSubscriptions) {
+        auto oldest = std::min_element(
+            m_subscriptions.begin(), m_subscriptions.end(),
+            [](const auto& a, const auto& b) { return a.second.expiresAt < b.second.expiresAt; });
+        if (oldest != m_subscriptions.end()) {
+            LogPrint(L"GENA subscription table full (%zu); evicting nearest-to-expire SID %hs",
+                     kMaxUpnpSubscriptions, oldest->first.c_str());
+            m_subscriptions.erase(oldest);
+        }
+    }
 
     const std::string sid = MakeSid(m_sidCounter.fetch_add(1, std::memory_order_relaxed));
     Subscription subscription;

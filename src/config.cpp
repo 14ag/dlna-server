@@ -198,7 +198,7 @@ Config::Config() : port(8200), fileServerPort(8201), flatFolderStyle(false), sho
 }
 
 ConfigSnapshot Config::Snapshot() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     return ConfigSnapshot{
         serverName,
         port,
@@ -223,13 +223,23 @@ ConfigSnapshot Config::Snapshot() const {
 }
 
 bool Config::IsDebugLogEnabled() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     return debugLog;
 }
 
 int Config::GetPort() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     return port;
+}
+
+bool Config::IsSortByTitleEnabled() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return sortByTitle;
+}
+
+bool Config::IsProxyStreamsEnabled() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return proxyStreams;
 }
 
 int ParsePortOrDefault(const std::unordered_map<std::string, std::string>& values, const char* key, int defaultValue) {
@@ -283,7 +293,7 @@ void Config::SetRunOnBoot(bool enable) {
 }
 
 void Config::Load() {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     std::wstring path = GetConfigPath();
     auto values = ReadConfigFile(path);
 
@@ -321,9 +331,11 @@ void Config::Load() {
     if (deviceManufacturer.empty()) deviceManufacturer = L"dlna-server contributors";
     if (deviceModelName.empty()) deviceModelName = L"dlna-server";
     if (presentationUrl.empty()) presentationUrl = L"/";
+
+    bool needsSave = false;
     if (deviceUUID.empty()) {
         deviceUUID = GenerateUUID();
-        Save();
+        needsSave = true;
     }
 
     mediaSources.clear();
@@ -331,10 +343,13 @@ void Config::Load() {
     for (const auto& token : SplitConfigList(sourcesStr)) {
         if (!token.empty()) mediaSources.push_back({ token, true });
     }
+
+    lock.unlock();
+    if (needsSave) Save();
 }
 
 void Config::Save() {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     std::wstring path = GetConfigPath();
 
     std::wstring sourcesStr;
@@ -365,14 +380,8 @@ void Config::Save() {
     ss << "PresentationURL=" << WideToUtf8(presentationUrl) << "\n";
     ss << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";
 
-    FILE* fp = NULL;
-    if (_wfopen_s(&fp, path.c_str(), L"wb") == 0 && fp) {
-        static const unsigned char bom[] = { 0xEF, 0xBB, 0xBF };
-        fwrite(bom, 1, sizeof(bom), fp);
-        std::string content = ss.str();
-        fwrite(content.data(), 1, content.size(), fp);
-        fclose(fp);
-    } else {
+    static const std::string bom = "\xEF\xBB\xBF";
+    if (!WriteFileAtomicUtf8(path, bom + ss.str())) {
         LogPrint(L"Config save failed: %ls", path.c_str());
     }
 

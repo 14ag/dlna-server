@@ -565,7 +565,7 @@ std::vector<MediaItem> MediaSources::GetChildren(int parentId) {
             }
         }
     }
-    const bool sortByTitle = AppConfig.Snapshot().sortByTitle;
+    const bool sortByTitle = AppConfig.IsSortByTitleEnabled();
     if (sortByTitle) {
         std::sort(res.begin(), res.end(), [](const MediaItem& a, const MediaItem& b) {
             if (a.isFolder != b.isFolder) return a.isFolder && !b.isFolder;
@@ -594,8 +594,7 @@ MediaSources::GetChildrenResult MediaSources::TryGetChildren(int objId, std::vec
             if (index < m_items.size()) out.push_back(m_items[index]);
         }
     }
-    const bool sortByTitle = AppConfig.Snapshot().sortByTitle;
-    if (sortByTitle) {
+    if (AppConfig.IsSortByTitleEnabled()) {
         std::sort(out.begin(), out.end(), [](const MediaItem& a, const MediaItem& b) {
             if (a.isFolder != b.isFolder) return a.isFolder && !b.isFolder;
             return NaturalLessWide(a.title, b.title);
@@ -614,7 +613,7 @@ std::vector<MediaItem> MediaSources::GetDescendants(int parentId) {
     }
 
     std::vector<MediaItem> result;
-    AppendDescendants(items, childrenByParent, parentId, AppConfig.Snapshot().sortByTitle, result);
+    AppendDescendants(items, childrenByParent, parentId, AppConfig.IsSortByTitleEnabled(), result);
     return result;
 }
 
