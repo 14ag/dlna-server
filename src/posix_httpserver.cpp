@@ -505,28 +505,41 @@ ScopedFd client(clientSocket);
                     SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }
-                HttpByteRange parsedRange = ParseHttpRangeHeader(FindHeaderValueCaseInsensitive(req, "Range"), static_cast<long long>(st.st_size));
-                if (!parsedRange.satisfiable) {
-                    SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(static_cast<long long>(st.st_size)) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                    return;
+
+                const bool isHlsManifest = item.mimeType == L"video/mpegurl";
+                bool hasKnownSize = st.st_size > 0;
+                HttpByteRange parsedRange{};
+                if (hasKnownSize && !isHlsManifest) {
+                    parsedRange = ParseHttpRangeHeader(FindHeaderValueCaseInsensitive(req, "Range"), static_cast<long long>(st.st_size));
+                    if (!parsedRange.satisfiable) {
+                        SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(static_cast<long long>(st.st_size)) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                        return;
+                    }
                 }
-                long long start = parsedRange.start;
-                long long end = parsedRange.end;
-                bool partial = parsedRange.requested;
+
+                bool partial = hasKnownSize && !isHlsManifest && parsedRange.requested;
+                long long start = hasKnownSize && !isHlsManifest ? parsedRange.start : 0;
+                long long end = hasKnownSize && !isHlsManifest ? parsedRange.end : 0;
+                long long bodyLength = hasKnownSize ? (isHlsManifest ? static_cast<long long>(st.st_size) : (end - start + 1)) : 0;
                 std::stringstream headers;
                 headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
-                if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << st.st_size << "\r\n";
-                headers << "Content-Type: " << WideToUtf8(item.mimeType) << "\r\n"
-                        << "Content-Length: " << (end - start + 1) << "\r\n"
-                        << "Accept-Ranges: bytes\r\n"
-                        << ConnectionHeader(keepAlive)
+                if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << static_cast<long long>(st.st_size) << "\r\n";
+                headers << "Content-Type: " << WideToUtf8(item.mimeType) << "\r\n";
+
+                if (hasKnownSize) {
+                    headers << "Content-Length: " << bodyLength << "\r\n"
+                            << "Accept-Ranges: " << (isHlsManifest ? "none" : "bytes") << "\r\n";
+                } else {
+                    headers << "Accept-Ranges: none\r\n";
+                }
+                headers << ConnectionHeader(keepAlive)
                         << "transferMode.dlna.org: Streaming\r\n"
-                        << "contentFeatures.dlna.org: " << (item.mimeType == L"video/mpegurl" ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true)) << "\r\n\r\n";
+                        << "contentFeatures.dlna.org: " << (isHlsManifest ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true)) << "\r\n";
                 SendAll(clientSocket, headers.str());
                 if (method == "GET") {
                     SetSocketStreamTimeouts(clientSocket);
                     lseek(fd.get(), start, SEEK_SET);
-                    long long remaining = end - start + 1;
+                    long long remaining = bodyLength;
                     while (remaining > 0) {
                         ssize_t chunk = read(fd.get(), buf, (std::min)(sizeof(buf), static_cast<size_t>(remaining)));
                         if (chunk <= 0) break;

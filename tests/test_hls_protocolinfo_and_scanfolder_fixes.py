@@ -16,7 +16,7 @@ class HlsProtocolInfoAndScanFolderFixTests(unittest.TestCase):
         src = self.read("src/contentdirectory.cpp")
         # ItemProtocolInfo must detect HLS MIME and emit OP=01 (time-seek)
         # matching the android j.java contentFeatures.dlna.org pattern
-        self.assertIn("application/vnd.apple.mpegurl", src)
+        self.assertIn("video/mpegurl", src)
         self.assertIn("BuildHlsProtocolInfo()", src)
         # The literal string should be centralized to dlna_utils.cpp
         src = self.read("src/dlna_utils.cpp")
@@ -28,7 +28,7 @@ class HlsProtocolInfoAndScanFolderFixTests(unittest.TestCase):
     def test_hls_mime_guard_present_in_contentdirectory(self):
         src = self.read("src/contentdirectory.cpp")
         self.assertIn("ItemProtocolInfo", src)
-        self.assertIn("application/vnd.apple.mpegurl", src)
+        self.assertIn("video/mpegurl", src)
 
     # ------------------------------------------------------------------
     # Fix 2: ScanFolder and ScanNetworkFolder do not pre-create containers
@@ -66,7 +66,7 @@ class HlsProtocolInfoAndScanFolderFixTests(unittest.TestCase):
 
     def _assert_http_hls_content_features(self, path):
         src = self.read(path)
-        self.assertIn("application/vnd.apple.mpegurl", src)
+        self.assertIn("video/mpegurl", src)
         self.assertIn(
             "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000",
             src,
