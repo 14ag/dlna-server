@@ -27,8 +27,11 @@ class FirewallAccessSourceTests(unittest.TestCase):
             "ShellExecuteExW",
             'L"runas"',
             'L"--configure-firewall --port "',
-            "DLNA Server HTTP TCP",
-            "DLNA Server SSDP UDP",
+            "BuildTcpRuleName",
+            "BuildUdpRuleName",
+            "DLNA Server-",
+            "HTTP TCP",
+            "SSDP UDP",
         ):
             self.assertIn(token, source)
 
@@ -40,8 +43,8 @@ class FirewallAccessSourceTests(unittest.TestCase):
             "get_Grouping",
             "NET_FW_IP_PROTOCOL_ANY",
             "MessageIndicatesAccessDenied",
-            "AddRule(rules, kTcpRuleName, kProtocolTcp, 0, false",
-            "AddRule(rules, kUdpRuleName, kProtocolUdp, kSsdpPort, true",
+            "AddRule(rules, BuildTcpRuleName(exePath)",
+            "AddRule(rules, BuildUdpRuleName(exePath)",
             "put_LocalPorts",
         ):
             self.assertIn(token, source)

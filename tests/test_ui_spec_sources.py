@@ -130,7 +130,7 @@ class UiSpecTests(unittest.TestCase):
         ):
             self.assertIn(token, app_rc)
         self.assertIn('set_target_properties(dlna-server PROPERTIES OUTPUT_NAME "DLNA Server")', cmake)
-        self.assertIn('CreateWindowExW(\n        0, CLASS_NAME, L"DLNA Server"', main)
+        self.assertIn('CreateWindowExW(\n        m_startedHeadless ? WS_EX_TOOLWINDOW : 0, CLASS_NAME, L"DLNA Server"', main)
         self.assertIn('wcscpy_s(nid.szTip, L"DLNA Server")', main)
         self.assertIn("AppendMenuW(hMenu", main)
         self.assertNotIn("InsertMenuW(hMenu, -1", main)

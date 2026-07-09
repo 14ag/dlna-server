@@ -8,6 +8,7 @@
 #include <string>
 #include <cwctype>
 #include <thread>
+#include <atomic>
 #include "config.h"
 #include "media_sources.h"
 #include "modal_focus.h"
@@ -289,7 +290,8 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
 }
 
 MainWindow::MainWindow() : m_hwnd(NULL), m_hInstance(NULL), m_state(ServerUiState::Stopped),
-m_hBtnAdd(NULL), m_hBtnDelete(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL), m_listOldProc(NULL) {
+m_hBtnAdd(NULL), m_hBtnDelete(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL), m_listOldProc(NULL),
+m_startedHeadless(false), m_scanInProgress(false), m_scanningStatusActive(false), m_pendingRescanAfterBusy(false) {
     m_hBgBrush = CreateSolidBrush(kPageColor);
     m_hDarkBrush = CreateSolidBrush(kControlColor);
     m_hToolbarBrush = CreateSolidBrush(kToolbarColor);
@@ -313,8 +315,9 @@ MainWindow::~MainWindow() {
     if (m_hButtonFont) DeleteObject(m_hButtonFont);
 }
 
-bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
+bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
     m_hInstance = hInstance;
+    m_startedHeadless = startHeadless;
 
     const wchar_t CLASS_NAME[] = L"dlna-server_Main";
 
@@ -329,7 +332,7 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow) {
     RegisterClassW(&wc);
 
     m_hwnd = CreateWindowExW(
-        0, CLASS_NAME, L"DLNA Server",
+        m_startedHeadless ? WS_EX_TOOLWINDOW : 0, CLASS_NAME, L"DLNA Server",
         WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, kDefaultWindowWidth, kDefaultWindowHeight,
         NULL, NULL, hInstance, this
@@ -415,7 +418,8 @@ void MainWindow::SetControlsForState() {
     BOOL enabled = IsBusy() ? FALSE : TRUE;
     EnableWindow(m_hBtnAdd, enabled);
     EnableWindow(m_hBtnStartStop, enabled);
-    EnableWindow(m_hBtnSettings, enabled);
+    EnableWindow(m_hBtnSettings, TRUE);
+    SendMessage(m_hBtnAdd, WM_SETTEXT, 0, (LPARAM)(IsRunning() ? L"Scan" : L"Add"));
     UpdateDeleteButton();
 }
 
@@ -430,7 +434,7 @@ void MainWindow::BeginStartServer() {
             ok ? ServerUiState::Running : ServerUiState::Stopped,
             ok,
             ok ? DLNAServer.GetEndpoint() : L"",
-            ok ? L"" : L"Failed to start DLNA server. Open View log for details."
+            ok ? L"" : L"Failed to start DLNA server."
         };
         PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
     });
@@ -474,6 +478,9 @@ void MainWindow::CompleteServerOperation(ServerUiState finalState, const std::ws
     SetStatus(finalState, endpoint);
     if (!success && !message.empty()) {
         MessageBoxW(m_hwnd, message.c_str(), L"DLNA Server", MB_ICONWARNING | MB_OK);
+    }
+    if (m_pendingRescanAfterBusy.exchange(false)) {
+        std::thread([]() { DLNAServer.Rescan(); }).detach();
     }
 }
 
@@ -524,13 +531,26 @@ void MainWindow::ShowTrayMenu() {
     DestroyMenu(hMenu);
 
     if (cmd == 1) {
-        ShowWindow(m_hwnd, SW_RESTORE);
-        SetForegroundWindow(m_hwnd);
+        RestoreAndFocusMainWindow();
     } else if (cmd == 2 && !IsBusy()) {
         PostMessage(m_hwnd, WM_COMMAND, IDC_BTN_STARTSTOP, 0);
     } else if (cmd == 3) {
         PostQuitMessage(0);
     }
+}
+
+void MainWindow::RestoreAndFocusMainWindow() {
+    if (m_startedHeadless) {
+        LONG_PTR exStyle = GetWindowLongPtrW(m_hwnd, GWL_EXSTYLE);
+        if (exStyle & WS_EX_TOOLWINDOW) {
+            exStyle &= ~WS_EX_TOOLWINDOW;
+            SetWindowLongPtrW(m_hwnd, GWL_EXSTYLE, exStyle);
+            SetWindowPos(m_hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
+            m_startedHeadless = false;
+        }
+    }
+    ShowWindow(m_hwnd, IsIconic(m_hwnd) ? SW_RESTORE : SW_SHOW);
+    SetForegroundWindow(m_hwnd);
 }
 
 void MainWindow::RefreshSourceList() {
@@ -549,11 +569,10 @@ int MainWindow::SelectedSourceIndex() const {
 
 void MainWindow::UpdateDeleteButton() {
     if (!m_hBtnDelete) return;
-    EnableWindow(m_hBtnDelete, (!IsBusy() && SelectedSourceIndex() >= 0) ? TRUE : FALSE);
+    EnableWindow(m_hBtnDelete, SelectedSourceIndex() >= 0 ? TRUE : FALSE);
 }
 
 void MainWindow::RemoveSelectedSource() {
-    if (IsBusy()) return;
     int selected = SelectedSourceIndex();
     if (selected < 0 || selected >= static_cast<int>(AppConfig.mediaSources.size())) {
         UpdateDeleteButton();
@@ -564,7 +583,6 @@ void MainWindow::RemoveSelectedSource() {
         cfg.mediaSources.erase(cfg.mediaSources.begin() + selected);
     });
     AppConfig.Save();
-    std::thread([]() { DLNAServer.Rescan(); }).detach();
     RefreshSourceList();
 
     int count = static_cast<int>(SendMessage(m_hListSources, LB_GETCOUNT, 0, 0));
@@ -574,6 +592,12 @@ void MainWindow::RemoveSelectedSource() {
     }
     UpdateDeleteButton();
     InvalidateRect(m_hwnd, NULL, TRUE);
+
+    if (IsBusy()) {
+        m_pendingRescanAfterBusy.store(true);
+    } else {
+        std::thread([]() { DLNAServer.Rescan(); }).detach();
+    }
 }
 
 void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
@@ -637,8 +661,25 @@ void MainWindow::OpenFolderPicker() {
     std::thread([]() { DLNAServer.Rescan(); }).detach();
 }
 
+void MainWindow::BeginRescan() {
+    if (IsBusy()) return;
+    if (m_scanInProgress.exchange(true)) return;
+    m_scanningStatusActive = true;
+    InvalidateRect(m_hwnd, NULL, TRUE);
+    std::thread([this]() {
+        DLNAServer.Rescan();
+        m_scanInProgress.store(false);
+        m_scanningStatusActive = false;
+        InvalidateRect(m_hwnd, NULL, TRUE);
+    }).detach();
+}
+
 LRESULT CALLBACK MainWindow::ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     MainWindow* pThis = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (pThis && uMsg == WM_KILLFOCUS) {
+        SendMessage(hwnd, LB_SETCURSEL, (WPARAM)-1, 0);
+        pThis->UpdateDeleteButton();
+    }
     if (pThis && uMsg == WM_KEYDOWN && wParam == VK_DELETE) {
         pThis->RemoveSelectedSource();
         return 0;
@@ -698,13 +739,15 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         hOldFont = SelectObject(hdc, m_hBodyFont ? m_hBodyFont : GetStockObject(DEFAULT_GUI_FONT));
 
         RECT rcStatusText = { kGutter, kToolbarHeight, rcClient.right - kGutter, kToolbarHeight + kStatusHeight };
-        std::wstring statusText = L"DLNA Server is stopped";
-        if (m_state == ServerUiState::Starting) {
+        std::wstring statusText;
+        if (m_scanningStatusActive) {
+            statusText = L"scanning...";
+        } else if (m_state == ServerUiState::Starting) {
             statusText = L"starting server...";
         } else if (m_state == ServerUiState::Stopping) {
             statusText = L"stopping server...";
         } else if (m_state == ServerUiState::Running) {
-            statusText = L"DLNA Server is running on " + m_statusEndpoint;
+            statusText = L"Server running";
         }
         DrawTextW(hdc, statusText.c_str(), -1, &rcStatusText, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
@@ -757,7 +800,11 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             }
             break;
         case IDC_BTN_ADD:
-            OpenFolderPicker();
+            if (IsRunning()) {
+                BeginRescan();
+            } else {
+                OpenFolderPicker();
+            }
             break;
         case IDC_BTN_DELETE:
             RemoveSelectedSource();
@@ -806,11 +853,12 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         return TRUE;
     }
     case WM_TRAYICON: {
-        if (lParam == WM_RBUTTONUP) {
+        if (lParam == WM_LBUTTONUP) {
+            RestoreAndFocusMainWindow();
+        } else if (lParam == WM_RBUTTONUP) {
             ShowTrayMenu();
         } else if (lParam == WM_LBUTTONDBLCLK) {
-            ShowWindow(m_hwnd, SW_RESTORE);
-            SetForegroundWindow(m_hwnd);
+            RestoreAndFocusMainWindow();
         }
         return 0;
     }
