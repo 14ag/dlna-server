@@ -1,6 +1,7 @@
 #include "firewall_access.h"
 #include "dlna_utils.h"
 #include "log.h"
+#include "netutils.h"
 
 #include <windows.h>
 #include <netfw.h>
@@ -10,13 +11,38 @@
 #include <vector>
 
 namespace {
-const wchar_t* kTcpRuleName = L"DLNA Server HTTP TCP";
-const wchar_t* kUdpRuleName = L"DLNA Server SSDP UDP";
+constexpr uint64_t kFnvOffset = 1469598103934665603ULL;
+constexpr uint64_t kFnvPrime = 1099511628211ULL;
 const wchar_t* kRuleGroup = L"DLNA Server";
 const LONG kProfiles = NET_FW_PROFILE2_DOMAIN | NET_FW_PROFILE2_PRIVATE | NET_FW_PROFILE2_PUBLIC;
 const LONG kProtocolTcp = 6;
 const LONG kProtocolUdp = 17;
 const int kSsdpPort = 1900;
+
+uint64_t HashModulePath(const std::wstring& path) {
+    uint64_t hash = kFnvOffset;
+    std::string utf8 = WideToUtf8(path);
+    for (unsigned char ch : utf8) {
+        hash ^= ch;
+        hash *= kFnvPrime;
+    }
+    return hash;
+}
+
+std::wstring BuildRuleSuffix(const std::wstring& exePath) {
+    uint64_t hash = HashModulePath(exePath);
+    std::wstring decimalText = std::to_wstring(hash);
+    size_t len = decimalText.length() < 5 ? decimalText.length() : 5;
+    return decimalText.substr(0, len);
+}
+
+std::wstring BuildTcpRuleName(const std::wstring& exePath) {
+    return L"DLNA Server-" + BuildRuleSuffix(exePath) + L" HTTP TCP";
+}
+
+std::wstring BuildUdpRuleName(const std::wstring& exePath) {
+    return L"DLNA Server-" + BuildRuleSuffix(exePath) + L" SSDP UDP";
+}
 
 struct ComInit {
     HRESULT hr;
@@ -303,9 +329,11 @@ bool EvaluateFirewallRules(int port,
                 if (RuleIsCompleteUdpAllow(rule, exePath)) {
                     hasUdpAllow = true;
                 }
+                std::wstring tcpRuleName = BuildTcpRuleName(exePath);
+                std::wstring udpRuleName = BuildUdpRuleName(exePath);
                 if (collectRemovals &&
-                    (name == kTcpRuleName ||
-                     name == kUdpRuleName ||
+                    (name == tcpRuleName ||
+                     name == udpRuleName ||
                      grouping == kRuleGroup ||
                      RuleIsMatchingBlock(rule, exePath) ||
                      RuleIsOldPortScopedTcpAllow(rule, exePath))) {
@@ -465,9 +493,9 @@ bool ConfigureFirewallAccessElevated(int port, std::wstring& message) {
         return false;
     }
 
-    bool ok = RemoveNamedRules(rules, removals, message) &&
-              AddRule(rules, kTcpRuleName, kProtocolTcp, 0, false, exePath, message) &&
-              AddRule(rules, kUdpRuleName, kProtocolUdp, kSsdpPort, true, exePath, message);
+bool ok = RemoveNamedRules(rules, removals, message) &&
+               AddRule(rules, BuildTcpRuleName(exePath).c_str(), kProtocolTcp, 0, false, exePath, message) &&
+               AddRule(rules, BuildUdpRuleName(exePath).c_str(), kProtocolUdp, kSsdpPort, true, exePath, message);
     rules->Release();
     if (!ok) {
         return false;

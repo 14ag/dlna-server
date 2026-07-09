@@ -17,55 +17,19 @@
 
 namespace {
 
-// --- headless helpers (posix_main.cpp style) ---
+std::atomic<bool> g_headlessConsoleStop(false);
+HWND g_hwndMainForConsole = NULL;
 
-std::atomic<bool> g_stopHeadless(false);
-
-BOOL WINAPI ConsoleCtrlHandler(DWORD ctrlType) {
+BOOL WINAPI HeadlessConsoleCtrlHandler(DWORD ctrlType) {
     if (ctrlType == CTRL_C_EVENT || ctrlType == CTRL_BREAK_EVENT) {
-        g_stopHeadless = true;
+        g_headlessConsoleStop = true;
+        if (g_hwndMainForConsole) {
+            PostMessageW(g_hwndMainForConsole, WM_CLOSE, 0, 0);
+        }
         return TRUE;
     }
     return FALSE;
 }
-
-void PrintHeadlessUsage() {
-    std::wcerr << L"Usage: DLNA Server.exe --headless [--port 8200] [--name NAME] [--uuid UUID] [--debug] --source PATH_OR_URL [--source PATH_OR_URL...]\n";
-    std::wcerr << L"Sources can be folders, playlist files (.m3u, .m3u8, .pls), smb:// URLs, or ftp:// URLs.\n";
-}
-
-int RunHeadless(LPWSTR* argv, int argc) {
-    AppConfig.Load();
-    for (int i = 1; i < argc; ++i) {
-        if (wcscmp(argv[i], L"--headless") == 0) continue;
-        if (wcscmp(argv[i], L"--port") == 0 && i + 1 < argc) {
-            int port = 0;
-            if (!TryParsePortStrict(WideToUtf8(argv[++i]).c_str(), port)) {
-                PrintHeadlessUsage();
-                return 2;
-            }
-            AppConfig.port = port;
-        }
-        else if (wcscmp(argv[i], L"--name") == 0 && i + 1 < argc) AppConfig.serverName = argv[++i];
-        else if (wcscmp(argv[i], L"--uuid") == 0 && i + 1 < argc) AppConfig.deviceUUID = argv[++i];
-        else if (wcscmp(argv[i], L"--source") == 0 && i + 1 < argc) AppConfig.mediaSources.push_back({argv[++i], true});
-        else if (wcscmp(argv[i], L"--debug") == 0) AppConfig.debugLog = true;
-        else if (wcscmp(argv[i], L"--help") == 0) { PrintHeadlessUsage(); return 0; }
-        else AppConfig.mediaSources.push_back({argv[i], true});
-    }
-    if (AppConfig.mediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
-        PrintHeadlessUsage();
-        return 2;
-    }
-    std::signal(SIGINT, [](int) { g_stopHeadless = true; });
-    SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
-    if (!DLNAServer.Start()) return 1;
-    while (!g_stopHeadless) std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    DLNAServer.Stop();
-    return 0;
-}
-
-// --- GUI helpers (existing) ---
 
 bool HasCommandLineToken(const wchar_t* token) {
     int argc = 0;
@@ -74,6 +38,21 @@ bool HasCommandLineToken(const wchar_t* token) {
     bool found = false;
     for (int i = 1; i < argc; ++i) {
         if (wcscmp(argv[i], token) == 0) {
+            found = true;
+            break;
+        }
+    }
+    LocalFree(argv);
+    return found;
+}
+
+bool HasHeadlessToken() {
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) return false;
+    bool found = false;
+    for (int i = 1; i < argc; ++i) {
+        if (wcscmp(argv[i], L"--headless") == 0 || wcscmp(argv[i], L"-h") == 0) {
             found = true;
             break;
         }
@@ -119,20 +98,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     (void)hPrevInstance;
     (void)pCmdLine;
 
-    // headless path: runs before any GUI/window infrastructure
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (argv && argc > 1) {
-        for (int i = 1; i < argc; ++i) {
-            if (wcscmp(argv[i], L"--headless") == 0) {
-                int ret = RunHeadless(argv, argc);
-                LocalFree(argv);
-                return ret;
-            }
-        }
-    }
-    if (argv) LocalFree(argv);
-
     int helperExitCode = 0;
     if (TryRunFirewallHelper(helperExitCode)) {
         return helperExitCode;
@@ -150,18 +115,47 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 0;
     }
 
-    // Parse command line for --minimized
-    bool startMinimized = HasCommandLineToken(L"--minimized");
+    bool startHeadless = HasHeadlessToken();
 
-    AppConfig.Load();
+    // Attach console for headless mode output
+    bool consoleAttached = false;
+    FILE* fpOut = NULL;
+    FILE* fpErr = NULL;
+    if (startHeadless) {
+        consoleAttached = AttachConsole(ATTACH_PARENT_PROCESS) != 0;
+        if (consoleAttached && GetLastError() == ERROR_ACCESS_DENIED) {
+            // Already has console, skip redirect
+        } else if (!consoleAttached && GetLastError() == ERROR_INVALID_HANDLE) {
+            // No parent console (e.g., launched from Explorer), proceed silently
+            consoleAttached = false;
+        } else if (consoleAttached) {
+            // Successfully attached, redirect stdout/stderr
+            _wfreopen_s(&fpOut, L"CONOUT$", L"w", stdout);
+            _wfreopen_s(&fpErr, L"CONOUT$", L"w", stderr);
+        }
+
+        AppConfig.Load();
+
+        if (AppConfig.debugLog) {
+            SetConsoleCtrlHandler(HeadlessConsoleCtrlHandler, TRUE);
+        }
+    } else {
+        AppConfig.Load();
+    }
 
     MainWindow app;
-    if (!app.Create(hInstance, startMinimized ? SW_HIDE : nCmdShow)) {
+    if (!app.Create(hInstance, startHeadless ? SW_HIDE : nCmdShow, startHeadless)) {
         return 0;
     }
 
-    if (startMinimized) {
-        PostMessageW(app.GetHwnd(), WM_COMMAND, IDC_BTN_STARTSTOP, 0);
+    HWND hwndMain = app.GetHwnd();
+    g_hwndMainForConsole = hwndMain;
+    if (startHeadless) {
+        if (!AppConfig.debugLog) {
+            std::wcout << L"server is up" << std::endl;
+            FreeConsole();
+        }
+        PostMessageW(hwndMain, WM_COMMAND, IDC_BTN_STARTSTOP, 0);
     }
 
     MSG msg = {};

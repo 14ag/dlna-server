@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <string>
 #include <thread>
+#include <atomic>
 
 enum class ServerUiState {
     Stopped,
@@ -17,7 +18,7 @@ public:
     MainWindow();
     ~MainWindow();
 
-    bool Create(HINSTANCE hInstance, int nCmdShow);
+    bool Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless = false);
     void SetStatus(ServerUiState state, const std::wstring& endpoint = L"");
     HWND GetHwnd() const { return m_hwnd; }
 
@@ -29,8 +30,10 @@ private:
     void AddTrayIcon();
     void RemoveTrayIcon();
     void ShowTrayMenu();
+    void RestoreAndFocusMainWindow();
     void OpenFolderPicker();
     void RemoveSelectedSource();
+    void BeginRescan();
     void RefreshSourceList();
     void UpdateDeleteButton();
     int SelectedSourceIndex() const;
@@ -64,6 +67,11 @@ private:
     ServerUiState m_state;
     std::wstring m_statusEndpoint;
     std::thread m_worker;
+
+    bool m_startedHeadless;
+    std::atomic<bool> m_scanInProgress;
+    std::atomic<bool> m_scanningStatusActive;
+    std::atomic<bool> m_pendingRescanAfterBusy;
 };
 
 #endif // MAINWINDOW_H
