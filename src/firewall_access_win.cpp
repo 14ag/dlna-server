@@ -524,11 +524,15 @@ bool EnsureFirewallAccess(int port, FirewallAccessMode mode, std::wstring& messa
     bool hasUdpAllow = false;
     std::vector<std::wstring> removals;
     bool canReadRules = EvaluateFirewallRules(port, false, hasTcpAllow, hasUdpAllow, removals, message);
+    LogPrint(L"[firewall:diag] canReadRules=%d hasTcpAllow=%d hasUdpAllow=%d msg=%ls",
+             canReadRules, hasTcpAllow, hasUdpAllow, message.c_str());
     bool readDenied = !canReadRules && MessageIndicatesAccessDenied(message);
     if (!canReadRules && !readDenied) {
+        LogPrint(L"[firewall:diag] branch A returning false rule enumeration failed");
         return false;
     }
     if (canReadRules && hasTcpAllow && hasUdpAllow) {
+        LogPrint(L"[firewall:diag] branch B returning true both allow rules already present no prompt shown");
         return true;
     }
 
@@ -539,8 +543,11 @@ bool EnsureFirewallAccess(int port, FirewallAccessMode mode, std::wstring& messa
         return false;
     }
 
+    LogPrint(L"[firewall:diag] branch C reaching interactive prompt now");
     std::wstring prompt = BuildFirewallAccessSummary(port) + L"\n\nAllow access now?";
-    int answer = MessageBoxW(NULL, prompt.c_str(), L"DLNA Server firewall access", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON1);
+    int answer = MessageBoxW(NULL, prompt.c_str(), L"DLNA Server firewall access",
+                              MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON1 | MB_SETFOREGROUND | MB_TOPMOST);
+    LogPrint(L"[firewall:diag] branch C prompt answered=%d (6=yes 7=no)", answer);
     if (answer != IDYES) {
         message = L"Firewall access was declined.";
         return false;

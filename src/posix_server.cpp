@@ -189,6 +189,7 @@ bool Server::Start() {
 bool Server::Rescan() {
     if (m_running.load(std::memory_order_acquire)) {
         StartBackgroundScan();
+        JoinBackgroundScan();
     } else {
         AppMedia.Scan();
     }
