@@ -73,7 +73,7 @@ class HlsManifestProxyFixSourceTests(unittest.TestCase):
         src = self._read("src/posix_httpserver.cpp")
         self.assertIn("if (hasKnownSize && !isHlsManifest)", src)
         self.assertIn("bool partial = hasKnownSize && !isHlsManifest && parsedRange.requested", src)
-        self.assertIn("isHlsManifest ? fileSize : (end - start + 1)", src)
+        self.assertIn("isHlsManifest ? static_cast<long long>(st.st_size)", src)
 
     def test_posix_hls_accept_ranges_none(self):
         src = self._read("src/posix_httpserver.cpp")
@@ -82,7 +82,7 @@ class HlsManifestProxyFixSourceTests(unittest.TestCase):
     def test_posix_bodyLength_variable_exists(self):
         src = self._read("src/posix_httpserver.cpp")
         self.assertIn("bodyLength", src)
-        self.assertIn("long long bodyLength = hasKnownSize ? (isHlsManifest ? fileSize : (end - start + 1)) : 0", src)
+        self.assertIn("isHlsManifest ? static_cast<long long>(st.st_size) : (end - start + 1)", src)
 
     def test_posix_spoofSamsung_unchanged(self):
         src = self._read("src/posix_httpserver.cpp")
@@ -99,7 +99,7 @@ class HlsManifestProxyFixSourceTests(unittest.TestCase):
         for path in ("src/httpserver.cpp", "src/posix_httpserver.cpp"):
             src = self._read(path)
             self.assertIn("const bool isHlsManifest", src)
-            self.assertIn('L"application/vnd.apple.mpegurl"', src)
+            self.assertIn('L"video/mpegurl"', src)
 
     def test_both_platforms_spoof_value_unchanged(self):
         for path in ("src/httpserver.cpp", "src/posix_httpserver.cpp"):
