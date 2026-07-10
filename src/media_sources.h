@@ -1,6 +1,7 @@
 #ifndef MEDIA_SOURCES_H
 #define MEDIA_SOURCES_H
 
+#include <functional>
 #include <string>
 #include <vector>
 #include <mutex>
@@ -9,8 +10,14 @@
 #include <utility>
 #include <unordered_map>
 #include <unordered_set>
+#include <condition_variable>
+#include <deque>
+#include <memory>
 
-struct ConfigSnapshot;
+#include "task_group.h"
+#include "playlist_scan_concurrency.h"
+#include "config.h"
+
 class MediaDatabase;
 
 struct MediaItem {
@@ -33,6 +40,16 @@ struct MediaItem {
     long long rawDateMs = 0;
 };
 
+struct MediaIndexState;
+struct PlaylistScanContext;
+
+struct PendingPlaylistNode {
+    std::wstring path;
+    int parentId;
+    std::wstring titleOverride;
+    int depth;
+};
+
 struct MediaIndexState {
     std::vector<MediaItem> items;
     std::unordered_map<int, size_t> idToIndex;
@@ -43,8 +60,11 @@ struct MediaIndexState {
     std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> perStemAlbumArt;
     std::unordered_set<std::wstring> duplicateKeys;
     MediaDatabase* mediaDatabase = nullptr;
-    int nextId = 1;
+
+    std::unique_ptr<std::mutex> mutationMutex = std::make_unique<std::mutex>();
 };
+
+constexpr int kMaxPlaylistRecursionDepth = 8;
 
 class MediaSources {
 public:
@@ -64,23 +84,55 @@ public:
     };
     GetChildrenResult TryGetChildren(int objId, std::vector<MediaItem>& out);
 
+    void ResetForRescan();
+    int PublishContainer(MediaDatabase* database, int parentId,
+                          const std::wstring& title, const std::wstring& path,
+                          std::function<std::wstring(const std::wstring&)> canonicalize);
+    void PublishItem(MediaItem item);
+
 private:
     MediaSources();
     void AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& path, int parentId, const std::wstring& titleOverride = L"", const std::wstring& subtitleOverride = L"", bool allowArtistAlbumMirror = true);
     void AddHlsStreamItem(MediaIndexState& state, const std::wstring& path, int parentId, const std::wstring& titleOverride = L"");
-    void ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& playlistPath, int parentId, int depth = 0);
-    void ScanPlaylistEntry(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& location, const std::wstring& titleOverride, int parentId, int depth);
-    void ScanNetworkFolder(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& folderUrl, int parentId, int depth);
-    void ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& rootPath, int parentId, int depth = 0);
+
+public:
+    // Entry point used by Scan() (Task 9) and, internally, by ScanFolder /
+    // ScanNetworkFolder when they discover a playlist file mid-walk. Enqueues
+    // the root node and runs the dispatcher until every node discovered
+    // transitively under `path` has been scanned and published. Blocking:
+    // call this from a background scan task, never from Server::Start()'s
+    // calling thread directly (see Task 9/10).
+    void ScanPlaylistTree(std::shared_ptr<PlaylistScanContext> ctx, const std::wstring& path,
+                          int parentId, const std::wstring& titleOverride = L"");
+
+private:
+    void ScanNetworkFolder(std::shared_ptr<PlaylistScanContext> sourceContext, const std::wstring& folderUrl, int parentId, int depth);
+    void ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext, const std::wstring& rootPath, int parentId, int depth = 0);
     bool IsAllowedExtension(const std::wstring& ext, std::wstring& mime, std::wstring& uclass);
-    static void BuildIndexes(MediaIndexState& state);
-    void SwapScannedState(MediaIndexState&& state);
+    void RunPlaylistDispatcher(std::shared_ptr<PlaylistScanContext> ctx);
+    void ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx, const PendingPlaylistNode& node, TaskGroupLeaveGuard& guard);
 
     std::mutex m_mutex;
     std::vector<MediaItem> m_items;
     std::unordered_map<int, size_t> m_idToIndex;
     std::unordered_map<int, std::vector<size_t>> m_childrenByParent;
     std::atomic<int> m_systemUpdateId;
+};
+
+// Owns everything needed to scan one top-level media source's playlist/HLS
+// subtree concurrently. One instance per configured source; shared by every
+// playlist reference discovered anywhere under that source (see Task 7
+// background). Lives as long as the source's scan is in flight -- keep it
+// alive via std::shared_ptr captured into every submitted task.
+struct PlaylistScanContext {
+    ConfigSnapshot cfg;
+    MediaIndexState state;                    // per-source scratch caches, see Task 5
+    AdaptiveConcurrencyLimiter limiter{1};
+    std::atomic<size_t> discoveredCount{0};
+    TaskGroup group;
+    std::mutex queueMutex;
+    std::condition_variable queueCv;
+    std::deque<PendingPlaylistNode> pendingQueue;
 };
 
 #define AppMedia MediaSources::Get()

@@ -108,7 +108,8 @@ void Server::WatchLoop() {
         lock.unlock();
 
         cfg = AppConfig.Snapshot();
-        if (MediaSourcesHaveChanged(cfg, signature)) {
+        const bool sourcesChanged = MediaSourcesHaveChanged(cfg, signature);
+        if (ShouldAutoRescan(cfg, sourcesChanged)) {
             LogPrint(L"Media source change detected; rescanning.");
             if (!m_stopWatch.load(std::memory_order_acquire)) {
                 StartBackgroundScan();
@@ -216,9 +217,11 @@ bool Server::Start() {
     }
 
     m_running.store(true, std::memory_order_release);
-    StartBackgroundScan();
-    JoinBackgroundScan();
+    AppMedia.ResetForRescan();
     m_initialScanComplete.store(true, std::memory_order_release);
+    if (cfg.backgroundScanEnabled) {
+        StartBackgroundScan();
+    }
     StartWatchMode();
     return true;
 }

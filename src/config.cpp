@@ -194,7 +194,8 @@ Config::Config() : port(8200), fileServerPort(8201), flatFolderStyle(false), sho
     deviceModelName(L"dlna-server"),
     presentationUrl(L"/"),
     runOnBoot(false),
-    defaultPlaylistEnabled(false) {
+    defaultPlaylistEnabled(false),
+    backgroundScanEnabled(false) {
 }
 
 ConfigSnapshot Config::Snapshot() const {
@@ -218,6 +219,7 @@ ConfigSnapshot Config::Snapshot() const {
         runOnBoot,
         defaultPlaylistEnabled,
         defaultPlaylistPath,
+        backgroundScanEnabled,
         mediaSources
     };
 }
@@ -318,6 +320,7 @@ void Config::Load() {
     debugLog = ParseIntOrDefault(values, "DebugLog", 0) != 0;
     runOnBoot = ParseIntOrDefault(values, "RunOnBoot", 0) != 0;
     defaultPlaylistEnabled = ParseIntOrDefault(values, "DefaultPlaylistEnabled", 0) != 0;
+    backgroundScanEnabled = ParseIntOrDefault(values, "BackgroundScanEnabled", 0) != 0;
 
     ipWhiteList = Utf8ToWide(ConfigValueOrDefault(values, "IPWhiteList", ""));
     deviceUUID = Utf8ToWide(ConfigValueOrDefault(values, "DeviceUUID", ""));
@@ -373,6 +376,7 @@ void Config::Save() {
     ss << "RunOnBoot=" << (runOnBoot ? 1 : 0) << "\n";
     ss << "DefaultPlaylistEnabled=" << (defaultPlaylistEnabled ? 1 : 0) << "\n";
     ss << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
+    ss << "BackgroundScanEnabled=" << (backgroundScanEnabled ? 1 : 0) << "\n";
     ss << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
     ss << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
     ss << "DeviceManufacturer=" << WideToUtf8(deviceManufacturer) << "\n";

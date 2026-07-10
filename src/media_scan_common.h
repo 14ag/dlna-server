@@ -24,10 +24,6 @@ std::wstring BuildDuplicateMediaKey(int parentId, const std::wstring& path,
 std::wstring BuildStableMediaKey(int parentId, const std::wstring& path,
                                  std::function<std::wstring(const std::wstring&)> canonicalize);
 
-int AllocateContainerId(MediaIndexState& state, int parentId, const std::wstring& title,
-                        const std::wstring& keyPath,
-                        std::function<std::wstring(const std::wstring&)> canonicalize);
-
 struct ScopedScanSuccess {
     ScopedScanSuccess(MediaDatabase* database, std::wstring key);
     void Mark();

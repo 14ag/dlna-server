@@ -5,8 +5,8 @@
 #include <dwmapi.h>
 
 namespace {
-constexpr UINT_PTR kLogRefreshTimerId = 1;
-constexpr UINT kLogRefreshIntervalMs = 1000;
+
+unsigned long long g_lastSeenSequence = 0;
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -46,12 +46,25 @@ void ApplyDarkFrame(HWND hwnd) {
     DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkFrame, sizeof(darkFrame));
 }
 
-void RefreshLogText(HWND hwndDlg) {
-    std::wstring logText = GetSystemLog();
-    SetDlgItemTextW(hwndDlg, IDC_EDT_LOG_TEXT, logText.c_str());
-    SendDlgItemMessage(hwndDlg, IDC_EDT_LOG_TEXT, EM_SETSEL, 0, -1);
+void LoadInitialLogText(HWND hwndDlg) {
+    LogSnapshot initial = GetSystemLogSince(0);
+    SetDlgItemTextW(hwndDlg, IDC_EDT_LOG_TEXT, initial.text.c_str());
+    g_lastSeenSequence = initial.latestSequence;
     SendDlgItemMessage(hwndDlg, IDC_EDT_LOG_TEXT, EM_SETSEL, (WPARAM)-1, -1);
     SendDlgItemMessage(hwndDlg, IDC_EDT_LOG_TEXT, EM_SCROLLCARET, 0, 0);
+}
+
+void AppendNewLogText(HWND hwndDlg) {
+    LogSnapshot delta = GetSystemLogSince(g_lastSeenSequence);
+    if (delta.text.empty()) {
+        g_lastSeenSequence = delta.latestSequence;
+        return;
+    }
+    HWND edit = GetDlgItem(hwndDlg, IDC_EDT_LOG_TEXT);
+    const int endPos = GetWindowTextLengthW(edit);
+    SendMessageW(edit, EM_SETSEL, endPos, endPos);
+    SendMessageW(edit, EM_REPLACESEL, FALSE, reinterpret_cast<LPARAM>(delta.text.c_str()));
+    g_lastSeenSequence = delta.latestSequence;
 }
 
 }
@@ -66,32 +79,23 @@ INT_PTR LogDialog::Show(HWND hParent) {
 INT_PTR CALLBACK LogDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     (void)lParam;
     switch (uMsg) {
-    case WM_INITDIALOG: {
+case WM_INITDIALOG: {
         ApplyDarkFrame(hwndDlg);
         ApplyDialogFont(hwndDlg);
-        RefreshLogText(hwndDlg);
-        SetTimer(hwndDlg, kLogRefreshTimerId, kLogRefreshIntervalMs, NULL);
+        LoadInitialLogText(hwndDlg);
         return (INT_PTR)TRUE;
     }
-    case WM_TIMER:
-        if (wParam == kLogRefreshTimerId) {
-            RefreshLogText(hwndDlg);
-            return (INT_PTR)TRUE;
-        }
-        break;
     case WM_COMMAND:
         if (LOWORD(wParam) == IDC_BTN_REFRESH_LOG) {
-            RefreshLogText(hwndDlg);
+            AppendNewLogText(hwndDlg);
             return (INT_PTR)TRUE;
         }
         if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL) {
-            KillTimer(hwndDlg, kLogRefreshTimerId);
             EndDialog(hwndDlg, LOWORD(wParam));
             return (INT_PTR)TRUE;
         }
         break;
     case WM_DESTROY:
-        KillTimer(hwndDlg, kLogRefreshTimerId);
         break;
     }
     return (INT_PTR)FALSE;
