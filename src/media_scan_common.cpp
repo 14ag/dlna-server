@@ -27,14 +27,16 @@ std::wstring BuildStableMediaKey(int parentId, const std::wstring& path,
     return BuildDuplicateMediaKey(parentId, path, canonicalize);
 }
 
-int AllocateContainerId(MediaIndexState& state, int parentId, const std::wstring& title,
-                        const std::wstring& keyPath,
-                        std::function<std::wstring(const std::wstring&)> canonicalize) {
-    if (state.mediaDatabase) {
-        return state.mediaDatabase->GetOrCreateStableContainerId(
-            BuildStableContainerKey(parentId, title, keyPath, canonicalize));
-    }
-    return state.nextId++;
+int FindOrAddContainer(MediaIndexState& state, int parentId, const std::wstring& title,
+                       const std::wstring& keyPath,
+                       std::function<std::wstring(const std::wstring&)> canonicalize) {
+    const std::wstring lookupKey = ContainerLookupKey(parentId, title, keyPath);
+    std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+    auto found = state.containerKeys.find(lookupKey);
+    if (found != state.containerKeys.end()) return found->second;
+    const int id = AppMedia.PublishContainer(state.mediaDatabase, parentId, title, keyPath, canonicalize);
+    state.containerKeys[lookupKey] = id;
+    return id;
 }
 
 ScopedScanSuccess::ScopedScanSuccess(MediaDatabase* database, std::wstring key)
@@ -45,27 +47,6 @@ void ScopedScanSuccess::Mark() {
         database->MarkScanSuccess(key);
         marked = true;
     }
-}
-
-int FindOrAddContainer(MediaIndexState& state, int parentId, const std::wstring& title,
-                       const std::wstring& keyPath,
-                       std::function<std::wstring(const std::wstring&)> canonicalize) {
-    const std::wstring lookupKey = ContainerLookupKey(parentId, title, keyPath);
-    auto found = state.containerKeys.find(lookupKey);
-    if (found != state.containerKeys.end()) {
-        return found->second;
-    }
-
-    MediaItem folderInfo;
-    folderInfo.id = AllocateContainerId(state, parentId, title, keyPath, canonicalize);
-    folderInfo.parentId = parentId;
-    folderInfo.path = keyPath;
-    folderInfo.title = title;
-    folderInfo.isFolder = true;
-    folderInfo.upnpClass = L"object.container.storageFolder";
-    state.items.push_back(folderInfo);
-    state.containerKeys[lookupKey] = folderInfo.id;
-    return folderInfo.id;
 }
 
 void AppendDescendants(const std::vector<MediaItem>& items,
@@ -109,12 +90,14 @@ void AddArtistAlbumMirrorIfPresent(MediaIndexState& state, const ConfigSnapshot&
 
     int artistId = FindOrAddContainer(state, sourceParentId, artist, artistPath, canonicalize);
     int albumId = FindOrAddContainer(state, artistId, album, albumPath, canonicalize);
-    if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(albumId, item.path, canonicalize)).second) return;
-
+    {
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(albumId, item.path, canonicalize)).second) return;
+    }
     MediaItem mirror = item;
     mirror.id = state.mediaDatabase
         ? state.mediaDatabase->GetOrCreateStableId(BuildStableMediaKey(albumId, item.path, canonicalize))
-        : state.nextId++;
+        : 0;
     mirror.parentId = albumId;
-    state.items.push_back(mirror);
+    AppMedia.PublishItem(std::move(mirror));
 }

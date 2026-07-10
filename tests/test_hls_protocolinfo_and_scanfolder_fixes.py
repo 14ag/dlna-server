@@ -36,17 +36,20 @@ class HlsProtocolInfoAndScanFolderFixTests(unittest.TestCase):
 
     def _assert_scan_folder_hls_peek(self, path):
         src = self.read(path)
-        # Must call FetchPlaylistOnce before pushing container
+        # Must call ScanPlaylistTree for playlist files
+        self.assertIn("ScanPlaylistTree", src)
+        # Must call FetchPlaylistOnce in ScanOnePlaylistNode
         self.assertIn("FetchPlaylistOnce", src)
         # Must use ParseFetchedPlaylistText for non-HLS branch (no double-fetch)
         self.assertIn("ParseFetchedPlaylistText", src)
-        # Must add HLS item directly under parentId with no container
-        self.assertIn("AddHlsStreamItem(state, fullPath, parentId)", src)
+        # Must add HLS item in ScanOnePlaylistNode
+        self.assertIn("AddHlsStreamItem(ctx->state, node.path, node.parentId, node.titleOverride)", src)
 
     def _assert_scan_network_hls_peek(self, path):
         src = self.read(path)
+        self.assertIn("ScanPlaylistTree", src)
         self.assertIn("FetchPlaylistOnce", src)
-        self.assertIn("AddHlsStreamItem(state, entry.url, parentId", src)
+        self.assertIn("AddHlsStreamItem(ctx->state, node.path, node.parentId, node.titleOverride)", src)
 
     def test_win32_scan_folder_hls_peek(self):
         self._assert_scan_folder_hls_peek("src/media_sources.cpp")

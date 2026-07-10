@@ -84,7 +84,7 @@ def test_persistent_media_database_stores_stable_ids_and_scan_errors_without_new
         assert "RecordScanError" in source_text
 
     assert "GetOrCreateStableId(BuildStableMediaKey(" in scan_common
-    assert "GetOrCreateStableContainerId" in scan_common
+    assert "GetOrCreateStableContainerId" in windows  # Used in PublishContainer
 
     assert "src/media_database.cpp" in cmake
     assert "src/media_database.h" in cmake

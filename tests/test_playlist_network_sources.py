@@ -30,11 +30,11 @@ class PlaylistNetworkSourceTests(unittest.TestCase):
         for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
             source = self.read(path)
             self.assertIn("IsPlaylistSourcePath", source)
-            self.assertIn("ScanPlaylist", source)
+            self.assertIn("ScanPlaylistTree", source)
             self.assertIn("IsNetworkShareUrl", source)
             self.assertIn("ScanNetworkFolder", source)
-            # scanners now use FetchPlaylistOnce/ParseFetchedPlaylistText instead of LoadPlaylistEntries directly
-            self.assertIn("ScanPlaylistEntry", source)
+            # scanners now use FetchPlaylistOnce/ParseFetchedPlaylistText via ScanOnePlaylistNode
+            self.assertIn("ScanOnePlaylistNode", source)
             self.assertIn("ParseFetchedPlaylistText", source)
             self.assertIn("ListRemoteDirectory", source)
             self.assertIn("ProbeRemoteContentLength", source)

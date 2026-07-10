@@ -135,3 +135,7 @@ bool MediaSourcesHaveChanged(const ConfigSnapshot& cfg, std::string& signature) 
     signature = next;
     return true;
 }
+
+bool ShouldAutoRescan(const ConfigSnapshot& cfg, bool sourcesChanged) {
+    return cfg.backgroundScanEnabled && sourcesChanged;
+}

@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <windows.h>
+#include "source_list_focus.h"
 #include <string>
 #include <thread>
 #include <atomic>
@@ -72,6 +73,8 @@ private:
     std::atomic<bool> m_scanInProgress;
     std::atomic<bool> m_scanningStatusActive;
     std::atomic<bool> m_pendingRescanAfterBusy;
+
+    SourceListFocusState m_focusState;
 };
 
 #endif // MAINWINDOW_H
