@@ -32,6 +32,7 @@ struct ConfigSnapshot {
     bool runOnBoot;
     bool defaultPlaylistEnabled;
     std::wstring defaultPlaylistPath;
+    bool backgroundScanEnabled;
     std::vector<MediaSource> mediaSources;
 };
 
@@ -61,6 +62,7 @@ public:
     std::wstring presentationUrl;
     bool runOnBoot;
     bool defaultPlaylistEnabled;
+    bool backgroundScanEnabled;
     std::wstring defaultPlaylistPath;
     
     std::vector<MediaSource> mediaSources;

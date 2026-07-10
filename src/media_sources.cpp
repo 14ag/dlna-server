@@ -5,11 +5,14 @@
 #include "media_database.h"
 #include "media_scan_common.h"
 #include "network_sources.h"
+#include "playlist_scan_concurrency.h"
+#include "task_group.h"
 #include "upnp_eventing.h"
 #include <windows.h>
 #include <shlwapi.h>
 #include <algorithm>
 #include <ctime>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -48,20 +51,26 @@ bool MediaSources::IsAllowedExtension(const std::wstring& ext, std::wstring& mim
     return true;
 }
 
+namespace {
+bool DefaultPlaylistFileExists(const std::wstring& path) {
+    DWORD attrs = GetFileAttributesW(path.c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+}
+
 void MediaSources::Scan() {
     const ConfigSnapshot cfg = AppConfig.Snapshot();
-    MediaDatabase database;
-    database.Load(MediaDatabase::DefaultDatabasePath());
-    MediaIndexState state;
-    state.mediaDatabase = &database;
+    auto database = std::make_shared<MediaDatabase>();
+    database->Load(MediaDatabase::DefaultDatabasePath());
 
-    // Root (0)
-    MediaItem rootInfo;
-    rootInfo.id = 0;
-    rootInfo.parentId = -1;
-    rootInfo.title = L"Root";
-    rootInfo.isFolder = true;
-    state.items.push_back(rootInfo);
+    ResetForRescan();
+
+    struct SourceJob {
+        std::shared_ptr<PlaylistScanContext> ctx;
+        MediaSource source;
+        int containerId;
+    };
+    std::vector<SourceJob> jobs;
 
     for (const auto& src : cfg.mediaSources) {
         if (!src.enabled) {
@@ -69,60 +78,48 @@ void MediaSources::Scan() {
             continue;
         }
         if (IsRemovedSmbSourcePath(src.path)) {
-            LogPrint(L"[media:smb-removed] SMB (smb://, smbs://) media sources are no longer supported; skipping: %ls", RedactUrlForLog(src.path).c_str());
+            LogPrint(L"[media:smb-removed] SMB media sources are no longer supported; skipping: %ls",
+                     RedactUrlForLog(src.path).c_str());
             continue;
         }
+        const int containerId = PublishContainer(database.get(), 0, SourceDisplayName(src.path), src.path, g_canonicalize);
 
-        LogPrint(L"Scanning media source: %ls", RedactUrlForLog(src.path).c_str());
-        const int itemsBefore = static_cast<int>(state.items.size());
-        MediaItem folderInfo;
-        folderInfo.id = AllocateContainerId(state, 0, SourceDisplayName(src.path), src.path, g_canonicalize);
-        folderInfo.parentId = 0;
-        folderInfo.path = src.path;
-        folderInfo.title = SourceDisplayName(src.path);
-        folderInfo.isFolder = true;
-        folderInfo.upnpClass = L"object.container.storageFolder";
-        state.items.push_back(folderInfo);
-
-        if (IsPlaylistSourcePath(src.path)) {
-            ScanPlaylist(state, cfg, src.path, folderInfo.id);
-        } else if (IsNetworkShareUrl(src.path)) {
-            ScanNetworkFolder(state, cfg, src.path, folderInfo.id, 0);
-        } else {
-            ScanFolder(state, cfg, src.path, folderInfo.id);
-        }
-        const int sourceItemCount = static_cast<int>(state.items.size()) - itemsBefore;
-        LogPrint(L"Scanned %d media items from %ls", sourceItemCount, SourceDisplayName(src.path).c_str());
-    }
-    if (cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty()) {
-        DWORD attrs = GetFileAttributesW(cfg.defaultPlaylistPath.c_str());
-        if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-            const int itemsBefore = static_cast<int>(state.items.size());
-            MediaItem playlistFolder;
-            playlistFolder.id = AllocateContainerId(state, 0, L"Default playlist", cfg.defaultPlaylistPath, g_canonicalize);
-            playlistFolder.parentId = 0;
-            playlistFolder.path = cfg.defaultPlaylistPath;
-            playlistFolder.title = L"Default playlist";
-            playlistFolder.isFolder = true;
-            playlistFolder.upnpClass = L"object.container.storageFolder";
-            state.items.push_back(playlistFolder);
-            ScanPlaylist(state, cfg, cfg.defaultPlaylistPath, playlistFolder.id);
-            const int sourceItemCount = static_cast<int>(state.items.size()) - itemsBefore;
-            LogPrint(L"Scanned %d media items from Default playlist", sourceItemCount);
-        }
+        auto ctx = std::make_shared<PlaylistScanContext>();
+        ctx->cfg = cfg;
+        ctx->state.mediaDatabase = database.get();
+        jobs.push_back({ctx, src, containerId});
     }
 
-    int mediaItemCount = static_cast<int>(std::count_if(state.items.begin(), state.items.end(), [](const MediaItem& item) {
-        return !item.isFolder;
-    }));
-    BuildIndexes(state);
-    SwapScannedState(std::move(state));
+    if (cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty() && DefaultPlaylistFileExists(cfg.defaultPlaylistPath)) {
+        const int containerId = PublishContainer(database.get(), 0, L"Default playlist", cfg.defaultPlaylistPath, g_canonicalize);
+        auto ctx = std::make_shared<PlaylistScanContext>();
+        ctx->cfg = cfg;
+        ctx->state.mediaDatabase = database.get();
+        jobs.push_back({ctx, MediaSource{cfg.defaultPlaylistPath, true}, containerId});
+    }
+
+    std::vector<std::thread> sourceThreads;
+    for (auto& job : jobs) {
+        sourceThreads.emplace_back([this, &job]() {
+            LogPrint(L"Scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
+            if (IsPlaylistSourcePath(job.source.path)) {
+                ScanPlaylistTree(job.ctx, job.source.path, job.containerId);
+            } else if (IsNetworkShareUrl(job.source.path)) {
+                ScanNetworkFolder(job.ctx, job.source.path, job.containerId, 0);
+            } else {
+                ScanFolder(job.ctx, job.source.path, job.containerId, 0);
+            }
+            LogPrint(L"Finished scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
+        });
+    }
+    for (auto& t : sourceThreads) t.join();
+
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
     AppEvents.NotifySystemUpdateId(newUpdateId);
-    if (!database.Save(MediaDatabase::DefaultDatabasePath())) {
+    if (!database->Save(MediaDatabase::DefaultDatabasePath())) {
         LogPrint(L"Media database save failed: %ls", MediaDatabase::DefaultDatabasePath().c_str());
     }
-    LogPrint(L"Scanned %d media items.", mediaItemCount);
+    LogPrint(L"Scan complete.");
 }
 
 namespace {
@@ -144,6 +141,7 @@ std::wstring NameOfPath(const std::wstring& path) {
 
 void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
     if (IsRemoteMediaUrl(item.path)) return;
+    std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
     std::wstring folder = item.path;
     size_t slash = folder.find_last_of(L"\\/");
     folder = slash == std::wstring::npos ? L"." : folder.substr(0, slash);
@@ -210,14 +208,18 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
         }
     }
 
-    if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, path, g_canonicalize)).second) return;
+    {
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, path, g_canonicalize)).second) return;
+    }
 
     MediaItem fileInfo;
     const std::wstring stableKey = BuildStableMediaKey(parentId, path, g_canonicalize);
     ScopedScanSuccess scanSuccess(state.mediaDatabase, stableKey);
+    static std::atomic<int> s_scratchMediaId{-1000002};
     fileInfo.id = state.mediaDatabase
         ? state.mediaDatabase->GetOrCreateStableId(stableKey)
-        : state.nextId++;
+        : s_scratchMediaId.fetch_sub(1, std::memory_order_relaxed);
     fileInfo.parentId = parentId;
     fileInfo.path = path;
     fileInfo.isFolder = false;
@@ -270,7 +272,7 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
     }
 
     SetAlbumArtIfExists(state, fileInfo);
-    state.items.push_back(fileInfo);
+    AppMedia.PublishItem(fileInfo);
     scanSuccess.Mark();
     if (allowArtistAlbumMirror) {
         AddArtistAlbumMirrorIfPresent(state, cfg, fileInfo, parentId, ParentPathOf, NameOfPath, g_canonicalize);
@@ -282,14 +284,18 @@ void MediaSources::AddHlsStreamItem(MediaIndexState& state, const std::wstring& 
     // scan-success marking but deliberately skips IsAllowedExtension/kFormats
     // because an HLS manifest file extension is m3u8 which must never be
     // treated as a generic playable extension
-    if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, path, g_canonicalize)).second) return;
+    {
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, path, g_canonicalize)).second) return;
+    }
 
     MediaItem hlsItem;
     const std::wstring stableKey = BuildStableMediaKey(parentId, path, g_canonicalize);
     ScopedScanSuccess scanSuccess(state.mediaDatabase, stableKey);
+    static std::atomic<int> s_scratchHlsId{-2000002};
     hlsItem.id = state.mediaDatabase
         ? state.mediaDatabase->GetOrCreateStableId(stableKey)
-        : state.nextId++;
+        : s_scratchHlsId.fetch_sub(1, std::memory_order_relaxed);
     hlsItem.parentId = parentId;
     hlsItem.path = path;
     hlsItem.isFolder = false;
@@ -312,111 +318,124 @@ void MediaSources::AddHlsStreamItem(MediaIndexState& state, const std::wstring& 
         hlsItem.rawDateMs = static_cast<long long>(now) * 1000LL;
     }
 
-    state.items.push_back(hlsItem);
+    AppMedia.PublishItem(hlsItem);
     scanSuccess.Mark();
 }
 
-void MediaSources::ScanPlaylist(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& playlistPath, int parentId, int depth) {
-    if (depth > 8) {
-        LogPrint(L"%ls Skipping playlist due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(playlistPath).c_str());
-        return;
+void MediaSources::ScanPlaylistTree(std::shared_ptr<PlaylistScanContext> ctx, const std::wstring& path,
+                                     int parentId, const std::wstring& titleOverride) {
+    {
+        std::lock_guard<std::mutex> lock(ctx->queueMutex);
+        ctx->pendingQueue.push_back({path, parentId, titleOverride, 0});
     }
+    ctx->group.Enter();
+    ctx->queueCv.notify_all();
+    RunPlaylistDispatcher(ctx);
+}
 
-    FetchedPlaylist fetched = FetchPlaylistOnce(playlistPath);
-    if (!fetched.fetchOk) {
-        LogPrint(L"[media:fetch-failed] Playlist could not be fetched; treating as unavailable rather than empty: %ls", RedactUrlForLog(playlistPath).c_str());
-        if (state.mediaDatabase) {
-            state.mediaDatabase->RecordScanError(BuildStableContainerKey(parentId, SourceStemName(playlistPath), playlistPath, g_canonicalize), L"Playlist fetch failed");
-        }
-        return;
-    }
-
-    if (fetched.isHls) {
-        // RFC 8216: this file is a Master or Media Playlist (contains at least
-        // one #EXT-X- tag) Its Media Segments exist purely so an HLS-aware
-        // player can fetch them itself they must NOT be enumerated as separate
-        // DLNA items or a UPnP renderer will play each segment as its own
-        // track with a stall at every boundary Expose the manifest itself as
-        // one playable resource
-        LogPrint(L"Detected HLS manifest, exposing as a single stream: %ls", RedactUrlForLog(playlistPath).c_str());
-        AddHlsStreamItem(state, playlistPath, parentId);
-        return;
-    }
-
-    auto entries = ParseFetchedPlaylistText(playlistPath, fetched.text);
-    LogPrint(L"Loaded %d entries from playlist: %ls", static_cast<int>(entries.size()), RedactUrlForLog(playlistPath).c_str());
-    for (const auto& entry : entries) {
-        if (IsPlaylistSourcePath(entry.location)) {
-            ScanPlaylistEntry(state, cfg, entry.location, entry.title, parentId, depth + 1);
-            continue;
-        }
-        bool addedAsHls = false;
-        if (IsRemoteMediaUrl(entry.location) && SourceExtension(entry.location).empty()) {
-            FetchedPlaylist childFetch = FetchPlaylistOnce(entry.location);
-            if (childFetch.isHls) {
-                LogPrint(L"Detected HLS manifest from extensionless URL in playlist: %ls", RedactUrlForLog(entry.location).c_str());
-                AddHlsStreamItem(state, entry.location, parentId);
-                addedAsHls = true;
+void MediaSources::RunPlaylistDispatcher(std::shared_ptr<PlaylistScanContext> ctx) {
+    while (true) {
+        PendingPlaylistNode node;
+        {
+            std::unique_lock<std::mutex> lock(ctx->queueMutex);
+            ctx->queueCv.wait(lock, [&]() {
+                return !ctx->pendingQueue.empty() || ctx->group.PendingCount() == 0;
+            });
+            if (ctx->pendingQueue.empty()) {
+                if (ctx->group.PendingCount() == 0) break;
+                continue; // spurious wake / another dispatcher thread took the last item
             }
+            node = std::move(ctx->pendingQueue.front());
+            ctx->pendingQueue.pop_front();
         }
-        if (!addedAsHls) {
-            AddMediaFile(state, cfg, entry.location, parentId, entry.title, entry.subtitlePath);
-        }
+        ctx->limiter.Acquire(); // safe to block: this is the dispatcher thread, never a pool worker
+        PlaylistScanPool::Get().Submit([this, ctx, node]() {
+            TaskGroupLeaveGuard leave(ctx->group);
+            ScanOnePlaylistNode(ctx, node, leave);
+            ctx->limiter.Release();
+            ctx->queueCv.notify_all(); // wake the dispatcher in case it is waiting on PendingCount()
+        });
     }
+    ctx->group.Wait();
 }
 
-void MediaSources::ScanPlaylistEntry(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& location, const std::wstring& titleOverride, int parentId, int depth) {
-    if (depth > 8) {
-        LogPrint(L"%ls Skipping playlist due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(location).c_str());
+void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx, const PendingPlaylistNode& node, TaskGroupLeaveGuard& guard) {
+    (void)guard; // unused but needed for signature
+    if (node.depth > kMaxPlaylistRecursionDepth) {
+        LogPrint(L"[media:scan-depth] Skipping playlist due to recursion depth limit: %ls",
+                 RedactUrlForLog(node.path).c_str());
         return;
     }
 
-    FetchedPlaylist fetched = FetchPlaylistOnce(location);
+    // NETWORK I/O -- no lock of any kind is held here. This is the single
+    // most important invariant in this file: holding state.mutationMutex or
+    // MediaSources::m_mutex across this call re-serializes every scan task
+    // that touches the same source or the same live index and silently
+    // reproduces the original bug while looking "concurrent" on paper.
+    FetchedPlaylist fetched = FetchPlaylistOnce(node.path);
+
     if (!fetched.fetchOk) {
-        LogPrint(L"[media:fetch-failed] Playlist could not be fetched; treating as unavailable rather than empty: %ls", RedactUrlForLog(location).c_str());
-        if (state.mediaDatabase) {
-            state.mediaDatabase->RecordScanError(BuildStableContainerKey(parentId, SourceStemName(location), location, g_canonicalize), L"Playlist fetch failed");
+        LogPrint(L"[media:fetch-failed] Playlist could not be fetched; treating as unavailable rather than empty: %ls",
+                 RedactUrlForLog(node.path).c_str());
+        if (ctx->state.mediaDatabase) {
+            ctx->state.mediaDatabase->RecordScanError(
+                BuildStableContainerKey(node.parentId, SourceStemName(node.path), node.path, g_canonicalize),
+                L"Playlist fetch failed");
         }
-        return;
+        return; // only this node is dropped; the parent container published
+                 // for it earlier (or its own parent's container) is
+                 // unaffected -- this is what fixes "parent playlist never
+                 // included": the container was already live before this
+                 // fetch ever started.
     }
 
     if (fetched.isHls) {
-        // The referenced .m3u8/.m3u/.pls is itself an HLS manifest
-        // Do not wrap it in its own container a container whose only
-        // possible child is one manifest item with no size or duration
-        // adds a browse hop with nothing distinguishable inside it
-        // Register the manifest directly under the CURRENT container
-        LogPrint(L"Detected HLS manifest, exposing as a single stream: %ls", RedactUrlForLog(location).c_str());
-        AddHlsStreamItem(state, location, parentId, titleOverride);
+        LogPrint(L"Detected HLS manifest, exposing as a single stream: %ls", RedactUrlForLog(node.path).c_str());
+        AppMedia.AddHlsStreamItem(ctx->state, node.path, node.parentId, node.titleOverride);
         return;
     }
 
-    auto entries = ParseFetchedPlaylistText(location, fetched.text);
+    auto entries = ParseFetchedPlaylistText(node.path, fetched.text);
     if (entries.empty()) {
-        // nothing to show do not advertise an empty folder to clients
-        LogPrint(L"Skipping nested playlist with no usable entries: %ls", RedactUrlForLog(location).c_str());
+        LogPrint(L"Skipping playlist with no usable entries: %ls", RedactUrlForLog(node.path).c_str());
         return;
     }
 
-    MediaItem playlistFolder;
-    playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(location), location, g_canonicalize);
-    playlistFolder.parentId = parentId;
-    playlistFolder.path = location;
-    playlistFolder.title = titleOverride.empty() ? SourceStemName(location) : titleOverride;
-    playlistFolder.isFolder = true;
-    playlistFolder.upnpClass = L"object.container.storageFolder";
-    state.items.push_back(playlistFolder);
+    // Publish this node's own container immediately -- this is the
+    // "container created, then content added procedurally" requirement.
+    // Every DIDL browse of the parent from this point on will show this
+    // folder, even though its children are still being fetched.
+    const int folderId = FindOrAddContainer(ctx->state, node.parentId,
+        node.titleOverride.empty() ? SourceStemName(node.path) : node.titleOverride,
+        node.path, g_canonicalize);
 
+    std::vector<PendingPlaylistNode> newlyDiscovered;
     for (const auto& entry : entries) {
         if (IsPlaylistSourcePath(entry.location)) {
-            ScanPlaylistEntry(state, cfg, entry.location, entry.title, playlistFolder.id, depth + 1);
+            ++ctx->discoveredCount;
+            ctx->limiter.SetLimit(ComputePlaylistScanConcurrency(ctx->discoveredCount.load()));
+            newlyDiscovered.push_back(PendingPlaylistNode{entry.location, folderId, entry.title, node.depth + 1});
             continue;
         }
-        AddMediaFile(state, cfg, entry.location, playlistFolder.id, entry.title, entry.subtitlePath);
+        // Plain media file entries are cheap relative to playlist fetches
+        // (ProbeRemoteContentLength has its own existing global limiter,
+        // GetRemoteProbeLimiter() in network_sources.cpp, unrelated to this
+        // task) -- publish them directly, synchronously, on this pool
+        // worker.
+        AppMedia.AddMediaFile(ctx->state, ctx->cfg, entry.location, folderId, entry.title, entry.subtitlePath);
     }
+
+    if (!newlyDiscovered.empty()) {
+        std::lock_guard<std::mutex> lock(ctx->queueMutex);
+        for (auto& child : newlyDiscovered) {
+            ctx->group.Enter();
+            ctx->pendingQueue.push_back(std::move(child));
+        }
+    }
+    ctx->queueCv.notify_all();
 }
 
-void MediaSources::ScanNetworkFolder(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& folderUrl, int parentId, int depth) {
+void MediaSources::ScanNetworkFolder(std::shared_ptr<PlaylistScanContext> sourceContext, const std::wstring& folderUrl, int parentId, int depth) {
     if (depth > 8) {
         LogPrint(L"%ls Skipping network folder due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(folderUrl).c_str());
         return;
@@ -424,60 +443,28 @@ void MediaSources::ScanNetworkFolder(MediaIndexState& state, const ConfigSnapsho
 
     for (const auto& entry : ListRemoteDirectory(folderUrl)) {
         if (IsPlaylistSourcePath(entry.url)) {
-            FetchedPlaylist fetched = FetchPlaylistOnce(entry.url);
-            if (!fetched.fetchOk) {
-                LogPrint(L"[media:fetch-failed] Playlist could not be fetched: %ls", RedactUrlForLog(entry.url).c_str());
-            } else if (fetched.isHls) {
-                LogPrint(L"Detected HLS manifest in network folder, exposing as single stream: %ls", RedactUrlForLog(entry.url).c_str());
-                AddHlsStreamItem(state, entry.url, parentId, SourceStemName(entry.name));
-            } else {
-                auto entries = ParseFetchedPlaylistText(entry.url, fetched.text);
-                if (!entries.empty()) {
-                    MediaItem playlistFolder;
-                    playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(entry.name), entry.url, g_canonicalize);
-                    playlistFolder.parentId = parentId;
-                    playlistFolder.path = entry.url;
-                    playlistFolder.title = SourceStemName(entry.name);
-                    playlistFolder.isFolder = true;
-                    playlistFolder.upnpClass = L"object.container.storageFolder";
-                    state.items.push_back(playlistFolder);
-                    for (const auto& e : entries) {
-                        if (IsPlaylistSourcePath(e.location)) {
-                            ScanPlaylistEntry(state, cfg, e.location, e.title, playlistFolder.id, 1);
-                            continue;
-                        }
-                        AddMediaFile(state, cfg, e.location, playlistFolder.id, e.title, e.subtitlePath);
-                    }
-                }
-            }
+            ScanPlaylistTree(sourceContext, entry.url, parentId, SourceStemName(entry.name));
             continue;
         }
 
         std::wstring mime, uclass;
         if (IsAllowedExtension(SourceExtension(entry.url), mime, uclass)) {
-            AddMediaFile(state, cfg, entry.url, parentId);
+            AddMediaFile(sourceContext->state, sourceContext->cfg, entry.url, parentId);
             continue;
         }
 
         if (entry.likelyDirectory) {
-            if (cfg.flatFolderStyle) {
-                ScanNetworkFolder(state, cfg, entry.url, parentId, depth + 1);
+            if (sourceContext->cfg.flatFolderStyle) {
+                ScanNetworkFolder(sourceContext, entry.url, parentId, depth + 1);
             } else {
-                MediaItem folderInfo;
-                folderInfo.id = AllocateContainerId(state, parentId, SourceDisplayName(entry.name), entry.url, g_canonicalize);
-                folderInfo.parentId = parentId;
-                folderInfo.path = entry.url;
-                folderInfo.title = SourceDisplayName(entry.name);
-                folderInfo.isFolder = true;
-                folderInfo.upnpClass = L"object.container.storageFolder";
-                state.items.push_back(folderInfo);
-                ScanNetworkFolder(state, cfg, entry.url, folderInfo.id, depth + 1);
+                const int folderId = FindOrAddContainer(sourceContext->state, parentId, SourceDisplayName(entry.name), entry.url, g_canonicalize);
+                ScanNetworkFolder(sourceContext, entry.url, folderId, depth + 1);
             }
         }
     }
 }
 
-void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& rootPath, int parentId, int depth) {
+void MediaSources::ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext, const std::wstring& rootPath, int parentId, int depth) {
     if (depth > 64) {
         LogPrint(L"%ls Skipping folder due to recursion depth limit: %ls", kScanDepthLogCode, rootPath.c_str());
         return;
@@ -487,8 +474,8 @@ void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg,
     HANDLE hFind = FindFirstFileW(searchPath.c_str(), &fd);
     
     if (hFind == INVALID_HANDLE_VALUE) {
-        if (state.mediaDatabase) {
-            state.mediaDatabase->RecordScanError(BuildStableContainerKey(parentId, SourceDisplayName(rootPath), rootPath, g_canonicalize), L"Folder unavailable");
+        if (sourceContext->state.mediaDatabase) {
+            sourceContext->state.mediaDatabase->RecordScanError(BuildStableContainerKey(parentId, SourceDisplayName(rootPath), rootPath, g_canonicalize), L"Folder unavailable");
         }
         LogPrint(L"Skipping unreadable folder: %ls", rootPath.c_str());
         return;
@@ -501,52 +488,17 @@ void MediaSources::ScanFolder(MediaIndexState& state, const ConfigSnapshot& cfg,
         std::wstring fullPath = rootPath + L"\\" + fd.cFileName;
 
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-            if (cfg.flatFolderStyle) {
-                ScanFolder(state, cfg, fullPath, parentId, depth + 1);
+            if (sourceContext->cfg.flatFolderStyle) {
+                ScanFolder(sourceContext, fullPath, parentId, depth + 1);
             } else {
-                MediaItem folderInfo;
-                folderInfo.id = AllocateContainerId(state, parentId, fd.cFileName, fullPath, g_canonicalize);
-                folderInfo.parentId = parentId;
-                folderInfo.path = fullPath;
-                folderInfo.title = fd.cFileName;
-                folderInfo.isFolder = true;
-                folderInfo.upnpClass = L"object.container.storageFolder";
-                state.items.push_back(folderInfo);
-
-                ScanFolder(state, cfg, fullPath, folderInfo.id, depth + 1);
+                const int folderId = FindOrAddContainer(sourceContext->state, parentId, fd.cFileName, fullPath, g_canonicalize);
+                ScanFolder(sourceContext, fullPath, folderId, depth + 1);
             }
         } else {
             if (IsPlaylistSourcePath(fullPath)) {
-                // Peek before creating container: HLS manifests must not get
-                // wrapped in a folder (android h() method never does this).
-                FetchedPlaylist fetched = FetchPlaylistOnce(fullPath);
-                if (!fetched.fetchOk) {
-                    LogPrint(L"[media:fetch-failed] Playlist could not be fetched: %ls", fullPath.c_str());
-                } else if (fetched.isHls) {
-                    LogPrint(L"Detected HLS manifest in folder, exposing as single stream: %ls", fullPath.c_str());
-                    AddHlsStreamItem(state, fullPath, parentId);
-                } else {
-                    auto entries = ParseFetchedPlaylistText(fullPath, fetched.text);
-                    if (!entries.empty()) {
-                        MediaItem playlistFolder;
-                        playlistFolder.id = AllocateContainerId(state, parentId, SourceStemName(fullPath), fullPath, g_canonicalize);
-                        playlistFolder.parentId = parentId;
-                        playlistFolder.path = fullPath;
-                        playlistFolder.title = SourceStemName(fullPath);
-                        playlistFolder.isFolder = true;
-                        playlistFolder.upnpClass = L"object.container.storageFolder";
-                        state.items.push_back(playlistFolder);
-                        for (const auto& entry : entries) {
-                            if (IsPlaylistSourcePath(entry.location)) {
-                                ScanPlaylistEntry(state, cfg, entry.location, entry.title, playlistFolder.id, 1);
-                                continue;
-                            }
-                            AddMediaFile(state, cfg, entry.location, playlistFolder.id, entry.title, entry.subtitlePath);
-                        }
-                    }
-                }
+                ScanPlaylistTree(sourceContext, fullPath, parentId);
             } else {
-                AddMediaFile(state, cfg, fullPath, parentId);
+                AddMediaFile(sourceContext->state, sourceContext->cfg, fullPath, parentId);
             }
         }
     } while (FindNextFileW(hFind, &fd));
@@ -643,18 +595,61 @@ int MediaSources::GetSystemUpdateID() {
     return m_systemUpdateId.load(std::memory_order_acquire);
 }
 
-void MediaSources::BuildIndexes(MediaIndexState& state) {
-    state.idToIndex.clear();
-    state.childrenByParent.clear();
-    for (size_t i = 0; i < state.items.size(); ++i) {
-        state.idToIndex[state.items[i].id] = i;
-        state.childrenByParent[state.items[i].parentId].push_back(i);
+void MediaSources::ResetForRescan() {
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_items.clear();
+        m_idToIndex.clear();
+        m_childrenByParent.clear();
+
+        MediaItem root{};
+        root.id = 0;
+        root.parentId = -1;
+        root.title = L"Root";
+        root.isFolder = true;
+        root.upnpClass = L"object.container.storageFolder";
+        m_items.push_back(root);
+        m_idToIndex[0] = 0;
     }
+    const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
+    AppEvents.NotifySystemUpdateId(newUpdateId);
 }
 
-void MediaSources::SwapScannedState(MediaIndexState&& state) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_items = std::move(state.items);
-    m_idToIndex = std::move(state.idToIndex);
-    m_childrenByParent = std::move(state.childrenByParent);
+int MediaSources::PublishContainer(MediaDatabase* database, int parentId,
+                                    const std::wstring& title, const std::wstring& path,
+                                    std::function<std::wstring(const std::wstring&)> canonicalize) {
+    MediaItem container{};
+    container.parentId = parentId;
+    container.path = path;
+    container.title = title;
+    container.isFolder = true;
+    container.upnpClass = L"object.container.storageFolder";
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        static std::atomic<int> s_scratchId{-2};
+        container.id = database
+            ? database->GetOrCreateStableContainerId(
+                  BuildStableContainerKey(parentId, title, path, canonicalize))
+            : s_scratchId.fetch_sub(1, std::memory_order_relaxed);
+        m_items.push_back(container);
+        const size_t index = m_items.size() - 1;
+        m_idToIndex[container.id] = index;
+        m_childrenByParent[parentId].push_back(index);
+    }
+    const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
+    AppEvents.NotifySystemUpdateId(newUpdateId);
+    return container.id;
+}
+
+void MediaSources::PublishItem(MediaItem item) {
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_items.push_back(std::move(item));
+        const size_t index = m_items.size() - 1;
+        const MediaItem& stored = m_items.back();
+        m_idToIndex[stored.id] = index;
+        m_childrenByParent[stored.parentId].push_back(index);
+    }
+    const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
+    AppEvents.NotifySystemUpdateId(newUpdateId);
 }

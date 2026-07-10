@@ -160,6 +160,48 @@ struct CurlGlobalInit {
     }
 };
 
+class CurlShareHandle {
+public:
+    CurlShareHandle() {
+        m_locks.resize(CURL_LOCK_DATA_LAST);
+        for (auto& lock : m_locks) {
+            lock = std::make_unique<std::mutex>();
+        }
+        m_share = curl_share_init();
+        if (!m_share) return;
+        curl_share_setopt(m_share, CURLSHOPT_LOCKFUNC, &CurlShareHandle::LockCallback);
+        curl_share_setopt(m_share, CURLSHOPT_UNLOCKFUNC, &CurlShareHandle::UnlockCallback);
+        curl_share_setopt(m_share, CURLSHOPT_USERDATA, this);
+        curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+        curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+        curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+    }
+    ~CurlShareHandle() {
+        if (m_share) curl_share_cleanup(m_share);
+    }
+    CURLSH* Get() const { return m_share; }
+
+private:
+    static void LockCallback(CURL*, curl_lock_data data, curl_lock_access, void* userPtr) {
+        auto* self = static_cast<CurlShareHandle*>(userPtr);
+        self->m_locks[data]->lock();
+    }
+    static void UnlockCallback(CURL*, curl_lock_data data, void* userPtr) {
+        auto* self = static_cast<CurlShareHandle*>(userPtr);
+        self->m_locks[data]->unlock();
+    }
+
+    CURLSH* m_share = nullptr;
+    std::vector<std::unique_ptr<std::mutex>> m_locks;
+};
+
+CURLSH* GetSharedCurlHandle() {
+    static CurlGlobalInit init;
+    (void)init;
+    static CurlShareHandle share;
+    return share.Get();
+}
+
 size_t CurlWriteBody(char* ptr, size_t size, size_t nmemb, void* userdata) {
     auto* result = static_cast<RemoteFetchResult*>(userdata);
     size_t bytes = size * nmemb;
@@ -213,6 +255,9 @@ CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutS
     curl_easy_setopt(curl, CURLOPT_FTP_RESPONSE_TIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_FTP_USE_EPSV, 1L);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errorBuffer);
+    if (CURLSH* share = GetSharedCurlHandle()) {
+        curl_easy_setopt(curl, CURLOPT_SHARE, share);
+    }
     return curl;
 }
 

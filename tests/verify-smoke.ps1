@@ -488,6 +488,7 @@ try {
     Set-IniValue "Settings" "SortByTitle" "0"
     Set-IniValue "Settings" "DoNotShowAllMediaFolders" "0"
     Set-IniValue "Settings" "AddArtistAlbumFolders" "0"
+    Set-IniValue "Settings" "BackgroundScanEnabled" "1"
     Set-IniValue "Settings" "DebugLog" "1"
     Set-IniValue "Settings" "RunOnBoot" "0"
     Set-IniValue "Settings" "IPWhiteList" ""
@@ -497,7 +498,7 @@ try {
     # added at runtime, because the media source watcher currently skips
     # remote sources entirely (fix-plan task 13). adding it at runtime and
     # waiting for a rescan would never observe it.
-    $testMediaSource = Join-Path $repo "tests\test media"
+    $testMediaSource = $testMediaDir
     $mediaSourcesValue = "$testMediaSource|$FtpSourceUrl"
     if ($hlsLocalPath -and $hlsLocalPath -ne "") {
         $mediaSourcesValue += "|" + $hlsLocalPath
@@ -719,7 +720,7 @@ try {
         $scanDeadline = [datetime]::UtcNow.AddSeconds(120)
         $scanFinished = $false
         while ([datetime]::UtcNow -lt $scanDeadline) {
-            $scanLines = Find-LogLines "Scanned \d+ media items\."
+            $scanLines = Find-LogLines "Scan complete\."
             if ($scanLines.Count -gt 0) {
                 Add-Result ("PASS scan completed: " + ($scanLines[-1] -replace '^\s+',''))
                 $scanFinished = $true

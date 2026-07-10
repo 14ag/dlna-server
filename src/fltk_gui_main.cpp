@@ -4,6 +4,7 @@
 #include "media_sources.h"
 #include "netutils.h"
 #include "server.h"
+#include "settings_restart.h"
 
 #include <FL/Fl.H>
 #include <FL/Fl_Box.H>
@@ -173,7 +174,7 @@ private:
 class SettingsDialog : public Fl_Window {
 public:
     SettingsDialog()
-        : Fl_Window(500, 370, "DLNA Server Settings"),
+        : Fl_Window(500, 396, "DLNA Server Settings"),
 m_serverName(120, 14, 190, 24, "Server Name:"),
           m_httpPort(120, 44, 190, 24, "HTTP Port:"),
           m_ipWhitelist(120, 74, 350, 24, "IP Whitelist:"),
@@ -187,19 +188,17 @@ m_serverName(120, 14, 190, 24, "Server Name:"),
           m_showFileNames(16, 242, 230, 24, "Show file names instead of titles"),
           m_sortByTitle(16, 268, 230, 24, "Sort by title instead of file name"),
           m_proxyStreams(16, 294, 190, 24, "Proxy streams"),
-          m_restartButton(7, 340, 70, 24, "Restart"),
-          m_viewLogButton(84, 340, 70, 24, "View log"),
-          m_cancelButton(340, 340, 70, 24, "Cancel"),
-          m_okButton(417, 340, 70, 24, "OK"),
+          m_backgroundScan(16, 320, 230, 24, "Background scan (auto-rescan on changes)"),
+          m_viewLogButton(84, 366, 70, 24, "View log"),
+          m_cancelButton(340, 366, 70, 24, "Cancel"),
+          m_okButton(417, 366, 70, 24, "OK"),
           m_saved(false),
           m_restartRequested(false) {
         LoadFromConfig();
 
-        m_restartButton.tooltip("Restart server");
         m_viewLogButton.tooltip("View log");
         m_defaultPlaylistAdd.tooltip("Add default playlist entry");
 
-        m_restartButton.callback(RestartClicked, this);
         m_viewLogButton.callback(ShowLog, this);
         m_defaultPlaylist.callback(DefaultPlaylistToggled, this);
         m_defaultPlaylistAdd.callback(AddDefaultPlaylistEntry, this);
@@ -234,6 +233,7 @@ private:
         m_showFileNames.value(AppConfig.showFileNamesInsteadOfTitles ? 1 : 0);
         m_sortByTitle.value(AppConfig.sortByTitle ? 1 : 0);
         m_proxyStreams.value(AppConfig.proxyStreams ? 1 : 0);
+        m_backgroundScan.value(AppConfig.backgroundScanEnabled ? 1 : 0);
     }
 
 bool SaveToConfig() {
@@ -253,7 +253,9 @@ bool SaveToConfig() {
         const bool showFileNamesInsteadOfTitles = m_showFileNames.value() != 0;
         const bool sortByTitle = m_sortByTitle.value() != 0;
         const bool proxyStreams = m_proxyStreams.value() != 0;
+        const bool backgroundScanEnabled = m_backgroundScan.value() != 0;
 
+        const ConfigSnapshot before = AppConfig.Snapshot();
         AppConfig.Mutate([&](Config& cfg) {
             cfg.serverName = serverName;
             cfg.port = httpPort;
@@ -268,9 +270,26 @@ bool SaveToConfig() {
             cfg.showFileNamesInsteadOfTitles = showFileNamesInsteadOfTitles;
             cfg.sortByTitle = sortByTitle;
             cfg.proxyStreams = proxyStreams;
+            cfg.backgroundScanEnabled = backgroundScanEnabled;
         });
         AppConfig.Save();
         LogPrint(L"Saved settings.");
+
+        m_restartRequested = false;
+        if (DLNAServer.IsRunning()) {
+            const ConfigSnapshot after = AppConfig.Snapshot();
+            std::vector<std::wstring> changed = DetermineSettingsRequiringRestart(before, after);
+            if (!changed.empty()) {
+                std::wstring names;
+                for (size_t i = 0; i < changed.size(); ++i) {
+                    if (i) names += L", ";
+                    names += changed[i];
+                }
+                std::string prompt = "A server restart is needed to apply changes to: " +
+                                      ToUtf8(names) + ".\n\nRestart server?";
+                m_restartRequested = (fl_choice("%s", "No", "Yes", nullptr, prompt.c_str()) == 1);
+            }
+        }
         return true;
     }
 
@@ -278,14 +297,6 @@ bool SaveToConfig() {
         auto* self = static_cast<SettingsDialog*>(data);
         if (!self->SaveToConfig()) return;
         self->m_saved = true;
-        self->hide();
-    }
-
-    static void RestartClicked(Fl_Widget*, void* data) {
-        auto* self = static_cast<SettingsDialog*>(data);
-        if (!self->SaveToConfig()) return;
-        self->m_saved = true;
-        self->m_restartRequested = true;
         self->hide();
     }
 
@@ -324,7 +335,7 @@ bool SaveToConfig() {
     Fl_Check_Button m_showFileNames;
     Fl_Check_Button m_sortByTitle;
     Fl_Check_Button m_proxyStreams;
-    Fl_Button m_restartButton;
+    Fl_Check_Button m_backgroundScan;
     Fl_Button m_viewLogButton;
     Fl_Button m_cancelButton;
     Fl_Button m_okButton;

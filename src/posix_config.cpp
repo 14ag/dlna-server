@@ -149,7 +149,8 @@ Config::Config()
       presentationUrl(L"/"),
       runOnBoot(false),
       defaultPlaylistEnabled(false),
-      defaultPlaylistPath(L"") {
+      defaultPlaylistPath(L""),
+      backgroundScanEnabled(false) {
 }
 
 ConfigSnapshot Config::Snapshot() const {
@@ -173,6 +174,7 @@ ConfigSnapshot Config::Snapshot() const {
         runOnBoot,
         defaultPlaylistEnabled,
         defaultPlaylistPath,
+        backgroundScanEnabled,
         mediaSources
     };
 }
@@ -275,6 +277,7 @@ void Config::Load() {
         else if (key == "DebugLog") debugLog = ParseIntOrDefault(value, 0) != 0;
         else if (key == "RunOnBoot") runOnBoot = ParseIntOrDefault(value, 0) != 0;
         else if (key == "DefaultPlaylistEnabled") defaultPlaylistEnabled = ParseIntOrDefault(value, 0) != 0;
+        else if (key == "BackgroundScanEnabled") backgroundScanEnabled = ParseIntOrDefault(value, 0) != 0;
         else if (key == "DefaultPlaylistPath") defaultPlaylistPath = Utf8ToWide(value);
         else if (key == "IPWhiteList") ipWhiteList = Utf8ToWide(value);
         else if (key == "DeviceUUID") deviceUUID = Utf8ToWide(value);
@@ -326,6 +329,7 @@ void Config::Save() {
     out << "RunOnBoot=" << (runOnBoot ? 1 : 0) << "\n";
     out << "DefaultPlaylistEnabled=" << (defaultPlaylistEnabled ? 1 : 0) << "\n";
     out << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
+    out << "BackgroundScanEnabled=" << (backgroundScanEnabled ? 1 : 0) << "\n";
     out << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
     out << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
     out << "DeviceManufacturer=" << WideToUtf8(deviceManufacturer) << "\n";

@@ -1,6 +1,7 @@
 #ifndef MEDIA_DATABASE_H
 #define MEDIA_DATABASE_H
 
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -25,6 +26,7 @@ private:
         std::wstring scanError;
     };
 
+    mutable std::mutex m_mutex;
     std::unordered_map<std::wstring, Record> m_records;
     int m_nextId = kPersistentMediaIdBase;
 };

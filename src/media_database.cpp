@@ -112,6 +112,7 @@ std::wstring MediaDatabase::DefaultDatabasePath() {
 }
 
 void MediaDatabase::Load(const std::wstring& path) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_records.clear();
     m_nextId = kPersistentMediaIdBase;
 
@@ -139,6 +140,7 @@ void MediaDatabase::Load(const std::wstring& path) {
 }
 
 bool MediaDatabase::Save(const std::wstring& path) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     std::ostringstream out;
     out << "# dlna-server media-cache.tsv v1\n";
     for (const auto& entry : m_records) {
@@ -159,6 +161,7 @@ bool MediaDatabase::Save(const std::wstring& path) const {
 }
 
 int MediaDatabase::GetOrCreateStableId(const std::wstring& canonicalKey) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto found = m_records.find(canonicalKey);
     if (found != m_records.end()) {
         return found->second.id;
@@ -177,6 +180,7 @@ int MediaDatabase::GetOrCreateStableContainerId(const std::wstring& canonicalKey
 }
 
 void MediaDatabase::MarkScanSuccess(const std::wstring& canonicalKey) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto found = m_records.find(canonicalKey);
     if (found != m_records.end()) {
         found->second.scanError.clear();
@@ -184,7 +188,8 @@ void MediaDatabase::MarkScanSuccess(const std::wstring& canonicalKey) {
 }
 
 void MediaDatabase::RecordScanError(const std::wstring& canonicalKey, const std::wstring& message) {
-    int id = GetOrCreateStableId(canonicalKey);
+    int id = GetOrCreateStableId(canonicalKey);   // locks and releases internally
+    std::lock_guard<std::mutex> lock(m_mutex);
     Record& record = m_records[canonicalKey];
     record.id = id;
     record.scanError = message;

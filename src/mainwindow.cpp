@@ -575,7 +575,7 @@ int MainWindow::SelectedSourceIndex() const {
 
 void MainWindow::UpdateDeleteButton() {
     if (!m_hBtnDelete) return;
-    EnableWindow(m_hBtnDelete, SelectedSourceIndex() >= 0 ? TRUE : FALSE);
+    EnableWindow(m_hBtnDelete, !m_focusState.IsNoFocus() ? TRUE : FALSE);
 }
 
 void MainWindow::RemoveSelectedSource() {
@@ -591,11 +591,8 @@ void MainWindow::RemoveSelectedSource() {
     AppConfig.Save();
     RefreshSourceList();
 
-    int count = static_cast<int>(SendMessage(m_hListSources, LB_GETCOUNT, 0, 0));
-    if (count > 0) {
-        int nextSelection = selected < count ? selected : count - 1;
-        SendMessage(m_hListSources, LB_SETCURSEL, nextSelection, 0);
-    }
+    SendMessage(m_hListSources, LB_SETCURSEL, (WPARAM)-1, 0);
+    m_focusState.OnSourceDeleted();
     UpdateDeleteButton();
     InvalidateRect(m_hwnd, NULL, TRUE);
 
@@ -683,7 +680,11 @@ void MainWindow::BeginRescan() {
 LRESULT CALLBACK MainWindow::ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     MainWindow* pThis = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     if (pThis && uMsg == WM_KILLFOCUS) {
-        SendMessage(hwnd, LB_SETCURSEL, (WPARAM)-1, 0);
+        const bool gainedFocusIsDeleteButton = reinterpret_cast<HWND>(wParam) == pThis->m_hBtnDelete;
+        pThis->m_focusState.OnListBoxLostFocus(gainedFocusIsDeleteButton);
+        if (!gainedFocusIsDeleteButton) {
+            SendMessage(hwnd, LB_SETCURSEL, (WPARAM)-1, 0);
+        }
         pThis->UpdateDeleteButton();
     }
     if (pThis && uMsg == WM_KEYDOWN && wParam == VK_DELETE) {
@@ -817,15 +818,15 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             break;
         case IDC_BTN_SETTINGS:
         {
-            int oldPort = AppConfig.port;
             INT_PTR result = SettingsDialog::Show(hwnd);
-            if (IsRunning() && (result == IDC_BTN_RESTART || (result == IDOK && AppConfig.port != oldPort))) {
+            if (result == IDOK && IsRunning() && SettingsDialog::WasRestartRequested()) {
                 BeginRestartServer();
             }
             break;
         }
         }
         if (wmId == IDC_LIST_SOURCES && HIWORD(wParam) == LBN_SELCHANGE) {
+            m_focusState.OnSelectionChanged(SelectedSourceIndex() >= 0);
             UpdateDeleteButton();
         }
         return 0;
