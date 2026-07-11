@@ -17,7 +17,6 @@ unsigned long long g_nextSeq = 1;
 std::FILE* g_debugLogFile = nullptr;
 std::string g_debugLogPath;
 constexpr size_t kMaxLogLines = 1000;
-unsigned long long g_nextSeq = 1;
 
 std::wstring TimestampPrefix() {
     timespec ts{};
@@ -112,28 +111,4 @@ LogSnapshot GetSystemLogSince(unsigned long long sinceSequence) {
         }
     }
     return snapshot;
-}
-    return result;
-}
-
-LogSnapshot GetSystemLogSince(unsigned long long sinceSequence) {
-    std::lock_guard<std::mutex> lock(g_logMutex);
-    LogSnapshot snapshot;
-    snapshot.latestSequence = g_nextSeq - 1;
-    if (g_lines.empty()) return snapshot;
-    const unsigned long long oldestKept = g_lines.front().first;
-    if (oldestKept > 1 && sinceSequence < oldestKept - 1) {
-        const unsigned long long dropped = oldestKept - 1 - sinceSequence;
-        snapshot.text += L"[" + std::to_wstring(dropped) +
-                          L" earlier log line(s) were dropped from the in-memory buffer]\n";
-    }
-    for (const auto& entry : g_lines) {
-        if (entry.first > sinceSequence) {
-            snapshot.text += entry.second;
-            snapshot.text += L"\n";
-        }
-    }
-    return snapshot;
-}
-    return result;
 }

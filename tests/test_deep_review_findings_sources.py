@@ -173,8 +173,9 @@ def test_remote_content_length_probing_notes_parallelization():
     assert "ConcurrencyLimiter" in network_h
     assert "GetRemoteProbeLimiter" in network
     assert "g_remoteProbeLimiter" in network
-    assert "ProbeRemoteContentLengthBatch" in network_h
-    assert "ProbeRemoteContentLengthBatch" in network
+    # ProbeRemoteContentLengthBatch removed as dead code per audit
+    assert "ProbeRemoteContentLengthBatch" not in network_h
+    assert "ProbeRemoteContentLengthBatch" not in network
 
 
 def test_join_url_optimized_no_str_back_in_loop():
