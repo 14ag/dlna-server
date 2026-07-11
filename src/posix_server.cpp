@@ -180,10 +180,13 @@ bool Server::Start() {
     }
     m_running.store(true, std::memory_order_release);
     AppMedia.ResetForRescan();
+    // see the matching comment in server.cpp Server::Start for windows
+    // the initial scan must complete before m_initialScanComplete is set
+    // and must not be gated by backgroundScanEnabled which only controls
+    // watchloop automatic rescans after startup see source_watcher cpp
+    StartBackgroundScan();
+    JoinBackgroundScan();
     m_initialScanComplete.store(true, std::memory_order_release);
-    if (cfg.backgroundScanEnabled) {
-        StartBackgroundScan();
-    }
     StartWatchMode();
     LogPrint(L"DLNA server running on %ls", endpointText.c_str());
     return true;
