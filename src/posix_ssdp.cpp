@@ -178,15 +178,15 @@ SSDP& SSDP::Get() {
     return instance;
 }
 
-SSDP::SSDP() : m_running(false), m_ipv4Socket(-1), m_ipv6Socket(-1), m_port(0) {
+SSDP::SSDP() : m_running(false), m_ipv4Socket(-1), m_ipv6Socket(-1) {
 }
 
 bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid) {
     if (m_running.load()) return true;
     m_endpoints = endpoints;
-    m_port = port;
-    m_serverName = WideToUtf8(serverName);
     m_uuidStr = WideToUtf8(uuid);
+    m_bootId = static_cast<unsigned int>(time(nullptr));
+    m_configId = 1;
     m_ipv4Socket = CreateIPv4Socket(m_endpoints);
     m_ipv6Socket = CreateIPv6Socket(m_endpoints);
     if (m_ipv4Socket < 0 && m_ipv6Socket < 0) return false;
@@ -249,7 +249,11 @@ void SSDP::SendNotifyRound(const char* nts) {
             if (std::strcmp(nts, "ssdp:byebye") != 0) {
                 ss << "SERVER: " << serverHeader << "\r\n";
             }
-            ss << "USN: " << target.usn << "\r\n\r\n";
+            ss << "USN: " << target.usn << "\r\n"
+               << "BOOTID.UPNP.ORG: " << m_bootId << "\r\n"
+               << "CONFIGID.UPNP.ORG: " << m_configId << "\r\n"
+               << "OPT: \"http://schemas.upnp.org/upnp/1/0/\"; ns=01\r\n"
+               << "01-NLS: " << m_bootId << "\r\n\r\n";
             const std::string msg = ss.str();
             ssize_t sent = sendto(socketFd, msg.data(), msg.size(), 0, reinterpret_cast<sockaddr*>(&dest), destLen);
             if (sent < 0) {
@@ -368,7 +372,9 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
            << "LOCATION: " << endpoint->locationUrl << "\r\n"
            << "SERVER: " << serverHeader << "\r\n"
            << "ST: " << target.st << "\r\n"
-           << "USN: " << target.usn << "\r\n\r\n";
+           << "USN: " << target.usn << "\r\n"
+           << "BOOTID.UPNP.ORG: " << m_bootId << "\r\n"
+           << "CONFIGID.UPNP.ORG: " << m_configId << "\r\n\r\n";
         delayed.messages.push_back(ss.str());
         delayed.logSt.push_back(target.st);
         delayed.logUsn.push_back(target.usn);

@@ -55,7 +55,6 @@ struct MediaIndexState {
     std::unordered_map<int, size_t> idToIndex;
     std::unordered_map<int, std::vector<size_t>> childrenByParent;
     std::unordered_map<std::wstring, int> containerKeys;
-    std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> albumArtByDirectory;
     std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> folderAlbumArt;
     std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> perStemAlbumArt;
     std::unordered_set<std::wstring> duplicateKeys;
@@ -71,7 +70,6 @@ public:
     static MediaSources& Get();
 
     void Scan();
-    std::vector<MediaItem> GetChildren(int parentId);
     std::vector<MediaItem> GetDescendants(int parentId);
     MediaItem GetItem(int id);
     std::unordered_map<int, int> GetChildCounts(const std::vector<MediaItem>& items);

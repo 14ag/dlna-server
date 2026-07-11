@@ -62,7 +62,8 @@ class ExistingFeatureImprovementTests(unittest.TestCase):
         for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
             source = self.read(path)
             self.assertIn("BuildAlbumArtCandidateNames", source)
-            self.assertIn("albumArtByDirectory", source)
+            self.assertIn("folderAlbumArt", source)
+            self.assertIn("perStemAlbumArt", source)
 
         content = self.read("src/contentdirectory.cpp")
         self.assertNotIn("IsRegularFileWide(it.albumArtPath)", content)

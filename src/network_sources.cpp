@@ -131,6 +131,94 @@ std::wstring JoinUrl(const std::wstring& baseUrl, const std::wstring& entry) {
     return Utf8ToWide(joined.str());
 }
 
+std::wstring ResolveRelativeUrl(const std::wstring& baseUrl, const std::wstring& relativeUrl) {
+    if (IsRemoteMediaUrl(relativeUrl)) return relativeUrl;
+
+    std::string base = UrlWithoutQueryOrFragment(WideToUtf8(baseUrl));
+    // remove filename part to get base directory
+    size_t slash = base.find_last_of('/');
+    std::string baseDir;
+    if (slash != std::string::npos && slash > 7) { // >7 to keep scheme://host/
+        baseDir = base.substr(0, slash + 1);
+    } else {
+        baseDir = base;
+        if (!baseDir.empty() && baseDir.back() != '/') baseDir += '/';
+    }
+
+    std::string rel = WideToUtf8(relativeUrl);
+    // remove leading slash if present (absolute-path relative to scheme://host)
+    if (!rel.empty() && rel[0] == '/') {
+        // keep scheme://host/ from base
+        size_t hostEnd = base.find('/', 8); // after scheme://host
+        if (hostEnd != std::string::npos) {
+            baseDir = base.substr(0, hostEnd + 1);
+            rel = rel.substr(1);
+        } else {
+            baseDir = base + "/";
+            rel = rel.substr(1);
+        }
+    }
+
+    // split baseDir path segments
+    std::vector<std::string> segments;
+    std::stringstream baseParts(baseDir);
+    std::string seg;
+    while (std::getline(baseParts, seg, '/')) {
+        if (!seg.empty()) segments.push_back(seg);
+    }
+
+    // process relative segments
+    std::stringstream relParts(rel);
+    while (std::getline(relParts, seg, '/')) {
+        if (seg.empty() || seg == ".") continue;
+        if (seg == "..") {
+            if (!segments.empty()) segments.pop_back();
+        } else {
+            segments.push_back(seg);
+        }
+    }
+
+    // reconstruct path
+    std::string result;
+    // rebuild scheme://host/
+    size_t schemeEnd = base.find("://");
+    size_t hostSlash = base.find('/', schemeEnd != std::string::npos ? schemeEnd + 3 : 0);
+    if (schemeEnd != std::string::npos) {
+        std::string schemeHost = (hostSlash != std::string::npos) ? base.substr(0, hostSlash + 1) : base + "/";
+        result = schemeHost;
+    }
+
+    for (size_t i = 0; i < segments.size(); ++i) {
+        result += UrlEncodePathSegment(segments[i]);
+        if (i + 1 < segments.size()) result += '/';
+    }
+
+    return Utf8ToWide(result);
+}
+
+std::string RewriteHlsManifestUrisToAbsolute(const std::wstring& manifestUrl, const std::string& manifestText) {
+    if (!IsRemoteMediaUrl(manifestUrl)) return manifestText;
+    std::string result;
+    result.reserve(manifestText.size() + 1024);
+    std::istringstream input(manifestText);
+    std::string line;
+    while (std::getline(input, line)) {
+        // trim trailing \r
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        // skip tags and blank lines
+        if (line.empty() || line[0] == '#') {
+            result += line + "\n";
+            continue;
+        }
+        // line is a URI — resolve against manifest URL
+        std::wstring resolved = ResolveRelativeUrl(manifestUrl, Utf8ToWide(line));
+        std::string resolvedUtf8 = WideToUtf8(resolved);
+        // Append the resolved URI (with original fragment/query if the line had it)
+        result += resolvedUtf8 + "\n";
+    }
+    return result;
+}
+
 std::wstring ResolvePlaylistEntry(const std::wstring& playlistPath, const std::wstring& entry) {
     if (IsRemoteMediaUrl(entry) || IsAbsoluteLocalPath(entry)) return entry;
     if (IsRemoteMediaUrl(playlistPath)) return JoinUrl(playlistPath, entry);
@@ -730,55 +818,6 @@ namespace {
 
 ConcurrencyLimiter& GetRemoteProbeLimiter() {
     return g_remoteProbeLimiter;
-}
-
-std::vector<long long> ProbeRemoteContentLengthBatch(const std::vector<std::wstring>& urls, size_t maxConcurrency) {
-    std::vector<long long> results(urls.size(), 0);
-    if (urls.empty()) return results;
-
-    std::mutex queueMutex;
-    std::condition_variable queueCv;
-    size_t nextIndex = 0;
-    size_t completedCount = 0;
-    bool stop = false;
-
-    std::vector<std::thread> workers;
-    workers.reserve(maxConcurrency);
-
-    for (size_t i = 0; i < maxConcurrency; ++i) {
-        workers.emplace_back([&]() {
-            while (true) {
-                size_t myIndex;
-                {
-                    std::unique_lock<std::mutex> lock(queueMutex);
-                    if (stop) return;
-                    if (nextIndex >= urls.size()) {
-                        if (completedCount >= urls.size()) return;
-                        queueCv.wait(lock);
-                        continue;
-                    }
-                    myIndex = nextIndex++;
-                }
-
-                results[myIndex] = ProbeRemoteContentLength(urls[myIndex]);
-
-                {
-                    std::lock_guard<std::mutex> lock(queueMutex);
-                    ++completedCount;
-                    if (completedCount >= urls.size()) {
-                        stop = true;
-                        queueCv.notify_all();
-                    }
-                }
-            }
-        });
-    }
-
-    for (auto& worker : workers) {
-        worker.join();
-    }
-
-    return results;
 }
 
 bool StreamRemoteContent(const std::wstring& url,
