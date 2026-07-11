@@ -218,10 +218,18 @@ bool Server::Start() {
 
     m_running.store(true, std::memory_order_release);
     AppMedia.ResetForRescan();
+    // the initial content scan must run to completion before the server is
+    // considered ready content directory browse and search already check
+    // IsInitialScanComplete and return upnp error 710 while it is false see
+    // HandleContentDirectoryControl in contentdirectory cpp that guard only
+    // works if this flag is set after the scan finishes not immediately
+    // after resetforrescan which only allocates the empty root container
+    // backgroundScanEnabled must not gate this call it only controls
+    // whether watchloop performs further automatic rescans after a source
+    // changes post startup see shouldautorescan in source_watcher cpp
+    StartBackgroundScan();
+    JoinBackgroundScan();
     m_initialScanComplete.store(true, std::memory_order_release);
-    if (cfg.backgroundScanEnabled) {
-        StartBackgroundScan();
-    }
     StartWatchMode();
     return true;
 }
