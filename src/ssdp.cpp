@@ -129,17 +129,16 @@ SSDP::SSDP()
     : m_running(false),
       m_hThread(NULL),
       m_ipv4Socket(INVALID_SOCKET),
-      m_ipv6Socket(INVALID_SOCKET),
-      m_port(0) {
+      m_ipv6Socket(INVALID_SOCKET) {
 }
 
 bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid) {
     if (m_running.load()) return true;
 
     m_endpoints = endpoints;
-    m_port = port;
-    m_serverName = WideToUtf8(serverName);
     m_uuidStr = WideToUtf8(uuid);
+    m_bootId = static_cast<unsigned int>(time(nullptr));
+    m_configId = 1;
 
     int ipv4EndpointCount = 0;
     int ipv6EndpointCount = 0;
@@ -332,6 +331,10 @@ void SSDP::SendNotifyRound(const char* nts) {
                     "NT: " + target.st + "\r\n" +
                     "NTS: " + nts + "\r\n" +
                     "USN: " + target.usn + "\r\n"
+                    "BOOTID.UPNP.ORG: " + std::to_string(m_bootId) + "\r\n"
+                    "CONFIGID.UPNP.ORG: " + std::to_string(m_configId) + "\r\n"
+                    "OPT: \"http://schemas.upnp.org/upnp/1/0/\"; ns=01\r\n"
+                    "01-NLS: " + std::to_string(m_bootId) + "\r\n"
                     "\r\n";
             } else {
                 message =
@@ -343,6 +346,10 @@ void SSDP::SendNotifyRound(const char* nts) {
                     "NTS: " + nts + "\r\n"
                     "SERVER: " + serverHeader + "\r\n" +
                     "USN: " + target.usn + "\r\n"
+                    "BOOTID.UPNP.ORG: " + std::to_string(m_bootId) + "\r\n"
+                    "CONFIGID.UPNP.ORG: " + std::to_string(m_configId) + "\r\n"
+                    "OPT: \"http://schemas.upnp.org/upnp/1/0/\"; ns=01\r\n"
+                    "01-NLS: " + std::to_string(m_bootId) + "\r\n"
                     "\r\n";
             }
 
@@ -511,6 +518,8 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
             "SERVER: " + serverHeader + "\r\n"
             "ST: " + target->st + "\r\n"
             "USN: " + target->usn + "\r\n"
+            "BOOTID.UPNP.ORG: " + std::to_string(m_bootId) + "\r\n"
+            "CONFIGID.UPNP.ORG: " + std::to_string(m_configId) + "\r\n"
             "\r\n";
 
         delayed.messages.push_back(response);

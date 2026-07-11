@@ -70,9 +70,9 @@ private:
     std::mutex m_socketMutex;
 
     std::vector<NetworkEndpoint> m_endpoints;
-    int m_port;
-    std::string m_serverName;
     std::string m_uuidStr;
+    unsigned int m_bootId;
+    unsigned int m_configId;
 };
 
 #endif // SSDP_H

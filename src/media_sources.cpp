@@ -187,12 +187,10 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
             item.albumArtPath = candidatePath;
             item.albumArtMime = candidate.mimeType;
             state.folderAlbumArt[folder] = { item.albumArtPath, item.albumArtMime };
-            state.albumArtByDirectory[folder] = { item.albumArtPath, item.albumArtMime };
             return;
         }
     }
     state.folderAlbumArt[folder] = { L"", L"" };
-    state.albumArtByDirectory[folder] = { L"", L"" };
 }
 
 void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& path, int parentId, const std::wstring& titleOverride, const std::wstring& subtitleOverride, bool allowArtistAlbumMirror) {
@@ -504,27 +502,6 @@ void MediaSources::ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext
     } while (FindNextFileW(hFind, &fd));
     
     FindClose(hFind);
-}
-
-std::vector<MediaItem> MediaSources::GetChildren(int parentId) {
-    std::vector<MediaItem> res;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        auto found = m_childrenByParent.find(parentId);
-        if (found != m_childrenByParent.end()) {
-            for (size_t index : found->second) {
-                if (index < m_items.size()) res.push_back(m_items[index]);
-            }
-        }
-    }
-    const bool sortByTitle = AppConfig.IsSortByTitleEnabled();
-    if (sortByTitle) {
-        std::sort(res.begin(), res.end(), [](const MediaItem& a, const MediaItem& b) {
-            if (a.isFolder != b.isFolder) return a.isFolder && !b.isFolder;
-            return NaturalLessWide(a.title, b.title);
-        });
-    }
-    return res;
 }
 
 MediaSources::GetChildrenResult MediaSources::TryGetChildren(int objId, std::vector<MediaItem>& out) {

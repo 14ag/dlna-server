@@ -112,12 +112,10 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
             item.albumArtPath = Utf8ToWide(candidatePath.u8string());
             item.albumArtMime = candidate.mimeType;
             state.folderAlbumArt[directoryKey] = { item.albumArtPath, item.albumArtMime };
-            state.albumArtByDirectory[directoryKey] = { item.albumArtPath, item.albumArtMime };
             return;
         }
     }
     state.folderAlbumArt[directoryKey] = { L"", L"" };
-    state.albumArtByDirectory[directoryKey] = { L"", L"" };
 }
 
 } // namespace
@@ -504,26 +502,7 @@ void MediaSources::ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext
     }
 }
 
-std::vector<MediaItem> MediaSources::GetChildren(int parentId) {
-    std::vector<MediaItem> result;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        auto found = m_childrenByParent.find(parentId);
-        if (found != m_childrenByParent.end()) {
-            for (size_t index : found->second) {
-                if (index < m_items.size()) result.push_back(m_items[index]);
-            }
-        }
-    }
-    if (AppConfig.IsSortByTitleEnabled()) {
-        std::sort(result.begin(), result.end(), [](const MediaItem& a, const MediaItem& b) {
-            if (a.isFolder != b.isFolder) return a.isFolder && !b.isFolder;
-            return NaturalLessWide(a.title, b.title);
-        });
-    }
-    return result;
 }
-
 MediaSources::GetChildrenResult MediaSources::TryGetChildren(int objId, std::vector<MediaItem>& out) {
     std::lock_guard<std::mutex> lock(m_mutex);
     auto found = m_idToIndex.find(objId);

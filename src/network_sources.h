@@ -90,6 +90,4 @@ bool StreamRemoteContent(const std::wstring& url,
                          const std::vector<std::string>& reqHeaders = {},
                          const std::function<void(const std::string&, const std::string&)>& onHeader = nullptr);
 
-std::vector<long long> ProbeRemoteContentLengthBatch(const std::vector<std::wstring>& urls, size_t maxConcurrency = 4);
-
 #endif // NETWORK_SOURCES_H
