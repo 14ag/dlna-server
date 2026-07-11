@@ -14,7 +14,7 @@ class DlnaReviewFixSourceTests(unittest.TestCase):
         header = read_text("src/media_sources.h")
         combined = read_text("src/media_sources.cpp") + read_text("src/posix_media_sources.cpp")
 
-        for token in (
+for token in (
             "struct MediaIndexState",
             "std::atomic<int> m_systemUpdateId",
             "std::unordered_map<int, size_t> idToIndex",
