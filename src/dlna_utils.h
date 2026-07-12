@@ -43,6 +43,13 @@ std::string BuildContentFeatures(const MediaFormatInfo& info, bool hasKnownSize)
 std::string BuildContentFeaturesForExtension(const std::wstring& ext, const std::wstring& mimeType, bool hasKnownSize);
 std::string BuildHlsContentFeatures();
 std::string BuildHlsProtocolInfo();
+
+// Shared by BuildHlsContentFeatures, BuildSourceProtocolInfoList, and every
+// contentFeatures.dlna.org header the HTTP handlers build for an item whose
+// mimeType is video/mpegurl -- do not hand-copy this literal anywhere else.
+inline constexpr const char* kHlsProtocolContentFeatures =
+    "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
+
 std::string BuildSourceProtocolInfoList();
 std::string GetDlnaServerHeader();
 std::string SubtitleMimeForExtension(const std::wstring& ext);

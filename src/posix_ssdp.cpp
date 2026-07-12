@@ -1,4 +1,5 @@
 #include "ssdp.h"
+#include "ssdp_common.h"
 #include "config.h"
 #include "dlna_utils.h"
 #include "log.h"
@@ -27,44 +28,6 @@ constexpr const char* kSsdpMulticastIPv4 = "239.255.255.250";
 constexpr const char* kSsdpMulticastIPv6 = "ff02::c";
 
 constexpr size_t kMaxDelayedResponses = 256;
-
-struct SSDPTarget {
-    std::string st;
-    std::string usn;
-};
-
-bool CoalesceDelayedResponse(std::vector<DelayedSearchResponse>& queue, DelayedSearchResponse&& response) {
-    for (auto& queued : queue) {
-        if (queued.remoteLen == response.remoteLen &&
-            std::memcmp(&queued.remoteAddr, &response.remoteAddr, static_cast<size_t>(response.remoteLen)) == 0 &&
-            queued.logUsn == response.logUsn &&
-            queued.logSt == response.logSt) {
-            queued = std::move(response);
-            return true;
-        }
-    }
-    return false;
-}
-
-unsigned int ComputeDelayMilliseconds(int mxSeconds) {
-    int boundedSeconds = (std::max)(0, (std::min)(mxSeconds, 5));
-    if (boundedSeconds <= 1) return 0;
-    unsigned int maxDelay = static_cast<unsigned int>(boundedSeconds * 1000);
-    if (maxDelay == 0) return 0;
-    static thread_local std::mt19937 generator(std::random_device{}());
-    std::uniform_int_distribution<unsigned int> distribution(0, maxDelay);
-    return distribution(generator);
-}
-
-std::vector<SSDPTarget> BuildTargets(const std::string& uuid) {
-    return {
-        {"upnp:rootdevice", "uuid:" + uuid + "::upnp:rootdevice"},
-        {"uuid:" + uuid, "uuid:" + uuid},
-        {"urn:schemas-upnp-org:device:MediaServer:1", "uuid:" + uuid + "::urn:schemas-upnp-org:device:MediaServer:1"},
-        {"urn:schemas-upnp-org:service:ContentDirectory:1", "uuid:" + uuid + "::urn:schemas-upnp-org:service:ContentDirectory:1"},
-        {"urn:schemas-upnp-org:service:ConnectionManager:1", "uuid:" + uuid + "::urn:schemas-upnp-org:service:ConnectionManager:1"},
-    };
-}
 
 int CreateIPv4Socket(const std::vector<NetworkEndpoint>& endpoints) {
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -236,7 +199,7 @@ void SSDP::SendNotifyRound(const char* nts) {
             continue;
         }
 
-        for (const auto& target : BuildTargets(m_uuidStr)) {
+        for (const auto& target : BuildAdvertisedTargets(m_uuidStr)) {
             std::stringstream ss;
             ss << "NOTIFY * HTTP/1.1\r\n"
                << "HOST: " << hostHeader << "\r\n";
@@ -345,7 +308,7 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
     const NetworkEndpoint* endpoint = SelectBestEndpoint(m_endpoints, remoteAddr);
     if (!endpoint || endpoint->family != remoteAddr->sa_family) return;
 
-    std::vector<SSDPTarget> targets = BuildTargets(m_uuidStr);
+    std::vector<SSDPTarget> targets = BuildAdvertisedTargets(m_uuidStr);
     std::vector<SSDPTarget> responses;
     if (ToLowerAscii(st) == "ssdp:all") {
         responses = targets;

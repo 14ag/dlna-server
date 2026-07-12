@@ -52,6 +52,7 @@ private:
     void StartWorkerLocked();
     void QueueInitialNotifyLocked(const Subscription& subscription);
     void QueueNotifyJobLocked(NotifyJob job);
+    void DispatchNotifyToSubscribersLocked(int updateId, std::chrono::steady_clock::time_point now);
     void ExpireSubscription(const std::string& sid);
     void StopWorker();
     void WorkerLoop();
@@ -66,8 +67,19 @@ private:
     bool m_workerStarted = false;
     int m_lastSystemUpdateId = 1;
     unsigned long long m_generation = 0;
+    // GENA notify moderation (leading-edge-plus-trailing-edge debounce): a
+    // publish burst dispatches its first update immediately, then coalesces
+    // every update inside m_minNotifyInterval into one trailing dispatch of
+    // the latest updateId. This bounds DispatchNotifyToSubscribersLocked's
+    // O(subscriber count) mutex-held iteration to roughly once per window
+    // instead of once per PublishItem/PublishContainer call.
+    std::chrono::milliseconds m_minNotifyInterval{500};
+    std::chrono::steady_clock::time_point m_lastDispatchTime{};
+    bool m_trailingFirePending = false;
+    int m_trailingUpdateId = 0;
+    std::chrono::steady_clock::time_point m_trailingFireAt{};
     std::atomic<unsigned long long> m_sidCounter;
-};
+ };
 
 #define AppEvents UpnpEventManager::Get()
 

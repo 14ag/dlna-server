@@ -25,9 +25,7 @@ namespace {
     };
 }
 
-#ifdef DLNA_HAS_LIBCURL
 #include <curl/curl.h>
-#endif
 
 namespace {
 constexpr int kMaxCurlOutputBytes = 4 * 1024 * 1024;
@@ -238,7 +236,6 @@ struct RemoteFetchResult {
     std::string body;
 };
 
-#ifdef DLNA_HAS_LIBCURL
 struct CurlGlobalInit {
     CurlGlobalInit() {
         curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -432,23 +429,8 @@ bool CurlStream(const std::wstring& url,
         LogPrint(L"Remote content unavailable: %hs", errorBuffer[0] ? errorBuffer : curl_easy_strerror(code));
         return false;
     }
-    return true;
+return true;
 }
-#else
-RemoteFetchResult CurlCapture(const std::wstring&, bool, bool) {
-    LogPrint(L"Remote content unavailable: libcurl support was not enabled at build time.");
-    return {};
-}
-
-bool CurlStream(const std::wstring&,
-                bool,
-                long long,
-                long long,
-                const std::function<bool(const char*, size_t)>&) {
-    LogPrint(L"Remote content unavailable: libcurl support was not enabled at build time.");
-    return false;
-}
-#endif
 
 std::string ReadLocalTextFile(const std::wstring& path) {
 #ifdef _WIN32
@@ -813,10 +795,10 @@ long long ProbeRemoteContentLength(const std::wstring& url) {
 }
 
 namespace {
-    ConcurrencyLimiter g_remoteProbeLimiter(4);
+    AdaptiveConcurrencyLimiter g_remoteProbeLimiter(4);
 }
 
-ConcurrencyLimiter& GetRemoteProbeLimiter() {
+AdaptiveConcurrencyLimiter& GetRemoteProbeLimiter() {
     return g_remoteProbeLimiter;
 }
 
@@ -828,9 +810,5 @@ bool StreamRemoteContent(const std::wstring& url,
                          const std::vector<std::string>& reqHeaders,
                          const std::function<void(const std::string&, const std::string&)>& onHeader) {
     if (!IsRemoteMediaUrl(url)) return false;
-#ifdef DLNA_HAS_LIBCURL
     return CurlStream(url, useRange, startByte, endByte, writeChunk, reqHeaders, onHeader);
-#else
-    return false;
-#endif
 }

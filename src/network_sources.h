@@ -1,11 +1,10 @@
 #ifndef NETWORK_SOURCES_H
 #define NETWORK_SOURCES_H
 
+#include "playlist_scan_concurrency.h"
 #include <functional>
 #include <string>
 #include <vector>
-#include <mutex>
-#include <condition_variable>
 
 struct PlaylistEntry {
     std::wstring location;
@@ -19,35 +18,7 @@ struct RemoteDirectoryEntry {
     bool likelyDirectory;
 };
 
-class ConcurrencyLimiter {
-public:
-    explicit ConcurrencyLimiter(size_t maxConcurrency)
-        : m_maxConcurrency(maxConcurrency), m_activeCount(0) {}
-    
-    void Acquire() {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        while (m_activeCount >= m_maxConcurrency) {
-            m_cv.wait(lock);
-        }
-        ++m_activeCount;
-    }
-    
-    void Release() {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        --m_activeCount;
-        if (m_activeCount < m_maxConcurrency) {
-            m_cv.notify_one();
-        }
-    }
-    
-private:
-    const size_t m_maxConcurrency;
-    size_t m_activeCount;
-    std::mutex m_mutex;
-    std::condition_variable m_cv;
-};
-
-ConcurrencyLimiter& GetRemoteProbeLimiter();
+AdaptiveConcurrencyLimiter& GetRemoteProbeLimiter();
 
 bool IsRemoteMediaUrl(const std::wstring& value);
 bool IsNetworkShareUrl(const std::wstring& value);

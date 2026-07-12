@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(dlna-server VERSION 1.4.0)
 
+configure_file(${CMAKE_SOURCE_DIR}/src/version.h.in ${CMAKE_BINARY_DIR}/generated/version.h @ONLY)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -24,61 +26,65 @@ function(dlna_link_required_curl target_name)
 endfunction()
 
 if(WIN32)
-    set(SOURCES
-        src/mainwindow.cpp
-        src/settingsdlg.cpp
-        src/logdlg.cpp
-        src/server.cpp
-        src/netutils.cpp
-        src/httpserver.cpp
-        src/contentdirectory.cpp
-        src/upnp_eventing.cpp
-        src/ssdp.cpp
-        src/dlna_utils.cpp
-        src/network_sources.cpp
-        src/source_watcher.cpp
-        src/media_database.cpp
-        src/media_scan_common.cpp
-        src/bounded_thread_pool.cpp
-        src/playlist_scan_concurrency.cpp
-        src/settings_restart.cpp
-        src/modal_focus.cpp
-        src/media_sources.cpp
-        src/config.cpp
-        src/ipwhitelist.cpp
-        src/firewall_access_win.cpp
-        src/log.cpp
-    )
+set(SOURCES
+         src/mainwindow.cpp
+         src/settingsdlg.cpp
+         src/logdlg.cpp
+         src/server.cpp
+         src/netutils.cpp
+         src/httpserver.cpp
+         src/http_common.cpp
+         src/contentdirectory.cpp
+         src/upnp_eventing.cpp
+         src/ssdp.cpp
+         src/ssdp_common.cpp
+         src/dlna_utils.cpp
+         src/network_sources.cpp
+         src/source_watcher.cpp
+         src/media_database.cpp
+         src/media_scan_common.cpp
+         src/bounded_thread_pool.cpp
+         src/playlist_scan_concurrency.cpp
+         src/fs_backend_win32.cpp
+         src/settings_restart.cpp
+         src/modal_focus.cpp
+         src/config.cpp
+         src/ipwhitelist.cpp
+         src/firewall_access_win.cpp
+         src/log.cpp
+     )
 
-    set(HEADERS
-        src/mainwindow.h
-        src/settingsdlg.h
-        src/logdlg.h
-        src/server.h
-        src/netutils.h
-        src/netutils_internal.h
-        src/httpserver.h
-        src/contentdirectory.h
-        src/upnp_eventing.h
-        src/ssdp.h
-        src/dlna_utils.h
-        src/network_sources.h
-        src/source_watcher.h
-        src/media_database.h
-        src/media_scan_common.h
-        src/task_group.h
-        src/bounded_thread_pool.h
-        src/playlist_scan_concurrency.h
-        src/settings_restart.h
-        src/source_list_focus.h
-        src/modal_focus.h
-        src/media_sources.h
-        src/config.h
-        src/ipwhitelist.h
-        src/firewall_access.h
-        src/log.h
-        resources/resource.h
-    )
+set(HEADERS
+         src/mainwindow.h
+         src/settingsdlg.h
+         src/logdlg.h
+         src/server.h
+         src/netutils.h
+         src/netutils_internal.h
+         src/httpserver.h
+         src/http_common.h
+         src/contentdirectory.h
+         src/upnp_eventing.h
+         src/ssdp.h
+         src/ssdp_common.h
+         src/dlna_utils.h
+         src/network_sources.h
+         src/source_watcher.h
+         src/media_database.h
+         src/media_scan_common.h
+         src/task_group.h
+         src/bounded_thread_pool.h
+         src/playlist_scan_concurrency.h
+         src/fs_backend.h
+         src/settings_restart.h
+         src/source_list_focus.h
+         src/modal_focus.h
+         src/config.h
+         src/ipwhitelist.h
+         src/firewall_access.h
+         src/log.h
+         resources/resource.h
+     )
 
     list(REMOVE_ITEM SOURCES src/main.cpp)
     add_library(dlna_core STATIC ${SOURCES} ${HEADERS})
@@ -86,10 +92,10 @@ if(WIN32)
     dlna_enable_warnings(dlna_core)
     target_link_libraries(dlna_core PUBLIC CURL::libcurl)
     target_compile_definitions(dlna_core PRIVATE DLNA_HAS_LIBCURL=1)
-    target_link_libraries(dlna_core PUBLIC
-        ws2_32 shell32 ole32 oleaut32 uuid comctl32 shlwapi dwmapi rpcrt4 iphlpapi)
+target_link_libraries(dlna_core PUBLIC
+         ws2_32 shell32 ole32 oleaut32 uuid comctl32 shlwapi dwmapi rpcrt4 iphlpapi)
     target_compile_definitions(dlna_core PUBLIC UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN)
-    target_include_directories(dlna_core PUBLIC src)
+    target_include_directories(dlna_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 
     add_executable(dlna-server WIN32 src/main.cpp resources/app.rc)
     target_link_libraries(dlna-server PRIVATE dlna_core)
@@ -103,29 +109,32 @@ else()
     option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" ON)
     set(DLNA_FLTK_VERSION "release-1.4.5" CACHE STRING "FLTK git tag used when system FLTK is unavailable")
 
-    add_library(dlna_core STATIC
-        src/posix_server.cpp
-        src/posix_ssdp.cpp
-        src/posix_httpserver.cpp
-        src/posix_netutils.cpp
-        src/posix_media_sources.cpp
-        src/posix_config.cpp
-        src/posix_log.cpp
-        src/ipwhitelist.cpp
-        src/contentdirectory.cpp
-        src/upnp_eventing.cpp
-        src/dlna_utils.cpp
-        src/network_sources.cpp
-        src/source_watcher.cpp
-        src/media_database.cpp
-        src/media_scan_common.cpp
-        src/bounded_thread_pool.cpp
-        src/playlist_scan_concurrency.cpp
-        src/settings_restart.cpp
-    )
+add_library(dlna_core STATIC
+         src/posix_server.cpp
+         src/posix_ssdp.cpp
+         src/ssdp_common.cpp
+         src/posix_httpserver.cpp
+         src/http_common.cpp
+         src/media_sources_common.cpp
+         src/fs_backend_posix.cpp
+         src/posix_netutils.cpp
+         src/posix_config.cpp
+         src/posix_log.cpp
+         src/ipwhitelist.cpp
+         src/contentdirectory.cpp
+         src/upnp_eventing.cpp
+         src/dlna_utils.cpp
+         src/network_sources.cpp
+         src/source_watcher.cpp
+         src/media_database.cpp
+         src/media_scan_common.cpp
+         src/bounded_thread_pool.cpp
+         src/playlist_scan_concurrency.cpp
+         src/settings_restart.cpp
+     )
     dlna_enable_warnings(dlna_core)
     dlna_link_required_curl(dlna_core)
-    target_include_directories(dlna_core PUBLIC src)
+    target_include_directories(dlna_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
     target_compile_definitions(dlna_core PUBLIC DLNA_POSIX=1 DLNA_RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources")
     if(APPLE)
         target_compile_definitions(dlna_core PUBLIC DLNA_PLATFORM_NAME=\"macOS\")
