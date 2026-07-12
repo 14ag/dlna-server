@@ -109,6 +109,12 @@ std::wstring JoinLocalPath(const std::wstring& baseFile, const std::wstring& ent
     return parent + entry;
 }
 
+// TODO(remediation): JoinUrl and ResolveRelativeUrl both resolve a
+// relative reference against a base URL with different correctness
+// guarantees (JoinUrl does not collapse ".." or handle host-relative
+// absolute paths). Candidate for consolidation onto ResolveRelativeUrl
+// once ResolvePlaylistEntry's callers are covered by a regression test
+// for '..'-bearing playlist entries.
 std::wstring JoinUrl(const std::wstring& baseUrl, const std::wstring& entry) {
     if (IsRemoteMediaUrl(entry)) return entry;
     std::string parent = ParentUrl(WideToUtf8(baseUrl));
@@ -668,6 +674,19 @@ FetchedPlaylist FetchPlaylistOnce(const std::wstring& playlistPath) {
     if (result.fetchOk) {
         result.isHls = IsHlsManifestText(result.text);
     }
+    return result;
+}
+
+HlsManifestFetchResult FetchHlsManifestForServing(const std::wstring& manifestUrl) {
+    HlsManifestFetchResult result;
+    bool fetchOk = true;
+    std::string text = ReadSourceText(manifestUrl, &fetchOk);
+    if (!fetchOk) {
+        LogPrint(L"[remote:network] HLS manifest unavailable for serving: %ls", RedactUrlForLog(manifestUrl).c_str());
+        return result;
+    }
+    result.fetchOk = true;
+    result.text = RewriteHlsManifestUrisToAbsolute(manifestUrl, text);
     return result;
 }
 

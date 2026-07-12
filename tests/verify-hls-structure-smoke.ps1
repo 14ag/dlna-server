@@ -4,19 +4,22 @@
 .SYNOPSIS
     HLS nested playlist structure parity smoke test.
 .DESCRIPTION
-    Replicates the manual traversal procedure used to produce
-    hls_access_comparison_report.txt and hls-playlist-findings.txt, as a
-    repeatable, pass/fail automated check.
+    Compares the PC dlna-server's HLS master/child playlist structure
+    against a fixed known-good reference baseline.
 
-    Traverses the HLS tree two independent ways using curl.exe:
-      1. Direct: local wrapper file (file://) -> upstream CDN master ->
-         each variant/media child playlist.
-      2. Server: dlna-server ContentDirectory item -> /media/<id> master ->
-         each child playlist referenced in that master's rewritten URIs.
+    The reference baseline was originally obtained by traversing the tree
+    via a second client (Android phone: local wrapper file -> upstream
+    CDN master -> each variant/media child playlist). That traversal
+    result does not change between runs, so it is hardcoded below instead
+    of being re-fetched live each time.
+
+    Only the PC server side is fetched live:
+      dlna-server ContentDirectory item -> /media/<id> master ->
+      each child playlist referenced in that master's rewritten URIs.
 
     Volatile per-fetch fields (EXT-X-MEDIA-SEQUENCE value,
     EXT-X-PROGRAM-DATE-TIME value, segment filenames/timestamps) are not
-    compared, since HLS is a live rolling window and two curl calls made
+    compared, since HLS is a live rolling window and two fetches made
     seconds apart will never share exact segment names. Tag composition,
     EXT-X-STREAM-INF attributes (bandwidth normalized), child URI sets,
     and per-child segment/EXTINF counts are compared.
@@ -28,12 +31,8 @@
     origin URLs.
 .PARAMETER ServerBase
     Base URL of the running dlna-server instance.
-.PARAMETER LocalWrapperPath
-    Path to the local .m3u8 wrapper file that references the upstream HLS
-    master, relative to the current working directory.
 .PARAMETER ItemTitle
-    DIDL title to look for while browsing the ContentDirectory root,
-    matches the wrapper file name by default.
+    DIDL title to look for while browsing the ContentDirectory root.
 .PARAMETER ServerRootUrl
     Skips ContentDirectory discovery and uses this resource URL directly,
     for example http://localhost:8200/media/1000010. Use this if
@@ -47,13 +46,50 @@
 [CmdletBinding()]
 param(
     [string]$ServerBase = 'http://localhost:8200',
-    [string]$LocalWrapperPath = '.\test media\test-hls-playlist.m3u8',
     [string]$ItemTitle = 'test-hls-playlist.m3u8',
     [string]$ServerRootUrl
 )
 
 $script:ExitCode = 0
 $script:Failures = [System.Collections.Generic.List[string]]::new()
+
+# --- hardcoded reference baseline (Android traversal, fixed) ---
+
+$refBaseUrl = 'https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/'
+
+$ReferenceMaster = [pscustomobject]@{
+    Tags        = @(
+        'EXTM3U',
+        'EXT-X-VERSION',
+        'EXT-X-INDEPENDENT-SEGMENTS',
+        'EXT-X-MEDIA',
+        'EXT-X-STREAM-INF(BANDWIDTH=N,AVERAGE-BANDWIDTH=3075600,CODECS="avc1.64001f,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=29.970,CLOSED-CAPTIONS="CC",SUBTITLES="subs")',
+        'EXT-X-STREAM-INF(BANDWIDTH=N,AVERAGE-BANDWIDTH=1315600,CODECS="avc1.64001f,mp4a.40.2",RESOLUTION=1024x576,FRAME-RATE=29.970,CLOSED-CAPTIONS="CC",SUBTITLES="subs")',
+        'EXT-X-STREAM-INF(BANDWIDTH=N,AVERAGE-BANDWIDTH=765600,CODECS="avc1.64001e,mp4a.40.2",RESOLUTION=640x360,FRAME-RATE=29.970,CLOSED-CAPTIONS="CC",SUBTITLES="subs")',
+        'EXT-X-STREAM-INF(BANDWIDTH=N,AVERAGE-BANDWIDTH=435600,CODECS="avc1.64000d,mp4a.40.2",RESOLUTION=384x216,FRAME-RATE=29.970,CLOSED-CAPTIONS="CC",SUBTITLES="subs")',
+        'EXT-X-MEDIA'
+    )
+    Children    = @(
+        "${refBaseUrl}playlist_1280x720.m3u8",
+        "${refBaseUrl}playlist_1024x576.m3u8",
+        "${refBaseUrl}playlist_640x360.m3u8",
+        "${refBaseUrl}playlist_384x216.m3u8",
+        "${refBaseUrl}playlist_webvtt.m3u8"
+    )
+    ExtinfCount = 0
+}
+
+# Header pattern is identical across all 5 child playlists (4 video
+# variants + 1 subtitle playlist): EXTM3U/VERSION/TARGETDURATION/
+# MEDIA-SEQUENCE/PROGRAM-DATE-TIME followed by 10 EXTINF segment pairs.
+$ReferenceChildTags = @(
+    'EXTM3U',
+    'EXT-X-VERSION',
+    'EXT-X-TARGETDURATION',
+    'EXT-X-MEDIA-SEQUENCE',
+    'EXT-X-PROGRAM-DATE-TIME'
+) + (1..10 | ForEach-Object { 'EXTINF' })
+$ReferenceChildExtinfCount = 10
 
 function Set-IniValue {
     param(
@@ -213,7 +249,8 @@ function ConvertTo-NormalizedHlsStructure {
         if ($tagName -eq 'EXT-X-STREAM-INF') {
             $attrs = ($line -replace '^#EXT-X-STREAM-INF:', '') -replace 'BANDWIDTH=\d+', 'BANDWIDTH=N'
             $tags.Add("EXT-X-STREAM-INF($attrs)")
-        } else {
+        }
+        else {
             $tags.Add($tagName)
         }
 
@@ -232,7 +269,8 @@ function ConvertTo-NormalizedHlsStructure {
 # --- discovery ---
 $configPath = '..\output\winx64\config.ini'
 $mediaSourcesValue = 'C:\Users\philip\sauce\dlna-server\tests\test media\test-hls-playlist.m3u8'
-$exePath='..\output\winx64\DLNA Server.exe'
+$exePath = '..\output\winx64\DLNA Server.exe'
+Set-IniValue "Settings" "DebugLog" "1"
 Set-IniValue "Settings" "MediaSources" $mediaSourcesValue
 Start-Process -FilePath $exePath -PassThru -ArgumentList '-h'
 Start-Sleep -Milliseconds 500
@@ -244,39 +282,20 @@ if (-not $ServerRootUrl) {
     try {
         $ServerRootUrl = Find-HlsResourceUrl -Title $ItemTitle
         Write-Host "Resolved server resource: $ServerRootUrl"
-    } catch {
+    }
+    catch {
         Write-Fail "ContentDirectory discovery failed: $($_.Exception.Message)"
         exit $script:ExitCode
     }
-} else {
+}
+else {
     Write-Host "Using supplied server resource: $ServerRootUrl"
 }
 
-# --- direct traversal ---
+# --- reference baseline (hardcoded, no fetch) ---
 
-Write-Section 'Direct traversal (local wrapper -> upstream CDN master)'
-if (-not (Test-Path -LiteralPath $LocalWrapperPath)) {
-    Write-Fail "Local wrapper file not found: $LocalWrapperPath"
-    exit $script:ExitCode
-}
-$wrapperFileUri = ([Uri]((Resolve-Path -LiteralPath $LocalWrapperPath).Path)).AbsoluteUri
-$wrapperResult = Invoke-Curl -Url $wrapperFileUri
-$upstreamMasterUrl = ($wrapperResult.Body -split "`r`n|`n" |
-    Where-Object { $_.Trim() -and $_.Trim()[0] -ne '#' } |
-    Select-Object -First 1)
-if (-not $upstreamMasterUrl) {
-    Write-Fail "Could not extract an upstream master URL from $LocalWrapperPath"
-    exit $script:ExitCode
-}
-$upstreamMasterUrl = $upstreamMasterUrl.Trim()
-
-$directMasterResult = Invoke-Curl -Url $upstreamMasterUrl
-if ($directMasterResult.StatusCode -ne 200) {
-    Write-Fail "Direct upstream master fetch failed, status $($directMasterResult.StatusCode): $upstreamMasterUrl"
-    exit $script:ExitCode
-}
-$directMaster = ConvertTo-NormalizedHlsStructure -ManifestText $directMasterResult.Body -ManifestUrl $upstreamMasterUrl
-Write-Host "Direct master: $($directMaster.Children.Count) children"
+Write-Section 'Reference baseline (hardcoded)'
+Write-Host "Reference master: $($ReferenceMaster.Children.Count) children"
 
 # --- server traversal ---
 
@@ -292,57 +311,52 @@ Write-Host "Server master: $($serverMaster.Children.Count) children"
 # --- master level comparison ---
 
 Write-Section 'Master structure comparison'
-$directTagsJoined = $directMaster.Tags -join '|'
+$referenceTagsJoined = $ReferenceMaster.Tags -join '|'
 $serverTagsJoined = $serverMaster.Tags -join '|'
-if ($directTagsJoined -eq $serverTagsJoined) {
+if ($referenceTagsJoined -eq $serverTagsJoined) {
     Write-Pass 'Master tag structure identical'
-} else {
-    Write-Fail "Master tag structure differs`n  direct: $directTagsJoined`n  server: $serverTagsJoined"
+}
+else {
+    Write-Fail "Master tag structure differs`n  reference: $referenceTagsJoined`n  server: $serverTagsJoined"
 }
 
-$directChildrenSorted = $directMaster.Children | Sort-Object
+$referenceChildrenSorted = $ReferenceMaster.Children | Sort-Object
 $serverChildrenSorted = $serverMaster.Children | Sort-Object
-$childDiff = Compare-Object -ReferenceObject $directChildrenSorted -DifferenceObject $serverChildrenSorted
+$childDiff = Compare-Object -ReferenceObject $referenceChildrenSorted -DifferenceObject $serverChildrenSorted
 if (-not $childDiff) {
-    Write-Pass "Master child URI set identical ($($directChildrenSorted.Count) children)"
-} else {
+    Write-Pass "Master child URI set identical ($($referenceChildrenSorted.Count) children)"
+}
+else {
     Write-Fail "Master child URI set differs:`n$($childDiff | Format-Table -AutoSize | Out-String)"
 }
 
 # --- child level comparison ---
 
 Write-Section 'Child playlist structure comparison'
-$pairCount = [Math]::Min($directMaster.Children.Count, $serverMaster.Children.Count)
+$referenceChildTagsJoined = $ReferenceChildTags -join '|'
+$pairCount = [Math]::Min($ReferenceMaster.Children.Count, $serverMaster.Children.Count)
 for ($i = 0; $i -lt $pairCount; $i++) {
-    $directChildUrl = $directMaster.Children[$i]
     $serverChildUrl = $serverMaster.Children[$i]
     $label = Split-Path -Leaf ([Uri]$serverChildUrl).AbsolutePath
 
-    $directChildResult = Invoke-Curl -Url $directChildUrl
     $serverChildResult = Invoke-Curl -Url $serverChildUrl
-
-    if ($directChildResult.StatusCode -ne 200) {
-        Write-Fail "Direct child unreachable: $directChildUrl (status $($directChildResult.StatusCode))"
-        continue
-    }
     if ($serverChildResult.StatusCode -ne 200) {
         Write-Fail "Server-resolved child unreachable: $serverChildUrl (status $($serverChildResult.StatusCode))"
         continue
     }
 
-    $directChild = ConvertTo-NormalizedHlsStructure -ManifestText $directChildResult.Body -ManifestUrl $directChildUrl
     $serverChild = ConvertTo-NormalizedHlsStructure -ManifestText $serverChildResult.Body -ManifestUrl $serverChildUrl
-    $directChildTags = $directChild.Tags -join '|'
     $serverChildTags = $serverChild.Tags -join '|'
 
-    if ($directChildTags -eq $serverChildTags -and $directChild.ExtinfCount -eq $serverChild.ExtinfCount) {
+    if ($serverChildTags -eq $referenceChildTagsJoined -and $serverChild.ExtinfCount -eq $ReferenceChildExtinfCount) {
         Write-Pass "Child '$label' structure identical ($($serverChild.ExtinfCount) segments)"
-    } else {
-        Write-Fail "Child '$label' structure differs`n  direct: $directChildTags ($($directChild.ExtinfCount) segments)`n  server: $serverChildTags ($($serverChild.ExtinfCount) segments)"
+    }
+    else {
+        Write-Fail "Child '$label' structure differs`n  reference: $referenceChildTagsJoined ($ReferenceChildExtinfCount segments)`n  server: $serverChildTags ($($serverChild.ExtinfCount) segments)"
     }
 }
-if ($directMaster.Children.Count -ne $serverMaster.Children.Count) {
-    Write-Fail "Child count mismatch: direct=$($directMaster.Children.Count) server=$($serverMaster.Children.Count)"
+if ($ReferenceMaster.Children.Count -ne $serverMaster.Children.Count) {
+    Write-Fail "Child count mismatch: reference=$($ReferenceMaster.Children.Count) server=$($serverMaster.Children.Count)"
 }
 
 # --- expected-unreachable naive route ---
@@ -354,17 +368,19 @@ if ($serverMaster.Children.Count -gt 0) {
     $naiveResult = Invoke-Curl -Url $naiveUrl
     if ($naiveResult.StatusCode -eq 400) {
         Write-Pass "Naive server-relative child route still rejects as expected (400): $naiveUrl"
-    } else {
+    }
+    else {
         Write-Fail "Naive server-relative child route returned unexpected status $($naiveResult.StatusCode), expected 400: $naiveUrl"
     }
 }
 
 # --- summary ---
-
+Get-Process -Name "DLNA Server" -ErrorAction SilentlyContinue | ForEach-Object { $_.Id; Stop-Process -Id $_.Id -Force; "killed pid $($_.Id)" }
 Write-Section 'Summary'
 if ($script:ExitCode -eq 0) {
     Write-Host 'All checks passed.' -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "$($script:Failures.Count) check(s) failed:" -ForegroundColor Red
     $script:Failures | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
 }

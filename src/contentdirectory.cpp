@@ -579,7 +579,11 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
 
     if (action == "Search") {
         if (!DLNAServer.IsInitialScanComplete()) {
-            return SoapFault(710, "Initial scan in progress");
+            // No content index exists yet at all (Start() has not reached
+            // ResetForRescan()). This is the only case 710 should represent --
+            // an in-progress-but-partially-populated index is a valid Browse
+            // target, not an error (see remediation workflow S1).
+            return SoapFault(710, "Content directory not yet initialized");
         }
         std::string containerIdStr;
         std::string searchCriteria;
@@ -624,7 +628,11 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
     }
 
     if (!DLNAServer.IsInitialScanComplete()) {
-        return SoapFault(710, "Initial scan in progress");
+        // No content index exists yet at all (Start() has not reached
+        // ResetForRescan()). This is the only case 710 should represent --
+        // an in-progress-but-partially-populated index is a valid Browse
+        // target, not an error (see remediation workflow S1).
+        return SoapFault(710, "Content directory not yet initialized");
     }
 
     std::string objIdStr;

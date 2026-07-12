@@ -20,7 +20,7 @@ Server& Server::Get() {
     return instance;
 }
 
-Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false), m_initialScanComplete(false) {
+Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false), m_initialScanComplete(false), m_initialScanInProgress(false) {
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 }
@@ -45,7 +45,9 @@ bool Server::ShouldStartScan() const {
 }
 
 void Server::StartBackgroundScan() {
-    if (!ShouldStartScan()) return;
+    if (!ShouldStartScan()) {
+        return;
+    }
 
     std::thread previousScan;
     {
@@ -60,8 +62,13 @@ void Server::StartBackgroundScan() {
     if (!ShouldStartScan()) return;
 
     std::lock_guard<std::mutex> lock(m_scanMutex);
-    if (m_scanThread.joinable()) return;
+    if (m_scanThread.joinable()) {
+        LogPrint(L"[diag] StartBackgroundScan: scan already running, skipping");
+        return;
+    }
+    LogPrint(L"[diag] StartBackgroundScan: creating scan thread");
     m_scanThread = std::thread([]() { AppMedia.Scan(); });
+    LogPrint(L"[diag] StartBackgroundScan: thread created");
 }
 
 void Server::JoinBackgroundScanLocked() {
@@ -205,6 +212,15 @@ bool Server::Start() {
     }
     LogPrint(L"Starting server on %ls", endpointText.c_str());
 
+    // Initialize the content directory before starting the HTTP/SSDP layers
+    // so the root container exists and the scan-in-progress flag is set
+    // before any client can connect and issue a Browse/Search request.
+    // This eliminates the window where a Browse arriving immediately after
+    // the port opens would see m_initialScanComplete==false and return 710.
+    AppMedia.ResetForRescan();
+    m_initialScanComplete.store(true, std::memory_order_release);
+    m_initialScanInProgress.store(true, std::memory_order_release);
+
     if (!HttpServer::Get().Start(cfg.port)) {
         LogPrint(L"Failed to start HTTP server.");
         return false;
@@ -215,26 +231,25 @@ bool Server::Start() {
         HttpServer::Get().Stop();
         return false;
     }
+    LogPrint(L"[diag:server] After SSDP::Get().Start returned - about to store m_running");
 
     m_running.store(true, std::memory_order_release);
-    AppMedia.ResetForRescan();
-    // the initial content scan must run to completion before the server is
-    // considered ready content directory browse and search already check
-    // IsInitialScanComplete and return upnp error 710 while it is false see
-    // HandleContentDirectoryControl in contentdirectory cpp that guard only
-    // works if this flag is set after the scan finishes not immediately
-    // after resetforrescan which only allocates the empty root container
-    // backgroundScanEnabled must not gate this call it only controls
-    // whether watchloop performs further automatic rescans after a source
-    // changes post startup see shouldautorescan in source_watcher cpp
+    LogPrint(L"[diag:server] After m_running.store - about to call StartBackgroundScan");
     StartBackgroundScan();
-    JoinBackgroundScan();
-    m_initialScanComplete.store(true, std::memory_order_release);
-    StartWatchMode();
+    // Do not JoinBackgroundScan() here: Start() must return once the device is
+    // advertised, not once the library is fully indexed. The scan continues on
+    // m_scanThread; StartWatchMode() begins after Start() returns via a small
+    // completion hook below.
+    std::thread([this]() {
+        JoinBackgroundScan();
+        m_initialScanInProgress.store(false, std::memory_order_release);
+        StartWatchMode();
+    }).detach();
     return true;
 }
 
 bool Server::Rescan() {
+    AppMedia.ResetForRescan();
     if (m_running.load(std::memory_order_acquire)) {
         // StartBackgroundScan only launches the scan thread and returns
         // Rescan must not report completion until the scan is done

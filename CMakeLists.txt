@@ -45,6 +45,7 @@ set(SOURCES
          src/media_scan_common.cpp
          src/bounded_thread_pool.cpp
          src/playlist_scan_concurrency.cpp
+         src/media_sources_common.cpp
          src/fs_backend_win32.cpp
          src/settings_restart.cpp
          src/modal_focus.cpp
@@ -283,8 +284,9 @@ if(DLNA_BUILD_TESTS)
             src/network_sources.cpp
             src/source_watcher.cpp
             src/media_database.cpp
-            src/media_scan_common.cpp
-            src/bounded_thread_pool.cpp
+src/media_scan_common.cpp
+         src/media_sources_common.cpp
+         src/bounded_thread_pool.cpp
             src/playlist_scan_concurrency.cpp
         )
         target_link_libraries(dlna-test PRIVATE dlna_core GTest::gtest_main)
