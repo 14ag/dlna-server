@@ -196,13 +196,19 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     }
 
     m_running.store(true);
+    {
+        FILE* fp = _wfopen(L"diag_mrunning.txt", L"a");
+        if (fp) { fwprintf(fp, L"m_running.store(true) executed\n"); fclose(fp); }
+    }
     m_hThread = CreateThread(NULL, 0, ThreadWorker, this, 0, NULL);
     if (!m_hThread) {
         m_running.store(false);
         CloseSockets();
         return false;
     }
+    LogPrint(L"[diag:ssdp] After CreateThread");
     m_responseThread = std::thread(&SSDP::ResponseWorker, this);
+    LogPrint(L"[diag:ssdp] After std::thread(&SSDP::ResponseWorker)");
 
     // Fire initial SSDP alive burst asynchronously so Server::Start() is not
     // blocked from launching the background scan while the burst completes.
@@ -212,6 +218,7 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
         Sleep(ComputeSsdpStartupJitterMilliseconds());
         SendNotifyBurst("ssdp:alive", 3, 100);
     }).detach();
+    LogPrint(L"[diag:ssdp] SSDP::Start about to return true");
     return true;
 }
 
