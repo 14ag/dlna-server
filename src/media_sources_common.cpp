@@ -9,6 +9,7 @@
 #include "playlist_scan_concurrency.h"
 #include "task_group.h"
 #include "upnp_eventing.h"
+#include <shared_mutex>
 #include <algorithm>
 #include <ctime>
 #include <functional>
@@ -119,11 +120,13 @@ bool MediaSources::IsAllowedExtension(const std::wstring& ext, std::wstring& mim
 }
 
 void MediaSources::Scan() {
+    FILE* f_diag = NULL;
+    _wfopen_s(&f_diag, L"diag_scan.txt", L"a");
+    if (f_diag) { fwprintf(f_diag, L"Scan entered\n"); fclose(f_diag); }
+    LogPrint(L"[diag:scan] MediaSources::Scan entered");
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     auto database = std::make_shared<MediaDatabase>();
     database->Load(MediaDatabase::DefaultDatabasePath());
-
-    ResetForRescan();
 
     struct SourceJob {
         std::shared_ptr<PlaylistScanContext> ctx;
@@ -467,7 +470,7 @@ void MediaSources::ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext
 }
 
 MediaSources::GetChildrenResult MediaSources::TryGetChildren(int objId, std::vector<MediaItem>& out) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     auto found = m_idToIndex.find(objId);
     if (found == m_idToIndex.end() || found->second >= m_items.size()) {
         out.clear();
@@ -498,7 +501,7 @@ std::vector<MediaItem> MediaSources::GetDescendants(int parentId) {
     std::vector<MediaItem> items;
     std::unordered_map<int, std::vector<size_t>> childrenByParent;
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::shared_lock<std::shared_mutex> lock(m_mutex);
         items = m_items;
         childrenByParent = m_childrenByParent;
     }
@@ -509,7 +512,7 @@ std::vector<MediaItem> MediaSources::GetDescendants(int parentId) {
 }
 
 MediaItem MediaSources::GetItem(int id) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     auto found = m_idToIndex.find(id);
     if (found != m_idToIndex.end() && found->second < m_items.size()) {
         return m_items[found->second];
@@ -521,7 +524,7 @@ MediaItem MediaSources::GetItem(int id) {
 
 std::unordered_map<int, int> MediaSources::GetChildCounts(const std::vector<MediaItem>& items) {
     std::unordered_map<int, int> counts;
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     for (const auto& item : items) {
         if (!item.isFolder) continue;
         auto found = m_childrenByParent.find(item.id);
@@ -536,7 +539,7 @@ int MediaSources::GetSystemUpdateID() {
 
 void MediaSources::ResetForRescan() {
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::unique_lock<std::shared_mutex> lock(m_mutex);
         m_items.clear();
         m_idToIndex.clear();
         m_childrenByParent.clear();
@@ -564,7 +567,7 @@ int MediaSources::PublishContainer(MediaDatabase* database, int parentId,
     container.isFolder = true;
     container.upnpClass = L"object.container.storageFolder";
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::unique_lock<std::shared_mutex> lock(m_mutex);
         static std::atomic<int> s_scratchId{-2};
         container.id = database
             ? database->GetOrCreateStableContainerId(
@@ -582,7 +585,7 @@ int MediaSources::PublishContainer(MediaDatabase* database, int parentId,
 
 void MediaSources::PublishItem(MediaItem item) {
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        std::unique_lock<std::shared_mutex> lock(m_mutex);
         m_items.push_back(std::move(item));
         const size_t index = m_items.size() - 1;
         const MediaItem& stored = m_items.back();

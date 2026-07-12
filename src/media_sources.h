@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <deque>
 #include <memory>
+#include <shared_mutex>
 
 #include "task_group.h"
 #include "playlist_scan_concurrency.h"
@@ -110,7 +111,7 @@ private:
     void RunPlaylistDispatcher(std::shared_ptr<PlaylistScanContext> ctx);
     void ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx, const PendingPlaylistNode& node, TaskGroupLeaveGuard& guard);
 
-    std::mutex m_mutex;
+std::shared_mutex m_mutex;   // was: std::mutex m_mutex;
     std::vector<MediaItem> m_items;
     std::unordered_map<int, size_t> m_idToIndex;
     std::unordered_map<int, std::vector<size_t>> m_childrenByParent;
