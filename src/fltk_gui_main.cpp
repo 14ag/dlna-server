@@ -463,7 +463,9 @@ private:
             m_startStopButton.deactivate();
         } else if (m_state == ServerUiState::Running) {
             const std::string endpoint = ToUtf8(DLNAServer.GetEndpoint());
-            const std::string label = "DLNA Server is running on " + endpoint;
+            const std::string label = DLNAServer.IsInitialScanInProgress()
+                ? ("DLNA Server is running on " + endpoint + " (scanning...)")
+                : ("DLNA Server is running on " + endpoint);
             m_status.copy_label(label.c_str());
             m_startStopButton.copy_label("Stop");
             m_startStopButton.tooltip("Stop server");
@@ -474,7 +476,7 @@ private:
             m_startStopButton.tooltip("Start server");
             m_startStopButton.activate();
         }
-        if (IsBusy()) {
+        if (IsBusy() || DLNAServer.IsInitialScanInProgress()) {
             m_addButton.deactivate();
             m_removeButton.deactivate();
             m_settingsButton.deactivate();

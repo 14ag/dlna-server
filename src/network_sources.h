@@ -43,8 +43,23 @@ struct FetchedPlaylist {
 // callers must not call ReadSourceText or IsHlsPlaylistSource separately after this
 FetchedPlaylist FetchPlaylistOnce(const std::wstring& playlistPath);
 
+// Result of fetching an HLS manifest specifically for re-serving to a DLNA
+// renderer through this proxy (as opposed to FetchPlaylistOnce, which is
+// used during library scanning to classify/enumerate playlist entries).
+// text has had every URI line rewritten to an absolute URL via
+// RewriteHlsManifestUrisToAbsolute so relative segment/variant references
+// resolve correctly regardless of how the renderer reached this manifest.
+struct HlsManifestFetchResult {
+    bool fetchOk = false;
+    std::string text;
+};
+
+// Fetches manifestUrl once and rewrites its relative URIs to absolute form.
+// Used by both httpserver.cpp and posix_httpserver.cpp when serving a
+// MediaItem whose mimeType is video/mpegurl.
+HlsManifestFetchResult FetchHlsManifestForServing(const std::wstring& manifestUrl);
+
 std::wstring ResolveRelativeUrl(const std::wstring &baseUrl, const std::wstring &relativeUrl);
-std::string RewriteHlsManifestUrisToAbsolute(const std::wstring &manifestUrl, const std::string &manifestText);
 
 // parses already fetched playlist text with no network or file access
 std::vector<PlaylistEntry> ParseFetchedPlaylistText(const std::wstring& playlistPath, const std::string& text);

@@ -383,6 +383,7 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
     UpdateDeleteButton();
 
     AddTrayIcon();
+    SetTimer(m_hwnd, kInitialScanPollTimerId, 250, NULL);
 
     if (nCmdShow != SW_HIDE) {
         ShowWindow(m_hwnd, nCmdShow);
@@ -421,7 +422,7 @@ void MainWindow::SetControlsForState() {
     BOOL enableStartStop = IsBusy() ? FALSE : TRUE;
     // add slash scan additionally waits on m_scanInProgress
     // this prevents a second overlapping scan request
-    BOOL enableAdd = (IsBusy() || m_scanInProgress.load()) ? FALSE : TRUE;
+    BOOL enableAdd = (IsBusy() || m_scanInProgress.load() || DLNAServer.IsInitialScanInProgress()) ? FALSE : TRUE;
     EnableWindow(m_hBtnStartStop, enableStartStop);
     EnableWindow(m_hBtnAdd, enableAdd);
     EnableWindow(m_hBtnSettings, TRUE);
@@ -747,7 +748,7 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 
         RECT rcStatusText = { kGutter, kToolbarHeight, rcClient.right - kGutter, kToolbarHeight + kStatusHeight };
         std::wstring statusText;
-        if (m_scanningStatusActive) {
+        if (m_scanningStatusActive || (IsRunning() && DLNAServer.IsInitialScanInProgress())) {
             statusText = L"scanning...";
         } else if (m_state == ServerUiState::Starting) {
             statusText = L"starting server...";
@@ -889,7 +890,15 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         }
         return 0;
     }
+    case WM_TIMER: {
+        if (wParam == kInitialScanPollTimerId) {
+            SetControlsForState();
+            InvalidateRect(m_hwnd, NULL, TRUE);
+        }
+        return 0;
+    }
     case WM_DESTROY: {
+        KillTimer(m_hwnd, kInitialScanPollTimerId);
         if (m_worker.joinable()) {
             m_worker.join();
         }

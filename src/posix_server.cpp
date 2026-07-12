@@ -16,7 +16,7 @@ Server& Server::Get() {
     return instance;
 }
 
-Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false), m_initialScanComplete(false) {
+Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false), m_initialScanComplete(false), m_initialScanInProgress(false) {
 }
 
 Server::~Server() {
@@ -169,6 +169,15 @@ bool Server::Start() {
         std::lock_guard<std::mutex> lock(m_endpointMutex);
         m_endpoint = endpointText;
     }
+    // Initialize the content directory before starting the HTTP/SSDP layers
+    // so the root container exists and the scan-in-progress flag is set
+    // before any client can connect and issue a Browse/Search request.
+    // This eliminates the window where a Browse arriving immediately after
+    // the port opens would see m_initialScanComplete==false and return 710.
+    AppMedia.ResetForRescan();
+    m_initialScanComplete.store(true, std::memory_order_release);
+    m_initialScanInProgress.store(true, std::memory_order_release);
+
     if (!HttpServer::Get().Start(cfg.port)) {
         LogPrint(L"Failed to start HTTP server.");
         return false;
@@ -179,20 +188,22 @@ bool Server::Start() {
         return false;
     }
     m_running.store(true, std::memory_order_release);
-    AppMedia.ResetForRescan();
-    // see the matching comment in server.cpp Server::Start for windows
-    // the initial scan must complete before m_initialScanComplete is set
-    // and must not be gated by backgroundScanEnabled which only controls
-    // watchloop automatic rescans after startup see source_watcher cpp
     StartBackgroundScan();
-    JoinBackgroundScan();
-    m_initialScanComplete.store(true, std::memory_order_release);
-    StartWatchMode();
+    // Do not JoinBackgroundScan() here: Start() must return once the device is
+    // advertised, not once the library is fully indexed. The scan continues on
+    // m_scanThread; StartWatchMode() begins after Start() returns via a small
+    // completion hook below.
+    std::thread([this]() {
+        JoinBackgroundScan();
+        m_initialScanInProgress.store(false, std::memory_order_release);
+        StartWatchMode();
+    }).detach();
     LogPrint(L"DLNA server running on %ls", endpointText.c_str());
     return true;
 }
 
 bool Server::Rescan() {
+    AppMedia.ResetForRescan();
     if (m_running.load(std::memory_order_acquire)) {
         StartBackgroundScan();
         JoinBackgroundScan();

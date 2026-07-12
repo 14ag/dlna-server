@@ -204,8 +204,14 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     }
     m_responseThread = std::thread(&SSDP::ResponseWorker, this);
 
-    Sleep(ComputeSsdpStartupJitterMilliseconds());
-    SendNotifyBurst("ssdp:alive", 3, 100);
+    // Fire initial SSDP alive burst asynchronously so Server::Start() is not
+    // blocked from launching the background scan while the burst completes.
+    // The burst sleep + sendto calls can block for 300ms+ or hang entirely in
+    // environments without multicast support (test infrastructure).
+    std::thread([this]() {
+        Sleep(ComputeSsdpStartupJitterMilliseconds());
+        SendNotifyBurst("ssdp:alive", 3, 100);
+    }).detach();
     return true;
 }
 

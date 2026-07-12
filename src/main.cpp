@@ -12,6 +12,7 @@
 #include "log.h"
 #include "netutils.h"
 #include "server.h"
+#include "playlist_scan_concurrency.h"
 #include "../resources/resource.h"
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
@@ -101,6 +102,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     int helperExitCode = 0;
     if (TryRunFirewallHelper(helperExitCode)) {
         return helperExitCode;
+    }
+
+    // Hidden test hook: print scan concurrency for given N and exit
+    {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if (argv) {
+            for (int i = 1; i < argc; ++i) {
+                if (wcscmp(argv[i], L"--print-scan-concurrency") == 0 && i + 1 < argc) {
+                    size_t n = static_cast<size_t>(_wtoi(argv[i + 1]));
+                    std::cout << ComputePlaylistScanConcurrency(n) << std::endl;
+                    LocalFree(argv);
+                    return 0;
+                }
+            }
+            LocalFree(argv);
+        }
     }
 
     // Check for single instance

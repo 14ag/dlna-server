@@ -23,6 +23,8 @@ public:
     void SetStatus(ServerUiState state, const std::wstring& endpoint = L"");
     HWND GetHwnd() const { return m_hwnd; }
 
+    static constexpr UINT_PTR kInitialScanPollTimerId = 1;
+
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
