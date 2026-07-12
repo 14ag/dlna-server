@@ -88,3 +88,4 @@ AGENTS.MD
 *.m3u
 tests/test media/test-clip.mp4
 tests/test media/test-clip.srt
+build*

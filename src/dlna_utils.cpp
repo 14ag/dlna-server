@@ -1,4 +1,5 @@
 #include "dlna_utils.h"
+#include "version.h"
 
 #include "netutils.h"
 #include <algorithm>
@@ -315,7 +316,7 @@ std::string BuildContentFeaturesForExtension(const std::wstring& ext, const std:
 std::string BuildHlsContentFeatures() {
     // op 01 means time seek is available per the android reference proxy pattern
     // ci 0 means no content transcoding
-    return "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
+    return kHlsProtocolContentFeatures;
 }
 
 std::string BuildHlsProtocolInfo() {
@@ -337,11 +338,7 @@ std::string BuildSourceProtocolInfoList() {
     // renderers that consult GetProtocolInfo before playback accept HLS items.
     // Flags match contentdirectory.cpp ItemProtocolInfo() and the Android
     // contentFeatures.dlna.org response header in j.java.
-    entries.push_back(
-        "http-get:*:video/mpegurl:"
-        "DLNA.ORG_OP=01;DLNA.ORG_CI=0;"
-        "DLNA.ORG_FLAGS=01700000000000000000000000000000"
-    );
+    entries.push_back(std::string("http-get:*:video/mpegurl:") + kHlsProtocolContentFeatures);
     std::string result;
     for (size_t i = 0; i < entries.size(); ++i) {
         if (i > 0) result += ",";
@@ -353,11 +350,11 @@ std::string BuildSourceProtocolInfoList() {
 
 std::string GetDlnaServerHeader() {
 #ifdef _WIN32
-    return "Windows/10.0 UPnP/1.1 dlna-server/1.4.0";
+    return "Windows/10.0 UPnP/1.1 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #elif defined(DLNA_PLATFORM_NAME)
-    return std::string(DLNA_PLATFORM_NAME) + " UPnP/1.1 dlna-server/1.4.0";
+    return std::string(DLNA_PLATFORM_NAME) + " UPnP/1.1 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #else
-    return "POSIX UPnP/1.1 dlna-server/1.4.0";
+    return "POSIX UPnP/1.1 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #endif
 }
 

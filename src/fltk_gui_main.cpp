@@ -178,7 +178,6 @@ public:
 m_serverName(120, 14, 190, 24, "Server Name:"),
           m_httpPort(120, 44, 190, 24, "HTTP Port:"),
           m_ipWhitelist(120, 74, 350, 24, "IP Whitelist:"),
-          m_runOnStartup(16, 112, 190, 24, "Run on startup"),
           m_debugLog(16, 138, 190, 24, "Debug Log (Write to file)"),
           m_defaultPlaylist(260, 112, 130, 24, "Default playlist"),
           m_defaultPlaylistAdd(400, 112, 70, 24, "Add..."),
@@ -224,7 +223,6 @@ private:
         m_serverName.value(ToUtf8(AppConfig.serverName).c_str());
         m_httpPort.value(std::to_string(AppConfig.port).c_str());
         m_ipWhitelist.value(ToUtf8(AppConfig.ipWhiteList).c_str());
-        m_runOnStartup.value(AppConfig.runOnBoot ? 1 : 0);
         m_debugLog.value(AppConfig.debugLog ? 1 : 0);
         m_defaultPlaylist.value(AppConfig.defaultPlaylistEnabled ? 1 : 0);
         m_artistAlbum.value(AppConfig.addArtistAlbumFolders ? 1 : 0);
@@ -244,7 +242,6 @@ bool SaveToConfig() {
         }
         const std::wstring serverName = ToWide(m_serverName.value());
         const std::wstring ipWhiteList = ToWide(m_ipWhitelist.value());
-        const bool runOnBoot = m_runOnStartup.value() != 0;
         const bool debugLog = m_debugLog.value() != 0;
         const bool defaultPlaylistEnabled = m_defaultPlaylist.value() != 0;
         const bool addArtistAlbumFolders = m_artistAlbum.value() != 0;
@@ -260,7 +257,6 @@ bool SaveToConfig() {
             cfg.serverName = serverName;
             cfg.port = httpPort;
             cfg.ipWhiteList = ipWhiteList;
-            cfg.runOnBoot = runOnBoot;
             cfg.debugLog = debugLog;
             cfg.defaultPlaylistEnabled = defaultPlaylistEnabled;
             if (cfg.defaultPlaylistPath.empty()) cfg.defaultPlaylistPath = cfg.GetDefaultPlaylistPath();
@@ -325,7 +321,6 @@ bool SaveToConfig() {
     Fl_Input m_serverName;
     Fl_Int_Input m_httpPort;
     Fl_Input m_ipWhitelist;
-    Fl_Check_Button m_runOnStartup;
     Fl_Check_Button m_debugLog;
     Fl_Check_Button m_defaultPlaylist;
     Fl_Button m_defaultPlaylistAdd;

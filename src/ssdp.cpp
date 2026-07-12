@@ -1,4 +1,5 @@
 #include "ssdp.h"
+#include "ssdp_common.h"
 #include "config.h"
 #include "dlna_utils.h"
 #include "log.h"
@@ -20,24 +21,6 @@
 namespace {
 constexpr size_t kMaxDelayedResponses = 256;
 
-struct SSDPTarget {
-    std::string st;
-    std::string usn;
-};
-
-bool CoalesceDelayedResponse(std::vector<DelayedSearchResponse>& queue, DelayedSearchResponse&& response) {
-    for (auto& queued : queue) {
-        if (queued.remoteLen == response.remoteLen &&
-            std::memcmp(&queued.remoteAddr, &response.remoteAddr, static_cast<size_t>(response.remoteLen)) == 0 &&
-            queued.logUsn == response.logUsn &&
-            queued.logSt == response.logSt) {
-            queued = std::move(response);
-            return true;
-        }
-    }
-    return false;
-}
-
 void DiscoveryLog(const wchar_t* fmt, ...) {
     if (!AppConfig.Snapshot().debugLog) {
         return;
@@ -54,21 +37,6 @@ void DiscoveryLog(const wchar_t* fmt, ...) {
 bool IsDiscoverManHeader(const std::string& man) {
     std::string normalized = ToLowerAscii(TrimAscii(man));
     return normalized == "\"ssdp:discover\"" || normalized == "ssdp:discover";
-}
-
-DWORD ComputeDelayMilliseconds(int mxSeconds) {
-    int boundedSeconds = (std::max)(0, (std::min)(mxSeconds, 5));
-    if (boundedSeconds <= 1) {
-        return 0;
-    }
-    DWORD maxDelay = static_cast<DWORD>(boundedSeconds * 1000);
-    if (maxDelay == 0) {
-        return 0;
-    }
-
-    static thread_local std::mt19937 generator(std::random_device{}());
-    std::uniform_int_distribution<DWORD> distribution(0, maxDelay);
-    return distribution(generator);
 }
 
 bool SetOutboundInterface(SOCKET socket, const NetworkEndpoint& endpoint, bool multicast) {
@@ -97,16 +65,6 @@ bool SetOutboundInterface(SOCKET socket, const NetworkEndpoint& endpoint, bool m
                       multicast ? IPV6_MULTICAST_IF : IPV6_UNICAST_IF,
                       reinterpret_cast<const char*>(&ifIndex),
                       sizeof(ifIndex)) == 0;
-}
-
-std::vector<SSDPTarget> BuildAdvertisedTargets(const std::string& uuid) {
-    std::vector<SSDPTarget> targets;
-    targets.push_back({ "upnp:rootdevice", "uuid:" + uuid + "::upnp:rootdevice" });
-    targets.push_back({ "uuid:" + uuid, "uuid:" + uuid });
-    targets.push_back({ "urn:schemas-upnp-org:device:MediaServer:1", "uuid:" + uuid + "::urn:schemas-upnp-org:device:MediaServer:1" });
-    targets.push_back({ "urn:schemas-upnp-org:service:ContentDirectory:1", "uuid:" + uuid + "::urn:schemas-upnp-org:service:ContentDirectory:1" });
-    targets.push_back({ "urn:schemas-upnp-org:service:ConnectionManager:1", "uuid:" + uuid + "::urn:schemas-upnp-org:service:ConnectionManager:1" });
-    return targets;
 }
 
 const SSDPTarget* FindTarget(const std::vector<SSDPTarget>& targets, const std::string& requestedSt) {
