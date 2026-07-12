@@ -106,12 +106,10 @@ std::string MakeSid(unsigned long long counter) {
     return ss.str();
 }
 
-#ifdef DLNA_HAS_LIBCURL
 struct CurlGlobalInit {
     CurlGlobalInit() { curl_global_init(CURL_GLOBAL_DEFAULT); }
     ~CurlGlobalInit() { curl_global_cleanup(); }
 };
-#endif
 }
 
 UpnpEventManager& UpnpEventManager::Get() {
@@ -205,13 +203,11 @@ void UpnpEventManager::ClearSubscriptions() {
     ++m_generation;
     m_subscriptions.clear();
     m_queue.clear();
+    m_trailingFirePending = false;
+    m_lastDispatchTime = (std::chrono::steady_clock::time_point::min)();
 }
 
-void UpnpEventManager::NotifySystemUpdateId(int updateId) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_lastSystemUpdateId = updateId;
-
-    const auto now = std::chrono::steady_clock::now();
+void UpnpEventManager::DispatchNotifyToSubscribersLocked(int updateId, std::chrono::steady_clock::time_point now) {
     const std::string body = MakeSystemUpdateBody(updateId);
     for (auto it = m_subscriptions.begin(); it != m_subscriptions.end();) {
         if (it->second.expiresAt <= now) {
@@ -229,7 +225,30 @@ void UpnpEventManager::NotifySystemUpdateId(int updateId) {
         }
         ++it;
     }
-    if (!m_queue.empty()) {
+}
+
+void UpnpEventManager::NotifySystemUpdateId(int updateId) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_lastSystemUpdateId = updateId;
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now - m_lastDispatchTime >= m_minNotifyInterval) {
+        // Leading edge: window has elapsed, dispatch now and start a new window.
+        m_lastDispatchTime = now;
+        m_trailingFirePending = false;
+        DispatchNotifyToSubscribersLocked(updateId, now);
+    } else {
+        // Inside the window: remember only the latest updateId. If no
+        // trailing fire is scheduled yet for this window, schedule one for
+        // the moment the window ends.
+        m_trailingUpdateId = updateId;
+        if (!m_trailingFirePending) {
+            m_trailingFirePending = true;
+            m_trailingFireAt = m_lastDispatchTime + m_minNotifyInterval;
+        }
+    }
+
+    if (!m_queue.empty() || m_trailingFirePending) {
         StartWorkerLocked();
         m_cv.notify_one();
     }
@@ -280,6 +299,7 @@ void UpnpEventManager::StopWorker() {
         ++m_generation;
         m_subscriptions.clear();
         m_queue.clear();
+        m_trailingFirePending = false;
     }
     m_cv.notify_all();
     if (m_worker.joinable()) m_worker.join();
@@ -290,8 +310,22 @@ void UpnpEventManager::WorkerLoop() {
         NotifyJob job;
         {
             std::unique_lock<std::mutex> lock(m_mutex);
-            m_cv.wait(lock, [&]() { return m_stopping || !m_queue.empty(); });
-            if (m_stopping && m_queue.empty()) return;
+            for (;;) {
+                if (m_stopping && m_queue.empty()) return;
+                if (!m_queue.empty()) break;
+                if (m_trailingFirePending) {
+                    const auto now = std::chrono::steady_clock::now();
+                    if (now >= m_trailingFireAt) {
+                        m_lastDispatchTime = now;
+                        m_trailingFirePending = false;
+                        DispatchNotifyToSubscribersLocked(m_trailingUpdateId, now);
+                        continue; // re-check: the dispatch above may have queued jobs
+                    }
+                    m_cv.wait_until(lock, m_trailingFireAt);
+                    continue;
+                }
+                m_cv.wait(lock, [&]() { return m_stopping || !m_queue.empty() || m_trailingFirePending; });
+            }
             job = m_queue.front();
             m_queue.pop_front();
             if (job.generation != m_generation) {
@@ -306,7 +340,6 @@ void UpnpEventManager::WorkerLoop() {
 }
 
 void UpnpEventManager::SendNotifyJob(const NotifyJob& job) {
-#ifdef DLNA_HAS_LIBCURL
     static CurlGlobalInit init;
     (void)init;
 
@@ -351,8 +384,4 @@ void UpnpEventManager::SendNotifyJob(const NotifyJob& job) {
     }
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
-#else
-    (void)job;
-    LogPrint(L"GENA notify skipped: libcurl support was not enabled at build time.");
-#endif
 }

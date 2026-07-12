@@ -1,4 +1,5 @@
 #include "media_sources.h"
+#include "fs_backend.h"
 #include "config.h"
 #include "dlna_utils.h"
 #include "log.h"
@@ -8,13 +9,98 @@
 #include "playlist_scan_concurrency.h"
 #include "task_group.h"
 #include "upnp_eventing.h"
-#include <windows.h>
-#include <shlwapi.h>
 #include <algorithm>
 #include <ctime>
 #include <functional>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <shlwapi.h>
+#pragma comment(lib, "shlwapi.lib")
+#endif
+
+namespace {
+
+constexpr const wchar_t* kScanDepthLogCode = L"[media:scan-depth]";
+
+bool DefaultPlaylistFileExists(const std::wstring& path) {
+    return FsIsRegularFile(path);
+}
+
+std::wstring CanonicalMediaKey(const std::wstring& path) {
+    if (IsRemoteMediaUrl(path)) return ToLowerWide(path);
+    return ToLowerWide(path);
+}
+
+const auto g_canonicalize = [](const std::wstring& path) -> std::wstring {
+    return CanonicalMediaKey(path);
+};
+
+std::wstring ParentPathOf(const std::wstring& path) {
+    size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? L"" : path.substr(0, slash);
+}
+
+std::wstring NameOfPath(const std::wstring& path) {
+    std::wstring clean = path;
+    while (!clean.empty() && (clean.back() == L'\\' || clean.back() == L'/')) clean.pop_back();
+    size_t slash = clean.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? clean : clean.substr(slash + 1);
+}
+
+void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
+    if (IsRemoteMediaUrl(item.path)) return;
+    std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+    std::wstring folder = item.path;
+    size_t slash = folder.find_last_of(L"\\/");
+    folder = slash == std::wstring::npos ? L"." : folder.substr(0, slash);
+
+    std::wstring fileName = SourceDisplayName(item.path);
+    std::wstring stem = SourceStemName(fileName);
+    const std::wstring stemKey = folder + L"\n" + stem;
+
+    auto stemCached = state.perStemAlbumArt.find(stemKey);
+    if (stemCached != state.perStemAlbumArt.end()) {
+        item.albumArtPath = stemCached->second.first;
+        item.albumArtMime = stemCached->second.second;
+        return;
+    }
+
+    std::vector<AlbumArtCandidate> perStemCandidates = {
+        { stem + L".jpg", L"image/jpeg" },
+        { stem + L".jpeg", L"image/jpeg" },
+        { stem + L".png", L"image/png" },
+    };
+    for (const auto& candidate : perStemCandidates) {
+        std::wstring candidatePath = folder + L"\\" + candidate.fileName;
+        if (FsIsRegularFile(candidatePath)) {
+            item.albumArtPath = candidatePath;
+            item.albumArtMime = candidate.mimeType;
+            state.perStemAlbumArt[stemKey] = { item.albumArtPath, item.albumArtMime };
+            return;
+        }
+    }
+    state.perStemAlbumArt[stemKey] = { L"", L"" };
+
+    auto folderCached = state.folderAlbumArt.find(folder);
+    if (folderCached != state.folderAlbumArt.end()) {
+        item.albumArtPath = folderCached->second.first;
+        item.albumArtMime = folderCached->second.second;
+        return;
+    }
+    for (const auto& candidate : BuildAlbumArtCandidateNames(L"")) {
+        std::wstring candidatePath = folder + L"\\" + candidate.fileName;
+        if (FsIsRegularFile(candidatePath)) {
+            item.albumArtPath = candidatePath;
+            item.albumArtMime = candidate.mimeType;
+            state.folderAlbumArt[folder] = { item.albumArtPath, item.albumArtMime };
+            return;
+        }
+    }
+    state.folderAlbumArt[folder] = { L"", L"" };
+}
+
+} // namespace
 
 MediaSources& MediaSources::Get() {
     static MediaSources instance;
@@ -24,38 +110,12 @@ MediaSources& MediaSources::Get() {
 MediaSources::MediaSources() : m_systemUpdateId(1) {
 }
 
-namespace {
-std::wstring CanonicalMediaKey(const std::wstring& path) {
-    if (IsRemoteMediaUrl(path)) return ToLowerWide(path);
-    DWORD required = GetFullPathNameW(path.c_str(), 0, nullptr, nullptr);
-    if (required > 0) {
-        std::vector<wchar_t> full(required + 1);
-        DWORD written = GetFullPathNameW(path.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr);
-        if (written > 0 && written < full.size()) {
-            return ToLowerWide(full.data());
-        }
-    }
-    return ToLowerWide(path);
-}
-
-const auto g_canonicalize = [](const std::wstring& path) -> std::wstring {
-    return CanonicalMediaKey(path);
-};
-}
-
 bool MediaSources::IsAllowedExtension(const std::wstring& ext, std::wstring& mime, std::wstring& uclass) {
     MediaFormatInfo info;
     if (!GetMediaFormatForExtension(ext, info)) return false;
     mime = info.mimeType;
     uclass = info.upnpClass;
     return true;
-}
-
-namespace {
-bool DefaultPlaylistFileExists(const std::wstring& path) {
-    DWORD attrs = GetFileAttributesW(path.c_str());
-    return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
-}
 }
 
 void MediaSources::Scan() {
@@ -81,6 +141,13 @@ void MediaSources::Scan() {
             LogPrint(L"[media:smb-removed] SMB media sources are no longer supported; skipping: %ls",
                      RedactUrlForLog(src.path).c_str());
             continue;
+        }
+        if (!IsPlaylistSourcePath(src.path) && !IsNetworkShareUrl(src.path)) {
+            if (!FsExists(src.path)) {
+                database->RecordScanError(CanonicalMediaKey(src.path), L"Source unavailable");
+                LogPrint(L"Skipping missing source: %ls", src.path.c_str());
+                continue;
+            }
         }
         const int containerId = PublishContainer(database.get(), 0, SourceDisplayName(src.path), src.path, g_canonicalize);
 
@@ -122,77 +189,6 @@ void MediaSources::Scan() {
     LogPrint(L"Scan complete.");
 }
 
-namespace {
-constexpr const wchar_t* kScanDepthLogCode = L"[media:scan-depth]";
-
-std::wstring ParentPathOf(const std::wstring& path) {
-    size_t slash = path.find_last_of(L"\\/");
-    return slash == std::wstring::npos ? L"" : path.substr(0, slash);
-}
-
-std::wstring NameOfPath(const std::wstring& path) {
-    std::wstring clean = path;
-    while (!clean.empty() && (clean.back() == L'\\' || clean.back() == L'/')) clean.pop_back();
-    size_t slash = clean.find_last_of(L"\\/");
-    return slash == std::wstring::npos ? clean : clean.substr(slash + 1);
-}
-
-}
-
-void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
-    if (IsRemoteMediaUrl(item.path)) return;
-    std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
-    std::wstring folder = item.path;
-    size_t slash = folder.find_last_of(L"\\/");
-    folder = slash == std::wstring::npos ? L"." : folder.substr(0, slash);
-
-    std::wstring fileName = SourceDisplayName(item.path);
-    std::wstring stem = SourceStemName(fileName);
-    const std::wstring stemKey = folder + L"\n" + stem;
-
-    auto stemCached = state.perStemAlbumArt.find(stemKey);
-    if (stemCached != state.perStemAlbumArt.end()) {
-        item.albumArtPath = stemCached->second.first;
-        item.albumArtMime = stemCached->second.second;
-        return;
-    }
-
-    std::vector<AlbumArtCandidate> perStemCandidates = {
-        { stem + L".jpg", L"image/jpeg" },
-        { stem + L".jpeg", L"image/jpeg" },
-        { stem + L".png", L"image/png" },
-    };
-    for (const auto& candidate : perStemCandidates) {
-        std::wstring candidatePath = folder + L"\\" + candidate.fileName;
-        DWORD attrs = GetFileAttributesW(candidatePath.c_str());
-        if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-            item.albumArtPath = candidatePath;
-            item.albumArtMime = candidate.mimeType;
-            state.perStemAlbumArt[stemKey] = { item.albumArtPath, item.albumArtMime };
-            return;
-        }
-    }
-    state.perStemAlbumArt[stemKey] = { L"", L"" };
-
-    auto folderCached = state.folderAlbumArt.find(folder);
-    if (folderCached != state.folderAlbumArt.end()) {
-        item.albumArtPath = folderCached->second.first;
-        item.albumArtMime = folderCached->second.second;
-        return;
-    }
-    for (const auto& candidate : BuildAlbumArtCandidateNames(L"")) {
-        std::wstring candidatePath = folder + L"\\" + candidate.fileName;
-        DWORD attrs = GetFileAttributesW(candidatePath.c_str());
-        if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-            item.albumArtPath = candidatePath;
-            item.albumArtMime = candidate.mimeType;
-            state.folderAlbumArt[folder] = { item.albumArtPath, item.albumArtMime };
-            return;
-        }
-    }
-    state.folderAlbumArt[folder] = { L"", L"" };
-}
-
 void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cfg, const std::wstring& path, int parentId, const std::wstring& titleOverride, const std::wstring& subtitleOverride, bool allowArtistAlbumMirror) {
     std::wstring mime, uclass;
     std::wstring ext = SourceExtension(path);
@@ -227,12 +223,11 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
     if (IsRemoteMediaUrl(path)) {
         fileInfo.sizeBytes = ProbeRemoteContentLength(path);
     } else {
-        WIN32_FILE_ATTRIBUTE_DATA data = {};
-        if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &data) ||
-            (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        long long size = 0;
+        if (!FsFileSize(path, size)) {
             return;
         }
-        fileInfo.sizeBytes = ((long long)data.nFileSizeHigh << 32) | data.nFileSizeLow;
+        fileInfo.sizeBytes = size;
     }
 
     if (cfg.showFileNamesInsteadOfTitles) {
@@ -261,8 +256,7 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
         static const wchar_t* kSubExts[] = { L".srt", L".vtt", L".sub", L".ass", L".ssa", L".smi", L".txt" };
         for (const wchar_t* subExt : kSubExts) {
             std::wstring candidate = folder + L"\\" + stemBuf + subExt;
-            DWORD attrs = GetFileAttributesW(candidate.c_str());
-            if (attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+            if (FsIsRegularFile(candidate)) {
                 fileInfo.subtitlePath = candidate;
                 break;
             }
@@ -278,10 +272,6 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
 }
 
 void MediaSources::AddHlsStreamItem(MediaIndexState& state, const std::wstring& path, int parentId, const std::wstring& titleOverride) {
-    // Mirrors the bookkeeping in AddMediaFile dedupe stable id and
-    // scan-success marking but deliberately skips IsAllowedExtension/kFormats
-    // because an HLS manifest file extension is m3u8 which must never be
-    // treated as a generic playable extension
     {
         std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
         if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, path, g_canonicalize)).second) return;
@@ -297,15 +287,14 @@ void MediaSources::AddHlsStreamItem(MediaIndexState& state, const std::wstring& 
     hlsItem.parentId = parentId;
     hlsItem.path = path;
     hlsItem.isFolder = false;
-    // use video/mpegurl to match Android DLNA server output
-    // Android reference proxy uses this MIME for Didl res elements
     hlsItem.mimeType = L"video/mpegurl";
     hlsItem.upnpClass = L"object.item.videoItem";
-    // Adaptive/live HLS manifests do not have a meaningful fixed byte length
-    // and must not be advertised as byte-range seekable leaving sizeBytes at 0
     hlsItem.sizeBytes = 0;
+    if (!IsRemoteMediaUrl(path)) {
+        long long size = 0;
+        if (FsFileSize(path, size)) hlsItem.sizeBytes = size;
+    }
     hlsItem.title = !titleOverride.empty() ? titleOverride : SourceStemName(path);
-    // stamp scan date matching Android rawDate/dc:date fields
     {
         std::time_t now = std::time(nullptr);
         struct tm utc;
@@ -341,35 +330,30 @@ void MediaSources::RunPlaylistDispatcher(std::shared_ptr<PlaylistScanContext> ct
             });
             if (ctx->pendingQueue.empty()) {
                 if (ctx->group.PendingCount() == 0) break;
-                continue; // spurious wake / another dispatcher thread took the last item
+                continue;
             }
             node = std::move(ctx->pendingQueue.front());
             ctx->pendingQueue.pop_front();
         }
-        ctx->limiter.Acquire(); // safe to block: this is the dispatcher thread, never a pool worker
+        ctx->limiter.Acquire();
         PlaylistScanPool::Get().Submit([this, ctx, node]() {
             TaskGroupLeaveGuard leave(ctx->group);
             ScanOnePlaylistNode(ctx, node, leave);
             ctx->limiter.Release();
-            ctx->queueCv.notify_all(); // wake the dispatcher in case it is waiting on PendingCount()
+            ctx->queueCv.notify_all();
         });
     }
     ctx->group.Wait();
 }
 
 void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx, const PendingPlaylistNode& node, TaskGroupLeaveGuard& guard) {
-    (void)guard; // unused but needed for signature
+    (void)guard;
     if (node.depth > kMaxPlaylistRecursionDepth) {
         LogPrint(L"[media:scan-depth] Skipping playlist due to recursion depth limit: %ls",
                  RedactUrlForLog(node.path).c_str());
         return;
     }
 
-    // NETWORK I/O -- no lock of any kind is held here. This is the single
-    // most important invariant in this file: holding state.mutationMutex or
-    // MediaSources::m_mutex across this call re-serializes every scan task
-    // that touches the same source or the same live index and silently
-    // reproduces the original bug while looking "concurrent" on paper.
     FetchedPlaylist fetched = FetchPlaylistOnce(node.path);
 
     if (!fetched.fetchOk) {
@@ -380,11 +364,7 @@ void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx,
                 BuildStableContainerKey(node.parentId, SourceStemName(node.path), node.path, g_canonicalize),
                 L"Playlist fetch failed");
         }
-        return; // only this node is dropped; the parent container published
-                 // for it earlier (or its own parent's container) is
-                 // unaffected -- this is what fixes "parent playlist never
-                 // included": the container was already live before this
-                 // fetch ever started.
+        return;
     }
 
     if (fetched.isHls) {
@@ -399,10 +379,6 @@ void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx,
         return;
     }
 
-    // Publish this node's own container immediately -- this is the
-    // "container created, then content added procedurally" requirement.
-    // Every DIDL browse of the parent from this point on will show this
-    // folder, even though its children are still being fetched.
     const int folderId = FindOrAddContainer(ctx->state, node.parentId,
         node.titleOverride.empty() ? SourceStemName(node.path) : node.titleOverride,
         node.path, g_canonicalize);
@@ -415,11 +391,6 @@ void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx,
             newlyDiscovered.push_back(PendingPlaylistNode{entry.location, folderId, entry.title, node.depth + 1});
             continue;
         }
-        // Plain media file entries are cheap relative to playlist fetches
-        // (ProbeRemoteContentLength has its own existing global limiter,
-        // GetRemoteProbeLimiter() in network_sources.cpp, unrelated to this
-        // task) -- publish them directly, synchronously, on this pool
-        // worker.
         AppMedia.AddMediaFile(ctx->state, ctx->cfg, entry.location, folderId, entry.title, entry.subtitlePath);
     }
 
@@ -467,11 +438,9 @@ void MediaSources::ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext
         LogPrint(L"%ls Skipping folder due to recursion depth limit: %ls", kScanDepthLogCode, rootPath.c_str());
         return;
     }
-    WIN32_FIND_DATAW fd;
-    std::wstring searchPath = rootPath + L"\\*";
-    HANDLE hFind = FindFirstFileW(searchPath.c_str(), &fd);
-    
-    if (hFind == INVALID_HANDLE_VALUE) {
+
+    std::vector<FsDirEntry> entries;
+    if (!FsListDirectory(rootPath, entries)) {
         if (sourceContext->state.mediaDatabase) {
             sourceContext->state.mediaDatabase->RecordScanError(BuildStableContainerKey(parentId, SourceDisplayName(rootPath), rootPath, g_canonicalize), L"Folder unavailable");
         }
@@ -479,29 +448,22 @@ void MediaSources::ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext
         return;
     }
 
-    do {
-        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-        if (fd.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_REPARSE_POINT)) continue;
-
-        std::wstring fullPath = rootPath + L"\\" + fd.cFileName;
-
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+    for (const auto& entry : entries) {
+        if (entry.isDirectory) {
             if (sourceContext->cfg.flatFolderStyle) {
-                ScanFolder(sourceContext, fullPath, parentId, depth + 1);
+                ScanFolder(sourceContext, entry.fullPath, parentId, depth + 1);
             } else {
-                const int folderId = FindOrAddContainer(sourceContext->state, parentId, fd.cFileName, fullPath, g_canonicalize);
-                ScanFolder(sourceContext, fullPath, folderId, depth + 1);
+                const int folderId = FindOrAddContainer(sourceContext->state, parentId, entry.name, entry.fullPath, g_canonicalize);
+                ScanFolder(sourceContext, entry.fullPath, folderId, depth + 1);
             }
         } else {
-            if (IsPlaylistSourcePath(fullPath)) {
-                ScanPlaylistTree(sourceContext, fullPath, parentId);
+            if (IsPlaylistSourcePath(entry.fullPath)) {
+                ScanPlaylistTree(sourceContext, entry.fullPath, parentId);
             } else {
-                AddMediaFile(sourceContext->state, sourceContext->cfg, fullPath, parentId);
+                AddMediaFile(sourceContext->state, sourceContext->cfg, entry.fullPath, parentId);
             }
         }
-    } while (FindNextFileW(hFind, &fd));
-    
-    FindClose(hFind);
+    }
 }
 
 MediaSources::GetChildrenResult MediaSources::TryGetChildren(int objId, std::vector<MediaItem>& out) {

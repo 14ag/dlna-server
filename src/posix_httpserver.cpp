@@ -1,4 +1,5 @@
 #include "httpserver.h"
+#include "http_common.h"
 #include "config.h"
 #include "contentdirectory.h"
 #include "dlna_utils.h"
@@ -34,10 +35,7 @@
 #endif
 
 namespace {
-constexpr int kBufferSize = 8192;
-constexpr size_t kMaxHeaderBytes = 64 * 1024;
 constexpr size_t kMaxClientThreads = 64;
-constexpr size_t kMaxSoapBodyBytes = 1024 * 1024;
 
 class ScopedFd {
 public:
@@ -108,19 +106,6 @@ void SetSocketNoDelay(int fd) {
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 }
 
-bool ShouldKeepAlive(const std::string& req) {
-    std::string connectionValue = ToLowerAscii(FindHeaderValueCaseInsensitive(req, "Connection"));
-    if (connectionValue == "close") return false;
-    if (connectionValue == "keep-alive") return true;
-    size_t firstLineEnd = req.find("\r\n");
-    if (firstLineEnd == std::string::npos) return false;
-    std::string firstLine = req.substr(0, firstLineEnd);
-    size_t lastSpace = firstLine.rfind(' ');
-    if (lastSpace == std::string::npos) return false;
-    std::string version = firstLine.substr(lastSpace + 1);
-    return version.find("1.1") != std::string::npos;
-}
-
 void SendAll(int fd, const std::string& bytes) {
     const char* data = bytes.data();
     size_t remaining = bytes.size();
@@ -138,35 +123,6 @@ bool TrySendAll(int fd, const char* data, size_t remaining) {
         if (sent <= 0) return false;
         data += sent;
         remaining -= static_cast<size_t>(sent);
-    }
-    return true;
-}
-
-std::string ConnectionHeader(bool keepAlive) {
-    return keepAlive ? "Connection: keep-alive\r\n" : "Connection: close\r\n";
-}
-
-std::string SplitRequestTarget(const std::string& requestTarget) {
-    const size_t query = requestTarget.find('?');
-    return query == std::string::npos ? requestTarget : requestTarget.substr(0, query);
-}
-
-bool ValidateHostHeader(const std::string& host) {
-    if (host.empty()) return false;
-    for (unsigned char ch : host) {
-        if (ch <= 32 || ch == '/' || ch == '\\') return false;
-    }
-    return true;
-}
-
-bool ReadHttpRequestHeaders(int fd, std::string& req) {
-    req.clear();
-    char buffer[kBufferSize];
-    while (req.find("\r\n\r\n") == std::string::npos) {
-        ssize_t readBytes = recv(fd, buffer, sizeof(buffer), 0);
-        if (readBytes <= 0) return false;
-        req.append(buffer, static_cast<size_t>(readBytes));
-        if (req.size() > kMaxHeaderBytes) return false;
     }
     return true;
 }
@@ -315,7 +271,7 @@ void HttpServer::AcceptLoop(int listenSocket) {
 
 void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
 ScopedFd client(clientSocket);
-    char buf[kBufferSize];
+    char buf[kHttpBufSize];
     bool firstRequest = true;
 
     while (m_running.load()) {
@@ -325,7 +281,7 @@ ScopedFd client(clientSocket);
         firstRequest = false;
 
         std::string req;
-        if (!ReadHttpRequestHeaders(clientSocket, req)) return;
+        if (!ReadHttpRequestHeaders([clientSocket](char* buf, int len) { return static_cast<int>(recv(clientSocket, buf, static_cast<size_t>(len), 0)); }, req)) return;
 
         bool keepAlive = ShouldKeepAlive(req);
 
@@ -396,13 +352,36 @@ ScopedFd client(clientSocket);
                 MediaItem item = AppMedia.GetItem(mediaId);
                 if (item.id != -1) {
                     LogPrint(L"HTTP media request: id=%d path=%ls", mediaId, item.path.c_str());
+                    if (item.mimeType == L"video/mpegurl") {
+                        // mirrors the windows httpserver cpp branch exactly
+                        // see that file for the full rationale comment
+                        HlsManifestFetchResult manifest = FetchHlsManifestForServing(item.path);
+                        if (!manifest.fetchOk) {
+                            SendAll(clientSocket, "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                            return;
+                        }
+                        std::stringstream hlsHeaders;
+                        hlsHeaders << "HTTP/1.1 200 OK\r\n"
+                                   << "Content-Type: video/mpegurl\r\n"
+                                   << "Content-Length: " << manifest.text.size() << "\r\n"
+                                   << "Accept-Ranges: none\r\n"
+                                   << ConnectionHeader(keepAlive)
+                                   << "transferMode.dlna.org: Streaming\r\n"
+                                   << "contentFeatures.dlna.org: " << BuildHlsContentFeatures() << "\r\n"
+                                   << "\r\n";
+                        SendAll(clientSocket, hlsHeaders.str());
+                        if (sendBody) {
+                            SendAll(clientSocket, manifest.text);
+                        }
+                        if (!keepAlive) return;
+                        continue;
+                    }
                     if (IsRemoteMediaUrl(item.path)) {
-                        const bool isHlsManifest = item.mimeType == L"video/mpegurl";
                     long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
                     std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
                     bool hasKnownSize = fileSize > 0;
                     HttpByteRange parsedRange;
-                    if (hasKnownSize && !isHlsManifest) {
+                    if (hasKnownSize) {
                         parsedRange = ParseHttpRangeHeader(rangeHeader, fileSize);
                         if (!parsedRange.satisfiable) {
                             SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(fileSize) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
@@ -410,10 +389,10 @@ ScopedFd client(clientSocket);
                         }
                     }
 
-                    bool partial = hasKnownSize && !isHlsManifest && parsedRange.requested;
-                    long long start = hasKnownSize && !isHlsManifest ? parsedRange.start : 0;
-                    long long end = hasKnownSize && !isHlsManifest ? parsedRange.end : 0;
-                    long long bodyLength = hasKnownSize ? (isHlsManifest ? fileSize : (end - start + 1)) : 0;
+                    bool partial = hasKnownSize && parsedRange.requested;
+                    long long start = hasKnownSize ? parsedRange.start : 0;
+                    long long end = hasKnownSize ? parsedRange.end : 0;
+                    long long bodyLength = hasKnownSize ? (end - start + 1) : 0;
                     std::stringstream headers;
                     headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
                     if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << fileSize << "\r\n";
@@ -429,7 +408,7 @@ ScopedFd client(clientSocket);
 
                     if (hasKnownSize) {
                         headers << "Content-Length: " << bodyLength << "\r\n"
-                                << "Accept-Ranges: " << (isHlsManifest ? "none" : "bytes") << "\r\n";
+                                << "Accept-Ranges: bytes\r\n";
                     } else if (spoofSamsung) {
                         headers << "Content-Length: 1073741824\r\n"
                                 << "Accept-Ranges: none\r\n";
@@ -438,7 +417,7 @@ ScopedFd client(clientSocket);
                     }
                     headers << ConnectionHeader(keepAlive)
                             << "transferMode.dlna.org: Streaming\r\n"
-                            << "contentFeatures.dlna.org: " << (item.mimeType == L"video/mpegurl" ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize)) << "\r\n";
+                            << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize) << "\r\n";
 
                     std::vector<std::string> proxyReqHeaders;
                     if (FindHeaderValueCaseInsensitive(req, "Icy-MetaData") == "1") {
@@ -506,10 +485,9 @@ ScopedFd client(clientSocket);
                     return;
                 }
 
-                const bool isHlsManifest = item.mimeType == L"video/mpegurl";
                 bool hasKnownSize = st.st_size > 0;
                 HttpByteRange parsedRange{};
-                if (hasKnownSize && !isHlsManifest) {
+                if (hasKnownSize) {
                     parsedRange = ParseHttpRangeHeader(FindHeaderValueCaseInsensitive(req, "Range"), static_cast<long long>(st.st_size));
                     if (!parsedRange.satisfiable) {
                         SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(static_cast<long long>(st.st_size)) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
@@ -517,10 +495,10 @@ ScopedFd client(clientSocket);
                     }
                 }
 
-                bool partial = hasKnownSize && !isHlsManifest && parsedRange.requested;
-                long long start = hasKnownSize && !isHlsManifest ? parsedRange.start : 0;
-                long long end = hasKnownSize && !isHlsManifest ? parsedRange.end : 0;
-                long long bodyLength = hasKnownSize ? (isHlsManifest ? static_cast<long long>(st.st_size) : (end - start + 1)) : 0;
+                bool partial = hasKnownSize && parsedRange.requested;
+                long long start = hasKnownSize ? parsedRange.start : 0;
+                long long end = hasKnownSize ? parsedRange.end : 0;
+                long long bodyLength = hasKnownSize ? (end - start + 1) : 0;
                 std::stringstream headers;
                 headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
                 if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << static_cast<long long>(st.st_size) << "\r\n";
@@ -528,13 +506,13 @@ ScopedFd client(clientSocket);
 
                 if (hasKnownSize) {
                     headers << "Content-Length: " << bodyLength << "\r\n"
-                            << "Accept-Ranges: " << (isHlsManifest ? "none" : "bytes") << "\r\n";
+                            << "Accept-Ranges: bytes\r\n";
                 } else {
                     headers << "Accept-Ranges: none\r\n";
                 }
                 headers << ConnectionHeader(keepAlive)
                         << "transferMode.dlna.org: Streaming\r\n"
-                        << "contentFeatures.dlna.org: " << (isHlsManifest ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true)) << "\r\n";
+                        << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n";
                 SendAll(clientSocket, headers.str());
                 if (method == "GET") {
                     SetSocketStreamTimeouts(clientSocket);

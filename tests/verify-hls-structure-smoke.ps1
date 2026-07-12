@@ -55,6 +55,50 @@ param(
 $script:ExitCode = 0
 $script:Failures = [System.Collections.Generic.List[string]]::new()
 
+function Set-IniValue {
+    param(
+        [string]$section,
+        [string]$key,
+        [string]$value
+    )
+
+    if (Test-Path $configPath) {
+        $lines = @(Get-Content -LiteralPath $configPath -Encoding UTF8)
+    }
+    else {
+        $lines = @("[$section]")
+    }
+
+    $sectionHeader = "[$section]"
+    $sectionIndex = [Array]::IndexOf([string[]]$lines, $sectionHeader)
+    if ($sectionIndex -lt 0) {
+        $lines += $sectionHeader
+        $sectionIndex = $lines.Count - 1
+    }
+
+    $keyPrefix = "$key="
+    $insertIndex = $lines.Count
+    for ($i = $sectionIndex + 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\[.+\]$') {
+            $insertIndex = $i
+            break
+        }
+        if ($lines[$i].StartsWith($keyPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $lines[$i] = "$key=$value"
+            Set-Content -LiteralPath $configPath -Value $lines -Encoding UTF8
+            return
+        }
+    }
+    $list = New-Object System.Collections.Generic.List[string]
+    foreach ($line in $lines) {
+        $list.Add($line)
+    }
+    $list.Insert($insertIndex, "$key=$value")
+    Set-Content -LiteralPath $configPath -Value $list -Encoding UTF8
+
+}
+
+
 function Write-Section {
     param([Parameter(Mandatory)][string]$Text)
     Write-Host "`n== $Text ==" -ForegroundColor Cyan
@@ -186,6 +230,14 @@ function ConvertTo-NormalizedHlsStructure {
 }
 
 # --- discovery ---
+$configPath = '..\output\winx64\config.ini'
+$mediaSourcesValue = 'C:\Users\philip\sauce\dlna-server\tests\test media\test-hls-playlist.m3u8'
+$exePath='..\output\winx64\DLNA Server.exe'
+Set-IniValue "Settings" "MediaSources" $mediaSourcesValue
+Start-Process -FilePath $exePath -PassThru -ArgumentList '-h'
+Start-Sleep -Milliseconds 500
+Start-Sleep -Milliseconds 500
+
 
 Write-Section 'Discovering server resource'
 if (-not $ServerRootUrl) {

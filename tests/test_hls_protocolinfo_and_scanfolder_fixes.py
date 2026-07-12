@@ -70,10 +70,9 @@ class HlsProtocolInfoAndScanFolderFixTests(unittest.TestCase):
     def _assert_http_hls_content_features(self, path):
         src = self.read(path)
         self.assertIn("video/mpegurl", src)
-        self.assertIn(
-            "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000",
-            src,
-        )
+        # HLS content features are now emitted via BuildHlsContentFeatures()
+        # in the early-return HLS branch, not via an inline ternary
+        self.assertIn("BuildHlsContentFeatures()", src)
 
     def test_win32_httpserver_hls_content_features(self):
         self._assert_http_hls_content_features("src/httpserver.cpp")
