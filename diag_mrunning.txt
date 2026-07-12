@@ -1,0 +1,2 @@
+m_running.store(true) executed
+m_running.store(true) executed
