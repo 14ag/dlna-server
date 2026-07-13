@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _read(path):
-    return (ROOT.parent / path).read_text(encoding="utf-8")
+    return (ROOT / path).read_text(encoding="utf-8")
 
 
 class TestDispatcherNotifyOrdering:
@@ -17,13 +17,12 @@ class TestDispatcherNotifyOrdering:
         src = _read("src/media_sources_common.cpp")
         idx = src.find("PlaylistScanPool::Get().Submit([this, ctx, node]()")
         assert idx > 0, "Submit call not found"
-        region = src[idx:idx + 900]
+        region = src[idx:idx + 800]
         leave_idx = region.find("TaskGroupLeaveGuard leave(ctx->group);")
         notify_idx = region.find("ctx->queueCv.notify_all();")
         assert leave_idx > 0 and notify_idx > 0
         # the notify text must appear in program order strictly after
         # a closing brace that ends the block containing the leave guard
-        # find the first closing brace after the leave guard declaration
         brace_after_leave = region.find("}", leave_idx)
         assert brace_after_leave > 0
         assert notify_idx > brace_after_leave, (
@@ -45,7 +44,7 @@ class TestSingleManifestScanCompletes:
         import http.server
         import socket
         import threading
-        import os
+        import os as _os
 
         manifest_dir = tmp_path / "hls"
         manifest_dir.mkdir()
@@ -64,7 +63,7 @@ class TestSingleManifestScanCompletes:
                 pass
 
         httpd = http.server.HTTPServer(("127.0.0.1", hls_port), Handler)
-        os.chdir(manifest_dir)
+        _os.chdir(manifest_dir)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
 
@@ -86,7 +85,6 @@ class TestSingleManifestScanCompletes:
             encoding="utf-8-sig",
         )
 
-        import os as _os
         env = _os.environ.copy()
         env["DLNA_SERVER_SKIP_FIREWALL"] = "1"
         proc = subprocess.Popen(
@@ -138,16 +136,6 @@ class TestSingleManifestScanCompletes:
             while time.time() < deadline:
                 result = browse()
                 if int(result.get("NumberReturned", "0")) > 0:
-                    inner = browse()
-                    # descend once into the single source container
-                    import re as _re
-                    ids = _re.findall(r'container id="(\d+)"',
-                                        result.get("Result", ""))
-                    if ids:
-                        child_env = build_browse_envelope(
-                            object_id=ids[0])
-                        # reuse the same soap call with the child id
-                        result2 = browse()
                     found_item = True
                     break
                 time.sleep(0.5)
@@ -188,6 +176,8 @@ class TestSsdpInitialBurstThreadIsJoined:
         assert "m_initialBurstThread = std::thread(" in start_region
         assert "m_initialBurstThread.joinable()" in stop_region
         assert "m_initialBurstThread.join();" in stop_region
+        # the join for the burst thread must appear before CloseSockets
+        # is called or the race this task fixes is not actually closed
         close_idx = stop_region.find("CloseSockets();")
         join_idx = stop_region.find("m_initialBurstThread.join();")
         assert 0 < join_idx < close_idx, (
@@ -203,6 +193,13 @@ class TestSsdpInitialBurstThreadIsJoined:
 class TestSsdpStartStopCycleUnderRace:
     def test_rapid_start_stop_does_not_crash_or_hang(
             self, dlna_binary, tmp_path):
+        """Best effort regression guard for the SSDP thread race fixed in
+        T2. This cannot deterministically prove the race is gone from
+        Python (that needs ThreadSanitizer, see workflow note below), but
+        repeated fast start/stop cycles that would previously have a
+        realistic chance of the burst thread still sleeping when Stop
+        tears sockets down give the race many chances to manifest as a
+        crash or a hung teardown, which this test would catch."""
         import os
         import socket
 
@@ -245,6 +242,9 @@ class TestSsdpStartStopCycleUnderRace:
                     except OSError:
                         time.sleep(0.05)
                 assert connected, "server did not come up on iteration"
+                # stop immediately, before the 0-100ms startup jitter and
+                # the three-round 100ms-spaced alive burst can possibly
+                # finish, this is the exact window T2 makes safe
                 proc.terminate()
                 try:
                     proc.wait(timeout=5)
@@ -259,6 +259,29 @@ class TestSsdpStartStopCycleUnderRace:
                 config_ini.write_text(old, encoding="utf-8-sig")
             elif config_ini.exists():
                 config_ini.unlink()
+
+
+class TestNoDeadHlsTernaryInLocalFileBranch:
+    def test_windows_local_file_branch_has_no_hardcoded_hls_ternary(self):
+        source = _read("src/httpserver.cpp")
+        assert 'item.mimeType == L"video/mpegurl" ? "DLNA.ORG_OP=01' \
+            not in source, (
+            "dead ternary reintroduced in the local file branch, "
+            "item.mimeType can never be video/mpegurl at that point "
+            "because the dedicated HLS branch earlier in the function "
+            "always continues or returns, see workflow T3")
+
+    def test_windows_and_posix_local_file_contentfeatures_call_match(self):
+        win = _read("src/httpserver.cpp")
+        posix = _read("src/posix_httpserver.cpp")
+        needle = (
+            'contentFeatures.dlna.org: " << '
+            'BuildContentFeaturesForExtension(SourceExtension(item.path), '
+            'item.mimeType, true) << "\\r\\n"')
+        assert needle in win, "Windows local-file branch drifted from " \
+            "the shared BuildContentFeaturesForExtension contract"
+        assert needle in posix, "POSIX local-file branch missing the " \
+            "same call, both platforms must match"
 
 
 class TestSkipFirewallEnvVarDetection:
@@ -276,6 +299,11 @@ class TestSkipFirewallEnvVarDetection:
 
     def test_empty_env_var_skips_firewall_check(
             self, dlna_binary, tmp_path):
+        """A present-but-empty DLNA_SERVER_SKIP_FIREWALL must skip the
+        interactive firewall prompt path the same way a non-empty value
+        does, since Popen(env=...) can legitimately produce this state
+        even though cmd.exe's SET syntax cannot. Before T4 this value
+        fell through to the interactive EnsureFirewallAccess call."""
         import os
         import socket
 
@@ -299,7 +327,7 @@ class TestSkipFirewallEnvVarDetection:
             encoding="utf-8-sig",
         )
         env = os.environ.copy()
-        env["DLNA_SERVER_SKIP_FIREWALL"] = ""
+        env["DLNA_SERVER_SKIP_FIREWALL"] = ""  # present, empty on purpose
         proc = subprocess.Popen(
             [str(dlna_binary), "--headless"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -341,7 +369,7 @@ class TestRescanSerialization:
         for src in (win, posix):
             idx = src.find("bool Server::Rescan()")
             assert idx > 0
-            region = src[idx:idx + 600]
+            region = src[idx:idx + 500]
             assert "std::lock_guard<std::mutex> rescanLock(m_rescanMutex);" \
                 in region
             reset_idx = region.find("AppMedia.ResetForRescan();")
