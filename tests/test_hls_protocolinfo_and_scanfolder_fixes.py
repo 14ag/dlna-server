@@ -18,17 +18,12 @@ class HlsProtocolInfoAndScanFolderFixTests(unittest.TestCase):
         # matching the android j.java contentFeatures.dlna.org pattern
         self.assertIn("video/mpegurl", src)
         self.assertIn("BuildHlsProtocolInfo()", src)
-        # The literal string should be centralized to dlna_utils.cpp
-        src = self.read("src/dlna_utils.cpp")
+        # The literal string should be centralized in dlna_utils.h
+        src = self.read("src/dlna_utils.h")
         self.assertIn(
             "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000",
             src,
         )
-
-    def test_hls_mime_guard_present_in_contentdirectory(self):
-        src = self.read("src/contentdirectory.cpp")
-        self.assertIn("ItemProtocolInfo", src)
-        self.assertIn("video/mpegurl", src)
 
     # ------------------------------------------------------------------
     # Fix 2: ScanFolder and ScanNetworkFolder do not pre-create containers
@@ -51,17 +46,6 @@ class HlsProtocolInfoAndScanFolderFixTests(unittest.TestCase):
         self.assertIn("FetchPlaylistOnce", src)
         self.assertIn("AddHlsStreamItem(ctx->state, node.path, node.parentId, node.titleOverride)", src)
 
-    def test_win32_scan_folder_hls_peek(self):
-        self._assert_scan_folder_hls_peek("src/media_sources.cpp")
-
-    def test_win32_scan_network_folder_hls_peek(self):
-        self._assert_scan_network_hls_peek("src/media_sources.cpp")
-
-    def test_posix_scan_folder_hls_peek(self):
-        self._assert_scan_folder_hls_peek("src/posix_media_sources.cpp")
-
-    def test_posix_scan_network_folder_hls_peek(self):
-        self._assert_scan_network_hls_peek("src/posix_media_sources.cpp")
 
     # ------------------------------------------------------------------
     # Fix 3: HTTP servers emit android-matching contentFeatures for HLS

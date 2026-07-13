@@ -248,9 +248,12 @@ def _soap_request(base_url, envelope, action):
 
 def _browse_for_hls_item(base_url, max_retries=20, interval=0.5):
     """Browse root and find the first video/mpegurl item.
-    Polls until found (scan runs async after Phase 1)."""
+    Polls until found (scan runs async after Phase 1).
+    Descends into containers at root level to find items."""
     import html as _html
     import xml.etree.ElementTree as ET
+    import re as _re
+    DIDL = "{urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/}"
     for _ in range(max_retries):
         env = build_browse_envelope(object_id="0")
         xml = _soap_request(base_url, env, "Browse")
@@ -259,23 +262,61 @@ def _browse_for_hls_item(base_url, max_retries=20, interval=0.5):
         if result_xml:
             unescaped = _html.unescape(result_xml)
             root = ET.fromstring(unescaped)
-            for item in root.iter(
-                    "{urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/}item"):
-                res = item.find(
-                    "{urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/}res")
+            # Check items at root level
+            for item in root.iter(DIDL + "item"):
+                res = item.find(DIDL + "res")
                 upnp_class = item.find(
                     "{urn:schemas-upnp-org:metadata-1-0/upnp/}class")
-                if upnp_class is not None and \
-                        "videoItem" in (upnp_class.text or ""):
-                    if res is not None and res.text:
-                        path = res.text
-                        item_id = path.rstrip("/").rsplit("/", 1)[-1]
-                        return int(item_id)
                 if res is not None and res.text:
                     path = res.text
                     item_id = path.rstrip("/").rsplit("/", 1)[-1]
                     return int(item_id)
+            # Descend into containers at root level
+            for container in root.iter(DIDL + "container"):
+                cid = container.get("id", "")
+                if cid and cid.isdigit():
+                    item_id = _browse_container_for_item(base_url, cid)
+                    if item_id is not None:
+                        return item_id
         time.sleep(interval)
+    return None
+
+
+def _browse_container_for_item(base_url, container_id):
+    """Browse a container and return the item id of the first item
+    found, descending through intermediate containers if needed."""
+    import html as _html
+    import xml.etree.ElementTree as ET
+    DIDL = "{urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/}"
+    visited = set()
+    stack = [container_id]
+    while stack:
+        cid = stack.pop()
+        if cid in visited:
+            continue
+        visited.add(cid)
+        env = build_browse_envelope(object_id=cid)
+        xml = _soap_request(base_url, env, "Browse")
+        parsed = parse_browse_response(xml)
+        result_xml = parsed.get("Result", "")
+        if not result_xml:
+            continue
+        unescaped = _html.unescape(result_xml)
+        root = ET.fromstring(unescaped)
+        for item in root.iter(DIDL + "item"):
+            res = item.find(DIDL + "res")
+            if res is not None and res.text:
+                path = res.text
+                last = path.rstrip("/").rsplit("/", 1)[-1]
+                if last.isdigit():
+                    return int(last)
+                item_id = item.get("id", "")
+                if item_id.isdigit():
+                    return int(item_id)
+        for container in root.iter(DIDL + "container"):
+            child_id = container.get("id", "")
+            if child_id and child_id.isdigit() and child_id not in visited:
+                stack.append(child_id)
     return None
 
 

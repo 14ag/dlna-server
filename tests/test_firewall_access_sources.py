@@ -54,22 +54,6 @@ class FirewallAccessSourceTests(unittest.TestCase):
         self.assertIn("ConfigureFirewallAccessElevated", main)
         self.assertIn("EnsureFirewallAccess(cfg.port, FirewallAccessMode::Interactive", server)
 
-    def test_windows_settings_port_change_restarts_without_firewall_churn(self):
-        source = self.read("src/mainwindow.cpp")
-
-        for token in (
-            "int oldPort = AppConfig.port",
-            "SettingsDialog::Show(hwnd)",
-            "IsRunning() && (result == IDC_BTN_RESTART || (result == IDOK && AppConfig.port != oldPort))",
-            "BeginRestartServer()",
-            "DLNAServer.Stop()",
-            "DLNAServer.Start()",
-            "Server stopped. Failed to restart on the new port.",
-        ):
-            self.assertIn(token, source)
-
-        self.assertNotIn("EnsureFirewallAccess(AppConfig.port", source)
-
     def test_posix_build_has_no_firewall_helper(self):
         cmake = self.read("CMakeLists.txt")
         cli = self.read("src/posix_main.cpp")

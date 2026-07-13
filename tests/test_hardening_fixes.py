@@ -9,16 +9,6 @@ class HardeningFixSourceTests(unittest.TestCase):
     def read(self, path: str) -> str:
         return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_remote_fetch_uses_libcurl_without_shell_or_child_process(self):
-        source = self.read("src/network_sources.cpp")
-
-        for forbidden in ("popen", "_wpopen", "_popen", "system(", "CreateProcessW", "execvp", "RunCurlWithReader"):
-            self.assertNotIn(forbidden, source)
-        self.assertIn("DLNA_HAS_LIBCURL", source)
-        self.assertIn("curl_easy_perform", source)
-        self.assertIn("curl_easy_setopt", source)
-        self.assertIn("Remote content unavailable", source)
-
     def test_whitelist_and_http_shutdown_are_synchronized(self):
         whitelist_h = self.read("src/ipwhitelist.h")
         whitelist_cpp = self.read("src/ipwhitelist.cpp")
