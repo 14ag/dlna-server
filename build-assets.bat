@@ -46,7 +46,7 @@ echo   build-assets.bat --platform winx64,linux --no-clean
 echo   build-assets.bat --platform winx64 --no-clean
 echo.
 echo Assets:
-echo   output\winx64, output\winx86, output\linux, output\macos-x64, output\macos-arm64 by default
+echo   output\winx64, output\winx86, output\linux by default (macOS requires explicit --platform)
 echo.
 echo Options:
 echo   --platform comma-separated platforms: winx64, winx86, linux, macos-x64, macos-arm64

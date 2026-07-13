@@ -15,6 +15,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 #include <netinet/in.h>
 #include <fstream>
 #include <limits.h>
@@ -526,8 +527,10 @@ ScopedFd client(clientSocket);
                     }
                     if (remaining > 0 || !keepAlive) return;
                     continue;
-                }
-            }
+    }
+}
+}
+
             if (path.rfind("/subtitle/", 0) == 0) {
                 int mediaId = -1;
                 if (!TryParseIntStrict(path.substr(10), mediaId) || mediaId < 0) {

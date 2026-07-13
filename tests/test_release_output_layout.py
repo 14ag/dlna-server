@@ -13,7 +13,7 @@ class ReleaseOutputLayoutTests(unittest.TestCase):
         script = self.read("scripts/build-release-assets.ps1")
         batch = self.read("build-assets.bat")
 
-        self.assertIn('[string]$Platform = "winx64,winx86,linux,macos-x64,macos-arm64"', script)
+        self.assertIn('[string]$Platform = "winx64,winx86,linux"', script)
         self.assertIn('[Alias("no-clean")]', script)
         self.assertIn('$allPlatforms = @("winx64", "winx86", "linux", "macos-x64", "macos-arm64")', script)
         self.assertIn("function Resolve-VcpkgRoot", script)
