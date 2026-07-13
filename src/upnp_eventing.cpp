@@ -303,6 +303,7 @@ void UpnpEventManager::StopWorker() {
     }
     m_cv.notify_all();
     if (m_worker.joinable()) m_worker.join();
+    m_notifyPool.reset();
 }
 
 void UpnpEventManager::WorkerLoop() {
@@ -319,7 +320,7 @@ void UpnpEventManager::WorkerLoop() {
                         m_lastDispatchTime = now;
                         m_trailingFirePending = false;
                         DispatchNotifyToSubscribersLocked(m_trailingUpdateId, now);
-                        continue; // re-check: the dispatch above may have queued jobs
+                        continue;
                     }
                     m_cv.wait_until(lock, m_trailingFireAt);
                     continue;
@@ -335,7 +336,10 @@ void UpnpEventManager::WorkerLoop() {
                 continue;
             }
         }
-        SendNotifyJob(job);
+        if (!m_notifyPool) {
+            m_notifyPool = std::make_unique<BoundedThreadPool>(kMaxUpnpSubscriptions);
+        }
+        m_notifyPool->Submit([this, job]() { SendNotifyJob(job); });
     }
 }
 

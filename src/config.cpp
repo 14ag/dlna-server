@@ -220,7 +220,8 @@ ConfigSnapshot Config::Snapshot() const {
         defaultPlaylistEnabled,
         defaultPlaylistPath,
         backgroundScanEnabled,
-        mediaSources
+        mediaSources,
+        networkInterfaceAllowList
     };
 }
 
@@ -344,8 +345,10 @@ void Config::Load() {
     mediaSources.clear();
     std::wstring sourcesStr = Utf8ToWide(ConfigValueOrDefault(values, "MediaSources", ""));
     for (const auto& token : SplitConfigList(sourcesStr)) {
-        if (!token.empty()) mediaSources.push_back({ token, true });
+        if (!token.empty()) mediaSources.push_back({ token });
     }
+
+    networkInterfaceAllowList = Utf8ToWide(ConfigValueOrDefault(values, "NetworkInterfaceAllowList", ""));
 
     lock.unlock();
     if (needsSave) Save();
@@ -383,6 +386,7 @@ void Config::Save() {
     ss << "DeviceModelName=" << WideToUtf8(deviceModelName) << "\n";
     ss << "PresentationURL=" << WideToUtf8(presentationUrl) << "\n";
     ss << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";
+    ss << "NetworkInterfaceAllowList=" << WideToUtf8(networkInterfaceAllowList) << "\n";
 
     static const std::string bom = "\xEF\xBB\xBF";
     if (!WriteFileAtomicUtf8(path, bom + ss.str())) {

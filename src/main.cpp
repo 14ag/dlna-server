@@ -113,7 +113,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (!runtimeUUID.empty()) AppConfig.deviceUUID = runtimeUUID;
     if (debugFlag) AppConfig.debugLog = true;
     for (const auto& src : runtimeSources) {
-        AppConfig.mediaSources.push_back({src, true});
+        AppConfig.mediaSources.push_back({src});
     }
 
     LocalFree(argv);
@@ -121,10 +121,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Check for single instance
     HANDLE hMutex = CreateMutexW(NULL, TRUE, L"dlna-server_SingleInstance_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        // Ask the existing instance to restore itself through
+        // MainWindow::RestoreAndFocusMainWindow (see mainwindow.cpp), which
+        // is the only code path that clears WS_EX_TOOLWINDOW when the
+        // running instance was originally started with --headless. Do NOT
+        // call ShowWindow/SetForegroundWindow directly here: this process
+        // cannot call methods on the other process's MainWindow instance,
+        // and skipping that code path is what left the window with a
+        // permanently "lite" frame (no icon, no min/max buttons, tiny
+        // close button) in the original bug.
         HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
         if (hwndExisting) {
-            ShowWindow(hwndExisting, SW_RESTORE);
-            SetForegroundWindow(hwndExisting);
+            PostMessageW(hwndExisting, MainWindow::WM_SHOW_EXISTING_INSTANCE, 0, 0);
         }
         return 0;
     }
@@ -145,6 +153,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         if (AppConfig.debugLog) {
             SetConsoleCtrlHandler(HeadlessConsoleCtrlHandler, TRUE);
+            if (consoleAttached) {
+                SetConsoleEchoEnabled(true);
+            }
         }
     }
 
@@ -157,7 +168,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     g_hwndMainForConsole = hwndMain;
     if (startHeadless) {
         if (!AppConfig.debugLog) {
-            std::wcout << L"server is up" << std::endl;
+            // A leading \n forces the cursor to column 0 of a fresh line even if
+            // cmd.exe's own prompt is still sitting on the current line (see the
+            // AttachConsole(ATTACH_PARENT_PROCESS) race documented above this
+            // function). Deliberately no trailing newline: leaving the cursor
+            // immediately after the message, rather than one line below it,
+            // avoids stranding an empty line before the shell redraws its prompt.
+            std::wcout << L"\nserver is up" << std::flush;
             FreeConsole();
         }
         PostMessageW(hwndMain, WM_COMMAND, IDC_BTN_STARTSTOP, 0);

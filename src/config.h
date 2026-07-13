@@ -11,7 +11,6 @@
 
 struct MediaSource {
     std::wstring path;
-    bool enabled;
 };
 
 struct ConfigSnapshot {
@@ -35,6 +34,7 @@ struct ConfigSnapshot {
     std::wstring defaultPlaylistPath;
     bool backgroundScanEnabled;
     std::vector<MediaSource> mediaSources;
+    std::wstring networkInterfaceAllowList;
 };
 
 class Config {
@@ -66,7 +66,20 @@ public:
     bool backgroundScanEnabled;
     std::wstring defaultPlaylistPath;
     
+    // INVARIANT: as of this writing, every direct (unlocked) read of this
+    // field happens only from the UI thread (MainWindow::RefreshSourceList,
+    // fltk_gui_main.cpp's equivalent), and every write to it happens only
+    // via Mutate()/Load() also called from the UI thread. That is what
+    // makes the direct-field-access pattern in those two files safe today
+    // despite Config using a shared_mutex for its "official" thread-safe
+    // surface (Snapshot()/Mutate()). If you are about to add ANY code path
+    // that writes mediaSources from a background thread (an auto-import
+    // feature, a remote-config-sync feature, etc.), every existing direct
+    // read of this field must be converted to go through Snapshot() first
+    // -- do not assume the existing direct reads are safe once this
+    // invariant no longer holds.
     std::vector<MediaSource> mediaSources;
+    std::wstring networkInterfaceAllowList;
     std::wstring GetDefaultPlaylistPath();
     std::wstring GetConfigPath();
 

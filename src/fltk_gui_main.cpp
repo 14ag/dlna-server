@@ -431,7 +431,7 @@ private:
             for (int i = 1; i <= m_sources.size(); ++i) {
                 const char* text = m_sources.text(i);
                 if (text && *text) {
-                    cfg.mediaSources.push_back({ToWide(text), true});
+                    cfg.mediaSources.push_back({ToWide(text)});
                 }
             }
             savedCount = cfg.mediaSources.size();

@@ -24,8 +24,18 @@ std::wstring BuildDuplicateMediaKey(int parentId, const std::wstring& path,
 std::wstring BuildStableMediaKey(int parentId, const std::wstring& path,
                                  std::function<std::wstring(const std::wstring&)> canonicalize);
 
-struct ScopedScanSuccess {
-    ScopedScanSuccess(MediaDatabase* database, std::wstring key);
+// Explicit manually-triggered success marker for a scan operation keyed by
+// canonicalKey  Despite the shape (constructed with a database+key exposes
+// a one-shot completion call) this is NOT an RAII scope guard -- there is
+// no destructor and nothing happens automatically if Mark() is never
+// called (e g on an early-return error path)  That is intentional: only
+// the success path should mark the key as successfully scanned so a caller
+// bailing out early on an error must be able to simply return without
+// marking anything  If you are looking for automatic cleanup-on-scope-exit
+// behavior this is not that type -- see ScopeGuard in network_sources.cpp
+// for an example of a type that actually does run on destruction
+struct ScanSuccessMarker {
+    ScanSuccessMarker(MediaDatabase* database, std::wstring key);
     void Mark();
     MediaDatabase* database;
     std::wstring key;

@@ -36,7 +36,7 @@ std::string BuildHttpDateHeaderValue();
 
 bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Content);
 
-bool EnumerateNetworkEndpoints(int port, std::vector<NetworkEndpoint>& endpoints);
+bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList, std::vector<NetworkEndpoint>& endpoints);
 const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& endpoints, const SOCKADDR* remoteAddr);
 
 #endif // NETUTILS_H

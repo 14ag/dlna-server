@@ -38,7 +38,7 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--name" && i + 1 < argc) AppConfig.serverName = Utf8ToWide(argv[++i]);
         else if (arg == "--uuid" && i + 1 < argc) AppConfig.deviceUUID = Utf8ToWide(argv[++i]);
-        else if (arg == "--source" && i + 1 < argc) AppConfig.mediaSources.push_back({Utf8ToWide(argv[++i]), true});
+        else if (arg == "--source" && i + 1 < argc) AppConfig.mediaSources.push_back({Utf8ToWide(argv[++i])});
         else if (arg == "--print-scan-concurrency" && i + 1 < argc) {
             size_t n = static_cast<size_t>(std::atoll(argv[++i]));
             std::cout << ComputePlaylistScanConcurrency(n) << std::endl;
@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--debug") AppConfig.debugLog = true;
         else if (arg == "--help") { PrintUsage(argv[0]); return 0; }
-        else AppConfig.mediaSources.push_back({Utf8ToWide(arg), true});
+        else AppConfig.mediaSources.push_back({Utf8ToWide(arg)});
     }
     if (AppConfig.mediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
         PrintUsage(argv[0]);

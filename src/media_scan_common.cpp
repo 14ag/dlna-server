@@ -39,10 +39,10 @@ int FindOrAddContainer(MediaIndexState& state, int parentId, const std::wstring&
     return id;
 }
 
-ScopedScanSuccess::ScopedScanSuccess(MediaDatabase* database, std::wstring key)
+ScanSuccessMarker::ScanSuccessMarker(MediaDatabase* database, std::wstring key)
     : database(database), key(std::move(key)), marked(false) {}
 
-void ScopedScanSuccess::Mark() {
+void ScanSuccessMarker::Mark() {
     if (database && !marked) {
         database->MarkScanSuccess(key);
         marked = true;
@@ -57,18 +57,22 @@ void AppendDescendants(const std::vector<MediaItem>& items,
     auto found = childrenByParent.find(parentId);
     if (found == childrenByParent.end()) return;
 
-    std::vector<MediaItem> children;
+    std::vector<size_t> childIndices;
+    childIndices.reserve(found->second.size());
     for (size_t index : found->second) {
-        if (index < items.size()) children.push_back(items[index]);
+        if (index < items.size()) childIndices.push_back(index);
     }
     if (sortByTitle) {
-        std::sort(children.begin(), children.end(), [](const MediaItem& a, const MediaItem& b) {
-            if (a.isFolder != b.isFolder) return a.isFolder && !b.isFolder;
-            return NaturalLessWide(a.title, b.title);
+        std::sort(childIndices.begin(), childIndices.end(), [&items](size_t a, size_t b) {
+            const MediaItem& left = items[a];
+            const MediaItem& right = items[b];
+            if (left.isFolder != right.isFolder) return left.isFolder && !right.isFolder;
+            return NaturalLessWide(left.title, right.title);
         });
     }
 
-    for (const auto& child : children) {
+    for (size_t index : childIndices) {
+        const MediaItem& child = items[index];
         result.push_back(child);
         if (child.isFolder) AppendDescendants(items, childrenByParent, child.id, sortByTitle, result);
     }

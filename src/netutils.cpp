@@ -96,6 +96,39 @@ void AddEndpointForUnicast(std::vector<NetworkEndpoint>& endpoints,
     endpoint.locationUrl = "http://" + endpoint.host + ":" + std::to_string(port) + "/description.xml";
     endpoints.push_back(endpoint);
 }
+bool NameContainsNoCase(const std::wstring& haystack, const wchar_t* needle) {
+    std::wstring lowerHaystack = ToLowerWide(haystack);
+    std::wstring lowerNeedle = ToLowerWide(needle);
+    return lowerHaystack.find(lowerNeedle) != std::wstring::npos;
+}
+
+const wchar_t* const kVirtualAdapterDenylist[] = {
+    L"virtualbox", L"vmware", L"hyper-v", L"virtual switch", L"wsl",
+    L"docker", L"tap-windows", L"tailscale", L"zerotier", L"loopback",
+    L"npcap loopback", L"vethernet",
+};
+
+bool IsLikelyVirtualAdapter(const std::wstring& friendlyName) {
+    for (const wchar_t* needle : kVirtualAdapterDenylist) {
+        if (NameContainsNoCase(friendlyName, needle)) return true;
+    }
+    return false;
+}
+
+bool InterfaceAllowListPermits(const std::wstring& allowList, const std::wstring& friendlyName) {
+    if (allowList.empty()) {
+        return !IsLikelyVirtualAdapter(friendlyName);
+    }
+    size_t start = 0;
+    while (start <= allowList.size()) {
+        size_t comma = allowList.find(L',', start);
+        std::wstring token = allowList.substr(start, comma == std::wstring::npos ? std::wstring::npos : comma - start);
+        if (!token.empty() && NameContainsNoCase(friendlyName, token.c_str())) return true;
+        if (comma == std::wstring::npos) break;
+        start = comma + 1;
+    }
+    return false;
+}
 } // namespace
 
 std::string BuildEndpointHost(const SOCKADDR* addr) {
@@ -231,7 +264,7 @@ std::string BuildHttpDateHeaderValue() {
     return buffer;
 }
 
-bool EnumerateNetworkEndpoints(int port, std::vector<NetworkEndpoint>& endpoints) {
+bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList, std::vector<NetworkEndpoint>& endpoints) {
     endpoints.clear();
 
     ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
@@ -255,6 +288,9 @@ bool EnumerateNetworkEndpoints(int port, std::vector<NetworkEndpoint>& endpoints
             continue;
         }
         if (adapter->Flags & IP_ADAPTER_NO_MULTICAST) {
+            continue;
+        }
+        if (!InterfaceAllowListPermits(interfaceAllowList, adapter->FriendlyName ? std::wstring(adapter->FriendlyName) : std::wstring())) {
             continue;
         }
 

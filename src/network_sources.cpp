@@ -590,8 +590,64 @@ std::string ParseUnixListName(const std::string& trimmed) {
     return pos < trimmed.size() ? trimmed.substr(pos) : std::string();
 }
 
+bool TryParseDosListLine(const std::string& trimmed, std::string& outName, bool& outIsDirectory) {
+    size_t pos = 0;
+    auto skipDigits = [&](size_t count) -> bool {
+        if (pos + count > trimmed.size()) return false;
+        for (size_t i = 0; i < count; ++i) {
+            if (!std::isdigit(static_cast<unsigned char>(trimmed[pos + i]))) return false;
+        }
+        pos += count;
+        return true;
+    };
+    if (!skipDigits(2) || pos >= trimmed.size() || trimmed[pos] != '-') return false;
+    ++pos;
+    if (!skipDigits(2) || pos >= trimmed.size() || trimmed[pos] != '-') return false;
+    ++pos;
+    if (!(skipDigits(2) || skipDigits(4))) return false;
+    if (pos >= trimmed.size() || trimmed[pos] != ' ') return false;
+
+    size_t afterDate = trimmed.find_first_not_of(' ', pos);
+    if (afterDate == std::string::npos) return false;
+    size_t afterTime = trimmed.find_first_of(' ', afterDate);
+    if (afterTime == std::string::npos) return false;
+    std::string timeToken = trimmed.substr(afterDate, afterTime - afterDate);
+    if (timeToken.find(':') == std::string::npos) return false;
+
+    size_t afterTimeSpace = trimmed.find_first_not_of(' ', afterTime);
+    if (afterTimeSpace == std::string::npos) return false;
+
+    const std::string dirMarker = "<DIR>";
+    bool isDirectory = trimmed.compare(afterTimeSpace, dirMarker.size(), dirMarker) == 0;
+
+    size_t nameStart;
+    if (isDirectory) {
+        nameStart = trimmed.find_first_not_of(' ', afterTimeSpace + dirMarker.size());
+    } else {
+        size_t sizeEnd = trimmed.find_first_of(' ', afterTimeSpace);
+        if (sizeEnd == std::string::npos) return false;
+        std::string sizeToken = trimmed.substr(afterTimeSpace, sizeEnd - afterTimeSpace);
+        if (sizeToken.empty() || sizeToken.find_first_not_of("0123456789") != std::string::npos) return false;
+        nameStart = trimmed.find_first_not_of(' ', sizeEnd);
+    }
+    if (nameStart == std::string::npos) return false;
+
+    outName = trimmed.substr(nameStart);
+    outIsDirectory = isDirectory;
+    return true;
+}
+
 RemoteDirectoryEntry ClassifyRemoteDirectoryEntry(const std::wstring& baseUrl, const std::string& line) {
     std::string trimmed = TrimAscii(line);
+
+    std::string dosName;
+    bool dosIsDirectory = false;
+    if (TryParseDosListLine(trimmed, dosName, dosIsDirectory)) {
+        std::wstring name = Utf8ToWide(dosName);
+        std::wstring child = ChildUrl(baseUrl, name);
+        return { name, child, dosIsDirectory };
+    }
+
     const bool detailDirectory = !trimmed.empty() && trimmed[0] == 'd';
     const bool detailFile = !trimmed.empty() && trimmed[0] == '-';
     if ((detailDirectory || detailFile) && trimmed.find(' ') != std::string::npos) {

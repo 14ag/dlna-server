@@ -14,6 +14,7 @@
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#include <poll.h>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <netinet/in.h>
@@ -188,7 +189,13 @@ HttpServer& HttpServer::Get() {
     return instance;
 }
 
-HttpServer::HttpServer() : m_running(false), m_listenSocketV4(-1), m_listenSocketV6(-1) {
+HttpServer::HttpServer() : m_running(false), m_listenSocketV4(-1), m_listenSocketV6(-1), m_wakeupReadFd(-1), m_wakeupWriteFd(-1) {
+    int fds[2];
+    if (pipe(fds) == 0) {
+        m_wakeupReadFd = fds[0];
+        m_wakeupWriteFd = fds[1];
+        fcntl(m_wakeupReadFd, F_SETFL, fcntl(m_wakeupReadFd, F_GETFL) | O_NONBLOCK);
+    }
 }
 
 bool HttpServer::Start(int port) {
@@ -205,6 +212,10 @@ bool HttpServer::Start(int port) {
 void HttpServer::Stop() {
     m_running = false;
     AppEvents.ClearSubscriptions();
+    if (m_wakeupWriteFd >= 0) {
+        char byte = 0;
+        write(m_wakeupWriteFd, &byte, 1);
+    }
     if (m_listenSocketV4 >= 0) { shutdown(m_listenSocketV4, SHUT_RDWR); close(m_listenSocketV4); m_listenSocketV4 = -1; }
     if (m_listenSocketV6 >= 0) { shutdown(m_listenSocketV6, SHUT_RDWR); close(m_listenSocketV6); m_listenSocketV6 = -1; }
     for (auto& thread : m_threads) if (thread.joinable()) thread.join();
@@ -215,6 +226,8 @@ void HttpServer::Stop() {
         clients.swap(m_clientThreads);
     }
     for (auto& client : clients) if (client.thread.joinable()) client.thread.join();
+    if (m_wakeupReadFd >= 0) { close(m_wakeupReadFd); m_wakeupReadFd = -1; }
+    if (m_wakeupWriteFd >= 0) { close(m_wakeupWriteFd); m_wakeupWriteFd = -1; }
 }
 
 void HttpServer::ReapFinishedClientThreads() {
@@ -233,6 +246,22 @@ void HttpServer::ReapFinishedClientThreads() {
 void HttpServer::AcceptLoop(int listenSocket) {
     while (m_running) {
         ReapFinishedClientThreads();
+        struct pollfd fds[2];
+        fds[0].fd = listenSocket;
+        fds[0].events = POLLIN;
+        fds[1].fd = m_wakeupReadFd;
+        fds[1].events = POLLIN;
+        int ret = poll(fds, 2, -1);
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (fds[1].revents & POLLIN) {
+            char buf[64];
+            while (read(m_wakeupReadFd, buf, sizeof(buf)) > 0) {}
+            continue;
+        }
+        if (!(fds[0].revents & POLLIN)) continue;
         sockaddr_storage remote{};
         socklen_t len = sizeof(remote);
         int client = accept(listenSocket, reinterpret_cast<sockaddr*>(&remote), &len);
