@@ -196,29 +196,25 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     }
 
     m_running.store(true);
-    {
-        FILE* fp = _wfopen(L"diag_mrunning.txt", L"a");
-        if (fp) { fwprintf(fp, L"m_running.store(true) executed\n"); fclose(fp); }
-    }
     m_hThread = CreateThread(NULL, 0, ThreadWorker, this, 0, NULL);
     if (!m_hThread) {
         m_running.store(false);
         CloseSockets();
         return false;
     }
-    LogPrint(L"[diag:ssdp] After CreateThread");
     m_responseThread = std::thread(&SSDP::ResponseWorker, this);
-    LogPrint(L"[diag:ssdp] After std::thread(&SSDP::ResponseWorker)");
 
     // Fire initial SSDP alive burst asynchronously so Server::Start() is not
     // blocked from launching the background scan while the burst completes.
     // The burst sleep + sendto calls can block for 300ms+ or hang entirely in
     // environments without multicast support (test infrastructure).
-    std::thread([this]() {
+    // this thread is joined in Stop before CloseSockets runs
+    // it must not be detached or it can read m_ipv4Socket m_ipv6Socket
+    // at the same time Stop is writing them during teardown
+    m_initialBurstThread = std::thread([this]() {
         Sleep(ComputeSsdpStartupJitterMilliseconds());
         SendNotifyBurst("ssdp:alive", 3, 100);
-    }).detach();
-    LogPrint(L"[diag:ssdp] SSDP::Start about to return true");
+    });
     return true;
 }
 
@@ -238,6 +234,9 @@ void SSDP::Stop() {
     }
     if (m_responseThread.joinable()) {
         m_responseThread.join();
+    }
+    if (m_initialBurstThread.joinable()) {
+        m_initialBurstThread.join();
     }
     CloseSockets();
 }

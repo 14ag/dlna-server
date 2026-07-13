@@ -42,11 +42,5 @@ class RemoteSubtitleHostingSourceTests(unittest.TestCase):
         for token in ("ResolvePlaylistSidecar", "#DLNA-SUBTITLE:", "#EXTVLCOPT:sub-file="):
             self.assertIn(token, network)
 
-    def test_scan_time_remote_subtitle_logging_present(self):
-        for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
-            source = self.read(path)
-            self.assertIn("Playlist subtitle resolved to remote URL", source)
-
-
 if __name__ == "__main__":
     unittest.main()

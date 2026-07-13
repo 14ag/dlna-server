@@ -64,6 +64,7 @@ private:
     int m_ipv6Socket;
 #endif
     std::thread m_responseThread;
+    std::thread m_initialBurstThread;
     std::mutex m_responseMutex;
     std::condition_variable m_responseCondition;
     std::vector<DelayedSearchResponse> m_delayedResponses;

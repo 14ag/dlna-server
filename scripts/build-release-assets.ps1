@@ -22,6 +22,8 @@ function Invoke-NativeChecked {
     return $true
 }
 
+Get-Process "DLNA Server" -ErrorAction SilentlyContinue | Stop-Process -Force
+
 $ErrorActionPreference = "continue"
 $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $output = Join-Path $repo "output"

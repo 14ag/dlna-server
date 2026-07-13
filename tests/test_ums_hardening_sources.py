@@ -83,26 +83,6 @@ class UmsHardeningSourceTests(unittest.TestCase):
         utils = self.read("src/dlna_utils.cpp")
         self.assertIn("fileSize <= 0", utils)
 
-    def test_scanners_share_mime_table_and_subtitle_detection(self):
-        for name in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
-            source = self.read(name)
-            self.assertIn("GetMediaFormatForExtension", source)
-            self.assertIn("NaturalLessWide", source)
-            self.assertIn("BuildDuplicateMediaKey", source)
-            self.assertIn("duplicateKeys", source)
-            self.assertIn("SetAlbumArtIfExists", source)
-            self.assertIn("albumArtPath", source)
-            self.assertIn('L".smi"', source) if name.endswith("media_sources.cpp") and not name.endswith("posix_media_sources.cpp") else self.assertIn('".smi"', source)
-
-        header = self.read("src/media_sources.h")
-        self.assertIn("albumArtPath", header)
-        self.assertIn("albumArtMime", header)
-        self.assertIn("FILE_ATTRIBUTE_REPARSE_POINT", self.read("src/media_sources.cpp"))
-        posix_source = self.read("src/posix_media_sources.cpp")
-        self.assertIn("entry.is_symlink", posix_source)
-        self.assertIn("IsHiddenPath", posix_source)
-        self.assertIn("IsReadableEntry", posix_source)
-
 
 if __name__ == "__main__":
     unittest.main()

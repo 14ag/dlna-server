@@ -632,7 +632,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                                 << "Accept-Ranges: bytes\r\n"
                                 << ConnectionHeader(keepAlive)
                                 << "transferMode.dlna.org: Streaming\r\n"
-                                << "contentFeatures.dlna.org: " << (item.mimeType == L"video/mpegurl" ? "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000" : BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true)) << "\r\n"
+                                << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n"
                                 << "\r\n";
 
                         std::string headStr = headers.str();

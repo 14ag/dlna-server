@@ -201,7 +201,7 @@ function Get-CdsChildren {
 "@
     $headers = @{ SOAPACTION = '"urn:schemas-upnp-org:service:ContentDirectory:1#Browse"' }
     $response = Invoke-WebRequest -Uri "$ServerBase/upnp/control/content_directory" -Method Post `
-        -Body $soapBody -ContentType 'text/xml; charset="utf-8"' -Headers $headers -UseBasicParsing
+        -Body $soapBody -ContentType 'text/xml; charset="utf-8"' -Headers $headers -UseBasicParsing -SkipHeaderValidation
     [xml]$envelope = $response.Content
     [xml]$didl = $envelope.Envelope.Body.BrowseResponse.Result
     return Get-DidlNodes -DidlXml $didl

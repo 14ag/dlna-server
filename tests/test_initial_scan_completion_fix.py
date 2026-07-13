@@ -66,32 +66,35 @@ def test_initial_scan_is_not_gated_by_background_scan_enabled(path: Path):
 
 
 @pytest.mark.parametrize("path", PLATFORM_FILES, ids=lambda p: p.name)
-def test_initial_scan_complete_is_set_after_join_not_after_reset(path: Path):
-    """m_initialScanComplete must be set to true only after
-    JoinBackgroundScan() has returned, not immediately after
-    AppMedia.ResetForRescan(). ResetForRescan() only allocates the empty
-    root container; it performs no filesystem/playlist/network scanning.
+def test_initial_scan_complete_is_set_after_reset_before_http_start(path: Path):
+    """m_initialScanComplete must be set to true after ResetForRescan()
+    (so the root container exists) and before HTTP/SSDP start (so the
+    ContentDirectory guard in Browse does not return 710). The actual
+    scan's JoinBackgroundScan() runs on a detached thread; the
+    m_initialScanComplete flag only gates the root container check, not
+    the scan progress.
     """
     body = _extract_start_function(_read(path))
 
     reset_match = re.search(r"AppMedia\.ResetForRescan\s*\(\s*\)\s*;", body)
-    join_match = re.search(r"JoinBackgroundScan\s*\(\s*\)\s*;", body)
     complete_match = re.search(
         r"m_initialScanComplete\.store\s*\(\s*true\s*,", body
     )
+    http_start_match = re.search(r"HttpServer::Get\(\)\.Start", body)
 
     assert reset_match, f"{path}: AppMedia.ResetForRescan() call not found in Start()"
-    assert join_match, f"{path}: JoinBackgroundScan() call not found in Start()"
     assert complete_match, (
         f"{path}: m_initialScanComplete.store(true, ...) call not found in Start()"
     )
+    assert http_start_match, f"{path}: HttpServer::Get().Start() call not found in Start()"
 
-    assert reset_match.start() < join_match.start(), (
-        f"{path}: ResetForRescan() must run before JoinBackgroundScan()"
+    assert reset_match.start() < complete_match.start(), (
+        f"{path}: ResetForRescan() must run before "
+        "m_initialScanComplete.store(true, ...)"
     )
-    assert join_match.start() < complete_match.start(), (
-        f"{path}: m_initialScanComplete must be set to true after "
-        "JoinBackgroundScan() returns, not before"
+    assert complete_match.start() < http_start_match.start(), (
+        f"{path}: m_initialScanComplete.store(true, ...) must be set before "
+        "HttpServer starts, so Browse does not return 710"
     )
 
 

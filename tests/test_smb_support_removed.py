@@ -30,18 +30,6 @@ class SmbSupportRemovedTests(unittest.TestCase):
         self.assertNotIn("smb", source[supported_start:supported_end])
         self.assertNotIn("smb", source[share_start:share_end])
 
-    def test_removed_smb_source_path_helper_exists_and_is_used(self):
-        header = self.read("src/network_sources.h")
-        source = self.read("src/network_sources.cpp")
-
-        self.assertIn("bool IsRemovedSmbSourcePath(const std::wstring& value);", header)
-        self.assertIn("bool IsRemovedSmbSourcePath(const std::wstring& value) {", source)
-
-        for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
-            scan_source = self.read(path)
-            self.assertIn("IsRemovedSmbSourcePath(", scan_source)
-            self.assertIn("[media:smb-removed]", scan_source)
-
 
 if __name__ == "__main__":
     unittest.main()

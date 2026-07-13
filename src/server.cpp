@@ -15,6 +15,20 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
+namespace {
+// GetEnvironmentVariableW returns 0 both when a variable is absent and
+// when it is present but set to an empty string
+// GetLastError only reports ERROR_ENVVAR_NOT_FOUND for the absent case
+// so that must be checked to correctly treat present-but-empty as set
+// see https://learn.microsoft.com/windows/win32/api/processenv/nf-processenv-getenvironmentvariablew
+bool IsSkipFirewallEnvVarPresent() {
+    wchar_t buffer[8] = {};
+    DWORD copied = GetEnvironmentVariableW(L"DLNA_SERVER_SKIP_FIREWALL", buffer, 8);
+    if (copied != 0) return true;
+    return GetLastError() != ERROR_ENVVAR_NOT_FOUND;
+}
+}
+
 Server& Server::Get() {
     static Server instance;
     return instance;
@@ -63,12 +77,9 @@ void Server::StartBackgroundScan() {
 
     std::lock_guard<std::mutex> lock(m_scanMutex);
     if (m_scanThread.joinable()) {
-        LogPrint(L"[diag] StartBackgroundScan: scan already running, skipping");
         return;
     }
-    LogPrint(L"[diag] StartBackgroundScan: creating scan thread");
     m_scanThread = std::thread([]() { AppMedia.Scan(); });
-    LogPrint(L"[diag] StartBackgroundScan: thread created");
 }
 
 void Server::JoinBackgroundScanLocked() {
@@ -174,8 +185,7 @@ bool Server::Start() {
         return false;
     }
 
-    wchar_t skipFirewall[8] = {};
-    if (GetEnvironmentVariableW(L"DLNA_SERVER_SKIP_FIREWALL", skipFirewall, 8) == 0) {
+    if (!IsSkipFirewallEnvVarPresent()) {
         std::wstring firewallMessage;
         if (!EnsureFirewallAccess(cfg.port, FirewallAccessMode::Interactive, firewallMessage)) {
             LogPrint(L"%ls", firewallMessage.c_str());
@@ -231,10 +241,8 @@ bool Server::Start() {
         HttpServer::Get().Stop();
         return false;
     }
-    LogPrint(L"[diag:server] After SSDP::Get().Start returned - about to store m_running");
 
     m_running.store(true, std::memory_order_release);
-    LogPrint(L"[diag:server] After m_running.store - about to call StartBackgroundScan");
     StartBackgroundScan();
     // Do not JoinBackgroundScan() here: Start() must return once the device is
     // advertised, not once the library is fully indexed. The scan continues on
@@ -249,6 +257,11 @@ bool Server::Start() {
 }
 
 bool Server::Rescan() {
+    // serialize the whole reset then scan sequence per caller
+    // two overlapping Rescan calls must not let one caller reset the
+    // published item tree while another caller is still publishing into
+    // it from a scan that has not finished yet
+    std::lock_guard<std::mutex> rescanLock(m_rescanMutex);
     AppMedia.ResetForRescan();
     if (m_running.load(std::memory_order_acquire)) {
         // StartBackgroundScan only launches the scan thread and returns
