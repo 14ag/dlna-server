@@ -18,12 +18,7 @@ On Windows, it runs as a normal app with a tray icon. On Linux and macOS, you ca
 - Automatically finds matching subtitles and cover art sitting next to your media files
 - On Windows, can set up its own firewall access for you, limited to devices on your own network
 
-## Prerequisites
 
-- CMake 3.20 or newer
-- A C++17 compiler — MSVC on Windows, GCC or Clang on Linux/macOS
-- libcurl — via vcpkg on Windows, via your system package manager or dev package on POSIX
-- FLTK, only if you're building the native Linux/macOS GUI. If it's not already installed, CMake fetches and builds it for you.
 
 ## Install
 
@@ -35,7 +30,33 @@ Prebuilt binaries are available from the [Releases](https://github.com/anomalyco
 
 The desktop GUI starts by default on every platform. Use the Settings dialog to configure sources, port, and server name. The command-line flags described below override settings for a single session.
 
+## Usage
+
+**Windows** — launch `DLNA Server.exe`, add a folder, playlist, or network URL as a source, and click Start. A tray icon keeps it running in the background. Pass `--headless` to start with tray icon only and no window.
+
+**Linux / macOS desktop** — launch `dlna-server-gui-bin` (AppImage starts it automatically). Use the Settings dialog to configure sources and server options.
+
+**Headless / CLI (all platforms):**
+
+```
+DLNA Server.exe --port 8200 --source C:\media
+dlna-server --port 8200 --source /path/to/media --source ftp://user:pass@host/media
+```
+
+All flags work the same way regardless of platform: `--port`, `--name`, `--uuid`, `--debug`, `--source` (repeatable), `--help`, `--print-scan-concurrency`. Sources can be folders, playlist files (`.m3u`, `.m3u8`, `.pls`), or `ftp://`/`ftps://` URLs. On every platform, any unrecognized argument is treated as a media source path.
+
+## Configuration
+
+Settings persist to `config.ini` under a `[Settings]` section — server name, port, media sources, IP whitelist, and folder-display options. See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for the full field reference.
+
 ## Building
+
+### Prerequisites
+
+- CMake 3.20 or newer
+- A C++17 compiler — MSVC on Windows, GCC or Clang on Linux/macOS
+- libcurl — via vcpkg on Windows, via your system package manager or dev package on POSIX
+- FLTK, only if you're building the native Linux/macOS GUI. If it's not already installed, CMake fetches and builds it for you.
 
 **Windows** (requires a vcpkg install with the CURL port available):
 
@@ -56,23 +77,6 @@ sudo cmake --install build
 The native FLTK GUI (`dlna-server-gui-native`) builds by default on POSIX. Turn it off with `-DDLNA_ENABLE_FLTK_GUI=OFF` if you only want the headless binary.
 
 On Linux, `cmake --install` also registers desktop and AppStream metadata; `CPack` produces a `.deb` package (`libcurl4` is listed as a runtime dependency).
-
-## Usage
-
-**Windows GUI** — launch `DLNA Server.exe`, add a folder, playlist, or network URL as a source, and click Start. A tray icon keeps it running in the background.
-
-**Headless (no GUI):**
-
-```
-DLNA Server.exe --headless
-dlna-server --port 8200 --source /path/to/media --source ftp://user:pass@host/media
-```
-
-Available flags (same on all platforms): `--port`, `--name`, `--uuid`, `--debug`, `--source` (repeatable), `--help`. Sources can be folders, playlist files (`.m3u`, `.m3u8`, `.pls`), or `ftp://`/`ftps://` URLs.
-
-## Configuration
-
-Settings persist to `config.ini` under a `[Settings]` section — server name, port, media sources, IP whitelist, and folder-display options. See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for the full field reference.
 
 ## Testing
 

@@ -71,7 +71,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         } else if (wcscmp(argv[i], L"--help") == 0) {
             showHelp = true;
         } else if (wcscmp(argv[i], L"--port") == 0 && i + 1 < argc) {
-            portArg = _wtoi(argv[++i]);
+            ++i;
+            if (!TryParsePortStrict(WideToUtf8(argv[i]), portArg)) portArg = 0;
         } else if (wcscmp(argv[i], L"--name") == 0 && i + 1 < argc) {
             runtimeName = argv[++i];
         } else if (wcscmp(argv[i], L"--uuid") == 0 && i + 1 < argc) {
@@ -85,6 +86,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::cout << ComputePlaylistScanConcurrency(n) << std::endl;
             LocalFree(argv);
             return 0;
+        } else {
+            runtimeSources.push_back(argv[i]);
         }
     }
 
