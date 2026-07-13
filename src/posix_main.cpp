@@ -2,6 +2,7 @@
 #include "dlna_utils.h"
 #include "log.h"
 #include "netutils.h"
+#include "playlist_scan_concurrency.h"
 #include "server.h"
 
 #include <atomic>

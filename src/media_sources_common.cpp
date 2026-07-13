@@ -244,10 +244,7 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
             LogPrint(L"Playlist subtitle resolved to remote URL: %ls", RedactUrlForLog(subtitleOverride).c_str());
         }
     } else if (!IsRemoteMediaUrl(path) && uclass == L"object.item.videoItem") {
-        std::wstring fileName = SourceDisplayName(path);
-        wchar_t stemBuf[MAX_PATH];
-        wcscpy_s(stemBuf, fileName.c_str());
-        PathRemoveExtensionW(stemBuf);
+        std::wstring stem = SourceStemName(path);
 
         std::wstring folder = path;
         size_t slash = folder.find_last_of(L"\\/");
@@ -255,7 +252,7 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
 
         static const wchar_t* kSubExts[] = { L".srt", L".vtt", L".sub", L".ass", L".ssa", L".smi", L".txt" };
         for (const wchar_t* subExt : kSubExts) {
-            std::wstring candidate = folder + L"\\" + stemBuf + subExt;
+            std::wstring candidate = folder + L"\\" + stem + subExt;
             if (FsIsRegularFile(candidate)) {
                 fileInfo.subtitlePath = candidate;
                 break;
@@ -298,7 +295,11 @@ void MediaSources::AddHlsStreamItem(MediaIndexState& state, const std::wstring& 
     {
         std::time_t now = std::time(nullptr);
         struct tm utc;
+#ifdef _WIN32
         gmtime_s(&utc, &now);
+#else
+        gmtime_r(&now, &utc);
+#endif
         char buf[11];
         std::strftime(buf, sizeof(buf), "%Y-%m-%d", &utc);
         hlsItem.dcDate = buf;
