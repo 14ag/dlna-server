@@ -1,7 +1,7 @@
 param(
     [string]$Version = "",
     [string]$WslDistro = "Ubuntu",
-    [string]$Platform = "winx64,winx86,linux,macos-x64,macos-arm64",
+    [string]$Platform = "winx64,winx86,linux",
     [Alias("no-clean")]
     [switch]$NoClean
 )
@@ -68,6 +68,28 @@ function Get-Sha256Hex {
     }
 }
 
+function Clear-StaleDownload {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedSha256
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $existing = Get-Item -LiteralPath $Path
+    if ($existing.Length -eq 0) {
+        Write-Warning "Removing zero-byte stale file: $Path"
+        Remove-Item -LiteralPath $Path -Force
+        return
+    }
+    $actual = Get-Sha256Hex -Path $Path
+    if ($actual -ine $ExpectedSha256) {
+        Write-Warning "Checksum mismatch for $Path (expected $ExpectedSha256, got $actual). Removing stale file."
+        Remove-Item -LiteralPath $Path -Force
+    }
+}
+
 function Save-UrlIfMissing {
     param(
         [Parameter(Mandatory = $true)]
@@ -77,28 +99,28 @@ function Save-UrlIfMissing {
         [string]$Sha256 = ""
     )
 
-    if (Test-Path -LiteralPath $Path) {
-        $existing = Get-Item -LiteralPath $Path
-        if ($existing.Length -gt 0) {
-            if (-not $Sha256 -or ((Get-Sha256Hex -Path $Path) -ieq $Sha256)) {
-                return
-            }
-            Remove-Item -LiteralPath $Path -Force
-        }
+    if ($Sha256) {
+        Clear-StaleDownload -Path $Path -ExpectedSha256 $Sha256
     }
+
+    if (Test-Path -LiteralPath $Path) { return }
 
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
     Write-Host "Downloading $Url..."
     $client = New-Object System.Net.WebClient
     try {
         $client.DownloadFile($Url, $Path)
+    } catch {
+        Write-Warning "Download failed: $Url ($($_.Exception.Message))"
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        return
     } finally {
         $client.Dispose()
     }
 
     if ($Sha256 -and -not ((Get-Sha256Hex -Path $Path) -ieq $Sha256)) {
+        Write-Warning "Downloaded file checksum mismatch for $Path. Expected $Sha256, got $(Get-Sha256Hex -Path $Path). Removing."
         Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-        throw "Checksum mismatch for $Path"
     }
 }
 
