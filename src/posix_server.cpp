@@ -203,6 +203,9 @@ bool Server::Start() {
 }
 
 bool Server::Rescan() {
+    // serialize the whole reset then scan sequence per caller
+    // see src/server.cpp Server::Rescan for the full rationale
+    std::lock_guard<std::mutex> rescanLock(m_rescanMutex);
     AppMedia.ResetForRescan();
     if (m_running.load(std::memory_order_acquire)) {
         StartBackgroundScan();

@@ -55,14 +55,6 @@ std::string UrlWithoutQueryOrFragment(const std::string& value) {
     return end == std::string::npos ? value : value.substr(0, end);
 }
 
-std::string ParentUrl(const std::string& value) {
-    std::string clean = UrlWithoutQueryOrFragment(value);
-    if (!clean.empty() && clean.back() == '/') clean.pop_back();
-    size_t slash = clean.find_last_of('/');
-    if (slash == std::string::npos) return value;
-    return clean.substr(0, slash + 1);
-}
-
 std::wstring ParentLocalPath(const std::wstring& value) {
     size_t slash = value.find_last_of(L"\\/");
     if (slash == std::wstring::npos) return L".";
@@ -107,32 +99,6 @@ std::wstring JoinLocalPath(const std::wstring& baseFile, const std::wstring& ent
 #endif
     if (!parent.empty() && parent.back() != L'\\' && parent.back() != L'/') parent.push_back(slash);
     return parent + entry;
-}
-
-// TODO(remediation): JoinUrl and ResolveRelativeUrl both resolve a
-// relative reference against a base URL with different correctness
-// guarantees (JoinUrl does not collapse ".." or handle host-relative
-// absolute paths). Candidate for consolidation onto ResolveRelativeUrl
-// once ResolvePlaylistEntry's callers are covered by a regression test
-// for '..'-bearing playlist entries.
-std::wstring JoinUrl(const std::wstring& baseUrl, const std::wstring& entry) {
-    if (IsRemoteMediaUrl(entry)) return entry;
-    std::string parent = ParentUrl(WideToUtf8(baseUrl));
-    std::string relative = WideToUtf8(entry);
-    std::stringstream joined;
-    joined << parent;
-    bool needsSlash = !parent.empty() && parent.back() != '/';
-    std::stringstream parts(relative);
-    std::string part;
-    bool first = true;
-    while (std::getline(parts, part, '/')) {
-        if (part.empty() || part == ".") continue;
-        if (!first && needsSlash) joined << '/';
-        joined << UrlEncodePathSegment(part);
-        needsSlash = true;
-        first = false;
-    }
-    return Utf8ToWide(joined.str());
 }
 
 std::wstring ResolveRelativeUrl(const std::wstring& baseUrl, const std::wstring& relativeUrl) {
@@ -225,7 +191,7 @@ std::string RewriteHlsManifestUrisToAbsolute(const std::wstring& manifestUrl, co
 
 std::wstring ResolvePlaylistEntry(const std::wstring& playlistPath, const std::wstring& entry) {
     if (IsRemoteMediaUrl(entry) || IsAbsoluteLocalPath(entry)) return entry;
-    if (IsRemoteMediaUrl(playlistPath)) return JoinUrl(playlistPath, entry);
+    if (IsRemoteMediaUrl(playlistPath)) return ResolveRelativeUrl(playlistPath, entry);
     return JoinLocalPath(playlistPath, entry);
 }
 

@@ -120,10 +120,7 @@ bool MediaSources::IsAllowedExtension(const std::wstring& ext, std::wstring& mim
 }
 
 void MediaSources::Scan() {
-    FILE* f_diag = NULL;
-    _wfopen_s(&f_diag, L"diag_scan.txt", L"a");
-    if (f_diag) { fwprintf(f_diag, L"Scan entered\n"); fclose(f_diag); }
-    LogPrint(L"[diag:scan] MediaSources::Scan entered");
+    
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     auto database = std::make_shared<MediaDatabase>();
     database->Load(MediaDatabase::DefaultDatabasePath());
@@ -340,9 +337,18 @@ void MediaSources::RunPlaylistDispatcher(std::shared_ptr<PlaylistScanContext> ct
         }
         ctx->limiter.Acquire();
         PlaylistScanPool::Get().Submit([this, ctx, node]() {
-            TaskGroupLeaveGuard leave(ctx->group);
-            ScanOnePlaylistNode(ctx, node, leave);
-            ctx->limiter.Release();
+            // the leave guard must go out of scope and run group Leave
+            // before queueCv is notified
+            // Leave decrements the pending count the dispatcher predicate
+            // reads and that decrement must be visible before the notify
+            // fires or the dispatcher can observe a stale count and never
+            // wake again once this is the task that brings count to zero
+            // see the workflow doc section 1 3 for the full trace
+            {
+                TaskGroupLeaveGuard leave(ctx->group);
+                ScanOnePlaylistNode(ctx, node, leave);
+                ctx->limiter.Release();
+            }
             ctx->queueCv.notify_all();
         });
     }

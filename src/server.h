@@ -46,6 +46,7 @@ private:
     std::thread m_scanThread;
     std::thread m_watchThread;
     std::mutex m_scanMutex;
+    std::mutex m_rescanMutex;
     mutable std::mutex m_endpointMutex;
     std::mutex m_watchMutex;
     std::condition_variable m_watchCv;

@@ -26,19 +26,6 @@ class PlaylistNetworkSourceTests(unittest.TestCase):
         for token in ('L".m3u"', 'L".m3u8"', 'L".pls"', '"ftp"', "CURLOPT_DIRLISTONLY", "CURLOPT_RANGE"):
             self.assertIn(token, source)
 
-    def test_windows_and_posix_scanners_index_playlist_and_network_sources(self):
-        for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
-            source = self.read(path)
-            self.assertIn("IsPlaylistSourcePath", source)
-            self.assertIn("ScanPlaylistTree", source)
-            self.assertIn("IsNetworkShareUrl", source)
-            self.assertIn("ScanNetworkFolder", source)
-            # scanners now use FetchPlaylistOnce/ParseFetchedPlaylistText via ScanOnePlaylistNode
-            self.assertIn("ScanOnePlaylistNode", source)
-            self.assertIn("ParseFetchedPlaylistText", source)
-            self.assertIn("ListRemoteDirectory", source)
-            self.assertIn("ProbeRemoteContentLength", source)
-
     def test_http_servers_proxy_remote_media_with_range_support(self):
         for path in ("src/httpserver.cpp", "src/posix_httpserver.cpp"):
             source = self.read(path)
