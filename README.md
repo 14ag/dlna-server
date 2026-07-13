@@ -2,7 +2,7 @@
 
 dlna-server shares your videos, music, and photos with TVs, game consoles, and other DLNA-capable devices on your home network. Point it at a folder or a playlist, and any DLNA player on the same network can find it and start playing — no extra setup needed on the player's side.
 
-On Windows, it runs as a normal app with a tray icon. On Linux and macOS, it runs from the command line, with an optional desktop app too.
+On Windows, it runs as a normal app with a tray icon. On Linux and macOS, you can use the desktop app or the command line.
 
 ## Features
 
@@ -24,6 +24,16 @@ On Windows, it runs as a normal app with a tray icon. On Linux and macOS, it run
 - A C++17 compiler — MSVC on Windows, GCC or Clang on Linux/macOS
 - libcurl — via vcpkg on Windows, via your system package manager or dev package on POSIX
 - FLTK, only if you're building the native Linux/macOS GUI. If it's not already installed, CMake fetches and builds it for you.
+
+## Install
+
+Prebuilt binaries are available from the [Releases](https://github.com/anomalyco/dlna-server/releases) page:
+
+- **Windows** — download `DLNA-Server-win64.zip` or `DLNA-Server-win86.zip`, unzip, and run `DLNA Server.exe`.
+- **Linux** — download `dlna-server-x86_64.AppImage`, make it executable (`chmod +x dlna-server-x86_64.AppImage`), and run it. The AppImage bundles both the desktop GUI and the command-line server.
+- **macOS** — download `DLNA-Server.dmg`, open it, and drag `DLNA Server.app` to your Applications folder.
+
+The desktop GUI starts by default on every platform. Use the Settings dialog to configure sources, port, and server name. The command-line flags described below override settings for a single session.
 
 ## Building
 
@@ -51,19 +61,14 @@ On Linux, `cmake --install` also registers desktop and AppStream metadata; `CPac
 
 **Windows GUI** — launch `DLNA Server.exe`, add a folder, playlist, or network URL as a source, and click Start. A tray icon keeps it running in the background.
 
-**Windows headless:**
+**Headless (no GUI):**
 
 ```
 DLNA Server.exe --headless
-```
-
-**POSIX CLI:**
-
-```
 dlna-server --port 8200 --source /path/to/media --source ftp://user:pass@host/media
 ```
 
-Available flags: `--port`, `--name`, `--uuid`, `--debug`, `--source` (repeatable), `--help`. Sources can be folders, playlist files (`.m3u`, `.m3u8`, `.pls`), or `ftp://`/`ftps://` URLs.
+Available flags (same on all platforms): `--port`, `--name`, `--uuid`, `--debug`, `--source` (repeatable), `--help`. Sources can be folders, playlist files (`.m3u`, `.m3u8`, `.pls`), or `ftp://`/`ftps://` URLs.
 
 ## Configuration
 

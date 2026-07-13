@@ -32,99 +32,92 @@ BOOL WINAPI HeadlessConsoleCtrlHandler(DWORD ctrlType) {
     return FALSE;
 }
 
-bool HasCommandLineToken(const wchar_t* token) {
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv) return false;
-    bool found = false;
-    for (int i = 1; i < argc; ++i) {
-        if (wcscmp(argv[i], token) == 0) {
-            found = true;
-            break;
-        }
-    }
-    LocalFree(argv);
-    return found;
+void PrintUsage() {
+    std::wcerr << L"Usage: DLNA Server.exe [--headless] [--port N] [--name NAME] [--uuid UUID] [--debug] --source PATH_OR_URL [--source PATH_OR_URL...]\n";
+    std::wcerr << L"  --headless, -h    Start without window (tray icon only)\n";
+    std::wcerr << L"  --port N          HTTP port override (1-65535)\n";
+    std::wcerr << L"  --name NAME       UPnP friendly server name override\n";
+    std::wcerr << L"  --uuid UUID       Device UUID override\n";
+    std::wcerr << L"  --source PATH     Add media source (folder, playlist, or URL)\n";
+    std::wcerr << L"  --debug           Enable debug logging\n";
+    std::wcerr << L"  --configure-firewall  Run firewall helper and exit\n";
+    std::wcerr << L"  --help            Show this help and exit\n";
 }
 
-bool HasHeadlessToken() {
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv) return false;
-    bool found = false;
-    for (int i = 1; i < argc; ++i) {
-        if (wcscmp(argv[i], L"--headless") == 0 || wcscmp(argv[i], L"-h") == 0) {
-            found = true;
-            break;
-        }
-    }
-    LocalFree(argv);
-    return found;
-}
-
-bool TryRunFirewallHelper(int& exitCode) {
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv) {
-        return false;
-    }
-
-    bool configureFirewall = false;
-    int port = 0;
-    for (int i = 1; i < argc; ++i) {
-        if (wcscmp(argv[i], L"--configure-firewall") == 0) {
-            configureFirewall = true;
-        } else if (wcscmp(argv[i], L"--port") == 0 && i + 1 < argc) {
-            port = _wtoi(argv[++i]);
-        }
-    }
-
-    LocalFree(argv);
-    if (!configureFirewall) {
-        return false;
-    }
-
-    AppConfig.Load();
-    if (port <= 0) {
-        port = AppConfig.port;
-    }
-
-    std::wstring message;
-    exitCode = ConfigureFirewallAccessElevated(port, message) ? 0 : 1;
-    return true;
-}
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
     (void)hPrevInstance;
     (void)pCmdLine;
 
-    int helperExitCode = 0;
-    if (TryRunFirewallHelper(helperExitCode)) {
-        return helperExitCode;
-    }
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) return 1;
 
-    // Hidden test hook: print scan concurrency for given N and exit
-    {
-        int argc = 0;
-        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-        if (argv) {
-            for (int i = 1; i < argc; ++i) {
-                if (wcscmp(argv[i], L"--print-scan-concurrency") == 0 && i + 1 < argc) {
-                    size_t n = static_cast<size_t>(_wtoi(argv[i + 1]));
-                    std::cout << ComputePlaylistScanConcurrency(n) << std::endl;
-                    LocalFree(argv);
-                    return 0;
-                }
-            }
+    bool configureFirewall = false;
+    bool startHeadless = false;
+    bool showHelp = false;
+    bool debugFlag = false;
+    int portArg = 0;
+    std::wstring runtimeName;
+    std::wstring runtimeUUID;
+    std::vector<std::wstring> runtimeSources;
+
+    for (int i = 1; i < argc; ++i) {
+        if (wcscmp(argv[i], L"--configure-firewall") == 0) {
+            configureFirewall = true;
+        } else if (wcscmp(argv[i], L"--headless") == 0 || wcscmp(argv[i], L"-h") == 0) {
+            startHeadless = true;
+        } else if (wcscmp(argv[i], L"--help") == 0) {
+            showHelp = true;
+        } else if (wcscmp(argv[i], L"--port") == 0 && i + 1 < argc) {
+            portArg = _wtoi(argv[++i]);
+        } else if (wcscmp(argv[i], L"--name") == 0 && i + 1 < argc) {
+            runtimeName = argv[++i];
+        } else if (wcscmp(argv[i], L"--uuid") == 0 && i + 1 < argc) {
+            runtimeUUID = argv[++i];
+        } else if (wcscmp(argv[i], L"--source") == 0 && i + 1 < argc) {
+            runtimeSources.push_back(argv[++i]);
+        } else if (wcscmp(argv[i], L"--debug") == 0) {
+            debugFlag = true;
+        } else if (wcscmp(argv[i], L"--print-scan-concurrency") == 0 && i + 1 < argc) {
+            size_t n = static_cast<size_t>(_wtoi(argv[++i]));
+            std::cout << ComputePlaylistScanConcurrency(n) << std::endl;
             LocalFree(argv);
+            return 0;
         }
     }
+
+    if (showHelp) {
+        PrintUsage();
+        LocalFree(argv);
+        return 0;
+    }
+
+    if (configureFirewall) {
+        LocalFree(argv);
+        AppConfig.Load();
+        int port = portArg > 0 ? portArg : AppConfig.port;
+        std::wstring message;
+        return ConfigureFirewallAccessElevated(port, message) ? 0 : 1;
+    }
+
+    // Load config, then apply CLI overrides on top
+    AppConfig.Load();
+
+    if (portArg > 0 && portArg <= 65535) AppConfig.port = portArg;
+    if (!runtimeName.empty()) AppConfig.serverName = runtimeName;
+    if (!runtimeUUID.empty()) AppConfig.deviceUUID = runtimeUUID;
+    if (debugFlag) AppConfig.debugLog = true;
+    for (const auto& src : runtimeSources) {
+        AppConfig.mediaSources.push_back({src, true});
+    }
+
+    LocalFree(argv);
 
     // Check for single instance
     HANDLE hMutex = CreateMutexW(NULL, TRUE, L"dlna-server_SingleInstance_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        // Find existing window and show it
         HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
         if (hwndExisting) {
             ShowWindow(hwndExisting, SW_RESTORE);
@@ -133,8 +126,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 0;
     }
 
-    bool startHeadless = HasHeadlessToken();
-
     // Attach console for headless mode output
     bool consoleAttached = false;
     FILE* fpOut = NULL;
@@ -142,23 +133,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (startHeadless) {
         consoleAttached = AttachConsole(ATTACH_PARENT_PROCESS) != 0;
         if (consoleAttached && GetLastError() == ERROR_ACCESS_DENIED) {
-            // Already has console, skip redirect
         } else if (!consoleAttached && GetLastError() == ERROR_INVALID_HANDLE) {
-            // No parent console (e.g., launched from Explorer), proceed silently
             consoleAttached = false;
         } else if (consoleAttached) {
-            // Successfully attached, redirect stdout/stderr
             _wfreopen_s(&fpOut, L"CONOUT$", L"w", stdout);
             _wfreopen_s(&fpErr, L"CONOUT$", L"w", stderr);
         }
 
-        AppConfig.Load();
-
         if (AppConfig.debugLog) {
             SetConsoleCtrlHandler(HeadlessConsoleCtrlHandler, TRUE);
         }
-    } else {
-        AppConfig.Load();
     }
 
     MainWindow app;

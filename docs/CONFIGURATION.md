@@ -44,4 +44,4 @@ Each `MediaSources` entry is classified at scan time, not at config-parse time:
 
 ## Runtime overrides
 
-Command-line flags (`--port`, `--name`, `--uuid`, `--source`) apply on top of the loaded config for that process instance and are not written back to `config.ini` unless the GUI's Settings dialog is used, which calls `Config::Save()` explicitly.
+Command-line flags (`--port`, `--name`, `--uuid`, `--source`, `--debug`) apply on top of the loaded config for that process instance and are not written back to `config.ini` unless the GUI's Settings dialog is used, which calls `Config::Save()` explicitly. These flags work the same way on Windows (headless mode or regular window) and on POSIX (both the desktop GUI and the command-line binary).
