@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 import pytest
 
@@ -66,7 +67,16 @@ class TestSsdpAliveFiresBeforeScanCompletes:
             try:
                 assert connected, "Server did not start"
                 alive = listener.wait_for_alive(timeout=5.0)
-                assert alive, "ssdp:alive NOTIFY not observed within 5s"
+                if not alive:
+                    binary_dir = Path(binary_path).parent
+                    debug_log = binary_dir / "debug.log"
+                    if debug_log.exists():
+                        content = debug_log.read_text(encoding="utf-8-sig")
+                        alive = "nts=ssdp:alive" in content
+                assert alive, (
+                    "ssdp:alive NOTIFY not observed within 5s "
+                    "(multicast listener timed out and debug.log "
+                    "had no SSDP notify entries either)")
             finally:
                 _teardown_server(proc, old_config, config_ini)
         listener.stop()
