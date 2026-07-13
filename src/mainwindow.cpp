@@ -292,7 +292,7 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
 
 MainWindow::MainWindow() : m_hwnd(NULL), m_hInstance(NULL), m_state(ServerUiState::Stopped),
 m_hBtnAdd(NULL), m_hBtnDelete(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL), m_listOldProc(NULL),
-m_startedHeadless(false), m_scanInProgress(false), m_scanningStatusActive(false), m_pendingRescanAfterBusy(false) {
+m_startedHeadless(false), m_scanInProgress(false), m_scanningStatusActive(false) {
     m_hBgBrush = CreateSolidBrush(kPageColor);
     m_hDarkBrush = CreateSolidBrush(kControlColor);
     m_hToolbarBrush = CreateSolidBrush(kToolbarColor);
@@ -486,9 +486,6 @@ void MainWindow::CompleteServerOperation(ServerUiState finalState, const std::ws
     if (!success && !message.empty()) {
         MessageBoxW(m_hwnd, message.c_str(), L"DLNA Server", MB_ICONWARNING | MB_OK);
     }
-    if (m_pendingRescanAfterBusy.exchange(false)) {
-        std::thread([]() { DLNAServer.Rescan(); }).detach();
-    }
 }
 
 HFONT MainWindow::CreateUiFont(int pixelSize, int weight, const wchar_t* faceName) {
@@ -576,10 +573,16 @@ int MainWindow::SelectedSourceIndex() const {
 
 void MainWindow::UpdateDeleteButton() {
     if (!m_hBtnDelete) return;
-    EnableWindow(m_hBtnDelete, !m_focusState.IsNoFocus() ? TRUE : FALSE);
+    const bool hasSelection = !m_focusState.IsNoFocus();
+    const bool deletionAllowed = hasSelection && !IsBusy() && !m_scanInProgress.load();
+    EnableWindow(m_hBtnDelete, deletionAllowed ? TRUE : FALSE);
 }
 
 void MainWindow::RemoveSelectedSource() {
+    if (IsBusy() || m_scanInProgress.load()) {
+        return;
+    }
+
     int selected = SelectedSourceIndex();
     if (selected < 0 || selected >= static_cast<int>(AppConfig.mediaSources.size())) {
         UpdateDeleteButton();
@@ -597,11 +600,7 @@ void MainWindow::RemoveSelectedSource() {
     UpdateDeleteButton();
     InvalidateRect(m_hwnd, NULL, TRUE);
 
-    if (IsBusy()) {
-        m_pendingRescanAfterBusy.store(true);
-    } else {
-        std::thread([]() { DLNAServer.Rescan(); }).detach();
-    }
+    std::thread([]() { DLNAServer.Rescan(); }).detach();
 }
 
 void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
@@ -657,7 +656,7 @@ void MainWindow::OpenFolderPicker() {
                 return;
             }
         }
-        cfg.mediaSources.push_back({selected, true});
+        cfg.mediaSources.push_back({selected});
     });
     if (alreadyPresent) return;
     AppConfig.Save();
@@ -871,6 +870,10 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             return TRUE;
         }
         return TRUE;
+    }
+    case WM_SHOW_EXISTING_INSTANCE: {
+        RestoreAndFocusMainWindow();
+        return 0;
     }
     case WM_TRAYICON: {
         if (lParam == WM_LBUTTONUP) {

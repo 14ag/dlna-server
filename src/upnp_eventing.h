@@ -1,10 +1,13 @@
 #ifndef UPNP_EVENTING_H
 #define UPNP_EVENTING_H
 
+#include "bounded_thread_pool.h"
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -65,6 +68,11 @@ private:
     std::thread m_worker;
     bool m_stopping = false;
     bool m_workerStarted = false;
+    // Bounded so a burst of subscribers cannot spawn unbounded concurrent
+    // outbound HTTP NOTIFY requests; sized to kMaxUpnpSubscriptions since
+    // that is already the hard cap on how many jobs could ever be in
+    // flight at once in the worst case (one per subscriber).
+    std::unique_ptr<BoundedThreadPool> m_notifyPool;
     int m_lastSystemUpdateId = 1;
     unsigned long long m_generation = 0;
     // GENA notify moderation (leading-edge-plus-trailing-edge debounce): a

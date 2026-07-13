@@ -37,6 +37,18 @@ const auto g_canonicalize = [](const std::wstring& path) -> std::wstring {
     return CanonicalMediaKey(path);
 };
 
+// Single shared source of negative scratch IDs used whenever no
+// MediaDatabase is available to hand out a stable persistent ID  Every
+// fallback-ID call site in this file must go through this one counter
+// previously each call site kept its own independently-seeded static
+// atomic (-2 -1000002 -2000002) which only avoided collisions because
+// someone hand-picked disjoint ranges  A single shared strictly
+// decreasing counter cannot collide with itself by construction
+int NextScratchId() {
+    static std::atomic<int> s_nextScratchId{-2};
+    return s_nextScratchId.fetch_sub(1, std::memory_order_relaxed);
+}
+
 std::wstring ParentPathOf(const std::wstring& path) {
     size_t slash = path.find_last_of(L"\\/");
     return slash == std::wstring::npos ? L"" : path.substr(0, slash);
@@ -133,10 +145,6 @@ void MediaSources::Scan() {
     std::vector<SourceJob> jobs;
 
     for (const auto& src : cfg.mediaSources) {
-        if (!src.enabled) {
-            LogPrint(L"Skipping disabled media source: %ls", RedactUrlForLog(src.path).c_str());
-            continue;
-        }
         if (IsRemovedSmbSourcePath(src.path)) {
             LogPrint(L"[media:smb-removed] SMB media sources are no longer supported; skipping: %ls",
                      RedactUrlForLog(src.path).c_str());
@@ -162,12 +170,14 @@ void MediaSources::Scan() {
         auto ctx = std::make_shared<PlaylistScanContext>();
         ctx->cfg = cfg;
         ctx->state.mediaDatabase = database.get();
-        jobs.push_back({ctx, MediaSource{cfg.defaultPlaylistPath, true}, containerId});
+        jobs.push_back({ctx, MediaSource{cfg.defaultPlaylistPath}, containerId});
     }
 
-    std::vector<std::thread> sourceThreads;
+    TaskGroup sourceGroup;
     for (auto& job : jobs) {
-        sourceThreads.emplace_back([this, &job]() {
+        sourceGroup.Enter();
+        PlaylistScanPool::Get().Submit([this, &job, &sourceGroup]() {
+            TaskGroupLeaveGuard leave(sourceGroup);
             LogPrint(L"Scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
             if (IsPlaylistSourcePath(job.source.path)) {
                 ScanPlaylistTree(job.ctx, job.source.path, job.containerId);
@@ -179,7 +189,7 @@ void MediaSources::Scan() {
             LogPrint(L"Finished scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
         });
     }
-    for (auto& t : sourceThreads) t.join();
+    sourceGroup.Wait();
 
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
     AppEvents.NotifySystemUpdateId(newUpdateId);
@@ -209,11 +219,10 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
 
     MediaItem fileInfo;
     const std::wstring stableKey = BuildStableMediaKey(parentId, path, g_canonicalize);
-    ScopedScanSuccess scanSuccess(state.mediaDatabase, stableKey);
-    static std::atomic<int> s_scratchMediaId{-1000002};
+    ScanSuccessMarker scanSuccess(state.mediaDatabase, stableKey);
     fileInfo.id = state.mediaDatabase
         ? state.mediaDatabase->GetOrCreateStableId(stableKey)
-        : s_scratchMediaId.fetch_sub(1, std::memory_order_relaxed);
+        : NextScratchId();
     fileInfo.parentId = parentId;
     fileInfo.path = path;
     fileInfo.isFolder = false;
@@ -276,11 +285,10 @@ void MediaSources::AddHlsStreamItem(MediaIndexState& state, const std::wstring& 
 
     MediaItem hlsItem;
     const std::wstring stableKey = BuildStableMediaKey(parentId, path, g_canonicalize);
-    ScopedScanSuccess scanSuccess(state.mediaDatabase, stableKey);
-    static std::atomic<int> s_scratchHlsId{-2000002};
+    ScanSuccessMarker scanSuccess(state.mediaDatabase, stableKey);
     hlsItem.id = state.mediaDatabase
         ? state.mediaDatabase->GetOrCreateStableId(stableKey)
-        : s_scratchHlsId.fetch_sub(1, std::memory_order_relaxed);
+        : NextScratchId();
     hlsItem.parentId = parentId;
     hlsItem.path = path;
     hlsItem.isFolder = false;
@@ -575,11 +583,10 @@ int MediaSources::PublishContainer(MediaDatabase* database, int parentId,
     container.upnpClass = L"object.container.storageFolder";
     {
         std::unique_lock<std::shared_mutex> lock(m_mutex);
-        static std::atomic<int> s_scratchId{-2};
         container.id = database
             ? database->GetOrCreateStableContainerId(
                   BuildStableContainerKey(parentId, title, path, canonicalize))
-            : s_scratchId.fetch_sub(1, std::memory_order_relaxed);
+            : NextScratchId();
         m_items.push_back(container);
         const size_t index = m_items.size() - 1;
         m_idToIndex[container.id] = index;
@@ -590,6 +597,20 @@ int MediaSources::PublishContainer(MediaDatabase* database, int parentId,
     return container.id;
 }
 
+// PublishItem is called once per scanned file and takes m_mutex (exclusive)
+// plus, unconditionally, AppEvents.NotifySystemUpdateId()'s own mutex. Both
+// are cheap, uncontended std::mutex/std::shared_mutex acquisitions at the
+// concurrency level this project runs at (bounded by PlaylistScanPool's 20
+// workers -- see playlist_scan_concurrency.h). NotifySystemUpdateId's own
+// GENA-dispatch cost is already debounced to a 500ms window
+// (upnp_eventing.h: m_minNotifyInterval). A lock-free fast path was
+// evaluated here and intentionally not added: it would only save an
+// uncontended mutex acquisition, which is not the actual cost driver, and
+// it would add a second, easy-to-desync source of truth for "are we inside
+// the debounce window" (see UpnpEventManager::m_lastDispatchTime). If
+// profiling ever shows this path as hot at higher configured concurrency,
+// revisit by widening PlaylistScanPool sizing and re-measuring before
+// reaching for a lock-free rewrite here.
 void MediaSources::PublishItem(MediaItem item) {
     {
         std::unique_lock<std::shared_mutex> lock(m_mutex);

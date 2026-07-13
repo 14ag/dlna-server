@@ -503,9 +503,9 @@ bool MessageIndicatesAccessDenied(const std::wstring& message) {
 }
 
 std::wstring BuildFirewallAccessSummary(int port) {
-    (void)port;
-    return L"DLNA Server needs Windows Firewall access for this app on TCP and UDP 1900"
-           L" on Domain, Private, and Public profiles, restricted to LocalSubnet.";
+    return L"DLNA Server needs Windows Firewall access for this app on TCP port " +
+           std::to_wstring(port) +
+           L" and UDP port 1900, on Domain, Private, and Public profiles, restricted to LocalSubnet.";
 }
 
 bool ConfigureFirewallAccessElevated(int port, std::wstring& message) {
@@ -594,15 +594,11 @@ bool EnsureFirewallAccess(int port, FirewallAccessMode mode, std::wstring& messa
     bool currentUdpNamed = false;
     std::vector<std::wstring> removals;
     bool canReadRules = EvaluateFirewallRules(false, hasTcpAllow, hasUdpAllow, currentTcpNamed, currentUdpNamed, removals, message);
-    LogPrint(L"[firewall:diag] canReadRules=%d hasTcpAllow=%d hasUdpAllow=%d currentTcpNamed=%d currentUdpNamed=%d msg=%ls",
-             canReadRules, hasTcpAllow, hasUdpAllow, currentTcpNamed, currentUdpNamed, message.c_str());
     bool readDenied = !canReadRules && MessageIndicatesAccessDenied(message);
     if (!canReadRules && !readDenied) {
-        LogPrint(L"[firewall:diag] branch A returning false rule enumeration failed");
         return false;
     }
     if (canReadRules && hasTcpAllow && hasUdpAllow && currentTcpNamed && currentUdpNamed) {
-        LogPrint(L"[firewall:diag] branch B returning true both allow rules present under the current name no prompt shown");
         return true;
     }
 
@@ -613,11 +609,9 @@ bool EnsureFirewallAccess(int port, FirewallAccessMode mode, std::wstring& messa
         return false;
     }
 
-    LogPrint(L"[firewall:diag] branch C reaching interactive prompt now");
     std::wstring prompt = BuildFirewallAccessSummary(port) + L"\n\nAllow access now?";
     int answer = MessageBoxW(NULL, prompt.c_str(), L"DLNA Server firewall access",
                               MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON1 | MB_SETFOREGROUND | MB_TOPMOST);
-    LogPrint(L"[firewall:diag] branch C prompt answered=%d (6=yes 7=no)", answer);
     if (answer != IDYES) {
         message = L"Firewall access was declined.";
         return false;

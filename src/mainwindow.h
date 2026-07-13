@@ -24,6 +24,12 @@ public:
     HWND GetHwnd() const { return m_hwnd; }
 
     static constexpr UINT_PTR kInitialScanPollTimerId = 1;
+    // Sent by a second process instance (see main.cpp's single-instance
+    // detection) to ask the already-running instance to restore/focus its
+    // window through the same code path the tray icon uses, so
+    // WS_EX_TOOLWINDOW (see RestoreAndFocusMainWindow) is always cleared
+    // consistently regardless of which code path revealed the window.
+    static constexpr UINT WM_SHOW_EXISTING_INSTANCE = WM_APP + 20;
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
@@ -74,8 +80,6 @@ private:
     bool m_startedHeadless;
     std::atomic<bool> m_scanInProgress;
     std::atomic<bool> m_scanningStatusActive;
-    std::atomic<bool> m_pendingRescanAfterBusy;
-
     SourceListFocusState m_focusState;
 };
 

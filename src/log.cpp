@@ -6,6 +6,7 @@
 #include <shlwapi.h>
 #include <share.h>
 #include <mutex>
+#include <atomic>
 
 static std::deque<std::pair<unsigned long long, std::wstring>> g_logLines;
 static unsigned long long g_nextSeq = 1;
@@ -13,6 +14,11 @@ static std::mutex g_logMutex;
 static FILE* g_debugLogFile = NULL;
 static std::wstring g_debugLogPath;
 const size_t MAX_LOG_LINES = 1000;
+static std::atomic<bool> g_consoleEchoEnabled(false);
+
+void SetConsoleEchoEnabled(bool enabled) {
+    g_consoleEchoEnabled.store(enabled, std::memory_order_relaxed);
+}
 
 FILE* GetDebugLogFile() {
     std::wstring configPath = AppConfig.GetConfigPath();
@@ -66,6 +72,10 @@ void LogPrint(const wchar_t* fmt, ...) {
             fwprintf(fp, L"%s", line.c_str());
             fflush(fp);
         }
+    }
+    if (g_consoleEchoEnabled.load(std::memory_order_relaxed)) {
+        fwprintf(stdout, L"%ls", line.c_str());
+        fflush(stdout);
     }
 }
 
