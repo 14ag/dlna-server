@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <shared_mutex>
+#include <mutex>
 #ifdef _WIN32
 #include <windows.h>
 #endif
