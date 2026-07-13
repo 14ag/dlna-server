@@ -138,7 +138,7 @@ void Server::WatchLoop() {
 
 void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
     std::vector<NetworkEndpoint> endpoints;
-    if (!EnumerateNetworkEndpoints(cfg.port, endpoints)) {
+    if (!EnumerateNetworkEndpoints(cfg.port, cfg.networkInterfaceAllowList, endpoints)) {
         LogPrint(L"Network endpoint enumeration failed.");
         std::lock_guard<std::mutex> lock(m_endpointMutex);
         m_endpoint = L"";
@@ -177,9 +177,7 @@ bool Server::Start() {
 
     // Validate we have at least one source
     bool hasSource = cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
-    for (const auto& s : cfg.mediaSources) {
-        if (s.enabled) { hasSource = true; break; }
-    }
+    if (!cfg.mediaSources.empty()) hasSource = true;
     if (!hasSource) {
         LogPrint(L"No media sources configured.");
         return false;

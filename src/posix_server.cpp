@@ -113,7 +113,7 @@ void Server::WatchLoop() {
 
 void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
     std::vector<NetworkEndpoint> endpoints;
-    if (!EnumerateNetworkEndpoints(cfg.port, endpoints)) {
+    if (!EnumerateNetworkEndpoints(cfg.port, cfg.networkInterfaceAllowList, endpoints)) {
         LogPrint(L"Network endpoint enumeration failed.");
         std::lock_guard<std::mutex> lock(m_endpointMutex);
         m_endpoint.clear();
@@ -147,12 +147,7 @@ bool Server::Start() {
         LogPrint(L"FileServerPort is deprecated; serving media on Port %d.", cfg.port);
     }
     bool hasSource = cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
-    for (const auto& source : cfg.mediaSources) {
-        if (source.enabled) {
-            hasSource = true;
-            break;
-        }
-    }
+    if (!cfg.mediaSources.empty()) hasSource = true;
     if (!hasSource) {
         LogPrint(L"No media sources configured; refusing to serve current directory.");
         return false;

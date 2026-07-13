@@ -236,6 +236,19 @@ std::string ExtractQuotedCriteriaValue(const std::string& criteria) {
     return criteria.substr(first + 1, last - first - 1);
 }
 
+// Supports exactly one of: dc:title contains "...", upnp:class derivedfrom
+// "...", or upnp:class = "...". Per the ContentDirectory:1 spec's Search
+// Criteria String Syntax (Appendix B), a SearchCriteria string may combine
+// multiple property expressions with "and"/"or" -- that combined form is
+// NOT parsed here and falls through to the final return false below,
+// meaning a combined-criteria Search silently returns zero matches instead
+// of a partial or best-effort match. This is a known, accepted limitation:
+// the DLNA renderers this project targets in practice send single-clause
+// criteria almost exclusively (title-contains or class-derivedFrom), and
+// implementing a real boolean-expression parser for the full grammar is a
+// larger scope than this function's current callers need. If a renderer
+// in the wild is observed sending combined criteria and getting an
+// unexpectedly empty result, that is this code path -- start here.
 bool MatchesSearchCriteria(const MediaItem& item, const std::string& criteria) {
     const std::string normalized = ToLowerAscii(TrimAscii(criteria));
     if (normalized.empty() || normalized == "*" || normalized == "true") return true;

@@ -175,7 +175,8 @@ ConfigSnapshot Config::Snapshot() const {
         defaultPlaylistEnabled,
         defaultPlaylistPath,
         backgroundScanEnabled,
-        mediaSources
+        mediaSources,
+        networkInterfaceAllowList
     };
 }
 
@@ -292,9 +293,10 @@ void Config::Load() {
         else if (key == "MediaSources") {
             mediaSources.clear();
             for (const auto& token : SplitConfigList(Utf8ToWide(value))) {
-                if (!token.empty()) mediaSources.push_back({token, true});
+                if (!token.empty()) mediaSources.push_back({token});
             }
         }
+        else if (key == "NetworkInterfaceAllowList") networkInterfaceAllowList = Utf8ToWide(value);
     }
     if (serverName.empty()) serverName = DefaultServerName();
     if (defaultPlaylistPath.empty()) defaultPlaylistPath = GetDefaultPlaylistPath();
@@ -341,6 +343,7 @@ void Config::Save() {
     out << "DeviceModelName=" << WideToUtf8(deviceModelName) << "\n";
     out << "PresentationURL=" << WideToUtf8(presentationUrl) << "\n";
     out << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";
+    out << "NetworkInterfaceAllowList=" << WideToUtf8(networkInterfaceAllowList) << "\n";
 
     if (!WriteFileAtomicUtf8(configPath, out.str())) {
         LogPrint(L"Config save failed: %ls", configPath.c_str());
