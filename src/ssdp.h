@@ -64,15 +64,16 @@ private:
     int m_ipv6Socket;
 #endif
     std::thread m_responseThread;
+    std::thread m_initialBurstThread;
     std::mutex m_responseMutex;
     std::condition_variable m_responseCondition;
     std::vector<DelayedSearchResponse> m_delayedResponses;
     std::mutex m_socketMutex;
 
     std::vector<NetworkEndpoint> m_endpoints;
-    int m_port;
-    std::string m_serverName;
     std::string m_uuidStr;
+    unsigned int m_bootId;
+    unsigned int m_configId;
 };
 
 #endif // SSDP_H

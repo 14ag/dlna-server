@@ -1,4 +1,5 @@
 #include "ssdp.h"
+#include "ssdp_common.h"
 #include "config.h"
 #include "dlna_utils.h"
 #include "log.h"
@@ -25,46 +26,8 @@ namespace {
 constexpr int kSsdpPort = 1900;
 constexpr const char* kSsdpMulticastIPv4 = "239.255.255.250";
 constexpr const char* kSsdpMulticastIPv6 = "ff02::c";
-constexpr auto kAliveInterval = std::chrono::minutes(15);
+
 constexpr size_t kMaxDelayedResponses = 256;
-
-struct SSDPTarget {
-    std::string st;
-    std::string usn;
-};
-
-bool CoalesceDelayedResponse(std::vector<DelayedSearchResponse>& queue, DelayedSearchResponse&& response) {
-    for (auto& queued : queue) {
-        if (queued.remoteLen == response.remoteLen &&
-            std::memcmp(&queued.remoteAddr, &response.remoteAddr, static_cast<size_t>(response.remoteLen)) == 0 &&
-            queued.logUsn == response.logUsn &&
-            queued.logSt == response.logSt) {
-            queued = std::move(response);
-            return true;
-        }
-    }
-    return false;
-}
-
-unsigned int ComputeDelayMilliseconds(int mxSeconds) {
-    int boundedSeconds = std::max(0, std::min(mxSeconds, 5));
-    if (boundedSeconds <= 1) return 0;
-    unsigned int maxDelay = static_cast<unsigned int>(boundedSeconds * 1000);
-    if (maxDelay == 0) return 0;
-    static thread_local std::mt19937 generator(std::random_device{}());
-    std::uniform_int_distribution<unsigned int> distribution(0, maxDelay);
-    return distribution(generator);
-}
-
-std::vector<SSDPTarget> BuildTargets(const std::string& uuid) {
-    return {
-        {"upnp:rootdevice", "uuid:" + uuid + "::upnp:rootdevice"},
-        {"uuid:" + uuid, "uuid:" + uuid},
-        {"urn:schemas-upnp-org:device:MediaServer:1", "uuid:" + uuid + "::urn:schemas-upnp-org:device:MediaServer:1"},
-        {"urn:schemas-upnp-org:service:ContentDirectory:1", "uuid:" + uuid + "::urn:schemas-upnp-org:service:ContentDirectory:1"},
-        {"urn:schemas-upnp-org:service:ConnectionManager:1", "uuid:" + uuid + "::urn:schemas-upnp-org:service:ConnectionManager:1"},
-    };
-}
 
 int CreateIPv4Socket(const std::vector<NetworkEndpoint>& endpoints) {
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -74,7 +37,7 @@ int CreateIPv4Socket(const std::vector<NetworkEndpoint>& endpoints) {
 #ifdef SO_REUSEPORT
     setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
 #endif
-    unsigned char ttl = 2;
+    unsigned char ttl = 4;
     setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
     sockaddr_in bindAddr{};
     bindAddr.sin_family = AF_INET;
@@ -105,7 +68,7 @@ int CreateIPv6Socket(const std::vector<NetworkEndpoint>& endpoints) {
     setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
 #endif
     setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &yes, sizeof(yes));
-    int hops = 2;
+    int hops = 4;
     setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &hops, sizeof(hops));
 
     sockaddr_in6 bindAddr{};
@@ -178,21 +141,22 @@ SSDP& SSDP::Get() {
     return instance;
 }
 
-SSDP::SSDP() : m_running(false), m_ipv4Socket(-1), m_ipv6Socket(-1), m_port(0) {
+SSDP::SSDP() : m_running(false), m_ipv4Socket(-1), m_ipv6Socket(-1) {
 }
 
 bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid) {
     if (m_running.load()) return true;
     m_endpoints = endpoints;
-    m_port = port;
-    m_serverName = WideToUtf8(serverName);
     m_uuidStr = WideToUtf8(uuid);
+    m_bootId = static_cast<unsigned int>(time(nullptr));
+    m_configId = 1;
     m_ipv4Socket = CreateIPv4Socket(m_endpoints);
     m_ipv6Socket = CreateIPv6Socket(m_endpoints);
     if (m_ipv4Socket < 0 && m_ipv6Socket < 0) return false;
     m_running.store(true);
     m_thread = std::thread(&SSDP::ThreadWorker, this);
     m_responseThread = std::thread(&SSDP::ResponseWorker, this);
+    std::this_thread::sleep_for(std::chrono::milliseconds(ComputeSsdpStartupJitterMilliseconds()));
     SendNotifyBurst("ssdp:alive", 3, 100);
     return true;
 }
@@ -235,7 +199,7 @@ void SSDP::SendNotifyRound(const char* nts) {
             continue;
         }
 
-        for (const auto& target : BuildTargets(m_uuidStr)) {
+        for (const auto& target : BuildAdvertisedTargets(m_uuidStr)) {
             std::stringstream ss;
             ss << "NOTIFY * HTTP/1.1\r\n"
                << "HOST: " << hostHeader << "\r\n";
@@ -248,7 +212,11 @@ void SSDP::SendNotifyRound(const char* nts) {
             if (std::strcmp(nts, "ssdp:byebye") != 0) {
                 ss << "SERVER: " << serverHeader << "\r\n";
             }
-            ss << "USN: " << target.usn << "\r\n\r\n";
+            ss << "USN: " << target.usn << "\r\n"
+               << "BOOTID.UPNP.ORG: " << m_bootId << "\r\n"
+               << "CONFIGID.UPNP.ORG: " << m_configId << "\r\n"
+               << "OPT: \"http://schemas.upnp.org/upnp/1/0/\"; ns=01\r\n"
+               << "01-NLS: " << m_bootId << "\r\n\r\n";
             const std::string msg = ss.str();
             ssize_t sent = sendto(socketFd, msg.data(), msg.size(), 0, reinterpret_cast<sockaddr*>(&dest), destLen);
             if (sent < 0) {
@@ -340,7 +308,7 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
     const NetworkEndpoint* endpoint = SelectBestEndpoint(m_endpoints, remoteAddr);
     if (!endpoint || endpoint->family != remoteAddr->sa_family) return;
 
-    std::vector<SSDPTarget> targets = BuildTargets(m_uuidStr);
+    std::vector<SSDPTarget> targets = BuildAdvertisedTargets(m_uuidStr);
     std::vector<SSDPTarget> responses;
     if (ToLowerAscii(st) == "ssdp:all") {
         responses = targets;
@@ -367,7 +335,9 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
            << "LOCATION: " << endpoint->locationUrl << "\r\n"
            << "SERVER: " << serverHeader << "\r\n"
            << "ST: " << target.st << "\r\n"
-           << "USN: " << target.usn << "\r\n\r\n";
+           << "USN: " << target.usn << "\r\n"
+           << "BOOTID.UPNP.ORG: " << m_bootId << "\r\n"
+           << "CONFIGID.UPNP.ORG: " << m_configId << "\r\n\r\n";
         delayed.messages.push_back(ss.str());
         delayed.logSt.push_back(target.st);
         delayed.logUsn.push_back(target.usn);
@@ -381,6 +351,7 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
 
 void SSDP::ThreadWorker() {
     auto lastNotify = std::chrono::steady_clock::now();
+    auto nextAliveInterval = std::chrono::milliseconds(ComputeSsdpNextAliveIntervalMilliseconds());
     while (m_running.load()) {
         fd_set readfds;
         FD_ZERO(&readfds);
@@ -400,9 +371,10 @@ void SSDP::ThreadWorker() {
         if (!m_running.load()) break;
 
         auto now = std::chrono::steady_clock::now();
-        if (now - lastNotify >= kAliveInterval) {
+        if (now - lastNotify >= nextAliveInterval) {
             SendNotifyRound("ssdp:alive");
             lastNotify = now;
+            nextAliveInterval = std::chrono::milliseconds(ComputeSsdpNextAliveIntervalMilliseconds());
         }
 
         if (result <= 0) continue;

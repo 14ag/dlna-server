@@ -55,6 +55,8 @@ private:
     std::vector<std::thread> m_threads;
     std::mutex m_clientMutex;
     std::vector<ClientThread> m_clientThreads;
+    int m_wakeupReadFd;
+    int m_wakeupWriteFd;
 #endif
 };
 

@@ -16,6 +16,7 @@
 - `FileServerPort` remains accepted in `config.ini`; media file serving uses `Port`.
 
 ### Fixed
+- FTP-hosted playlists now recurse into nested `.m3u8` manifests, log rejected entries, and redact credentials in remote URL logs.
 - POSIX endpoint discovery now skips APIPA IPv4 addresses; Windows advertises all usable IPv4 aliases.
 - Device description metadata can now be configured, including manufacturer, model name, and presentation URL.
 - SOAP control dispatch now uses action-element matching and bounded POST body reads.
@@ -26,6 +27,7 @@
 - Background rescans are now serialized so watch-triggered and manual rescans cannot race on the scan thread handle.
 - Watch mode now reads current config snapshots each poll so source changes are monitored without restart.
 - Watch mode no longer ignores local media entries after a fixed scan-signature cap.
+- Remote content-length probing now uses a concurrency limiter to bound parallel network requests during media scans.
 
 ## [1.4.0] - 2026-05-29
 

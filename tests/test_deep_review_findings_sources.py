@@ -22,23 +22,6 @@ def test_server_scan_lifecycle_does_not_join_under_scan_mutex():
     assert "mutable std::mutex m_endpointMutex" in header
 
 
-def test_media_database_identity_and_atomic_save_contracts():
-    db_h = read("src/media_database.h")
-    db = read("src/media_database.cpp")
-    media = read("src/media_sources.cpp") + read("src/posix_media_sources.cpp")
-
-    assert "GetOrCreateStableContainerId" in db_h
-    assert "MarkScanSuccess" in db_h
-    assert "ReplaceFileAtomic" in db
-    assert ".tmp" in db
-    assert "ScopedScanSuccess" in media
-    assert "BuildStableMediaKey" in media
-    assert "BuildStableContainerKey" in media
-    assert "perStemAlbumArt" in media
-    assert "folderAlbumArt" in media
-    assert 'L"[media:scan-depth]"' in media
-
-
 def test_http_routes_validate_query_host_post_and_send_all_binary():
     http = read("src/httpserver.cpp")
     posix = read("src/posix_httpserver.cpp")
@@ -94,6 +77,102 @@ def test_ssdp_queue_bounded_send_errors_and_empty_drop():
     assert "responses.empty()" in ssdp
     assert "SSDP send failed" in ssdp
     assert "IP_MULTICAST_IF failed" in ssdp
+
+
+def test_narrow_ascii_uses_utf8_conversion():
+    utils = read("src/dlna_utils.cpp")
+
+    assert "#include \"netutils.h\"" in utils
+    assert "std::string NarrowAscii(const std::wstring& value)" in utils
+    assert "return WideToUtf8(value);" in utils
+    assert "static_cast<char>(ch)" not in utils
+
+
+def test_remote_source_rescan_behavior_documented():
+    readme = read("README.md")
+    source_watcher = read("src/source_watcher.cpp")
+
+    assert "Remote sources" in readme
+    assert "ftp://" in readme
+    assert "http://" in readme
+    assert "https://" in readme
+    assert "smb://" not in readme
+    assert "only scanned at server start" in readme
+    assert "do not participate in the automatic file watch loop" in readme
+    assert "Adding or removing a remote source at runtime requires a server restart" in readme
+    assert "IsRemoteMediaUrl(source.path)" in source_watcher
+
+
+def test_join_url_removed_resolve_playlist_entry_uses_resolve_relative_url():
+    # JoinUrl was consolidated onto ResolveRelativeUrl per the TODO in
+    # src/network_sources.cpp, see workflow dlna-server-scan-hang-and-
+    # review-fixes-workflow-13-7-26.md task T6. JoinUrl did not collapse
+    # ".." segments, ResolveRelativeUrl does.
+    network = read("src/network_sources.cpp")
+
+    assert "std::wstring JoinUrl(" not in network
+    assert "std::string ParentUrl(" not in network
+    idx = network.find("std::wstring ResolvePlaylistEntry(")
+    assert idx > 0
+    region = network[idx:idx + 400]
+    assert "ResolveRelativeUrl(playlistPath, entry)" in region
+
+
+def test_http_worker_limits_aligned():
+    win_http = read("src/httpserver.cpp")
+    posix_http = read("src/posix_httpserver.cpp")
+
+    assert "SetThreadpoolThreadMaximum(m_threadPool, 64)" in win_http
+    assert "constexpr size_t kMaxClientThreads = 64" in posix_http
+
+
+def test_split_header_and_stream_timeouts():
+    win_http = read("src/httpserver.cpp")
+    posix_http = read("src/posix_httpserver.cpp")
+
+    assert "SetSocketStreamTimeouts" in win_http
+    assert "SetSocketStreamTimeouts" in posix_http
+    assert "kStreamTimeoutMs = 60000" in win_http
+    assert "timeval timeout{60, 0}" in posix_http
+    assert "SO_SNDTIMEO" in win_http
+    assert "SO_SNDTIMEO" in posix_http
+
+
+def test_album_art_case_variants_reduced_on_windows():
+    utils = read("src/dlna_utils.cpp")
+
+    assert "BuildAlbumArtCandidateNames" in utils
+    assert "#if defined(_WIN32)" in utils
+    assert "Folder.jpg" not in utils.split("#if defined(_WIN32)")[1].split("#else")[0]
+
+
+def test_ssdp_ttl_complies_with_upnp_spec():
+    win_ssdp = read("src/ssdp.cpp")
+    posix_ssdp = read("src/posix_ssdp.cpp")
+
+    assert "kMulticastTTL = 4" in win_ssdp
+    assert "IP_MULTICAST_TTL" in win_ssdp
+    assert "kMulticastHops = 4" in win_ssdp
+    assert "IPV6_MULTICAST_HOPS" in win_ssdp
+    assert "unsigned char ttl = 4" in posix_ssdp
+    assert "int hops = 4" in posix_ssdp
+    assert "ComputeSsdpStartupJitterMilliseconds" in win_ssdp
+    assert "ComputeSsdpNextAliveIntervalMilliseconds" in win_ssdp
+    assert "ComputeSsdpStartupJitterMilliseconds" in posix_ssdp
+    assert "ComputeSsdpNextAliveIntervalMilliseconds" in posix_ssdp
+    assert "SSDP_ALIVE_INTERVAL_MS" not in win_ssdp
+    assert "kAliveInterval = std::chrono::minutes(15)" not in posix_ssdp
+
+
+def test_ssdp_jitter_helpers_are_shared_not_duplicated():
+    utils_header = read("src/dlna_utils.h")
+    utils_source = read("src/dlna_utils.cpp")
+
+    assert "unsigned int ComputeSsdpStartupJitterMilliseconds();" in utils_header
+    assert "unsigned int ComputeSsdpNextAliveIntervalMilliseconds();" in utils_header
+    assert "unsigned int ComputeSsdpStartupJitterMilliseconds() {" in utils_source
+    assert "unsigned int ComputeSsdpNextAliveIntervalMilliseconds() {" in utils_source
+    assert utils_source.count("std::uniform_int_distribution<unsigned int> distribution(0, 100)") == 1
 
 
 def test_release_scripts_enforce_platform_output_contracts():

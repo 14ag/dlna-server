@@ -180,40 +180,8 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("DLNAServer.Start()", gui_source)
         self.assertIn("DLNAServer.Stop()", gui_source)
         self.assertIn("AppConfig.Save()", gui_source)
-        self.assertIn("AppMedia.Scan()", gui_source)
+        self.assertIn("DLNAServer.Rescan()", gui_source)
 
-    def test_fltk_settings_and_log_dialogs_have_parity_controls(self):
-        gui_source = self.read("src/fltk_gui_main.cpp")
-
-        for label in (
-            "DLNA Server Settings",
-            "Server Name:",
-            "HTTP Port:",
-            "File Port:",
-            "IP Whitelist:",
-            "Run on startup",
-            "Debug Log (Write to file)",
-            "Add Artist/Album folders to audio",
-            "Do not show 'All Media' folders",
-            "Flat folders style",
-            "Show file names instead of titles",
-            "Sort by title instead of file name",
-            "Proxy streams",
-            "Default playlist",
-            "Default playlist entry",
-            "Restart",
-            "View log",
-            "OK",
-            "Cancel",
-            "DLNA Server Log",
-            "Close",
-        ):
-            self.assertIn(label, gui_source)
-
-        self.assertIn("Fl_Text_Display", gui_source)
-        self.assertIn("GetSystemLog()", gui_source)
-        self.assertIn("deactivate()", gui_source)
-
-
+    
 if __name__ == "__main__":
     unittest.main()

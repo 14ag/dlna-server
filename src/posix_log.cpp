@@ -12,7 +12,8 @@
 
 namespace {
 std::mutex g_logMutex;
-std::deque<std::wstring> g_lines;
+std::deque<std::pair<unsigned long long, std::wstring>> g_lines;
+unsigned long long g_nextSeq = 1;
 std::FILE* g_debugLogFile = nullptr;
 std::string g_debugLogPath;
 constexpr size_t kMaxLogLines = 1000;
@@ -64,10 +65,10 @@ void LogPrint(const wchar_t* fmt, ...) {
     va_end(args);
 
     std::wstring line = TimestampPrefix() + buffer;
-    const bool writeDebugLog = AppConfig.Snapshot().debugLog;
+    const bool writeDebugLog = AppConfig.IsDebugLogEnabled();
 
-    std::lock_guard<std::mutex> lock(g_logMutex);
-    g_lines.push_back(line);
+std::lock_guard<std::mutex> lock(g_logMutex);
+    g_lines.emplace_back(g_nextSeq++, line);
     if (g_lines.size() > kMaxLogLines) {
         g_lines.pop_front();
     }
@@ -85,9 +86,29 @@ std::wstring GetSystemLog() {
     std::lock_guard<std::mutex> lock(g_logMutex);
     std::wstring result;
     result.reserve(g_lines.size() * 128);
-    for (const auto& line : g_lines) {
-        result += line;
+    for (const auto& entry : g_lines) {
+        result += entry.second;
         result += L"\n";
     }
     return result;
+}
+
+LogSnapshot GetSystemLogSince(unsigned long long sinceSequence) {
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    LogSnapshot snapshot;
+    snapshot.latestSequence = g_nextSeq - 1;
+    if (g_lines.empty()) return snapshot;
+    const unsigned long long oldestKept = g_lines.front().first;
+    if (oldestKept > 1 && sinceSequence < oldestKept - 1) {
+        const unsigned long long dropped = oldestKept - 1 - sinceSequence;
+        snapshot.text += L"[" + std::to_wstring(dropped) +
+                          L" earlier log line(s) were dropped from the in-memory buffer]\n";
+    }
+    for (const auto& entry : g_lines) {
+        if (entry.first > sinceSequence) {
+            snapshot.text += entry.second;
+            snapshot.text += L"\n";
+        }
+    }
+    return snapshot;
 }

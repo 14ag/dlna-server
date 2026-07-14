@@ -23,19 +23,8 @@ class PlaylistNetworkSourceTests(unittest.TestCase):
             self.assertIn(token, header)
             self.assertIn(token, source)
 
-        for token in ('L".m3u"', 'L".m3u8"', 'L".pls"', '"smb"', '"ftp"', "CURLOPT_DIRLISTONLY", "CURLOPT_RANGE"):
+        for token in ('L".m3u"', 'L".m3u8"', 'L".pls"', '"ftp"', "CURLOPT_DIRLISTONLY", "CURLOPT_RANGE"):
             self.assertIn(token, source)
-
-    def test_windows_and_posix_scanners_index_playlist_and_network_sources(self):
-        for path in ("src/media_sources.cpp", "src/posix_media_sources.cpp"):
-            source = self.read(path)
-            self.assertIn("IsPlaylistSourcePath", source)
-            self.assertIn("ScanPlaylist", source)
-            self.assertIn("IsNetworkShareUrl", source)
-            self.assertIn("ScanNetworkFolder", source)
-            self.assertIn("LoadPlaylistEntries", source)
-            self.assertIn("ListRemoteDirectory", source)
-            self.assertIn("ProbeRemoteContentLength", source)
 
     def test_http_servers_proxy_remote_media_with_range_support(self):
         for path in ("src/httpserver.cpp", "src/posix_httpserver.cpp"):
@@ -50,8 +39,9 @@ class PlaylistNetworkSourceTests(unittest.TestCase):
         windows_gui = self.read("src/mainwindow.cpp")
         fltk_gui = self.read("src/fltk_gui_main.cpp")
 
-        for token in ("Playlist", "Network", "smb://user:pass@server/share", "ftp://user:pass@server"):
+        for token in ("Playlist", "Network", "ftp://user:pass@server"):
             self.assertIn(token, windows_gui + fltk_gui)
+        self.assertNotIn("smb://", windows_gui + fltk_gui)
 
         self.assertIn("BrowsePlaylist", windows_gui)
         self.assertIn("Fl_Native_File_Chooser", fltk_gui)

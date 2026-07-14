@@ -16,7 +16,7 @@ Server& Server::Get() {
     return instance;
 }
 
-Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false) {
+Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false), m_initialScanComplete(false), m_initialScanInProgress(false) {
 }
 
 Server::~Server() {
@@ -101,7 +101,8 @@ void Server::WatchLoop() {
         lock.unlock();
 
         cfg = AppConfig.Snapshot();
-        if (MediaSourcesHaveChanged(cfg, signature)) {
+        const bool sourcesChanged = MediaSourcesHaveChanged(cfg, signature);
+        if (ShouldAutoRescan(cfg, sourcesChanged)) {
             LogPrint(L"Media source change detected; rescanning.");
             if (!m_stopWatch.load(std::memory_order_acquire)) {
                 StartBackgroundScan();
@@ -112,7 +113,7 @@ void Server::WatchLoop() {
 
 void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
     std::vector<NetworkEndpoint> endpoints;
-    if (!EnumerateNetworkEndpoints(cfg.port, endpoints)) {
+    if (!EnumerateNetworkEndpoints(cfg.port, cfg.networkInterfaceAllowList, endpoints)) {
         LogPrint(L"Network endpoint enumeration failed.");
         std::lock_guard<std::mutex> lock(m_endpointMutex);
         m_endpoint.clear();
@@ -133,33 +134,31 @@ void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
     m_endpoints = std::move(endpoints);
 }
 
-bool Server::Start() {
+bool Server::Start(std::wstring& outReason) {
     if (m_running.load(std::memory_order_acquire)) return true;
     m_stopping.store(false, std::memory_order_release);
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     IPWhitelist::Get().Load(cfg.ipWhiteList);
     if (!IsValidPort(cfg.port)) {
         LogPrint(L"Invalid HTTP port: %d", cfg.port);
+        outReason = L"Invalid port: " + std::to_wstring(cfg.port);
         return false;
     }
     if (cfg.fileServerPort != cfg.port) {
         LogPrint(L"FileServerPort is deprecated; serving media on Port %d.", cfg.port);
     }
     bool hasSource = cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
-    for (const auto& source : cfg.mediaSources) {
-        if (source.enabled) {
-            hasSource = true;
-            break;
-        }
-    }
+    if (!cfg.mediaSources.empty()) hasSource = true;
     if (!hasSource) {
         LogPrint(L"No media sources configured; refusing to serve current directory.");
+        outReason = L"No media sources configured";
         return false;
     }
     RefreshEndpoints(cfg);
     std::vector<NetworkEndpoint> endpoints = GetEndpoints();
     if (endpoints.empty()) {
         LogPrint(L"Failed to find any active network endpoint for discovery.");
+        outReason = L"No active network endpoints found";
         return false;
     }
     const NetworkEndpoint* displayEndpoint = SelectBestEndpoint(endpoints, nullptr);
@@ -168,25 +167,49 @@ bool Server::Start() {
         std::lock_guard<std::mutex> lock(m_endpointMutex);
         m_endpoint = endpointText;
     }
+    // Initialize the content directory before starting the HTTP/SSDP layers
+    // so the root container exists and the scan-in-progress flag is set
+    // before any client can connect and issue a Browse/Search request.
+    // This eliminates the window where a Browse arriving immediately after
+    // the port opens would see m_initialScanComplete==false and return 710.
+    AppMedia.ResetForRescan();
+    m_initialScanComplete.store(true, std::memory_order_release);
+    m_initialScanInProgress.store(true, std::memory_order_release);
+
     if (!HttpServer::Get().Start(cfg.port)) {
         LogPrint(L"Failed to start HTTP server.");
+        outReason = L"Failed to start HTTP server on port " + std::to_wstring(cfg.port);
         return false;
     }
     if (!SSDP::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
         LogPrint(L"Failed to start SSDP.");
+        outReason = L"Failed to start SSDP discovery";
         HttpServer::Get().Stop();
         return false;
     }
     m_running.store(true, std::memory_order_release);
     StartBackgroundScan();
-    StartWatchMode();
+    // Do not JoinBackgroundScan() here: Start() must return once the device is
+    // advertised, not once the library is fully indexed. The scan continues on
+    // m_scanThread; StartWatchMode() begins after Start() returns via a small
+    // completion hook below.
+    std::thread([this]() {
+        JoinBackgroundScan();
+        m_initialScanInProgress.store(false, std::memory_order_release);
+        StartWatchMode();
+    }).detach();
     LogPrint(L"DLNA server running on %ls", endpointText.c_str());
     return true;
 }
 
 bool Server::Rescan() {
+    // serialize the whole reset then scan sequence per caller
+    // see src/server.cpp Server::Rescan for the full rationale
+    std::lock_guard<std::mutex> rescanLock(m_rescanMutex);
+    AppMedia.ResetForRescan();
     if (m_running.load(std::memory_order_acquire)) {
         StartBackgroundScan();
+        JoinBackgroundScan();
     } else {
         AppMedia.Scan();
     }

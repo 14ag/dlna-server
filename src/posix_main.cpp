@@ -2,6 +2,8 @@
 #include "dlna_utils.h"
 #include "log.h"
 #include "netutils.h"
+#include "access_keys.h"
+#include "playlist_scan_concurrency.h"
 #include "server.h"
 
 #include <atomic>
@@ -37,10 +39,45 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--name" && i + 1 < argc) AppConfig.serverName = Utf8ToWide(argv[++i]);
         else if (arg == "--uuid" && i + 1 < argc) AppConfig.deviceUUID = Utf8ToWide(argv[++i]);
-        else if (arg == "--source" && i + 1 < argc) AppConfig.mediaSources.push_back({Utf8ToWide(argv[++i]), true});
+        else if (arg == "--source" && i + 1 < argc) AppConfig.mediaSources.push_back({Utf8ToWide(argv[++i])});
+        else if (arg == "--print-scan-concurrency" && i + 1 < argc) {
+            size_t n = static_cast<size_t>(std::atoll(argv[++i]));
+            std::cout << ComputePlaylistScanConcurrency(n) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-mnemonics" && i + 1 < argc) {
+            std::string argVal = argv[++i];
+            std::vector<std::wstring> labels;
+            size_t start = 0;
+            for (size_t j = 0; j <= argVal.size(); ++j) {
+                if (j == argVal.size() || argVal[j] == ',') {
+                    labels.push_back(Utf8ToWide(argVal.substr(start, j - start)));
+                    start = j + 1;
+                }
+            }
+            std::vector<wchar_t> result = AssignMnemonics(labels);
+            for (size_t j = 0; j < result.size(); ++j) {
+                if (j > 0) std::cout << ",";
+                if (result[j] != L'\0') {
+                    std::cout << static_cast<char>(result[j]);
+                }
+            }
+            std::cout << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-cue-state" && i + 1 < argc) {
+            std::string seq = argv[++i];
+            KeyboardCueState cs;
+            for (char ch : seq) {
+                if (ch == 'k' || ch == 'K') cs.OnKeyboardInput();
+                else if (ch == 'm' || ch == 'M') cs.OnMouseButtonInput();
+                std::cout << (cs.HideAccel() ? "1" : "0") << "," << (cs.HideFocus() ? "1" : "0") << std::endl;
+            }
+            return 0;
+        }
         else if (arg == "--debug") AppConfig.debugLog = true;
         else if (arg == "--help") { PrintUsage(argv[0]); return 0; }
-        else AppConfig.mediaSources.push_back({Utf8ToWide(arg), true});
+        else AppConfig.mediaSources.push_back({Utf8ToWide(arg)});
     }
     if (AppConfig.mediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
         PrintUsage(argv[0]);

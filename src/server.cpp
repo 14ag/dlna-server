@@ -4,11 +4,7 @@
 #include "log.h"
 #include "media_sources.h"
 #include "source_watcher.h"
-#ifdef _WIN32
-#include "upnp_libupnp_win.h"
-#else
 #include "ssdp.h"
-#endif
 #include "httpserver.h"
 #include "ipwhitelist.h"
 #include "firewall_access.h"
@@ -19,12 +15,26 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
+namespace {
+// GetEnvironmentVariableW returns 0 both when a variable is absent and
+// when it is present but set to an empty string
+// GetLastError only reports ERROR_ENVVAR_NOT_FOUND for the absent case
+// so that must be checked to correctly treat present-but-empty as set
+// see https://learn.microsoft.com/windows/win32/api/processenv/nf-processenv-getenvironmentvariablew
+bool IsSkipFirewallEnvVarPresent() {
+    wchar_t buffer[8] = {};
+    DWORD copied = GetEnvironmentVariableW(L"DLNA_SERVER_SKIP_FIREWALL", buffer, 8);
+    if (copied != 0) return true;
+    return GetLastError() != ERROR_ENVVAR_NOT_FOUND;
+}
+}
+
 Server& Server::Get() {
     static Server instance;
     return instance;
 }
 
-Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false) {
+Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false), m_initialScanComplete(false), m_initialScanInProgress(false) {
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 }
@@ -49,7 +59,9 @@ bool Server::ShouldStartScan() const {
 }
 
 void Server::StartBackgroundScan() {
-    if (!ShouldStartScan()) return;
+    if (!ShouldStartScan()) {
+        return;
+    }
 
     std::thread previousScan;
     {
@@ -64,7 +76,9 @@ void Server::StartBackgroundScan() {
     if (!ShouldStartScan()) return;
 
     std::lock_guard<std::mutex> lock(m_scanMutex);
-    if (m_scanThread.joinable()) return;
+    if (m_scanThread.joinable()) {
+        return;
+    }
     m_scanThread = std::thread([]() { AppMedia.Scan(); });
 }
 
@@ -112,7 +126,8 @@ void Server::WatchLoop() {
         lock.unlock();
 
         cfg = AppConfig.Snapshot();
-        if (MediaSourcesHaveChanged(cfg, signature)) {
+        const bool sourcesChanged = MediaSourcesHaveChanged(cfg, signature);
+        if (ShouldAutoRescan(cfg, sourcesChanged)) {
             LogPrint(L"Media source change detected; rescanning.");
             if (!m_stopWatch.load(std::memory_order_acquire)) {
                 StartBackgroundScan();
@@ -123,7 +138,7 @@ void Server::WatchLoop() {
 
 void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
     std::vector<NetworkEndpoint> endpoints;
-    if (!EnumerateNetworkEndpoints(cfg.port, endpoints)) {
+    if (!EnumerateNetworkEndpoints(cfg.port, cfg.networkInterfaceAllowList, endpoints)) {
         LogPrint(L"Network endpoint enumeration failed.");
         std::lock_guard<std::mutex> lock(m_endpointMutex);
         m_endpoint = L"";
@@ -146,7 +161,7 @@ void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
     m_endpoints = std::move(endpoints);
 }
 
-bool Server::Start() {
+bool Server::Start(std::wstring& outReason) {
     if (m_running.load(std::memory_order_acquire)) return true;
     m_stopping.store(false, std::memory_order_release);
 
@@ -154,6 +169,7 @@ bool Server::Start() {
     IPWhitelist::Get().Load(cfg.ipWhiteList);
     if (!IsValidPort(cfg.port)) {
         LogPrint(L"Invalid HTTP port: %d", cfg.port);
+        outReason = L"Invalid port: " + std::to_wstring(cfg.port);
         return false;
     }
     if (cfg.fileServerPort != cfg.port) {
@@ -162,19 +178,18 @@ bool Server::Start() {
 
     // Validate we have at least one source
     bool hasSource = cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
-    for (const auto& s : cfg.mediaSources) {
-        if (s.enabled) { hasSource = true; break; }
-    }
+    if (!cfg.mediaSources.empty()) hasSource = true;
     if (!hasSource) {
-        MessageBoxW(NULL, L"Please add at least one media source before starting the server.", L"No sources", MB_ICONWARNING | MB_OK);
+        LogPrint(L"No media sources configured.");
+        outReason = L"No media sources configured";
         return false;
     }
 
-    wchar_t skipFirewall[8] = {};
-    if (GetEnvironmentVariableW(L"DLNA_SERVER_SKIP_FIREWALL", skipFirewall, 8) == 0) {
+    if (!IsSkipFirewallEnvVarPresent()) {
         std::wstring firewallMessage;
         if (!EnsureFirewallAccess(cfg.port, FirewallAccessMode::Interactive, firewallMessage)) {
             LogPrint(L"%ls", firewallMessage.c_str());
+            outReason = L"Firewall access was denied";
             MessageBoxW(NULL, firewallMessage.c_str(), L"Firewall access required", MB_ICONWARNING | MB_OK);
             return false;
         }
@@ -187,6 +202,7 @@ bool Server::Start() {
     std::vector<NetworkEndpoint> endpoints = GetEndpoints();
     if (endpoints.empty()) {
         LogPrint(L"Failed to find any active network endpoint for discovery.");
+        outReason = L"No active network endpoints found";
         return false;
     }
 
@@ -208,34 +224,57 @@ bool Server::Start() {
     }
     LogPrint(L"Starting server on %ls", endpointText.c_str());
 
+    // Initialize the content directory before starting the HTTP/SSDP layers
+    // so the root container exists and the scan-in-progress flag is set
+    // before any client can connect and issue a Browse/Search request.
+    // This eliminates the window where a Browse arriving immediately after
+    // the port opens would see m_initialScanComplete==false and return 710.
+    AppMedia.ResetForRescan();
+    m_initialScanComplete.store(true, std::memory_order_release);
+    m_initialScanInProgress.store(true, std::memory_order_release);
+
     if (!HttpServer::Get().Start(cfg.port)) {
         LogPrint(L"Failed to start HTTP server.");
+        outReason = L"Failed to start HTTP server on port " + std::to_wstring(cfg.port);
         return false;
     }
 
-#ifdef _WIN32
-    if (!LibUPnPWrapper::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
-        LogPrint(L"Failed to start UPnP.");
-        HttpServer::Get().Stop();
-        return false;
-    }
-#else
     if (!SSDP::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
         LogPrint(L"Failed to start SSDP.");
+        outReason = L"Failed to start SSDP discovery";
         HttpServer::Get().Stop();
         return false;
     }
-#endif
 
     m_running.store(true, std::memory_order_release);
     StartBackgroundScan();
-    StartWatchMode();
+    // Do not JoinBackgroundScan() here: Start() must return once the device is
+    // advertised, not once the library is fully indexed. The scan continues on
+    // m_scanThread; StartWatchMode() begins after Start() returns via a small
+    // completion hook below.
+    std::thread([this]() {
+        JoinBackgroundScan();
+        m_initialScanInProgress.store(false, std::memory_order_release);
+        StartWatchMode();
+    }).detach();
     return true;
 }
 
 bool Server::Rescan() {
+    // serialize the whole reset then scan sequence per caller
+    // two overlapping Rescan calls must not let one caller reset the
+    // published item tree while another caller is still publishing into
+    // it from a scan that has not finished yet
+    std::lock_guard<std::mutex> rescanLock(m_rescanMutex);
+    AppMedia.ResetForRescan();
     if (m_running.load(std::memory_order_acquire)) {
+        // StartBackgroundScan only launches the scan thread and returns
+        // Rescan must not report completion until the scan is done
+        // JoinBackgroundScan blocks this call until that thread finishes
+        // every caller of Rescan already runs on its own worker thread
+        // see MainWindow::BeginRescan so this never blocks the UI thread
         StartBackgroundScan();
+        JoinBackgroundScan();
     } else {
         AppMedia.Scan();
     }
@@ -246,14 +285,10 @@ void Server::Stop() {
     if (!m_running.exchange(false, std::memory_order_acq_rel)) return;
     m_stopping.store(true, std::memory_order_release);
     
-    LogPrint(L"Stopping server...");
+    LogPrint(L"Stopping server");
 
     StopWatchMode();
-#ifdef _WIN32
-    LibUPnPWrapper::Get().Stop();
-#else
     SSDP::Get().Stop();
-#endif
     HttpServer::Get().Stop();
     JoinBackgroundScan();
     

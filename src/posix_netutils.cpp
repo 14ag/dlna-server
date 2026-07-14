@@ -2,6 +2,7 @@
 
 #include <arpa/inet.h>
 #include <cstring>
+#include <cstdio>
 #include <ctime>
 #include <ifaddrs.h>
 #include <net/if.h>
@@ -43,6 +44,36 @@ ULONG PrefixLengthFromNetmask(const sockaddr* netmask) {
 bool IsIPv4Apipa(const sockaddr_in* addr) {
     const unsigned char* bytes = reinterpret_cast<const unsigned char*>(&addr->sin_addr.s_addr);
     return bytes[0] == 169 && bytes[1] == 254;
+}
+
+const char* const kVirtualAdapterNamePrefixes[] = {
+    "docker", "veth", "vboxnet", "vmnet", "tailscale", "zt", "wg", "tun", "tap", "br-",
+};
+
+bool IsLikelyVirtualAdapterName(const char* ifaceName) {
+    for (const char* prefix : kVirtualAdapterNamePrefixes) {
+        if (std::strncmp(ifaceName, prefix, std::strlen(prefix)) == 0) return true;
+    }
+    return false;
+}
+
+bool InterfaceAllowListPermits(const std::wstring& allowList, const char* ifaceName) {
+    if (allowList.empty()) {
+        return !IsLikelyVirtualAdapterName(ifaceName);
+    }
+    std::string name(ifaceName);
+    size_t start = 0;
+    while (start <= allowList.size()) {
+        size_t comma = allowList.find(L',', start);
+        std::wstring token = allowList.substr(start, comma == std::wstring::npos ? std::wstring::npos : comma - start);
+        if (!token.empty()) {
+            std::string tokenUtf8 = WideToUtf8(token);
+            if (name.find(tokenUtf8) != std::string::npos) return true;
+        }
+        if (comma == std::wstring::npos) break;
+        start = comma + 1;
+    }
+    return false;
 }
 }
 
@@ -160,13 +191,14 @@ std::string BuildHttpDateHeaderValue() {
     return buffer;
 }
 
-bool EnumerateNetworkEndpoints(int port, std::vector<NetworkEndpoint>& endpoints) {
+bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList, std::vector<NetworkEndpoint>& endpoints) {
     endpoints.clear();
     ifaddrs* list = nullptr;
     if (getifaddrs(&list) != 0) return false;
     for (ifaddrs* it = list; it; it = it->ifa_next) {
         if (!it->ifa_addr) continue;
         if (!(it->ifa_flags & IFF_UP) || !(it->ifa_flags & IFF_MULTICAST) || (it->ifa_flags & IFF_LOOPBACK)) continue;
+        if (!InterfaceAllowListPermits(interfaceAllowList, it->ifa_name)) continue;
         if (it->ifa_addr->sa_family != AF_INET && it->ifa_addr->sa_family != AF_INET6) continue;
 
         NetworkEndpoint endpoint{};
@@ -217,4 +249,21 @@ const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& en
         }
     }
     return best ? best : (endpoints.empty() ? nullptr : &endpoints.front());
+}
+
+bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Content) {
+    const std::wstring tempPath = path + L".tmp";
+    FILE* fp = std::fopen(WideToUtf8(tempPath).c_str(), "wb");
+    if (!fp) return false;
+    const bool wroteOk = std::fwrite(utf8Content.data(), 1, utf8Content.size(), fp) == utf8Content.size();
+    std::fclose(fp);
+    if (!wroteOk) {
+        std::remove(WideToUtf8(tempPath).c_str());
+        return false;
+    }
+    if (std::rename(WideToUtf8(tempPath).c_str(), WideToUtf8(path).c_str()) == 0) {
+        return true;
+    }
+    std::remove(WideToUtf8(tempPath).c_str());
+    return false;
 }

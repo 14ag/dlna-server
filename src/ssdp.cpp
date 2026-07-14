@@ -1,4 +1,5 @@
 #include "ssdp.h"
+#include "ssdp_common.h"
 #include "config.h"
 #include "dlna_utils.h"
 #include "log.h"
@@ -16,26 +17,9 @@
 #define SSDP_MULTICAST_IPV4 "239.255.255.250"
 #define SSDP_MULTICAST_IPV6 "ff02::c"
 
+
 namespace {
 constexpr size_t kMaxDelayedResponses = 256;
-
-struct SSDPTarget {
-    std::string st;
-    std::string usn;
-};
-
-bool CoalesceDelayedResponse(std::vector<DelayedSearchResponse>& queue, DelayedSearchResponse&& response) {
-    for (auto& queued : queue) {
-        if (queued.remoteLen == response.remoteLen &&
-            std::memcmp(&queued.remoteAddr, &response.remoteAddr, static_cast<size_t>(response.remoteLen)) == 0 &&
-            queued.logUsn == response.logUsn &&
-            queued.logSt == response.logSt) {
-            queued = std::move(response);
-            return true;
-        }
-    }
-    return false;
-}
 
 void DiscoveryLog(const wchar_t* fmt, ...) {
     if (!AppConfig.Snapshot().debugLog) {
@@ -53,21 +37,6 @@ void DiscoveryLog(const wchar_t* fmt, ...) {
 bool IsDiscoverManHeader(const std::string& man) {
     std::string normalized = ToLowerAscii(TrimAscii(man));
     return normalized == "\"ssdp:discover\"" || normalized == "ssdp:discover";
-}
-
-DWORD ComputeDelayMilliseconds(int mxSeconds) {
-    int boundedSeconds = (std::max)(0, (std::min)(mxSeconds, 5));
-    if (boundedSeconds <= 1) {
-        return 0;
-    }
-    DWORD maxDelay = static_cast<DWORD>(boundedSeconds * 1000);
-    if (maxDelay == 0) {
-        return 0;
-    }
-
-    static thread_local std::mt19937 generator(std::random_device{}());
-    std::uniform_int_distribution<DWORD> distribution(0, maxDelay);
-    return distribution(generator);
 }
 
 bool SetOutboundInterface(SOCKET socket, const NetworkEndpoint& endpoint, bool multicast) {
@@ -98,16 +67,6 @@ bool SetOutboundInterface(SOCKET socket, const NetworkEndpoint& endpoint, bool m
                       sizeof(ifIndex)) == 0;
 }
 
-std::vector<SSDPTarget> BuildAdvertisedTargets(const std::string& uuid) {
-    std::vector<SSDPTarget> targets;
-    targets.push_back({ "upnp:rootdevice", "uuid:" + uuid + "::upnp:rootdevice" });
-    targets.push_back({ "uuid:" + uuid, "uuid:" + uuid });
-    targets.push_back({ "urn:schemas-upnp-org:device:MediaServer:1", "uuid:" + uuid + "::urn:schemas-upnp-org:device:MediaServer:1" });
-    targets.push_back({ "urn:schemas-upnp-org:service:ContentDirectory:1", "uuid:" + uuid + "::urn:schemas-upnp-org:service:ContentDirectory:1" });
-    targets.push_back({ "urn:schemas-upnp-org:service:ConnectionManager:1", "uuid:" + uuid + "::urn:schemas-upnp-org:service:ConnectionManager:1" });
-    return targets;
-}
-
 const SSDPTarget* FindTarget(const std::vector<SSDPTarget>& targets, const std::string& requestedSt) {
     std::string lowered = ToLowerAscii(requestedSt);
     for (const auto& target : targets) {
@@ -128,17 +87,16 @@ SSDP::SSDP()
     : m_running(false),
       m_hThread(NULL),
       m_ipv4Socket(INVALID_SOCKET),
-      m_ipv6Socket(INVALID_SOCKET),
-      m_port(0) {
+      m_ipv6Socket(INVALID_SOCKET) {
 }
 
 bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid) {
     if (m_running.load()) return true;
 
     m_endpoints = endpoints;
-    m_port = port;
-    m_serverName = WideToUtf8(serverName);
     m_uuidStr = WideToUtf8(uuid);
+    m_bootId = static_cast<unsigned int>(time(nullptr));
+    m_configId = 1;
 
     int ipv4EndpointCount = 0;
     int ipv6EndpointCount = 0;
@@ -153,6 +111,8 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     if (m_ipv4Socket != INVALID_SOCKET) {
         BOOL reuse = TRUE;
         setsockopt(m_ipv4Socket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+        const DWORD kMulticastTTL = 4;
+        setsockopt(m_ipv4Socket, IPPROTO_IP, IP_MULTICAST_TTL, reinterpret_cast<const char*>(&kMulticastTTL), sizeof(kMulticastTTL));
 
         sockaddr_in localAddr = {};
         localAddr.sin_family = AF_INET;
@@ -192,6 +152,8 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
         setsockopt(m_ipv6Socket, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&reuse), sizeof(reuse));
         DWORD v6Only = 1;
         setsockopt(m_ipv6Socket, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&v6Only), sizeof(v6Only));
+        const DWORD kMulticastHops = 4;
+        setsockopt(m_ipv6Socket, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, reinterpret_cast<const char*>(&kMulticastHops), sizeof(kMulticastHops));
 
         sockaddr_in6 localAddr6 = {};
         localAddr6.sin6_family = AF_INET6;
@@ -242,7 +204,17 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     }
     m_responseThread = std::thread(&SSDP::ResponseWorker, this);
 
-    SendNotifyBurst("ssdp:alive", 3, 100);
+    // Fire initial SSDP alive burst asynchronously so Server::Start() is not
+    // blocked from launching the background scan while the burst completes.
+    // The burst sleep + sendto calls can block for 300ms+ or hang entirely in
+    // environments without multicast support (test infrastructure).
+    // this thread is joined in Stop before CloseSockets runs
+    // it must not be detached or it can read m_ipv4Socket m_ipv6Socket
+    // at the same time Stop is writing them during teardown
+    m_initialBurstThread = std::thread([this]() {
+        Sleep(ComputeSsdpStartupJitterMilliseconds());
+        SendNotifyBurst("ssdp:alive", 3, 100);
+    });
     return true;
 }
 
@@ -262,6 +234,9 @@ void SSDP::Stop() {
     }
     if (m_responseThread.joinable()) {
         m_responseThread.join();
+    }
+    if (m_initialBurstThread.joinable()) {
+        m_initialBurstThread.join();
     }
     CloseSockets();
 }
@@ -326,6 +301,10 @@ void SSDP::SendNotifyRound(const char* nts) {
                     "NT: " + target.st + "\r\n" +
                     "NTS: " + nts + "\r\n" +
                     "USN: " + target.usn + "\r\n"
+                    "BOOTID.UPNP.ORG: " + std::to_string(m_bootId) + "\r\n"
+                    "CONFIGID.UPNP.ORG: " + std::to_string(m_configId) + "\r\n"
+                    "OPT: \"http://schemas.upnp.org/upnp/1/0/\"; ns=01\r\n"
+                    "01-NLS: " + std::to_string(m_bootId) + "\r\n"
                     "\r\n";
             } else {
                 message =
@@ -337,6 +316,10 @@ void SSDP::SendNotifyRound(const char* nts) {
                     "NTS: " + nts + "\r\n"
                     "SERVER: " + serverHeader + "\r\n" +
                     "USN: " + target.usn + "\r\n"
+                    "BOOTID.UPNP.ORG: " + std::to_string(m_bootId) + "\r\n"
+                    "CONFIGID.UPNP.ORG: " + std::to_string(m_configId) + "\r\n"
+                    "OPT: \"http://schemas.upnp.org/upnp/1/0/\"; ns=01\r\n"
+                    "01-NLS: " + std::to_string(m_bootId) + "\r\n"
                     "\r\n";
             }
 
@@ -505,6 +488,8 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
             "SERVER: " + serverHeader + "\r\n"
             "ST: " + target->st + "\r\n"
             "USN: " + target->usn + "\r\n"
+            "BOOTID.UPNP.ORG: " + std::to_string(m_bootId) + "\r\n"
+            "CONFIGID.UPNP.ORG: " + std::to_string(m_configId) + "\r\n"
             "\r\n";
 
         delayed.messages.push_back(response);
@@ -522,6 +507,7 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
 DWORD WINAPI SSDP::ThreadWorker(LPVOID lpParam) {
     SSDP* pThis = reinterpret_cast<SSDP*>(lpParam);
     ULONGLONG lastNotifyTicks = GetTickCount64();
+    ULONGLONG nextAliveIntervalMs = ComputeSsdpNextAliveIntervalMilliseconds();
 
     while (pThis->m_running.load()) {
         fd_set readfds;
@@ -547,9 +533,10 @@ DWORD WINAPI SSDP::ThreadWorker(LPVOID lpParam) {
         }
 
         ULONGLONG now = GetTickCount64();
-        if (now - lastNotifyTicks > 900000) {
+        if (now - lastNotifyTicks > nextAliveIntervalMs) {
             pThis->SendNotifyRound("ssdp:alive");
             lastNotifyTicks = now;
+            nextAliveIntervalMs = ComputeSsdpNextAliveIntervalMilliseconds();
         }
 
         if (result <= 0) {

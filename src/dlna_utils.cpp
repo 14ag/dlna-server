@@ -1,9 +1,12 @@
 #include "dlna_utils.h"
+#include "version.h"
 
+#include "netutils.h"
 #include <algorithm>
 #include <cctype>
 #include <cwctype>
 #include <limits>
+#include <random>
 #include <unordered_set>
 #include <vector>
 
@@ -25,7 +28,7 @@ bool ParseRangeNumber(const std::string& text, long long& value) {
             return false;
         }
         int digit = ch - '0';
-        if (result > (std::numeric_limits<long long>::max() - digit) / 10) {
+        if (result > ((std::numeric_limits<long long>::max)() - digit) / 10) {
             return false;
         }
         result = (result * 10) + digit;
@@ -61,7 +64,7 @@ const ExtensionFormat kFormats[] = {
     { L".flv",  L"video/x-flv",             L"object.item.videoItem",             "", true },
     { L".3gp",  L"video/3gpp",              L"object.item.videoItem",             "", true },
     { L".3g2",  L"video/3gpp2",             L"object.item.videoItem",             "", true },
-    { L".mp3",  L"audio/mpeg",              L"object.item.audioItem.musicTrack",  "MP3", true },
+    { L".mp3",  L"audio/mpeg",          L"object.item.audioItem.musicTrack",  "MP3", true },
     { L".flac", L"audio/flac",              L"object.item.audioItem.musicTrack",  "", true },
     { L".m4a",  L"audio/mp4",               L"object.item.audioItem.musicTrack",  "AAC_ISO_320", true },
     { L".aac",  L"audio/aac",               L"object.item.audioItem.musicTrack",  "AAC_ISO_320", true },
@@ -106,12 +109,7 @@ std::string ProtocolTail(const MediaFormatInfo& info, bool hasKnownSize) {
 }
 
 std::string NarrowAscii(const std::wstring& value) {
-    std::string result;
-    result.reserve(value.size());
-    for (wchar_t ch : value) {
-        result.push_back(static_cast<char>(ch));
-    }
-    return result;
+    return WideToUtf8(value);
 }
 }
 
@@ -187,7 +185,7 @@ bool TryParseIntStrict(const std::string& text, int& value) {
             return false;
         }
         parsed = (parsed * 10) + (ch - '0');
-        long long limit = negative ? -(static_cast<long long>(std::numeric_limits<int>::min())) : std::numeric_limits<int>::max();
+        long long limit = negative ? -(static_cast<long long>((std::numeric_limits<int>::min)())) : (std::numeric_limits<int>::max)();
         if (parsed > limit) {
             return false;
         }
@@ -268,7 +266,7 @@ HttpByteRange ParseHttpRangeHeader(const std::string& rangeHeader, long long fil
     }
 
     result.start = start;
-    result.end = std::min(end, fileSize - 1);
+    result.end = (std::min)(end, fileSize - 1);
     return result;
 }
 
@@ -315,6 +313,16 @@ std::string BuildContentFeaturesForExtension(const std::wstring& ext, const std:
     return BuildContentFeatures(info, hasKnownSize);
 }
 
+std::string BuildHlsContentFeatures() {
+    // op 01 means time seek is available per the android reference proxy pattern
+    // ci 0 means no content transcoding
+    return kHlsProtocolContentFeatures;
+}
+
+std::string BuildHlsProtocolInfo() {
+    return "http-get:*:video/mpegurl:" + BuildHlsContentFeatures();
+}
+
 std::string BuildSourceProtocolInfoList() {
     std::vector<std::string> entries;
     std::unordered_set<std::string> seen;
@@ -325,6 +333,12 @@ std::string BuildSourceProtocolInfoList() {
             entries.push_back(entry);
         }
     }
+    // HLS is excluded from kFormats so file scanning does not treat .m3u8 as a
+    // generic playable extension. It must still be advertised here so DLNA
+    // renderers that consult GetProtocolInfo before playback accept HLS items.
+    // Flags match contentdirectory.cpp ItemProtocolInfo() and the Android
+    // contentFeatures.dlna.org response header in j.java.
+    entries.push_back(std::string("http-get:*:video/mpegurl:") + kHlsProtocolContentFeatures);
     std::string result;
     for (size_t i = 0; i < entries.size(); ++i) {
         if (i > 0) result += ",";
@@ -333,21 +347,15 @@ std::string BuildSourceProtocolInfoList() {
     return result;
 }
 
+
 std::string GetDlnaServerHeader() {
 #ifdef _WIN32
-    return "Windows/10.0 UPnP/1.1 dlna-server/1.4.0";
+    return "Windows/10.0 UPnP/1.1 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #elif defined(DLNA_PLATFORM_NAME)
-    return std::string(DLNA_PLATFORM_NAME) + " UPnP/1.1 dlna-server/1.4.0";
+    return std::string(DLNA_PLATFORM_NAME) + " UPnP/1.1 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #else
-    return "POSIX UPnP/1.1 dlna-server/1.4.0";
+    return "POSIX UPnP/1.1 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #endif
-}
-
-bool IsSubtitleExtension(const std::wstring& ext) {
-    std::wstring lower = ToLowerWide(ext);
-    return lower == L".srt" || lower == L".vtt" || lower == L".sub" ||
-           lower == L".ass" || lower == L".ssa" || lower == L".smi" ||
-           lower == L".txt";
 }
 
 std::string SubtitleMimeForExtension(const std::wstring& ext) {
@@ -397,7 +405,17 @@ bool NaturalLessWide(const std::wstring& left, const std::wstring& right) {
 }
 
 std::vector<AlbumArtCandidate> BuildAlbumArtCandidateNames(const std::wstring& stem) {
-    std::vector<AlbumArtCandidate> candidates = {
+    std::vector<AlbumArtCandidate> candidates;
+#if defined(_WIN32)
+    candidates = {
+        { L"folder.jpg", L"image/jpeg" },
+        { L"cover.jpg", L"image/jpeg" },
+        { L"album.jpg", L"image/jpeg" },
+        { L"thumb.jpg", L"image/jpeg" },
+        { L"thumb.jpeg", L"image/jpeg" },
+    };
+#else
+    candidates = {
         { L"folder.jpg", L"image/jpeg" },
         { L"folder.JPG", L"image/jpeg" },
         { L"Folder.jpg", L"image/jpeg" },
@@ -412,10 +430,31 @@ std::vector<AlbumArtCandidate> BuildAlbumArtCandidateNames(const std::wstring& s
         { L"thumb.jpeg", L"image/jpeg" },
         { L"thumb.JPEG", L"image/jpeg" },
     };
+#endif
     if (!stem.empty()) {
         candidates.push_back({ stem + L".jpg", L"image/jpeg" });
         candidates.push_back({ stem + L".jpeg", L"image/jpeg" });
         candidates.push_back({ stem + L".png", L"image/png" });
     }
     return candidates;
+}
+
+unsigned int ComputeSsdpStartupJitterMilliseconds() {
+    // UPnP Device Architecture: "Devices should wait a random interval (e.g.
+    // 0-100ms) before sending an initial set of advertisements in order to
+    // reduce the likelihood of network storms."
+    static thread_local std::mt19937 generator(std::random_device{}());
+    std::uniform_int_distribution<unsigned int> distribution(0, 100);
+    return distribution(generator);
+}
+
+unsigned int ComputeSsdpNextAliveIntervalMilliseconds() {
+    // UPnP Device Architecture: re-issue advertisements "at a
+    // randomly-distributed interval of less than one-half of the
+    // advertisement expiration time" (CACHE-CONTROL max-age=1800s here, so
+    // strictly under 900000ms). Jitter also avoids multiple restarted
+    // instances refreshing in lockstep.
+    static thread_local std::mt19937 generator(std::random_device{}());
+    std::uniform_int_distribution<unsigned int> distribution(12u * 60u * 1000u, 14u * 60u * 1000u + 30u * 1000u);
+    return distribution(generator);
 }

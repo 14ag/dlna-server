@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <sstream>
+#include <string>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -111,6 +112,7 @@ std::wstring MediaDatabase::DefaultDatabasePath() {
 }
 
 void MediaDatabase::Load(const std::wstring& path) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_records.clear();
     m_nextId = kPersistentMediaIdBase;
 
@@ -131,10 +133,6 @@ void MediaDatabase::Load(const std::wstring& path) {
         record.key = UnescapeField(fields[1]);
         if (record.key.empty()) continue;
         if (fields.size() > 2) record.scanError = UnescapeField(fields[2]);
-        if (fields.size() > 3) record.metadata.title = UnescapeField(fields[3]);
-        if (fields.size() > 4) record.metadata.mimeType = UnescapeField(fields[4]);
-        if (fields.size() > 5) record.metadata.upnpClass = UnescapeField(fields[5]);
-        if (fields.size() > 6) record.metadata.codec = UnescapeField(fields[6]);
 
         m_records[record.key] = record;
         if (id >= m_nextId) m_nextId = id + 1;
@@ -142,17 +140,14 @@ void MediaDatabase::Load(const std::wstring& path) {
 }
 
 bool MediaDatabase::Save(const std::wstring& path) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     std::ostringstream out;
     out << "# dlna-server media-cache.tsv v1\n";
     for (const auto& entry : m_records) {
         const Record& record = entry.second;
         out << record.id << '\t'
             << EscapeField(record.key) << '\t'
-            << EscapeField(record.scanError) << '\t'
-            << EscapeField(record.metadata.title) << '\t'
-            << EscapeField(record.metadata.mimeType) << '\t'
-            << EscapeField(record.metadata.upnpClass) << '\t'
-            << EscapeField(record.metadata.codec) << '\n';
+            << EscapeField(record.scanError) << '\n';
     }
     const std::wstring tempPath = path + L".tmp";
     if (!WriteWholeFile(tempPath, out.str())) return false;
@@ -166,6 +161,7 @@ bool MediaDatabase::Save(const std::wstring& path) const {
 }
 
 int MediaDatabase::GetOrCreateStableId(const std::wstring& canonicalKey) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto found = m_records.find(canonicalKey);
     if (found != m_records.end()) {
         return found->second.id;
@@ -184,6 +180,7 @@ int MediaDatabase::GetOrCreateStableContainerId(const std::wstring& canonicalKey
 }
 
 void MediaDatabase::MarkScanSuccess(const std::wstring& canonicalKey) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto found = m_records.find(canonicalKey);
     if (found != m_records.end()) {
         found->second.scanError.clear();
@@ -191,16 +188,9 @@ void MediaDatabase::MarkScanSuccess(const std::wstring& canonicalKey) {
 }
 
 void MediaDatabase::RecordScanError(const std::wstring& canonicalKey, const std::wstring& message) {
-    int id = GetOrCreateStableId(canonicalKey);
+    int id = GetOrCreateStableId(canonicalKey);   // locks and releases internally
+    std::lock_guard<std::mutex> lock(m_mutex);
     Record& record = m_records[canonicalKey];
     record.id = id;
     record.scanError = message;
-}
-
-void MediaDatabase::CacheMetadata(const std::wstring& canonicalKey, const CachedMediaMetadata& metadata) {
-    int id = GetOrCreateStableId(canonicalKey);
-    Record& record = m_records[canonicalKey];
-    record.id = id;
-    record.metadata = metadata;
-    record.scanError.clear();
 }

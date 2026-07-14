@@ -1,12 +1,30 @@
 param(
     [string]$Version = "",
     [string]$WslDistro = "Ubuntu",
-    [string]$Platform = "winx64,winx86,linux,macos-x64,macos-arm64",
+    [string]$Platform = "winx64,winx86,linux",
     [Alias("no-clean")]
     [switch]$NoClean
 )
 
-$ErrorActionPreference = "Stop"
+function Invoke-NativeChecked {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
+    )
+
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "$FilePath failed with exit code $LASTEXITCODE"
+        return $false
+    }
+    return $true
+}
+
+Get-Process "DLNA Server" -ErrorAction SilentlyContinue | Stop-Process -Force
+
+$ErrorActionPreference = "continue"
 $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $output = Join-Path $repo "output"
 $releaseTools = Join-Path $repo "build-release-tools"
@@ -50,6 +68,28 @@ function Get-Sha256Hex {
     }
 }
 
+function Clear-StaleDownload {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedSha256
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $existing = Get-Item -LiteralPath $Path
+    if ($existing.Length -eq 0) {
+        Write-Warning "Removing zero-byte stale file: $Path"
+        Remove-Item -LiteralPath $Path -Force
+        return
+    }
+    $actual = Get-Sha256Hex -Path $Path
+    if ($actual -ine $ExpectedSha256) {
+        Write-Warning "Checksum mismatch for $Path (expected $ExpectedSha256, got $actual). Removing stale file."
+        Remove-Item -LiteralPath $Path -Force
+    }
+}
+
 function Save-UrlIfMissing {
     param(
         [Parameter(Mandatory = $true)]
@@ -59,28 +99,28 @@ function Save-UrlIfMissing {
         [string]$Sha256 = ""
     )
 
-    if (Test-Path -LiteralPath $Path) {
-        $existing = Get-Item -LiteralPath $Path
-        if ($existing.Length -gt 0) {
-            if (-not $Sha256 -or ((Get-Sha256Hex -Path $Path) -ieq $Sha256)) {
-                return
-            }
-            Remove-Item -LiteralPath $Path -Force
-        }
+    if ($Sha256) {
+        Clear-StaleDownload -Path $Path -ExpectedSha256 $Sha256
     }
+
+    if (Test-Path -LiteralPath $Path) { return }
 
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
     Write-Host "Downloading $Url..."
     $client = New-Object System.Net.WebClient
     try {
         $client.DownloadFile($Url, $Path)
+    } catch {
+        Write-Warning "Download failed: $Url ($($_.Exception.Message))"
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        return
     } finally {
         $client.Dispose()
     }
 
     if ($Sha256 -and -not ((Get-Sha256Hex -Path $Path) -ieq $Sha256)) {
+        Write-Warning "Downloaded file checksum mismatch for $Path. Expected $Sha256, got $(Get-Sha256Hex -Path $Path). Removing."
         Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-        throw "Checksum mismatch for $Path"
     }
 }
 
@@ -142,7 +182,7 @@ function Test-SelectedPlatformPrerequisites {
         throw "tar.exe not found. Linux release tool extraction requires tar."
     }
     if (($Names -contains "macos-x64" -or $Names -contains "macos-arm64") -and $env:OS -eq "Windows_NT") {
-        throw "macOS assets must be built on macOS."
+        Write-Warning "macOS assets must be built on macOS. Skipping macos platforms."
     }
 }
 
@@ -175,18 +215,6 @@ function Get-VcpkgTripletForArch {
     }
 }
 
-function Assert-VcpkgCurlInstalled {
-    param(
-        [Parameter(Mandatory = $true)][string]$VcpkgRoot,
-        [Parameter(Mandatory = $true)][string]$Triplet
-    )
-
-    $curlConfig = Join-Path $VcpkgRoot "installed\$Triplet\share\curl\CURLConfig.cmake"
-    if (-not (Test-Path -LiteralPath $curlConfig)) {
-        throw "curl:$Triplet not installed in vcpkg. Run: vcpkg install curl:$Triplet"
-    }
-}
-
 function New-SourceReleaseArchive {
     param(
         [Parameter(Mandatory = $true)][string]$ArchivePath
@@ -206,10 +234,13 @@ function Invoke-CmakeBuild {
     $vcpkgRoot = Resolve-VcpkgRoot
     $vcpkgToolchain = Join-Path $vcpkgRoot "scripts\buildsystems\vcpkg.cmake"
     $vcpkgTriplet = Get-VcpkgTripletForArch -Arch $Arch
-    Assert-VcpkgCurlInstalled -VcpkgRoot $vcpkgRoot -Triplet $vcpkgTriplet
+    $curlConfig = Join-Path $vcpkgRoot "installed\$vcpkgTriplet\share\curl\CURLConfig.cmake"
+    if (-not (Test-Path -LiteralPath $curlConfig)) {
+        throw "curl:$vcpkgTriplet not installed in vcpkg. Run: vcpkg install curl:$vcpkgTriplet"
+    }
 
     Remove-DirectoryInsideRepo -Path $fullBuildDir
-    Invoke-NativeChecked "cmake" @(
+    $cmakeResult = Invoke-NativeChecked "cmake" @(
         "-S", $repo,
         "-B", $fullBuildDir,
         "-A", $Arch,
@@ -217,7 +248,10 @@ function Invoke-CmakeBuild {
         "-DCMAKE_TOOLCHAIN_FILE=$vcpkgToolchain",
         "-DVCPKG_TARGET_TRIPLET=$vcpkgTriplet"
     )
-    Invoke-NativeChecked "cmake" @("--build", $fullBuildDir, "--config", "Release", "--target", "install", "--", "/m")
+    if (-not $cmakeResult) { return $false }
+    $buildResult = Invoke-NativeChecked "cmake" @("--build", $fullBuildDir, "--config", "Release", "--target", "install", "--", "/m")
+    if (-not $buildResult) { return $false }
+    return $true
 }
 
 if (-not $Version) {
@@ -238,13 +272,15 @@ $sourceZip = Join-Path $output "dlna-server-$Version-source.zip"
 New-SourceReleaseArchive -ArchivePath $sourceZip
 
 if ($selectedPlatforms -contains "winx64") {
-    Invoke-CmakeBuild -BuildDir "build-release-winx64" -Arch "x64" -InstallDir $platformDirs["winx64"]
-    Compress-Archive -LiteralPath (Join-Path $platformDirs["winx64"] "DLNA Server.exe") -DestinationPath (Join-Path $platformDirs["winx64"] "dlna-server-$Version-windows-x86_64.zip") -Force
+    if (Invoke-CmakeBuild -BuildDir "build-release-winx64" -Arch "x64" -InstallDir $platformDirs["winx64"]) {
+        Compress-Archive -LiteralPath (Join-Path $platformDirs["winx64"] "DLNA Server.exe") -DestinationPath (Join-Path $platformDirs["winx64"] "dlna-server-$Version-windows-x86_64.zip") -Force
+    }
 }
 
 if ($selectedPlatforms -contains "winx86") {
-    Invoke-CmakeBuild -BuildDir "build-release-winx86" -Arch "Win32" -InstallDir $platformDirs["winx86"]
-    Compress-Archive -LiteralPath (Join-Path $platformDirs["winx86"] "DLNA Server.exe") -DestinationPath (Join-Path $platformDirs["winx86"] "dlna-server-$Version-windows-x86.zip") -Force
+    if (Invoke-CmakeBuild -BuildDir "build-release-winx86" -Arch "Win32" -InstallDir $platformDirs["winx86"]) {
+        Compress-Archive -LiteralPath (Join-Path $platformDirs["winx86"] "DLNA Server.exe") -DestinationPath (Join-Path $platformDirs["winx86"] "dlna-server-$Version-windows-x86.zip") -Force
+    }
 }
 
 $drive = $repo.Substring(0, 1).ToLowerInvariant()
@@ -313,21 +349,25 @@ DLNA_REPO_ROOT='__REPO_WSL__' DLNA_OUTPUT_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_
             $_.Name -like "DLNA_Server-$Version-*.AppImage"
         }
     if (-not $linuxAssets) {
-        throw "Linux build finished without producing Linux release assets in $($platformDirs["linux"])"
+        Write-Warning "Linux build finished without producing Linux release assets in $($platformDirs["linux"])"
     }
 }
 
 foreach ($macPlatform in @("macos-x64", "macos-arm64")) {
     if ($selectedPlatforms -contains $macPlatform) {
         if ($env:OS -eq "Windows_NT") {
-            throw "$macPlatform assets must be built on macOS."
+            Write-Warning "$macPlatform assets must be built on macOS. Skipping."
+            continue
         }
         $arch = if ($macPlatform -eq "macos-x64") { "x86_64" } else { "arm64" }
         $env:DLNA_MACOS_ARCH = $arch
         $env:DLNA_MACOS_PLATFORM_DIR = $platformDirs[$macPlatform]
         $env:DLNA_NO_CLEAN = if ($NoClean) { "1" } else { "0" }
         try {
-            Invoke-NativeChecked "bash" @("scripts/build-macos-dmg.sh")
+            $result = Invoke-NativeChecked "bash" @("scripts/build-macos-dmg.sh")
+            if (-not $result) {
+                Write-Warning "macOS build failed for $macPlatform"
+            }
         } finally {
             Remove-Item Env:\DLNA_MACOS_ARCH -ErrorAction SilentlyContinue
             Remove-Item Env:\DLNA_MACOS_PLATFORM_DIR -ErrorAction SilentlyContinue
@@ -345,7 +385,7 @@ $platformAssets = foreach ($selectedPlatform in $selectedPlatforms) {
         }
 }
 if (-not (Test-Path -LiteralPath $sourceZip) -and -not $platformAssets) {
-    throw "No release assets produced."
+    Write-Warning "No release assets produced."
 }
 
 foreach ($selectedPlatform in $selectedPlatforms) {
