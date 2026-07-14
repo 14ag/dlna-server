@@ -905,6 +905,7 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         if (m_worker.joinable()) {
             m_worker.join();
         }
+        RemoveTrayIcon();
         DLNAServer.Stop();
         SetThreadExecutionState(ES_CONTINUOUS);
         PostQuitMessage(0);
