@@ -1,1 +1,0 @@
-build-assets.bat --platform winx64 --no-clean
