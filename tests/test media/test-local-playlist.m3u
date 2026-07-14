@@ -1,0 +1,5 @@
+#EXTM3U
+#EXTINF:-1,test-clip
+#DLNA-SUBTITLE:C:\Users\philip\sauce\dlna-server\tests\test media\test-clip.srt
+#EXTVLCOPT:sub-file=C:\Users\philip\sauce\dlna-server\tests\test media\test-clip.srt
+C:\Users\philip\sauce\dlna-server\tests\test media\test-clip.mp4
