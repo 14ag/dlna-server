@@ -12,7 +12,10 @@
 #include "log.h"
 #include "netutils.h"
 #include "server.h"
+#include "access_key_hook.h"
+#include "access_keys.h"
 #include "playlist_scan_concurrency.h"
+#include "cli_flags.h"
 #include "../resources/resource.h"
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
@@ -33,15 +36,11 @@ BOOL WINAPI HeadlessConsoleCtrlHandler(DWORD ctrlType) {
 }
 
 void PrintUsage() {
-    std::wcerr << L"Usage: DLNA Server.exe [--headless] [--port N] [--name NAME] [--uuid UUID] [--debug] --source PATH_OR_URL [--source PATH_OR_URL...]\n";
-    std::wcerr << L"  --headless, -h    Start without window (tray icon only)\n";
-    std::wcerr << L"  --port N          HTTP port override (1-65535)\n";
-    std::wcerr << L"  --name NAME       UPnP friendly server name override\n";
-    std::wcerr << L"  --uuid UUID       Device UUID override\n";
-    std::wcerr << L"  --source PATH     Add media source (folder, playlist, or URL)\n";
-    std::wcerr << L"  --debug           Enable debug logging\n";
-    std::wcerr << L"  --configure-firewall  Run firewall helper and exit\n";
-    std::wcerr << L"  --help            Show this help and exit\n";
+    std::wcerr << L"Usage: DLNA Server.exe [--help]\n";
+    std::wcerr << L"       DLNA Server.exe [OPTIONS...] --source PATH\n";
+    for (auto& entry : GetCliFlagTable()) {
+        std::wcerr << L"  " << entry.flag << L"  " << entry.meaning << L"\n";
+    }
 }
 
 } // namespace
@@ -84,6 +83,36 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         } else if (wcscmp(argv[i], L"--print-scan-concurrency") == 0 && i + 1 < argc) {
             size_t n = static_cast<size_t>(_wtoi(argv[++i]));
             std::cout << ComputePlaylistScanConcurrency(n) << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-mnemonics") == 0 && i + 1 < argc) {
+            std::wstring arg = argv[++i];
+            std::vector<std::wstring> labels;
+            size_t start = 0;
+            for (size_t j = 0; j <= arg.size(); ++j) {
+                if (j == arg.size() || arg[j] == L',') {
+                    labels.push_back(arg.substr(start, j - start));
+                    start = j + 1;
+                }
+            }
+            std::vector<wchar_t> result = AssignMnemonics(labels);
+            for (size_t j = 0; j < result.size(); ++j) {
+                if (j > 0) std::cout << ",";
+                if (result[j] != L'\0') {
+                    std::cout << static_cast<char>(result[j]);
+                }
+            }
+            std::cout << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-cue-state") == 0 && i + 1 < argc) {
+            std::wstring seq = argv[++i];
+            KeyboardCueState cs;
+            for (wchar_t ch : seq) {
+                if (ch == L'k' || ch == L'K') cs.OnKeyboardInput();
+                else if (ch == L'm' || ch == L'M') cs.OnMouseButtonInput();
+                std::cout << (cs.HideAccel() ? "1" : "0") << "," << (cs.HideFocus() ? "1" : "0") << std::endl;
+            }
             LocalFree(argv);
             return 0;
         } else {
@@ -159,8 +188,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
     }
 
+    if (!InstallAccessKeyHook()) {
+        // Non-fatal: keyboard cues will default to always-hidden Windows behaviour
+    }
+
     MainWindow app;
     if (!app.Create(hInstance, startHeadless ? SW_HIDE : nCmdShow, startHeadless)) {
+        RemoveAccessKeyHook();
         return 0;
     }
 
@@ -168,22 +202,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     g_hwndMainForConsole = hwndMain;
     if (startHeadless) {
         if (!AppConfig.debugLog) {
-            // A leading \n forces the cursor to column 0 of a fresh line even if
-            // cmd.exe's own prompt is still sitting on the current line (see the
-            // AttachConsole(ATTACH_PARENT_PROCESS) race documented above this
-            // function). Deliberately no trailing newline: leaving the cursor
-            // immediately after the message, rather than one line below it,
-            // avoids stranding an empty line before the shell redraws its prompt.
             std::wcout << L"\nserver is up" << std::flush;
             FreeConsole();
         }
         PostMessageW(hwndMain, WM_COMMAND, IDC_BTN_STARTSTOP, 0);
     }
 
+    HWND hwndMainForNav = hwndMain;
     MSG msg = {};
     while (GetMessage(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        if (!IsDialogMessageW(hwndMainForNav, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
     }
 
     if (hMutex) {
@@ -191,5 +222,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         CloseHandle(hMutex);
     }
 
+    RemoveAccessKeyHook();
     return 0;
 }

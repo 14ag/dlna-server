@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <windows.h>
+#include "access_keys.h"
 #include "source_list_focus.h"
 #include <string>
 #include <thread>
@@ -56,6 +57,7 @@ private:
     bool IsRunning() const;
     void UpdateWakeLock();
     void SetControlsForState();
+    void RefreshToolbarMnemonics();
 
     HWND m_hwnd;
     HINSTANCE m_hInstance;
@@ -73,6 +75,7 @@ private:
     HWND m_hListSources;
     WNDPROC m_listOldProc;
 
+    KeyboardCueState m_cueState;
     ServerUiState m_state;
     std::wstring m_statusEndpoint;
     std::thread m_worker;

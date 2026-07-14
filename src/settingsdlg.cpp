@@ -5,6 +5,8 @@
 #include "dlna_utils.h"
 #include "modal_focus.h"
 #include "netutils.h"
+#include "access_keys.h"
+#include "help_dialog.h"
 #include "../resources/resource.h"
 #include <commctrl.h>
 #include <dwmapi.h>
@@ -406,11 +408,23 @@ void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
     }
 }
 
+namespace {
+HMENU BuildSettingsMenuBar() {
+    HMENU bar = CreateMenu();
+    std::vector<std::wstring> labels = { L"Logs", L"Help" };
+    std::vector<wchar_t> assigned = AssignMnemonics(labels);
+    AppendMenuW(bar, MF_STRING, ID_MENU_LOGS, InsertMnemonicMarker(labels[0], assigned[0]).c_str());
+    AppendMenuW(bar, MF_STRING, ID_MENU_HELP, InsertMnemonicMarker(labels[1], assigned[1]).c_str());
+    return bar;
+}
+}
+
 INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     (void)lParam;
     switch (uMsg) {
     case WM_INITDIALOG:
         ApplyDarkFrame(hwndDlg);
+        SetMenu(hwndDlg, BuildSettingsMenuBar());
         OnInitDialog(hwndDlg);
         return (INT_PTR)TRUE;
         
@@ -423,12 +437,6 @@ INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
             EndDialog(hwndDlg, LOWORD(wParam));
             return (INT_PTR)TRUE;
         }
-        else if (LOWORD(wParam) == IDC_BTN_VIEW_LOG) {
-            ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hwndDlg);
-            LogDialog::Show(hwndDlg);
-            RestoreModalFocus(focusSnapshot, hwndDlg);
-            return (INT_PTR)TRUE;
-        }
         else if (LOWORD(wParam) == IDC_CHK_DEFAULT_PLAYLIST) {
             UpdateDefaultPlaylistButton(hwndDlg);
             return (INT_PTR)TRUE;
@@ -437,6 +445,18 @@ INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
             ShowPlaylistEntryForm(hwndDlg);
             CheckDlgButton(hwndDlg, IDC_CHK_DEFAULT_PLAYLIST, BST_CHECKED);
             UpdateDefaultPlaylistButton(hwndDlg);
+            return (INT_PTR)TRUE;
+        }
+        else if (LOWORD(wParam) == ID_MENU_LOGS) {
+            ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hwndDlg);
+            LogDialog::Show(hwndDlg);
+            RestoreModalFocus(focusSnapshot, hwndDlg);
+            return (INT_PTR)TRUE;
+        }
+        else if (LOWORD(wParam) == ID_MENU_HELP) {
+            ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hwndDlg);
+            HelpDialog::Show(hwndDlg);
+            RestoreModalFocus(focusSnapshot, hwndDlg);
             return (INT_PTR)TRUE;
         }
         break;

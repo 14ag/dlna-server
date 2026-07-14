@@ -15,7 +15,7 @@ class Server {
 public:
     static Server& Get();
 
-    bool Start();
+    bool Start(std::wstring& outReason);
     void Stop();
     bool Rescan();
     
