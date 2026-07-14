@@ -24,7 +24,7 @@ On Windows, it runs as a normal app with a tray icon. On Linux and macOS, you ca
 
 Prebuilt binaries are available from the [Releases](https://github.com/anomalyco/dlna-server/releases) page:
 
-- **Windows** — download `DLNA-Server-win64.zip` or `DLNA-Server-win86.zip`, unzip, and run `DLNA Server.exe`.
+- **Windows** — download run `DLNA Server.exe`.
 - **Linux** — download `dlna-server-x86_64.AppImage`, make it executable (`chmod +x dlna-server-x86_64.AppImage`), and run it. The AppImage bundles both the desktop GUI and the command-line server.
 - **macOS** — download `DLNA-Server.dmg`, open it, and drag `DLNA Server.app` to your Applications folder.
 

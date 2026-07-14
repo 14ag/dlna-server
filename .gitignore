@@ -82,10 +82,17 @@ vlc-help.txt
 scratch/
 .pytest_cache/
 tests/__pycache__/*
+
+
+
 AGENTS.MD
 .codex/config.toml
 *.m3u8
 *.m3u
 tests/test media/test-clip.mp4
 tests/test media/test-clip.srt
-build*
+build*/
+tests/test media/test-hls-extended-playlist.m3u8
+tests/test media/test-hls-playlist.m3u8
+tests/test media/test-local-playlist.m3u
+
