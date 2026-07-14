@@ -1,0 +1,6 @@
+[mcp_servers.sequential-thinking]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+
+[mcp_servers.microsoft-docs-mcp]
+url = "https://learn.microsoft.com/api/mcp"

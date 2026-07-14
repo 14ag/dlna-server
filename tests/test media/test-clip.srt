@@ -1,0 +1,19 @@
+1
+00:00:02,000 --> 00:00:07,000
+test subtitles
+test
+
+2
+00:00:02,586 --> 00:00:03,837
+[Zed] <i>Welcome to Seabrook.</i>
+
+3
+00:00:04,296 --> 00:00:06,715
+<i>Our hometown's a little</i>
+<i>different than most...</i>
+
+4
+00:00:07,007 --> 00:00:08,000
+[Addison]
+<i>Where a mysterious galactic Moonstone</i>
+
