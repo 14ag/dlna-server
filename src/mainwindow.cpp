@@ -388,7 +388,32 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
     if (nCmdShow != SW_HIDE) {
         ShowWindow(m_hwnd, nCmdShow);
     }
+    RefreshToolbarMnemonics();
     return true;
+}
+
+static std::wstring GetWindowTextAsWide(HWND hwnd) {
+    int len = GetWindowTextLengthW(hwnd);
+    std::wstring text(len + 1, L'\0');
+    GetWindowTextW(hwnd, text.data(), len + 1);
+    text.resize(len);
+    return text;
+}
+
+void MainWindow::RefreshToolbarMnemonics() {
+    std::vector<std::wstring> labels = {
+        GetWindowTextAsWide(m_hBtnAdd),
+        GetWindowTextAsWide(m_hBtnDelete),
+        GetWindowTextAsWide(m_hBtnStartStop),
+        GetWindowTextAsWide(m_hBtnSettings)
+    };
+    std::vector<std::wstring> stripped;
+    for (auto& l : labels) stripped.push_back(StripMnemonicMarker(l));
+    std::vector<wchar_t> assigned = AssignMnemonics(stripped);
+    SetWindowTextW(m_hBtnAdd, InsertMnemonicMarker(stripped[0], assigned[0]).c_str());
+    SetWindowTextW(m_hBtnDelete, InsertMnemonicMarker(stripped[1], assigned[1]).c_str());
+    SetWindowTextW(m_hBtnStartStop, InsertMnemonicMarker(stripped[2], assigned[2]).c_str());
+    SetWindowTextW(m_hBtnSettings, InsertMnemonicMarker(stripped[3], assigned[3]).c_str());
 }
 
 void MainWindow::SetStatus(ServerUiState state, const std::wstring& endpoint) {
@@ -397,6 +422,7 @@ void MainWindow::SetStatus(ServerUiState state, const std::wstring& endpoint) {
     SendMessage(m_hBtnStartStop, WM_SETTEXT, 0, (LPARAM)(IsRunning() ? L"Stop" : L"Start"));
     SetControlsForState();
     UpdateWakeLock();
+    RefreshToolbarMnemonics();
     InvalidateRect(m_hwnd, NULL, TRUE);
 }
 
@@ -427,6 +453,7 @@ void MainWindow::SetControlsForState() {
     EnableWindow(m_hBtnAdd, enableAdd);
     EnableWindow(m_hBtnSettings, TRUE);
     SendMessage(m_hBtnAdd, WM_SETTEXT, 0, (LPARAM)(IsRunning() ? L"Scan" : L"Add"));
+    RefreshToolbarMnemonics();
     UpdateDeleteButton();
 }
 
@@ -436,12 +463,18 @@ void MainWindow::BeginStartServer() {
     SetStatus(ServerUiState::Starting);
     HWND target = m_hwnd;
     m_worker = std::thread([target]() {
-        bool ok = DLNAServer.Start();
+        std::wstring reason;
+        bool ok = DLNAServer.Start(reason);
+        std::wstring message;
+        if (!ok) {
+            message = L"server could not start\n";
+            if (!reason.empty()) message += reason;
+        }
         ServerOperationResult* result = new ServerOperationResult{
             ok ? ServerUiState::Running : ServerUiState::Stopped,
             ok,
             ok ? DLNAServer.GetEndpoint() : L"",
-            ok ? L"" : L"could not start DLNA server."
+            ok ? L"" : message.c_str()
         };
         PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
     });
@@ -467,12 +500,18 @@ void MainWindow::BeginRestartServer() {
     m_worker = std::thread([target]() {
         DLNAServer.Stop();
         PostMessageW(target, WM_SERVER_OPERATION_PROGRESS, static_cast<WPARAM>(ServerUiState::Starting), 0);
-        bool ok = DLNAServer.Start();
+        std::wstring reason;
+        bool ok = DLNAServer.Start(reason);
+        std::wstring message;
+        if (!ok) {
+            message = L"server could not start\n";
+            if (!reason.empty()) message += reason;
+        }
         ServerOperationResult* result = new ServerOperationResult{
             ok ? ServerUiState::Running : ServerUiState::Stopped,
             ok,
             ok ? DLNAServer.GetEndpoint() : L"",
-            ok ? L"" : L"Server stopped. Failed to restart on the new port."
+            ok ? L"" : message.c_str()
         };
         PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
     });
@@ -526,9 +565,17 @@ void MainWindow::ShowTrayMenu() {
     POINT pt;
     GetCursorPos(&pt);
     HMENU hMenu = CreatePopupMenu();
-    AppendMenuW(hMenu, MF_STRING, 1, L"Show Window");
-    AppendMenuW(hMenu, MF_STRING | (IsBusy() ? MF_GRAYED : 0), 2, IsRunning() ? L"Stop Server" : L"Start Server");
-    AppendMenuW(hMenu, MF_STRING, 3, L"Exit");
+
+    std::vector<std::wstring> labels = {
+        L"Show Window",
+        IsRunning() ? L"Stop Server" : L"Start Server",
+        L"Exit"
+    };
+    std::vector<wchar_t> assigned = AssignMnemonics(labels);
+
+    AppendMenuW(hMenu, MF_STRING, 1, InsertMnemonicMarker(labels[0], assigned[0]).c_str());
+    AppendMenuW(hMenu, MF_STRING | (IsBusy() ? MF_GRAYED : 0), 2, InsertMnemonicMarker(labels[1], assigned[1]).c_str());
+    AppendMenuW(hMenu, MF_STRING, 3, InsertMnemonicMarker(labels[2], assigned[2]).c_str());
 
     SetForegroundWindow(m_hwnd);
     int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, m_hwnd, NULL);
@@ -623,9 +670,11 @@ void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
     GetWindowTextW(drawItem->hwndItem, text, 32);
     HFONT oldFont = (HFONT)SelectObject(drawItem->hDC, m_hButtonFont ? m_hButtonFont : GetStockObject(DEFAULT_GUI_FONT));
     SetTextColor(drawItem->hDC, textColor);
-    DrawTextW(drawItem->hDC, text, -1, &rc, DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS);
+    UINT drawFlags = DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS;
+    if (m_cueState.HideAccel()) drawFlags |= DT_HIDEPREFIX;
+    DrawTextW(drawItem->hDC, text, -1, &rc, drawFlags);
 
-    if (drawItem->itemState & ODS_FOCUS) {
+    if ((drawItem->itemState & ODS_FOCUS) && !m_cueState.HideFocus()) {
         RECT focus = rc;
         InflateRect(&focus, -4, -4);
         HPEN focusPen = CreatePen(PS_SOLID, 1, kFocusColor);
@@ -793,6 +842,16 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         }
         SetWindowPos(m_hListSources, NULL, kGutter, kListTop, listWidth, listHeight, SWP_NOZORDER);
 
+        InvalidateRect(hwnd, NULL, TRUE);
+        return 0;
+    }
+    case WM_UPDATEUISTATE: {
+        WORD action = LOWORD(wParam);
+        WORD flags = HIWORD(wParam);
+        if (flags & UISF_HIDEACCEL) {
+            if (action == UIS_SET) m_cueState.OnMouseButtonInput();
+            if (action == UIS_CLEAR) m_cueState.OnKeyboardInput();
+        }
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
     }

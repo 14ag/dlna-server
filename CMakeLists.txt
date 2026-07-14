@@ -27,9 +27,12 @@ endfunction()
 
 if(WIN32)
 set(SOURCES
+         src/access_keys.cpp
+         src/access_key_hook.cpp
          src/mainwindow.cpp
          src/settingsdlg.cpp
          src/logdlg.cpp
+         src/help_dialog.cpp
          src/server.cpp
          src/netutils.cpp
          src/httpserver.cpp
@@ -56,9 +59,13 @@ set(SOURCES
      )
 
 set(HEADERS
+         src/access_keys.h
+         src/cli_flags.h
+         src/settings_help.h
          src/mainwindow.h
          src/settingsdlg.h
          src/logdlg.h
+         src/help_dialog.h
          src/server.h
          src/netutils.h
          src/netutils_internal.h
@@ -111,6 +118,7 @@ else()
     set(DLNA_FLTK_VERSION "release-1.4.5" CACHE STRING "FLTK git tag used when system FLTK is unavailable")
 
 add_library(dlna_core STATIC
+         src/access_keys.cpp
          src/posix_server.cpp
          src/posix_ssdp.cpp
          src/ssdp_common.cpp

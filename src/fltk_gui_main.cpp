@@ -502,8 +502,16 @@ private:
         m_state = ServerUiState::Starting;
         RefreshStatus();
         m_worker = std::thread([this]() {
-            bool ok = DLNAServer.Start();
-            SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, ok ? "" : "Failed to start DLNA server. Open View log for details.");
+            std::wstring reason;
+            bool ok = DLNAServer.Start(reason);
+            std::string message;
+            if (!ok) {
+                message = "server could not start\n";
+                if (!reason.empty()) {
+                    message += WideToUtf8(reason);
+                }
+            }
+            SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, message);
         });
     }
 
