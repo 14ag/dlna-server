@@ -334,7 +334,7 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
 
     m_hwnd = CreateWindowExW(
         m_startedHeadless ? WS_EX_TOOLWINDOW : 0, CLASS_NAME, L"DLNA Server",
-        WS_OVERLAPPEDWINDOW,
+        WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, kDefaultWindowWidth, kDefaultWindowHeight,
         NULL, NULL, hInstance, this
     );
