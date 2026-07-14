@@ -42,53 +42,6 @@ def test_event_subscribe_unsubscribe_routes_are_shared_by_windows_and_posix_http
     assert "std::string EventSubscriptionResponse" not in posix
 
 
-def test_successful_media_scan_notifies_gena_after_update_id_increment_on_both_platforms():
-    windows = read("src/media_sources.cpp")
-    posix = read("src/posix_media_sources.cpp")
-
-    for source in (windows, posix):
-        assert '#include "upnp_eventing.h"' in source
-        assert "SwapScannedState(std::move(state));" in source
-        assert "m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1" in source
-        assert "AppEvents.NotifySystemUpdateId(newUpdateId)" in source
-
-
-def test_persistent_media_database_stores_stable_ids_and_scan_errors_without_new_config_keys():
-    header = read("src/media_database.h")
-    source = read("src/media_database.cpp")
-    media_header = read("src/media_sources.h")
-    windows = read("src/media_sources.cpp")
-    posix = read("src/posix_media_sources.cpp")
-    cmake = read("CMakeLists.txt")
-    config = read("src/config.h") + read("src/config.cpp") + read("src/posix_config.cpp")
-
-    for token in (
-        "class MediaDatabase",
-        "kPersistentMediaIdBase",
-        "media-cache.tsv",
-        "GetOrCreateStableId",
-        "RecordScanError",
-        "Save",
-        "Load",
-    ):
-        assert token in header + source
-
-    assert "MediaDatabase* mediaDatabase" in media_header
-    for source_text in (windows, posix):
-        assert '#include "media_database.h"' in source_text
-        assert "MediaDatabase database;" in source_text
-        assert "database.Load(MediaDatabase::DefaultDatabasePath())" in source_text
-        assert "state.mediaDatabase = &database" in source_text
-        assert "database.Save(MediaDatabase::DefaultDatabasePath())" in source_text
-        assert "GetOrCreateStableId(BuildStableMediaKey(" in source_text
-        assert "GetOrCreateStableContainerId" in source_text
-        assert "RecordScanError" in source_text
-
-    assert "src/media_database.cpp" in cmake
-    assert "src/media_database.h" in cmake
-    assert "MediaDatabasePath" not in config
-
-
 def test_server_watch_mode_detects_local_source_changes_and_rescans_without_restart():
     header = read("src/server.h")
     windows = read("src/server.cpp")

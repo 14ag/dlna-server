@@ -1,14 +1,19 @@
 #ifndef UPNP_EVENTING_H
 #define UPNP_EVENTING_H
 
+#include "bounded_thread_pool.h"
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
+
+inline constexpr size_t kMaxUpnpSubscriptions = 64;
 
 class UpnpEventManager {
 public:
@@ -50,6 +55,7 @@ private:
     void StartWorkerLocked();
     void QueueInitialNotifyLocked(const Subscription& subscription);
     void QueueNotifyJobLocked(NotifyJob job);
+    void DispatchNotifyToSubscribersLocked(int updateId, std::chrono::steady_clock::time_point now);
     void ExpireSubscription(const std::string& sid);
     void StopWorker();
     void WorkerLoop();
@@ -62,10 +68,26 @@ private:
     std::thread m_worker;
     bool m_stopping = false;
     bool m_workerStarted = false;
+    // Bounded so a burst of subscribers cannot spawn unbounded concurrent
+    // outbound HTTP NOTIFY requests; sized to kMaxUpnpSubscriptions since
+    // that is already the hard cap on how many jobs could ever be in
+    // flight at once in the worst case (one per subscriber).
+    std::unique_ptr<BoundedThreadPool> m_notifyPool;
     int m_lastSystemUpdateId = 1;
     unsigned long long m_generation = 0;
+    // GENA notify moderation (leading-edge-plus-trailing-edge debounce): a
+    // publish burst dispatches its first update immediately, then coalesces
+    // every update inside m_minNotifyInterval into one trailing dispatch of
+    // the latest updateId. This bounds DispatchNotifyToSubscribersLocked's
+    // O(subscriber count) mutex-held iteration to roughly once per window
+    // instead of once per PublishItem/PublishContainer call.
+    std::chrono::milliseconds m_minNotifyInterval{500};
+    std::chrono::steady_clock::time_point m_lastDispatchTime{};
+    bool m_trailingFirePending = false;
+    int m_trailingUpdateId = 0;
+    std::chrono::steady_clock::time_point m_trailingFireAt{};
     std::atomic<unsigned long long> m_sidCounter;
-};
+ };
 
 #define AppEvents UpnpEventManager::Get()
 

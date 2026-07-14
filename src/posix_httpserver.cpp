@@ -1,4 +1,5 @@
 #include "httpserver.h"
+#include "http_common.h"
 #include "config.h"
 #include "contentdirectory.h"
 #include "dlna_utils.h"
@@ -13,7 +14,9 @@
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
+#include <poll.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 #include <netinet/in.h>
 #include <fstream>
 #include <limits.h>
@@ -34,10 +37,7 @@
 #endif
 
 namespace {
-constexpr int kBufferSize = 8192;
-constexpr size_t kMaxHeaderBytes = 64 * 1024;
 constexpr size_t kMaxClientThreads = 64;
-constexpr size_t kMaxSoapBodyBytes = 1024 * 1024;
 
 class ScopedFd {
 public:
@@ -93,6 +93,21 @@ void SetSocketTimeouts(int fd) {
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 }
 
+void SetSocketStreamTimeouts(int fd) {
+    timeval timeout{60, 0};
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+}
+
+void SetSocketKeepAliveIdleTimeout(int fd) {
+    timeval timeout{5, 0};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+}
+
+void SetSocketNoDelay(int fd) {
+    int flag = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+}
+
 void SendAll(int fd, const std::string& bytes) {
     const char* data = bytes.data();
     size_t remaining = bytes.size();
@@ -110,35 +125,6 @@ bool TrySendAll(int fd, const char* data, size_t remaining) {
         if (sent <= 0) return false;
         data += sent;
         remaining -= static_cast<size_t>(sent);
-    }
-    return true;
-}
-
-std::string ConnectionHeader(bool keepAlive) {
-    return keepAlive ? "Connection: keep-alive\r\n" : "Connection: close\r\n";
-}
-
-std::string SplitRequestTarget(const std::string& requestTarget) {
-    const size_t query = requestTarget.find('?');
-    return query == std::string::npos ? requestTarget : requestTarget.substr(0, query);
-}
-
-bool ValidateHostHeader(const std::string& host) {
-    if (host.empty()) return false;
-    for (unsigned char ch : host) {
-        if (ch <= 32 || ch == '/' || ch == '\\') return false;
-    }
-    return true;
-}
-
-bool ReadHttpRequestHeaders(int fd, std::string& req) {
-    req.clear();
-    char buffer[kBufferSize];
-    while (req.find("\r\n\r\n") == std::string::npos) {
-        ssize_t readBytes = recv(fd, buffer, sizeof(buffer), 0);
-        if (readBytes <= 0) return false;
-        req.append(buffer, static_cast<size_t>(readBytes));
-        if (req.size() > kMaxHeaderBytes) return false;
     }
     return true;
 }
@@ -203,7 +189,13 @@ HttpServer& HttpServer::Get() {
     return instance;
 }
 
-HttpServer::HttpServer() : m_running(false), m_listenSocketV4(-1), m_listenSocketV6(-1) {
+HttpServer::HttpServer() : m_running(false), m_listenSocketV4(-1), m_listenSocketV6(-1), m_wakeupReadFd(-1), m_wakeupWriteFd(-1) {
+    int fds[2];
+    if (pipe(fds) == 0) {
+        m_wakeupReadFd = fds[0];
+        m_wakeupWriteFd = fds[1];
+        fcntl(m_wakeupReadFd, F_SETFL, fcntl(m_wakeupReadFd, F_GETFL) | O_NONBLOCK);
+    }
 }
 
 bool HttpServer::Start(int port) {
@@ -220,6 +212,10 @@ bool HttpServer::Start(int port) {
 void HttpServer::Stop() {
     m_running = false;
     AppEvents.ClearSubscriptions();
+    if (m_wakeupWriteFd >= 0) {
+        char byte = 0;
+        write(m_wakeupWriteFd, &byte, 1);
+    }
     if (m_listenSocketV4 >= 0) { shutdown(m_listenSocketV4, SHUT_RDWR); close(m_listenSocketV4); m_listenSocketV4 = -1; }
     if (m_listenSocketV6 >= 0) { shutdown(m_listenSocketV6, SHUT_RDWR); close(m_listenSocketV6); m_listenSocketV6 = -1; }
     for (auto& thread : m_threads) if (thread.joinable()) thread.join();
@@ -230,6 +226,8 @@ void HttpServer::Stop() {
         clients.swap(m_clientThreads);
     }
     for (auto& client : clients) if (client.thread.joinable()) client.thread.join();
+    if (m_wakeupReadFd >= 0) { close(m_wakeupReadFd); m_wakeupReadFd = -1; }
+    if (m_wakeupWriteFd >= 0) { close(m_wakeupWriteFd); m_wakeupWriteFd = -1; }
 }
 
 void HttpServer::ReapFinishedClientThreads() {
@@ -248,11 +246,28 @@ void HttpServer::ReapFinishedClientThreads() {
 void HttpServer::AcceptLoop(int listenSocket) {
     while (m_running) {
         ReapFinishedClientThreads();
+        struct pollfd fds[2];
+        fds[0].fd = listenSocket;
+        fds[0].events = POLLIN;
+        fds[1].fd = m_wakeupReadFd;
+        fds[1].events = POLLIN;
+        int ret = poll(fds, 2, -1);
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (fds[1].revents & POLLIN) {
+            char buf[64];
+            while (read(m_wakeupReadFd, buf, sizeof(buf)) > 0) {}
+            continue;
+        }
+        if (!(fds[0].revents & POLLIN)) continue;
         sockaddr_storage remote{};
         socklen_t len = sizeof(remote);
         int client = accept(listenSocket, reinterpret_cast<sockaddr*>(&remote), &len);
         if (client < 0) continue;
         SetSocketTimeouts(client);
+        SetSocketNoDelay(client);
 #ifdef SO_NOSIGPIPE
         { int on = 1; setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on)); }
 #endif
@@ -285,95 +300,191 @@ void HttpServer::AcceptLoop(int listenSocket) {
 }
 
 void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
-    ScopedFd client(clientSocket);
-    char buf[kBufferSize];
-    std::string req;
-    if (!ReadHttpRequestHeaders(clientSocket, req)) return;
-    const size_t firstLineEnd = req.find("\r\n");
-    if (firstLineEnd == std::string::npos) return;
-    const std::string firstLine = req.substr(0, firstLineEnd);
-    const size_t space1 = firstLine.find(' ');
-    const size_t space2 = firstLine.rfind(' ');
-    if (space1 == std::string::npos || space2 <= space1) return;
-    const std::string method = firstLine.substr(0, space1);
-    const std::string path = SplitRequestTarget(firstLine.substr(space1 + 1, space2 - space1 - 1));
-    const ConfigSnapshot cfg = AppConfig.Snapshot();
-    if (cfg.debugLog) {
-        LogPrint(L"HTTP request: src=%hs method=%hs path=%hs", clientIp.c_str(), method.c_str(), path.c_str());
-    }
-    std::string hostUrl = FindHeaderValueCaseInsensitive(req, "Host");
-    if (!hostUrl.empty() && !ValidateHostHeader(hostUrl)) {
-        SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-        return;
-    }
-    if (hostUrl.empty()) hostUrl = "127.0.0.1:" + std::to_string(cfg.port);
+ScopedFd client(clientSocket);
+    char buf[kHttpBufSize];
+    bool firstRequest = true;
 
-    const bool sendBody = method != "HEAD";
-    auto sendText = [&](const std::string& status, const std::string& type, const std::string& body) {
-        std::string response = "HTTP/1.1 " + status + "\r\nContent-Type: " + type + "\r\nContent-Length: " + std::to_string(body.size()) + "\r\n" + ConnectionHeader(false) + "\r\n";
-        if (sendBody) response += body;
-        SendAll(clientSocket, response);
-    };
-
-    if (method == "SUBSCRIBE" || method == "UNSUBSCRIBE") {
-        SendAll(clientSocket, AppEvents.HandleEventSubscription(method, path, req));
-        return;
-    }
-
-    if (method == "GET" || method == "HEAD") {
-        if (path == "/description.xml") sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetDeviceDescriptionXML());
-        else if (path == "/ContentDirectory.xml") sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetContentDirectoryXML());
-        else if (path == "/ConnectionManager.xml") sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetConnectionManagerXML());
-        else if (std::string iconFileName = IconFileNameForPath(path); !iconFileName.empty()) {
-            std::string body;
-            if (!LoadServerIconPng(iconFileName, body)) {
-                SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
-            sendText("200 OK", "image/png", body);
+    while (m_running.load()) {
+        if (!firstRequest) {
+            SetSocketKeepAliveIdleTimeout(clientSocket);
         }
-        else if (path.rfind("/media/", 0) == 0) {
-            int mediaId = -1;
-            if (!TryParseIntStrict(path.substr(7), mediaId) || mediaId < 0) {
-                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
+        firstRequest = false;
+
+        std::string req;
+        if (!ReadHttpRequestHeaders([clientSocket](char* buf, int len) { return static_cast<int>(recv(clientSocket, buf, static_cast<size_t>(len), 0)); }, req)) return;
+
+        bool keepAlive = ShouldKeepAlive(req);
+
+        const size_t firstLineEnd = req.find("\r\n");
+        if (firstLineEnd == std::string::npos) return;
+        const std::string firstLine = req.substr(0, firstLineEnd);
+        const size_t space1 = firstLine.find(' ');
+        const size_t space2 = firstLine.rfind(' ');
+        if (space1 == std::string::npos || space2 <= space1) return;
+        const std::string method = firstLine.substr(0, space1);
+        const std::string path = SplitRequestTarget(firstLine.substr(space1 + 1, space2 - space1 - 1));
+        const int listenPort = AppConfig.GetPort();
+        if (AppConfig.IsDebugLogEnabled()) {
+            LogPrint(L"HTTP request: src=%hs method=%hs path=%hs", clientIp.c_str(), method.c_str(), path.c_str());
+        }
+        std::string hostUrl = FindHeaderValueCaseInsensitive(req, "Host");
+        if (!hostUrl.empty() && !ValidateHostHeader(hostUrl)) {
+            SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+            return;
+        }
+        if (hostUrl.empty()) hostUrl = "127.0.0.1:" + std::to_string(listenPort);
+
+        const bool sendBody = method != "HEAD";
+        auto sendText = [&](const std::string& status, const std::string& type, const std::string& body) {
+            std::string response = "HTTP/1.1 " + status + "\r\nContent-Type: " + type + "\r\nContent-Length: " + std::to_string(body.size()) + "\r\n" + ConnectionHeader(keepAlive) + "\r\n";
+            if (sendBody) response += body;
+            SendAll(clientSocket, response);
+        };
+
+        if (method == "SUBSCRIBE" || method == "UNSUBSCRIBE") {
+            SendAll(clientSocket, AppEvents.HandleEventSubscription(method, path, req));
+            if (!keepAlive) return;
+            continue;
+        }
+
+        if (method == "GET" || method == "HEAD") {
+            if (path == "/description.xml") {
+                sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetDeviceDescriptionXML(hostUrl));
+                if (!keepAlive) return;
+                continue;
             }
-            MediaItem item = AppMedia.GetItem(mediaId);
-            if (item.id != -1 && IsRemoteMediaUrl(item.path)) {
-                long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
-                std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
-                bool hasKnownSize = fileSize > 0;
-                HttpByteRange parsedRange;
-                if (hasKnownSize) {
-                    parsedRange = ParseHttpRangeHeader(rangeHeader, fileSize);
-                    if (!parsedRange.satisfiable) {
-                        SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(fileSize) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                        return;
-                    }
-                } else if (!rangeHeader.empty()) {
-                    SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+            if (path == "/ContentDirectory.xml") {
+                sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetContentDirectoryXML());
+                if (!keepAlive) return;
+                continue;
+            }
+            if (path == "/ConnectionManager.xml") {
+                sendText("200 OK", "text/xml; charset=\"utf-8\"", AppContent.GetConnectionManagerXML());
+                if (!keepAlive) return;
+                continue;
+            }
+            if (std::string iconFileName = IconFileNameForPath(path); !iconFileName.empty()) {
+                std::string body;
+                if (!LoadServerIconPng(iconFileName, body)) {
+                    SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }
-
-                bool partial = hasKnownSize && parsedRange.requested;
-                long long start = hasKnownSize ? parsedRange.start : 0;
-                long long end = hasKnownSize ? parsedRange.end : 0;
-                std::stringstream headers;
-                headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
-                if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << fileSize << "\r\n";
-                headers << "Content-Type: " << WideToUtf8(item.mimeType) << "\r\n";
-                if (hasKnownSize) {
-                    headers << "Content-Length: " << (end - start + 1) << "\r\n"
-                            << "Accept-Ranges: bytes\r\n";
-                } else {
-                    headers << "Accept-Ranges: none\r\n";
+                sendText("200 OK", "image/png", body);
+                if (!keepAlive) return;
+                continue;
+            }
+            if (path.rfind("/media/", 0) == 0) {
+                int mediaId = -1;
+                if (!TryParseIntStrict(path.substr(7), mediaId) || mediaId < 0) {
+                    SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                    return;
                 }
-                headers << "Connection: close\r\n"
-                        << "transferMode.dlna.org: Streaming\r\n"
-                        << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize) << "\r\n\r\n";
-                SendAll(clientSocket, headers.str());
-                if (method == "GET") {
-                    StreamRemoteContent(item.path, partial, start, end, [&](const char* data, size_t length) {
+                MediaItem item = AppMedia.GetItem(mediaId);
+                if (item.id != -1) {
+                    LogPrint(L"HTTP media request: id=%d path=%ls", mediaId, item.path.c_str());
+                    if (item.mimeType == L"video/mpegurl") {
+                        // mirrors the windows httpserver cpp branch exactly
+                        // see that file for the full rationale comment
+                        HlsManifestFetchResult manifest = FetchHlsManifestForServing(item.path);
+                        if (!manifest.fetchOk) {
+                            SendAll(clientSocket, "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                            return;
+                        }
+                        std::stringstream hlsHeaders;
+                        hlsHeaders << "HTTP/1.1 200 OK\r\n"
+                                   << "Content-Type: video/mpegurl\r\n"
+                                   << "Content-Length: " << manifest.text.size() << "\r\n"
+                                   << "Accept-Ranges: none\r\n"
+                                   << ConnectionHeader(keepAlive)
+                                   << "transferMode.dlna.org: Streaming\r\n"
+                                   << "contentFeatures.dlna.org: " << BuildHlsContentFeatures() << "\r\n"
+                                   << "\r\n";
+                        SendAll(clientSocket, hlsHeaders.str());
+                        if (sendBody) {
+                            SendAll(clientSocket, manifest.text);
+                        }
+                        if (!keepAlive) return;
+                        continue;
+                    }
+                    if (IsRemoteMediaUrl(item.path)) {
+                    long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
+                    std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
+                    bool hasKnownSize = fileSize > 0;
+                    HttpByteRange parsedRange;
+                    if (hasKnownSize) {
+                        parsedRange = ParseHttpRangeHeader(rangeHeader, fileSize);
+                        if (!parsedRange.satisfiable) {
+                            SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(fileSize) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                            return;
+                        }
+                    }
+
+                    bool partial = hasKnownSize && parsedRange.requested;
+                    long long start = hasKnownSize ? parsedRange.start : 0;
+                    long long end = hasKnownSize ? parsedRange.end : 0;
+                    long long bodyLength = hasKnownSize ? (end - start + 1) : 0;
+                    std::stringstream headers;
+                    headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
+                    if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << fileSize << "\r\n";
+                    headers << "Content-Type: " << WideToUtf8(item.mimeType) << "\r\n";
+                    
+                    bool spoofSamsung = false;
+                    if (!hasKnownSize) {
+                        std::string ua = FindHeaderValueCaseInsensitive(req, "User-Agent");
+                        if (ua.empty() || ua.find("SEC_HHP_") != std::string::npos) {
+                            spoofSamsung = true;
+                        }
+                    }
+
+                    if (hasKnownSize) {
+                        headers << "Content-Length: " << bodyLength << "\r\n"
+                                << "Accept-Ranges: bytes\r\n";
+                    } else if (spoofSamsung) {
+                        headers << "Content-Length: 1073741824\r\n"
+                                << "Accept-Ranges: none\r\n";
+                    } else {
+                        headers << "Accept-Ranges: none\r\n";
+                    }
+                    headers << ConnectionHeader(keepAlive)
+                            << "transferMode.dlna.org: Streaming\r\n"
+                            << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize) << "\r\n";
+
+                    std::vector<std::string> proxyReqHeaders;
+                    if (FindHeaderValueCaseInsensitive(req, "Icy-MetaData") == "1") {
+                        proxyReqHeaders.push_back("Icy-MetaData: 1");
+                    }
+
+                    if (method != "GET") {
+                        headers << "\r\n";
+                        SendAll(clientSocket, headers.str());
+                        if (!keepAlive) return;
+                        continue;
+                    }
+
+                    SetSocketStreamTimeouts(clientSocket);
+                    bool headersSent = false;
+                    std::string baseHeaders = headers.str();
+
+                    auto onRemoteHeader = [&](const std::string& key, const std::string& value) {
+                        if (headersSent) return;
+                        if (key.empty() && value.empty()) {
+                            baseHeaders += "\r\n";
+                            SendAll(clientSocket, baseHeaders);
+                            headersSent = true;
+                            return;
+                        }
+                        std::string lowerKey = ToLowerAscii(key);
+                        if (lowerKey.find("icy-") == 0) {
+                            baseHeaders += key + ": " + value + "\r\n";
+                        }
+                    };
+
+                    bool remoteOk = StreamRemoteContent(item.path, partial, start, end, [&](const char* data, size_t length) {
+                        if (!headersSent) {
+                            baseHeaders += "\r\n";
+                            SendAll(clientSocket, baseHeaders);
+                            headersSent = true;
+                        }
                         const char* p = data;
                         size_t remaining = length;
                         while (remaining > 0) {
@@ -383,145 +494,199 @@ void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
                             remaining -= static_cast<size_t>(sent);
                         }
                         return m_running.load();
-                    });
+                    }, proxyReqHeaders, onRemoteHeader);
+                    
+                    if (!headersSent) {
+                        baseHeaders += "\r\n";
+                        SendAll(clientSocket, baseHeaders);
+                    }
+
+                    if (!remoteOk || !keepAlive) return;
+                    continue;
                 }
-                return;
-            }
-            ScopedFd fd(item.id == -1 ? -1 : open(WideToUtf8(item.path).c_str(), O_RDONLY));
-            if (fd.get() < 0) {
-                SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-            } else {
+                ScopedFd fd(item.id == -1 ? -1 : open(WideToUtf8(item.path).c_str(), O_RDONLY));
+                if (fd.get() < 0) {
+                    SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                    return;
+                }
                 struct stat st{};
                 if (fstat(fd.get(), &st) != 0) {
                     SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }
-                HttpByteRange parsedRange = ParseHttpRangeHeader(FindHeaderValueCaseInsensitive(req, "Range"), static_cast<long long>(st.st_size));
-                if (!parsedRange.satisfiable) {
-                    SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(static_cast<long long>(st.st_size)) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                    return;
+
+                bool hasKnownSize = st.st_size > 0;
+                HttpByteRange parsedRange{};
+                if (hasKnownSize) {
+                    parsedRange = ParseHttpRangeHeader(FindHeaderValueCaseInsensitive(req, "Range"), static_cast<long long>(st.st_size));
+                    if (!parsedRange.satisfiable) {
+                        SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(static_cast<long long>(st.st_size)) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                        return;
+                    }
                 }
-                long long start = parsedRange.start;
-                long long end = parsedRange.end;
-                bool partial = parsedRange.requested;
+
+                bool partial = hasKnownSize && parsedRange.requested;
+                long long start = hasKnownSize ? parsedRange.start : 0;
+                long long end = hasKnownSize ? parsedRange.end : 0;
+                long long bodyLength = hasKnownSize ? (end - start + 1) : 0;
                 std::stringstream headers;
                 headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
-                if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << st.st_size << "\r\n";
-                headers << "Content-Type: " << WideToUtf8(item.mimeType) << "\r\n"
-                        << "Content-Length: " << (end - start + 1) << "\r\n"
-                        << "Accept-Ranges: bytes\r\nConnection: close\r\n"
+                if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << static_cast<long long>(st.st_size) << "\r\n";
+                headers << "Content-Type: " << WideToUtf8(item.mimeType) << "\r\n";
+
+                if (hasKnownSize) {
+                    headers << "Content-Length: " << bodyLength << "\r\n"
+                            << "Accept-Ranges: bytes\r\n";
+                } else {
+                    headers << "Accept-Ranges: none\r\n";
+                }
+                headers << ConnectionHeader(keepAlive)
                         << "transferMode.dlna.org: Streaming\r\n"
-                        << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n\r\n";
+                        << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n";
                 SendAll(clientSocket, headers.str());
                 if (method == "GET") {
+                    SetSocketStreamTimeouts(clientSocket);
                     lseek(fd.get(), start, SEEK_SET);
-                    long long remaining = end - start + 1;
+                    long long remaining = bodyLength;
                     while (remaining > 0) {
-                        ssize_t chunk = read(fd.get(), buf, std::min<long long>(sizeof(buf), remaining));
+                        ssize_t chunk = read(fd.get(), buf, (std::min)(sizeof(buf), static_cast<size_t>(remaining)));
                         if (chunk <= 0) break;
                         if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
                         remaining -= chunk;
                     }
+                    if (remaining > 0 || !keepAlive) return;
+                    continue;
+    }
+}
+}
+
+            if (path.rfind("/subtitle/", 0) == 0) {
+                int mediaId = -1;
+                if (!TryParseIntStrict(path.substr(10), mediaId) || mediaId < 0) {
+                    SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                    return;
                 }
-            }
-        } else if (path.rfind("/subtitle/", 0) == 0) {
-            int mediaId = -1;
-            if (!TryParseIntStrict(path.substr(10), mediaId) || mediaId < 0) {
-                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
-            MediaItem item = AppMedia.GetItem(mediaId);
-            ScopedFd fd(item.id == -1 || item.subtitlePath.empty() ? -1 : open(WideToUtf8(item.subtitlePath).c_str(), O_RDONLY));
-            if (fd.get() < 0) {
-                SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
-            struct stat st{};
-            if (fstat(fd.get(), &st) != 0) {
-                SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
-            std::string pathText = WideToUtf8(item.subtitlePath);
-            std::string ext;
-            size_t dot = pathText.find_last_of('.');
-            if (dot != std::string::npos) ext = pathText.substr(dot);
-            std::stringstream headers;
-            headers << "HTTP/1.1 200 OK\r\n"
-                    << "Content-Type: " << SubtitleMimeForExtension(Utf8ToWide(ext)) << "\r\n"
-                    << "Content-Length: " << static_cast<long long>(st.st_size) << "\r\n"
-                    << "Accept-Ranges: none\r\nConnection: close\r\n\r\n";
-            SendAll(clientSocket, headers.str());
-            if (sendBody) {
-                while (true) {
-                    ssize_t chunk = read(fd.get(), buf, sizeof(buf));
-                    if (chunk <= 0) break;
-                    if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
+                MediaItem item = AppMedia.GetItem(mediaId);
+
+                if (item.id != -1 && !item.subtitlePath.empty() && IsRemoteMediaUrl(item.subtitlePath)) {
+                    std::string subMime = SubtitleMimeForExtension(SourceExtension(item.subtitlePath));
+                    long long subtitleSize = ProbeRemoteContentLength(item.subtitlePath);
+                    bool hasKnownSize = subtitleSize > 0;
+
+                    std::stringstream headers;
+                    headers << "HTTP/1.1 200 OK\r\n"
+                            << "Content-Type: " << subMime << "\r\n";
+                    if (hasKnownSize) {
+                        headers << "Content-Length: " << subtitleSize << "\r\n";
+                    }
+                    headers << "Accept-Ranges: none\r\nConnection: close\r\n\r\n";
+                    SendAll(clientSocket, headers.str());
+                    if (sendBody) {
+                        bool streamed = StreamRemoteContent(item.subtitlePath, false, 0, 0, [&](const char* data, size_t length) {
+                            return TrySendAll(clientSocket, data, length) && m_running.load();
+                        });
+                        if (!streamed) {
+                            LogPrint(L"Remote subtitle unavailable: %ls", RedactUrlForLog(item.subtitlePath).c_str());
+                        }
+                    }
+                    return;
                 }
-            }
-        } else if (path.rfind("/albumart/", 0) == 0) {
-            int mediaId = -1;
-            if (!TryParseIntStrict(path.substr(10), mediaId) || mediaId < 0) {
-                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
-            MediaItem item = AppMedia.GetItem(mediaId);
-            ScopedFd fd(item.id == -1 || item.albumArtPath.empty() ? -1 : open(WideToUtf8(item.albumArtPath).c_str(), O_RDONLY));
-            if (fd.get() < 0) {
-                SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
-            struct stat st{};
-            if (fstat(fd.get(), &st) != 0) {
-                SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                return;
-            }
-            std::stringstream headers;
-            headers << "HTTP/1.1 200 OK\r\n"
-                    << "Content-Type: " << WideToUtf8(item.albumArtMime.empty() ? L"image/jpeg" : item.albumArtMime) << "\r\n"
-                    << "Content-Length: " << static_cast<long long>(st.st_size) << "\r\n"
-                    << "Accept-Ranges: none\r\n"
-                    << "Connection: close\r\n\r\n";
-            SendAll(clientSocket, headers.str());
-            if (sendBody) {
-                while (true) {
-                    ssize_t chunk = read(fd.get(), buf, sizeof(buf));
-                    if (chunk <= 0) break;
-                    if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
+
+                ScopedFd fd(item.id == -1 || item.subtitlePath.empty() ? -1 : open(WideToUtf8(item.subtitlePath).c_str(), O_RDONLY));
+                if (fd.get() < 0) {
+                    SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                    return;
                 }
+                struct stat st{};
+                if (fstat(fd.get(), &st) != 0) {
+                    SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                    return;
+                }
+                std::string subMime = SubtitleMimeForExtension(SourceExtension(item.subtitlePath));
+                std::stringstream headers;
+                headers << "HTTP/1.1 200 OK\r\n"
+                        << "Content-Type: " << subMime << "\r\n"
+                        << "Content-Length: " << static_cast<long long>(st.st_size) << "\r\n"
+                        << "Accept-Ranges: none\r\nConnection: close\r\n\r\n";
+                SendAll(clientSocket, headers.str());
+                if (sendBody) {
+                    while (true) {
+                        ssize_t chunk = read(fd.get(), buf, sizeof(buf));
+                        if (chunk <= 0) break;
+                        if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
+                    }
+                }
+                return;
             }
-        } else {
+            if (path.rfind("/albumart/", 0) == 0) {
+                int mediaId = -1;
+                if (!TryParseIntStrict(path.substr(10), mediaId) || mediaId < 0) {
+                    SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                    return;
+                }
+                MediaItem item = AppMedia.GetItem(mediaId);
+                ScopedFd fd(item.id == -1 || item.albumArtPath.empty() ? -1 : open(WideToUtf8(item.albumArtPath).c_str(), O_RDONLY));
+                if (fd.get() < 0) {
+                    SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                    return;
+                }
+                struct stat st{};
+                if (fstat(fd.get(), &st) != 0) {
+                    SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                    return;
+                }
+                std::stringstream headers;
+                headers << "HTTP/1.1 200 OK\r\n"
+                        << "Content-Type: " << WideToUtf8(item.albumArtMime.empty() ? L"image/jpeg" : item.albumArtMime) << "\r\n"
+                        << "Content-Length: " << static_cast<long long>(st.st_size) << "\r\n"
+                        << "Accept-Ranges: none\r\n"
+                        << "Connection: close\r\n\r\n";
+                SendAll(clientSocket, headers.str());
+                if (sendBody) {
+                    while (true) {
+                        ssize_t chunk = read(fd.get(), buf, sizeof(buf));
+                        if (chunk <= 0) break;
+                        if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
+                    }
+                }
+                return;
+            }
             SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-        }
-    } else if (method == "POST" && (path == "/upnp/control/content_directory" || path == "/upnp/control/connection_manager")) {
-        const size_t headersEnd = req.find("\r\n\r\n");
-        std::string body = headersEnd == std::string::npos ? std::string() : req.substr(headersEnd + 4);
-        const std::string lengthText = FindHeaderValueCaseInsensitive(req, "Content-Length");
-        if (lengthText.empty()) {
-            LogPrint(L"Content-Length header required for SOAP POST.");
-            SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
             return;
         }
-        long long contentLength = 0;
-        if (!TryParseNonNegativeLongLong(lengthText, contentLength) ||
-            contentLength < 0 ||
-            static_cast<unsigned long long>(contentLength) > kMaxSoapBodyBytes) {
-            SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-            return;
+        if (method == "POST" && (path == "/upnp/control/content_directory" || path == "/upnp/control/connection_manager")) {
+            const size_t headersEnd = req.find("\r\n\r\n");
+            std::string body = headersEnd == std::string::npos ? std::string() : req.substr(headersEnd + 4);
+            const std::string lengthText = FindHeaderValueCaseInsensitive(req, "Content-Length");
+            if (lengthText.empty()) {
+                LogPrint(L"Content-Length header required for SOAP POST.");
+                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
+            long long contentLength = 0;
+            if (!TryParseNonNegativeLongLong(lengthText, contentLength) ||
+                contentLength < 0 ||
+                static_cast<unsigned long long>(contentLength) > kMaxSoapBodyBytes) {
+                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
+            const size_t expectedBodyLength = static_cast<size_t>(contentLength);
+            while (body.size() < expectedBodyLength) {
+                ssize_t r = recv(clientSocket, buf, sizeof(buf), 0);
+                if (r <= 0) break;
+                body.append(buf, static_cast<size_t>(r));
+            }
+            if (body.size() < expectedBodyLength) {
+                SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
+            sendText("200 OK", "text/xml; charset=\"utf-8\"", path == "/upnp/control/connection_manager"
+                ? AppContent.HandleConnectionManagerControl(body)
+                : AppContent.HandleContentDirectoryControl(body, hostUrl));
+            if (!keepAlive) return;
+            continue;
         }
-        const size_t expectedBodyLength = static_cast<size_t>(contentLength);
-        while (body.size() < expectedBodyLength) {
-            ssize_t r = recv(clientSocket, buf, sizeof(buf), 0);
-            if (r <= 0) break;
-            body.append(buf, static_cast<size_t>(r));
-        }
-        if (body.size() < expectedBodyLength) {
-            SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-            return;
-        }
-        sendText("200 OK", "text/xml; charset=\"utf-8\"", path == "/upnp/control/connection_manager"
-            ? AppContent.HandleConnectionManagerControl(body)
-            : AppContent.HandleContentDirectoryControl(body, hostUrl));
-    } else {
         SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        return;
     }
 }

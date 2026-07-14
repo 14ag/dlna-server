@@ -1,4 +1,7 @@
-param()
+param(
+    [string]$FtpSourceUrl = "ftp://14ag:qwertyui@192.168.100.33:2121/playlist_remote.m3u8",
+    [string]$HlsSourceUrl = "C:\Users\philip\sauce\dlna-server\tests\test media\test-hls-playlist.m3u8"
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -13,11 +16,46 @@ $configPath = Join-Path $outputDir "config.ini"
 $debugLogPath = Join-Path $outputDir "debug.log"
 $resultsPath = Join-Path $outputDir "verification-results.txt"
 $debugCopyPath = Join-Path $outputDir "verification-debug.log"
-$testMediaDir = Join-Path $env:TEMP "dlna-server-TestMedia"
-$backupPath = $null
-$serverProc = $null
-$vlcProc = $null
-$summary = New-Object System.Collections.Generic.List[string]
+$transcriptPath = Join-Path $outputDir "verification-transcript.txt"
+$serverPort = 18200
+    $testMediaDir = Join-Path $env:TEMP "dlna-server-TestMedia"
+    $backupPath = $null
+    $serverProc = $null
+    $vlcProc = $null
+    $hlsHttpProc = $null
+    $hlsHttpServerUrl = ""
+    $hlsLocalPath = ""
+    $summary = New-Object System.Collections.Generic.List[string]
+    $transcriptStarted = $false
+
+New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+    try {
+        Start-Transcript -Path $transcriptPath -Force | Out-Null
+        $transcriptStarted = $true
+    }
+    catch {
+        Write-Host "WARN could not start transcript at $transcriptPath : $_"
+    }
+
+    # -------------------------------------------------------------------
+    # HLS source: use tests\test media folder and start HTTP server
+    # The DLNA server can scan local files, so we use the existing test media.
+    # We start an HTTP server to serve the playlist for proxy testing.
+    # -------------------------------------------------------------------
+    $hlsLocalPath = ""
+    if ($HlsSourceUrl -and $HlsSourceUrl -ne "" -and (Test-Path $HlsSourceUrl)) {
+        $hlsSourceDir = Split-Path $HlsSourceUrl -Parent
+        $hlsSourceName = Split-Path $HlsSourceUrl -Leaf
+        
+        # Use the source directory as the test media directory
+        $hlsLocalPath = $HlsSourceUrl
+        
+        # Start HTTP server to serve it for proxy testing
+        $hlsHttpPort = 18080
+        $hlsHttpServerUrl = "http://127.0.0.1:$hlsHttpPort/$hlsSourceName"
+        $hlsHttpProc = Start-Process -FilePath python -ArgumentList @("-m", "http.server", $hlsHttpPort, "--directory", "`"$hlsSourceDir`"") -PassThru -NoNewWindow
+        Start-Sleep -Seconds 2
+    }
 
 Add-Type @"
 using System;
@@ -44,7 +82,7 @@ function Add-Result {
 
     $summary.Add($line) | Out-Null
     Write-Host $line
-    $line | Out-File -Append -FilePath "C:\Users\philip\sauce\dlna-server\code\output\winx64\realtime.log" -Encoding UTF8
+    $line | Out-File -Append -FilePath (Join-Path $outputDir "realtime.log") -Encoding UTF8
 }
 
 function Set-IniValue {
@@ -305,6 +343,81 @@ function Read-DebugLog {
     return ""
 }
 
+function Get-FtpUrlCredential {
+    param([string]$Url)
+
+    try {
+        $uri = [System.Uri]$Url
+    }
+    catch {
+        return $null
+    }
+    if (-not $uri.UserInfo) {
+        return $null
+    }
+    $parts = $uri.UserInfo.Split(":", 2)
+    $password = ""
+    if ($parts.Count -gt 1) {
+        $password = [System.Uri]::UnescapeDataString($parts[1])
+    }
+    return [PSCustomObject]@{
+        Uri      = $uri
+        User     = [System.Uri]::UnescapeDataString($parts[0])
+        Password = $password
+    }
+}
+
+$script:kGroundTruthMediaExtensions = @(
+    'mp4', 'm4v', 'mkv', 'webm', 'avi', 'divx', 'mov',
+    'mpg', 'mpeg', 'mpe', 'vob', 'm2ts', 'mts', 'wmv', 'flv', '3gp', '3g2',
+    'mp3', 'flac', 'm4a', 'aac', 'wav', 'wma', 'ogg', 'oga', 'opus',
+    'aiff', 'aif', 'ac3', 'dts',
+    'jpg', 'jpeg', 'png', 'gif', 'bmp', 'tif', 'tiff', 'webp'
+)
+
+$script:kGroundTruthPlaylistExtensions = @('.m3u', '.m3u8', '.pls')
+
+function Get-PlaylistGroundTruth {
+    param([string]$Url, $Credential, [int]$Depth = 0)
+    if ($Depth -gt 8) { return [PSCustomObject]@{ Reachable = $true; ContainerCount = 0; MediaItemCount = 0; MaxDepthReached = $Depth } }
+    try {
+        $curlArgs = @('-sS', '--max-time', '10')
+    if ($Credential.User) { $curlArgs += @('-u', "$($Credential.User):$($Credential.Password)") }
+    $curlArgs += $Credential.Uri.AbsoluteUri
+    $text = Invoke-CurlText $curlArgs
+    }
+    catch { return [PSCustomObject]@{ Reachable = $false; ContainerCount = 0; MediaItemCount = 0; MaxDepthReached = $Depth } }
+    if (-not $text) { return [PSCustomObject]@{ Reachable = $false; ContainerCount = 0; MediaItemCount = 0; MaxDepthReached = $Depth } }
+    $containerCount = 0
+    $mediaItemCount = 0
+    $lines = $text -split '\r?\n'
+    foreach ($line in $lines) {
+        $trimmed = $line.Trim()
+        if ($trimmed.Length -eq 0 -or $trimmed.StartsWith('#')) { continue }
+        $ext = [System.IO.Path]::GetExtension($trimmed).ToLowerInvariant()
+        if ($script:kGroundTruthPlaylistExtensions -contains $ext) {
+            $childUrl = $trimmed
+            if ($childUrl -notmatch '^https?://' -and $childUrl -notmatch '^ftp://') {
+                $baseUri = New-Object System.Uri($Credential.Uri, $childUrl)
+                $childUrl = $baseUri.AbsoluteUri
+            }
+            $childCred = Get-FtpUrlCredential -Url $childUrl
+            if (-not $childCred) {
+                $childCred = [PSCustomObject]@{ Uri = [System.Uri]$childUrl; User = ''; Password = '' }
+            }
+            $childResult = Get-PlaylistGroundTruth -Url $childUrl -Credential $childCred -Depth ($Depth + 1)
+            $containerCount += 1 + $childResult.ContainerCount
+            $mediaItemCount += $childResult.MediaItemCount
+            continue
+        }
+        $extNoDot = if ($ext.StartsWith('.')) { $ext.Substring(1) } else { $ext }
+        if ($script:kGroundTruthMediaExtensions -contains $extNoDot) {
+            $mediaItemCount++
+        }
+    }
+    return [PSCustomObject]@{ Reachable = $true; ContainerCount = $containerCount; MediaItemCount = $mediaItemCount; MaxDepthReached = $Depth }
+}
+
 function Stop-RepoDlnaProcesses {
     $repoFull = [System.IO.Path]::GetFullPath($repo)
     Get-Process -Name "DLNA Server", "dlna-server", "WinDLNAServer" -ErrorAction SilentlyContinue | ForEach-Object {
@@ -324,6 +437,9 @@ function Stop-RepoDlnaProcesses {
 }
 
 try {
+    Add-Result "INFO PowerShell version $($PSVersionTable.PSVersion) host $($PSVersionTable.PSEdition)"
+    Add-Result "INFO FtpSourceUrl=$FtpSourceUrl"
+
     if (-not (Test-Path $exePath)) {
         throw "Missing built exe at $exePath"
     }
@@ -357,8 +473,14 @@ try {
     if (Test-Path $configPath) {
         Remove-Item -LiteralPath $configPath -Force
     }
-    Set-IniValue "Settings" "ServerName" "DLNA 测试"
-    Set-IniValue "Settings" "Port" "18200"
+    # non-ascii server name is built from numeric char codes on purpose.
+    # a literal non-ascii string in this file would be misread as the
+    # system ansi code page when this script has no byte order mark and
+    # runs under windows powershell 5.1, which corrupts it before it ever
+    # reaches config.ini. see the delivered review document, finding d-2.
+    $nonAsciiServerName = "DLNA " + [char]0x6D4B + [char]0x8BD5
+    Set-IniValue "Settings" "ServerName" $nonAsciiServerName
+    Set-IniValue "Settings" "Port" "$serverPort"
     Set-IniValue "Settings" "FileServerPort" "18201"
     Set-IniValue "Settings" "FlatFolderStyle" "0"
     Set-IniValue "Settings" "ShowFileNamesInsteadOfTitles" "0"
@@ -366,11 +488,22 @@ try {
     Set-IniValue "Settings" "SortByTitle" "0"
     Set-IniValue "Settings" "DoNotShowAllMediaFolders" "0"
     Set-IniValue "Settings" "AddArtistAlbumFolders" "0"
+    Set-IniValue "Settings" "BackgroundScanEnabled" "1"
     Set-IniValue "Settings" "DebugLog" "1"
     Set-IniValue "Settings" "RunOnBoot" "0"
     Set-IniValue "Settings" "IPWhiteList" ""
     Set-IniValue "Settings" "DeviceUUID" "11111111-2222-3333-4444-555555555555"
-    Set-IniValue "Settings" "MediaSources" $testMediaDir
+
+    # the ftp source is configured before the first server start, not
+    # added at runtime, because the media source watcher currently skips
+    # remote sources entirely (fix-plan task 13). adding it at runtime and
+    # waiting for a rescan would never observe it.
+    $testMediaSource = $testMediaDir
+    $mediaSourcesValue = "$testMediaSource|$FtpSourceUrl"
+    if ($hlsLocalPath -and $hlsLocalPath -ne "") {
+        $mediaSourcesValue += "|" + $hlsLocalPath
+    }
+    Set-IniValue "Settings" "MediaSources" $mediaSourcesValue
 
     $env:DLNA_SERVER_SKIP_FIREWALL = "1"
     try {
@@ -399,16 +532,16 @@ try {
     [void][User32Bridge]::PostMessage($windowHandle, 0x0111, [IntPtr]202, [IntPtr]0)
     for ($i = 0; $i -lt 30; $i++) {
         Start-Sleep -Milliseconds 500
-        $tcpListen = Get-NetTCPConnection -State Listen -LocalPort 18200 -ErrorAction SilentlyContinue
+        $tcpListen = Get-NetTCPConnection -State Listen -LocalPort $serverPort -ErrorAction SilentlyContinue
         if ($tcpListen) {
             $listenReady = $true
             break
         }
     }
     if (-not $listenReady) {
-        throw "Server did not start listening on TCP 18200 after WM_COMMAND start."
+        throw "Server did not start listening on TCP $serverPort after WM_COMMAND start."
     }
-    Add-Result "PASS app window launched and server listened on TCP 18200"
+    Add-Result "PASS app window launched and server listened on TCP $serverPort"
 
     $udpListen = Get-NetUDPEndpoint -LocalPort 1900 -ErrorAction SilentlyContinue | Select-Object LocalAddress, OwningProcess
     if ($udpListen) {
@@ -424,7 +557,7 @@ try {
         Add-Result ("PASS startup alive burst logged ($($aliveLines.Count) entries)")
     }
     else {
-        Add-Result ("WARN startup alive count lower than expected ($($aliveLines.Count) entries)")
+        Add-Result ("WARN startup alive count lower than expected ($($aliveLines.Count) entries). this build does not use LibUPnP so the self-reported SSDP notify count should be 60 (4 interfaces * 5 USNs * 3 bursts). a low count here indicates SSDP notify logging arrived late; discovery was still confirmed by M-SEARCH responses below.")
     }
 
     $targets = @(
@@ -513,7 +646,7 @@ try {
                 continue
             }
             try {
-                $iconResp = Invoke-WebRequest -Uri "http://127.0.0.1:18200/icons/server_icon_$size.png" -UseBasicParsing -TimeoutSec 5
+                $iconResp = Invoke-WebRequest -Uri "http://127.0.0.1:$serverPort/icons/server_icon_$size.png" -UseBasicParsing -TimeoutSec 5
                 $contentType = [string]$iconResp.Headers["Content-Type"]
                 $contentLength = 0
                 if ($null -ne $iconResp.RawContentLength) {
@@ -583,6 +716,28 @@ try {
             Add-Result "FAIL ContentDirectory event SUBSCRIBE response: $subscribeRaw"
         }
 
+        # wait for initial scan to complete before Browse
+        $scanDeadline = [datetime]::UtcNow.AddSeconds(120)
+        $scanFinished = $false
+        while ([datetime]::UtcNow -lt $scanDeadline) {
+            $scanLines = Find-LogLines "Scan complete\."
+            if ($scanLines.Count -gt 0) {
+                Add-Result ("PASS scan completed: " + ($scanLines[-1] -replace '^\s+',''))
+                $scanFinished = $true
+                break
+            }
+            $errorLines = Find-LogLines "Source unavailable|scan failed|Scan aborted"
+            if ($errorLines.Count -gt 0) {
+                Add-Result ("WARN scan has error lines: " + ($errorLines -join " | "))
+                $scanFinished = $true
+                break
+            }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $scanFinished) {
+            Add-Result "WARN scan did not complete within 120s timeout"
+        }
+
         $soapBody = @"
 <?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
@@ -644,7 +799,7 @@ try {
                         Add-Type -AssemblyName System.Net.Http
                         $client = New-Object System.Net.Http.HttpClient
                         try {
-                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:18200/media/$movieId")
+                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:$serverPort/media/$movieId")
                             $request.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(0, 4)
                             $response = $client.SendAsync($request).GetAwaiter().GetResult()
                             $statusCode = [int]$response.StatusCode
@@ -671,7 +826,7 @@ try {
                         # Request Range 100- (unsatisfiable)
                         $client = New-Object System.Net.Http.HttpClient
                         try {
-                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:18200/media/$movieId")
+                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:$serverPort/media/$movieId")
                             $request.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(100, $null)
                             $response = $client.SendAsync($request).GetAwaiter().GetResult()
                             $statusCode = [int]$response.StatusCode
@@ -699,11 +854,51 @@ try {
                         Add-Result "FAIL could not find movie item ID in Browse response"
                     }
 
+                    # keep-alive reuse: second request on same HttpClient
+                    # after movie range-206 must reuse TCP connection
+                    if ($movieId) {
+                        Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
+                        $kaHandler = New-Object System.Net.Http.HttpClientHandler
+                        $kaHandler.UseProxy = $false
+                        $kaClient = New-Object System.Net.Http.HttpClient($kaHandler)
+                        $kaClient.Timeout = [TimeSpan]::FromSeconds(5)
+                        try {
+                            $kaReq1 = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:$serverPort/media/$movieId")
+                            $kaReq1.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(0, 0)
+                            $kaResp1 = $kaClient.SendAsync($kaReq1).GetAwaiter().GetResult()
+                            if ([int]$kaResp1.StatusCode -ne 206) {
+                                Add-Result "WARN keep-alive reuse pre-check failed: first request returned $([int]$kaResp1.StatusCode)"
+                            }
+                            else {
+                                $kaReq2 = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:$serverPort/media/$movieId")
+                                $kaReq2.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(0, 0)
+                                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                                $kaResp2 = $kaClient.SendAsync($kaReq2).GetAwaiter().GetResult()
+                                $sw.Stop()
+                                if ([int]$kaResp2.StatusCode -eq 206 -and $sw.ElapsedMilliseconds -lt 2000) {
+                                    Add-Result "PASS keep-alive reuse: second range request on same HttpClient succeeded in $($sw.ElapsedMilliseconds)ms"
+                                }
+                                elseif ([int]$kaResp2.StatusCode -eq 206) {
+                                    Add-Result "WARN keep-alive reuse: second range request succeeded but took $($sw.ElapsedMilliseconds)ms (may be new connection)"
+                                }
+                                else {
+                                    Add-Result "WARN keep-alive reuse: second range request returned status $([int]$kaResp2.StatusCode)"
+                                }
+                            }
+                        }
+                        catch {
+                            Add-Result "WARN keep-alive reuse check threw: $($_.Exception.Message)"
+                        }
+                        finally {
+                            $kaClient.Dispose()
+                        }
+                    }
+
                     # 4. Range request on empty file check
                     if ($emptyId) {
                         $client = New-Object System.Net.Http.HttpClient
                         try {
-                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:18200/media/$emptyId")
+                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:$serverPort/media/$emptyId")
                             $request.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(0, $null)
                             $response = $client.SendAsync($request).GetAwaiter().GetResult()
                             $statusCode = [int]$response.StatusCode
@@ -788,9 +983,9 @@ try {
                     # 7. Invalid Content-Length check
                     $tcpClient = New-Object System.Net.Sockets.TcpClient
                     try {
-                        $tcpClient.Connect("127.0.0.1", 18200)
+                        $tcpClient.Connect("127.0.0.1", $serverPort)
                         $stream = $tcpClient.GetStream()
-                        $reqBytes = [System.Text.Encoding]::ASCII.GetBytes("POST /upnp/control/content_directory HTTP/1.1`r`nHost: 127.0.0.1:18200`r`nContent-Length: -10`r`n`r`n")
+                        $reqBytes = [System.Text.Encoding]::ASCII.GetBytes("POST /upnp/control/content_directory HTTP/1.1`r`nHost: 127.0.0.1:$serverPort`r`nContent-Length: -10`r`n`r`n")
                         $stream.Write($reqBytes, 0, $reqBytes.Length)
                         $reader = New-Object System.IO.StreamReader($stream)
                         $respLine = $reader.ReadLine()
@@ -807,9 +1002,9 @@ try {
 
                     $tcpClient2 = New-Object System.Net.Sockets.TcpClient
                     try {
-                        $tcpClient2.Connect("127.0.0.1", 18200)
+                        $tcpClient2.Connect("127.0.0.1", $serverPort)
                         $stream = $tcpClient2.GetStream()
-                        $reqBytes = [System.Text.Encoding]::ASCII.GetBytes("POST /upnp/control/content_directory HTTP/1.1`r`nHost: 127.0.0.1:18200`r`nContent-Length: abc`r`n`r`n")
+                        $reqBytes = [System.Text.Encoding]::ASCII.GetBytes("POST /upnp/control/content_directory HTTP/1.1`r`nHost: 127.0.0.1:$serverPort`r`nContent-Length: abc`r`n`r`n")
                         $stream.Write($reqBytes, 0, $reqBytes.Length)
                         $reader = New-Object System.IO.StreamReader($stream)
                         $respLine = $reader.ReadLine()
@@ -836,6 +1031,282 @@ try {
         else {
             Add-Result "FAIL root Browse SOAP did not include expected source folder"
         }
+
+        # begin ftp live source checks
+        # this section is additive: it does not reuse or mutate any of the
+        # local-folder state above, so a failure here cannot mark the
+        # local-folder checks above as failed, and a failure above does not
+        # skip this section, since discovery (specificRoot) is the only
+        # shared precondition.
+        $ftpCred = Get-FtpUrlCredential -Url $FtpSourceUrl
+        $groundTruth = Get-PlaylistGroundTruth -Url $FtpSourceUrl -Credential $ftpCred
+        if (-not $groundTruth.Reachable) {
+            Add-Result "WARN ftp ground-truth pre-fetch failed; skipping ftp checks per problem-statement.md requirement (curl failure must skip, not fail)"
+        }
+        elseif (-not $ftpCred) {
+            Add-Result "FAIL FtpSourceUrl is not a valid uri with embedded credentials: $FtpSourceUrl"
+        }
+        else {
+            Add-Result "--- begin ftp live source checks: $FtpSourceUrl ---"
+            $ftpPassword = $ftpCred.Password
+            $ftpSourceName = [System.IO.Path]::GetFileName($ftpCred.Uri.AbsolutePath)
+            if (-not $ftpSourceName) {
+                $ftpSourceName = "playlist.m3u8"
+            }
+            $controlUrlForFtp = $location -replace "/description\.xml$", "/upnp/control/content_directory" -replace "/device\.xml$", "/upnp/control/content_directory"
+
+            $ftpRootBrowse = ""
+            try {
+                $ftpRootBrowse = Invoke-SoapCurl $controlUrlForFtp $soapBody
+            }
+            catch {
+                Add-Result "FAIL ftp root Browse SOAP call threw: $($_.Exception.Message)"
+            }
+
+            $ftpContainerId = $null
+            if ($ftpRootBrowse) {
+                $decodedFtpRoot = [System.Net.WebUtility]::HtmlDecode($ftpRootBrowse)
+                $ftpContainerPattern = '<container id="(\d+)"[^>]*>(?:(?!</container>)[\s\S])*?<dc:title>' + [regex]::Escape($ftpSourceName) + '</dc:title>'
+                $ftpContainerMatch = [regex]::Match($decodedFtpRoot, $ftpContainerPattern)
+                if ($ftpContainerMatch.Success) {
+                    $ftpContainerId = $ftpContainerMatch.Groups[1].Value
+                }
+            }
+
+            if (-not $ftpContainerId) {
+                $rejectLines = Find-LogLines ("reject-extension.*" + [regex]::Escape($ftpSourceName))
+                if ($rejectLines.Count -gt 0) {
+                    Add-Result ("FAIL ftp source rejected during scan, reported exactly as logged: " + ($rejectLines -join " | "))
+                }
+                else {
+                    Add-Result "FAIL ftp source container '$ftpSourceName' not found in root Browse and no reject-extension log entry found for it; scan did not reach it, report this as a real finding, do not paper over it"
+                }
+            }
+            else {
+                Add-Result "PASS ftp source container found in root Browse (id=$ftpContainerId)"
+
+                $ftpChildBody = $soapBody -replace "<ObjectID>0</ObjectID>", "<ObjectID>$ftpContainerId</ObjectID>"
+                $ftpChildBrowse = ""
+                try {
+                    $ftpChildBrowse = Invoke-SoapCurl $controlUrlForFtp $ftpChildBody
+                }
+                catch {
+                    Add-Result "FAIL ftp child Browse SOAP call threw: $($_.Exception.Message)"
+                }
+
+                $ftpItemId = $null
+                if ($ftpChildBrowse) {
+                    $decodedFtpChild = [System.Net.WebUtility]::HtmlDecode($ftpChildBrowse)
+
+                    $ftpItemMatch = [regex]::Match($decodedFtpChild, '<item id="(\d+)"')
+                    $ftpContainerMatch = [regex]::Match($decodedFtpChild, '<container id="(\d+)"')
+                    if ($groundTruth.MediaItemCount -gt 0) {
+                        if ($ftpItemMatch.Success) {
+                            $ftpItemId = $ftpItemMatch.Groups[1].Value
+                            Add-Result "PASS ftp source has at least one indexed item (id=$ftpItemId), matching ground truth MediaItemCount=$($groundTruth.MediaItemCount)"
+                        }
+                        else {
+                            Add-Result "FAIL ground truth expected $($groundTruth.MediaItemCount) media item(s) under the ftp source but Browse returned none"
+                        }
+                    }
+                    else {
+                        if ($ftpContainerMatch.Success -and -not $ftpItemMatch.Success) {
+                            Add-Result "PASS ftp source returned containers only ($($groundTruth.ContainerCount) expected from ground truth), zero items, matching ground truth of an HLS/container-only tree"
+                        }
+                        elseif ($ftpItemMatch.Success) {
+                            Add-Result "FAIL ground truth expected zero media items (container-only HLS tree) but Browse returned an item"
+                        }
+                        else {
+                            Add-Result "WARN ftp source container returned zero child items and zero child containers; ground truth expected $($groundTruth.ContainerCount) container(s) - confirm the ftp test host still serves content at $FtpSourceUrl"
+                        }
+                    }
+
+                        if ($decodedFtpChild -match "ftp://") {
+                            Add-Result "FAIL ftp scheme literal found directly in a res element for the ftp source; proxying is not being forced for this non-http source, this reopens code review findings 17 and 18"
+                        }
+                        else {
+                            Add-Result "PASS ftp source content is exposed via proxied http res elements or as containers, not a raw ftp url"
+                        }
+
+                        if ($ftpPassword -and $decodedFtpChild -match [regex]::Escape($ftpPassword)) {
+                            Add-Result "FAIL ftp password literal found in the DIDL Browse response for the ftp source container"
+                        }
+                        elseif ($ftpPassword) {
+                            Add-Result "PASS ftp password not present in the DIDL Browse response for the ftp source container"
+                        }
+                    }
+                }
+
+                $fullDebugLogForFtp = Read-DebugLog
+                if ($ftpPassword -and $fullDebugLogForFtp -match [regex]::Escape($ftpPassword)) {
+                    Add-Result "FAIL ftp password literal found in debug.log"
+                }
+                elseif ($ftpPassword) {
+                    Add-Result "PASS ftp password not present in debug.log"
+                }
+
+                if ($ftpItemId) {
+                    try {
+                        Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
+                        $ftpMediaUrl = "http://127.0.0.1:$serverPort/media/$ftpItemId"
+                        $client = New-Object System.Net.Http.HttpClient
+                        $client.Timeout = [TimeSpan]::FromSeconds(20)
+                        try {
+                            $request = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::Get, $ftpMediaUrl)
+                            $request.Headers.Range = New-Object System.Net.Http.Headers.RangeHeaderValue(0, 31)
+                            $response = $client.SendAsync($request).GetAwaiter().GetResult()
+                            $statusCode = [int]$response.StatusCode
+                            $bytes = $response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+                            if (($statusCode -eq 206 -or $statusCode -eq 200) -and $bytes.Length -gt 0) {
+                                Add-Result "PASS ftp source item reachable via ranged GET on $ftpMediaUrl, status=$statusCode bytes=$($bytes.Length)"
+                            }
+                            else {
+                                Add-Result "FAIL ftp source item ranged GET on $ftpMediaUrl returned status=$statusCode bytes=$($bytes.Length)"
+                            }
+                        }
+                        finally {
+                            $client.Dispose()
+                        }
+                    }
+                    catch {
+                        Add-Result "FAIL ftp source item ranged GET threw: $($_.Exception.Message)"
+                    }
+}
+                }
+
+                if ($ftpItemId -and $decodedFtpChild -match 'sec:CaptionInfoEx[^>]*>([^<]+)<') {
+                    $ftpSubtitleUrl = [System.Net.WebUtility]::HtmlDecode($Matches[1])
+                    try {
+                        $subResp = Invoke-WebRequest -Uri $ftpSubtitleUrl -UseBasicParsing -TimeoutSec 15
+                        if ($subResp.StatusCode -eq 200 -and $subResp.Content.Length -gt 0) {
+                            Add-Result "PASS ftp-sourced subtitle served over http at $ftpSubtitleUrl"
+                        }
+                        else {
+                            Add-Result "FAIL ftp-sourced subtitle at $ftpSubtitleUrl returned status=$($subResp.StatusCode) length=$($subResp.Content.Length)"
+                        }
+                    }
+                    catch {
+                        Add-Result "FAIL ftp-sourced subtitle GET threw: $($_.Exception.Message)"
+                    }
+                }
+                else {
+                    Add-Result "WARN no sec:CaptionInfoEx found for the ftp source item; skipping ftp subtitle hosting check (add a #DLNA-SUBTITLE: line to the ftp test playlist to exercise this path)"
+                }
+            Add-Result "--- end ftp live source checks ---"
+        }
+
+    # -------------------------------------------------------------------
+    # HLS manifest proxy Range request test
+    # -------------------------------------------------------------------
+    # Verifies that Range requests against HLS manifests return 200 with
+    # Accept-Ranges: none, not 206 Partial Content.
+    # This prevents the "blank playlist" defect where CDN byte-range slicing
+    # produces truncated manifests.
+    if ($hlsHttpServerUrl -and $hlsHttpServerUrl -ne "") {
+        Add-Result "--- begin HLS manifest proxy checks: $hlsHttpServerUrl ---"
+
+        # find HLS item via Browse
+        # HLS playlists are exposed as containers with a single HLS item inside
+        $hlsItemId = $null
+        $hlsSoapBody = @"
+<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:Browse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
+      <ObjectID>0</ObjectID>
+      <BrowseFlag>BrowseDirectChildren</BrowseFlag>
+      <Filter>*</Filter>
+      <StartingIndex>0</StartingIndex>
+      <RequestedCount>0</RequestedCount>
+      <SortCriteria></SortCriteria>
+    </u:Browse>
+  </s:Body>
+</s:Envelope>
+"@
+        $hlsBrowseUrl = "http://127.0.0.1:$serverPort/upnp/control/content_directory"
+        $hlsBrowseRaw = Invoke-CurlRaw @(
+            "-sS", "--max-time", "15",
+            "-H", "Content-Type: text/xml; charset=utf-8",
+            "-H", 'SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#Browse"',
+            "--data-binary", $hlsSoapBody,
+            $hlsBrowseUrl
+        )
+        # Find HLS item with application/vnd.apple.mpegurl MIME type
+        # HLS items are exposed with this MIME type in the protocolInfo
+        if ($hlsBrowseRaw -match '<item[^>]*id="(\d+)"[^>]*>[^<]*<[^>]*>[^<]*<[^>]*>[^<]*application/vnd.apple.mpegurl') {
+            $hlsItemId = $Matches[1]
+            Add-Result "PASS found HLS item id=$hlsItemId in Browse response"
+        } elseif ($hlsBrowseRaw -match '<item[^>]*id="(\d+)"' -and $hlsBrowseRaw -match "application/vnd.apple.mpegurl") {
+            $hlsItemId = $Matches[1]
+            Add-Result "PASS found HLS item id=$hlsItemId in Browse response"
+        } else {
+            Add-Result "WARN HLS source did not yield an m3u8 item; skipping HLS Range proxy test"
+        }
+
+        if ($hlsItemId) {
+            # Test 1: GET without Range header
+            $hlsGetNoRange = Invoke-CurlRaw @(
+                "-sS", "-i", "--max-time", "15",
+                "http://127.0.0.1:$serverPort/media/$hlsItemId"
+            )
+            $hlsStatus = $hlsGetNoRange -split "`r?`n" | Select-Object -First 1
+            if ($hlsStatus -match "HTTP/1\.1 200") {
+                Add-Result "PASS HLS GET no-Range returned 200"
+            } else {
+                Add-Result "FAIL HLS GET no-Range returned: $hlsStatus"
+            }
+            if ($hlsGetNoRange -match "Accept-Ranges:\s*none") {
+                Add-Result "PASS HLS GET no-Range has Accept-Ranges: none"
+            } else {
+                Add-Result "FAIL HLS GET no-Range missing or wrong Accept-Ranges"
+            }
+            if ($hlsGetNoRange -match "#EXTM3U") {
+                Add-Result "PASS HLS GET no-Range body starts with #EXTM3U"
+            } else {
+                Add-Result "FAIL HLS GET no-Range body does not start with #EXTM3U"
+            }
+
+            # Test 2: GET with Range header (the regression test)
+            $hlsGetWithRange = Invoke-CurlRaw @(
+                "-sS", "-i", "--max-time", "15",
+                "-H", "Range: bytes=0-1",
+                "http://127.0.0.1:$serverPort/media/$hlsItemId"
+            )
+            $hlsRangeStatus = $hlsGetWithRange -split "`r?`n" | Select-Object -First 1
+            if ($hlsRangeStatus -match "HTTP/1\.1 200") {
+                Add-Result "PASS HLS GET with Range returned 200 (not 206)"
+            } else {
+                Add-Result "FAIL HLS GET with Range returned: $hlsRangeStatus (expected 200)"
+            }
+            if ($hlsGetWithRange -match "Accept-Ranges:\s*none") {
+                Add-Result "PASS HLS GET with Range has Accept-Ranges: none"
+            } else {
+                Add-Result "FAIL HLS GET with Range missing Accept-Ranges: none"
+            }
+            if ($hlsGetWithRange -match "#EXTM3U") {
+                Add-Result "PASS HLS GET with Range body starts with #EXTM3U (full manifest, not truncated)"
+            } else {
+                Add-Result "FAIL HLS GET with Range body does not start with #EXTM3U (truncated?)"
+            }
+
+            # Test 3: HEAD request
+            $hlsHeadResp = Invoke-CurlRaw @(
+                "-sS", "-I", "--max-time", "10",
+                "http://127.0.0.1:$serverPort/media/$hlsItemId"
+            )
+            $hlsHeadStatus = $hlsHeadResp -split "`r?`n" | Select-Object -First 1
+            if ($hlsHeadStatus -match "HTTP/1\.1 200") {
+                Add-Result "PASS HLS HEAD returned 200"
+            } else {
+                Add-Result "FAIL HLS HEAD returned: $hlsHeadStatus"
+            }
+            if ($hlsHeadResp -match "Accept-Ranges:\s*none") {
+                Add-Result "PASS HLS HEAD has Accept-Ranges: none"
+            } else {
+                Add-Result "FAIL HLS HEAD missing Accept-Ranges: none"
+            }
+        }
+        Add-Result "--- end HLS manifest proxy checks ---"
     }
 
     $ipv6If = Get-NetIPAddress -AddressFamily IPv6 -ErrorAction SilentlyContinue |
@@ -920,10 +1391,18 @@ try {
     Set-Content -LiteralPath $resultsPath -Value ($summary -join [Environment]::NewLine) -Encoding UTF8
 }
 catch {
-    Add-Result "FATAL ERROR: $_"
+    $errorRecord = $_
+    Add-Result "FATAL ERROR: $errorRecord"
+    Add-Result "FATAL SCRIPT STACK TRACE:"
+    Add-Result ([string]$errorRecord.ScriptStackTrace)
+    Add-Result "FATAL POSITION:"
+    Add-Result ([string]$errorRecord.InvocationInfo.PositionMessage)
     Set-Content -LiteralPath $resultsPath -Value ($summary -join [Environment]::NewLine) -Encoding UTF8
 }
 finally {
+    if ($hlsHttpProc -and -not $hlsHttpProc.HasExited) {
+        Stop-Process -Id $hlsHttpProc.Id -Force -ErrorAction SilentlyContinue
+    }
     if ($vlcProc -and -not $vlcProc.HasExited) {
         Stop-Process -Id $vlcProc.Id -Force -ErrorAction SilentlyContinue
     }
@@ -941,5 +1420,11 @@ finally {
         Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
     } elseif (Test-Path $configPath) {
         Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+    }
+    if ($transcriptStarted) {
+        try {
+            Stop-Transcript | Out-Null
+        } catch {
+        }
     }
 }

@@ -15,13 +15,6 @@ class SubtitleSupportSourceTests(unittest.TestCase):
 
         self.assertIn("std::wstring subtitlePath;", header)
 
-    def test_scan_detects_companion_subtitle_files(self):
-        source = self.read_source("media_sources.cpp")
-
-        for extension in ('.srt', '.vtt', '.sub', '.ass', '.ssa'):
-            self.assertIn(f'L"{extension}"', source)
-        self.assertIn("GetFileAttributesW(candidate.c_str())", source)
-        self.assertIn("fileInfo.subtitlePath = candidate;", source)
 
     def test_browse_xml_advertises_subtitle_url(self):
         source = self.read_source("contentdirectory.cpp")

@@ -11,14 +11,28 @@
 #include <sstream>
 #include <vector>
 
-#ifdef DLNA_HAS_LIBCURL
+namespace {
+    class ScopeGuard {
+    public:
+        template<typename F>
+        explicit ScopeGuard(F f) : m_f(std::move(f)) {}
+        ~ScopeGuard() { if (m_f) m_f(); }
+        ScopeGuard(ScopeGuard&& other) noexcept : m_f(std::move(other.m_f)) {}
+        ScopeGuard& operator=(ScopeGuard&& other) noexcept { if (this != &other) { m_f = std::move(other.m_f); } return *this; }
+        void Dismiss() { m_f = nullptr; }
+    private:
+        std::function<void()> m_f;
+    };
+}
+
 #include <curl/curl.h>
-#endif
 
 namespace {
 constexpr int kMaxCurlOutputBytes = 4 * 1024 * 1024;
 constexpr int kMaxPlsIndex = 10000;
 constexpr long kCurlCaptureTimeoutSeconds = 30L;
+constexpr long kCurlLowSpeedLimitBytes = 1L;
+constexpr long kCurlLowSpeedTimeSeconds = 30L;
 
 std::wstring TrimWide(const std::wstring& value);
 
@@ -39,14 +53,6 @@ bool IsAbsoluteLocalPath(const std::wstring& value) {
 std::string UrlWithoutQueryOrFragment(const std::string& value) {
     size_t end = value.find_first_of("?#");
     return end == std::string::npos ? value : value.substr(0, end);
-}
-
-std::string ParentUrl(const std::string& value) {
-    std::string clean = UrlWithoutQueryOrFragment(value);
-    if (!clean.empty() && clean.back() == '/') clean.pop_back();
-    size_t slash = clean.find_last_of('/');
-    if (slash == std::string::npos) return value;
-    return clean.substr(0, slash + 1);
 }
 
 std::wstring ParentLocalPath(const std::wstring& value) {
@@ -95,27 +101,97 @@ std::wstring JoinLocalPath(const std::wstring& baseFile, const std::wstring& ent
     return parent + entry;
 }
 
-std::wstring JoinUrl(const std::wstring& baseUrl, const std::wstring& entry) {
-    if (IsRemoteMediaUrl(entry)) return entry;
-    std::string parent = ParentUrl(WideToUtf8(baseUrl));
-    std::string relative = WideToUtf8(entry);
-    std::stringstream joined;
-    joined << parent;
-    std::stringstream parts(relative);
-    std::string part;
-    bool first = true;
-    while (std::getline(parts, part, '/')) {
-        if (part.empty() || part == ".") continue;
-        if (!first && joined.str().back() != '/') joined << '/';
-        joined << UrlEncodePathSegment(part);
-        first = false;
+std::wstring ResolveRelativeUrl(const std::wstring& baseUrl, const std::wstring& relativeUrl) {
+    if (IsRemoteMediaUrl(relativeUrl)) return relativeUrl;
+
+    std::string base = UrlWithoutQueryOrFragment(WideToUtf8(baseUrl));
+    // remove filename part to get base directory
+    size_t slash = base.find_last_of('/');
+    std::string baseDir;
+    if (slash != std::string::npos && slash > 7) { // >7 to keep scheme://host/
+        baseDir = base.substr(0, slash + 1);
+    } else {
+        baseDir = base;
+        if (!baseDir.empty() && baseDir.back() != '/') baseDir += '/';
     }
-    return Utf8ToWide(joined.str());
+
+    std::string rel = WideToUtf8(relativeUrl);
+    // remove leading slash if present (absolute-path relative to scheme://host)
+    if (!rel.empty() && rel[0] == '/') {
+        // keep scheme://host/ from base
+        size_t hostEnd = base.find('/', 8); // after scheme://host
+        if (hostEnd != std::string::npos) {
+            baseDir = base.substr(0, hostEnd + 1);
+            rel = rel.substr(1);
+        } else {
+            baseDir = base + "/";
+            rel = rel.substr(1);
+        }
+    }
+
+    // split baseDir path segments
+    std::vector<std::string> segments;
+    std::stringstream baseParts(baseDir);
+    std::string seg;
+    while (std::getline(baseParts, seg, '/')) {
+        if (!seg.empty()) segments.push_back(seg);
+    }
+
+    // process relative segments
+    std::stringstream relParts(rel);
+    while (std::getline(relParts, seg, '/')) {
+        if (seg.empty() || seg == ".") continue;
+        if (seg == "..") {
+            if (!segments.empty()) segments.pop_back();
+        } else {
+            segments.push_back(seg);
+        }
+    }
+
+    // reconstruct path
+    std::string result;
+    // rebuild scheme://host/
+    size_t schemeEnd = base.find("://");
+    size_t hostSlash = base.find('/', schemeEnd != std::string::npos ? schemeEnd + 3 : 0);
+    if (schemeEnd != std::string::npos) {
+        std::string schemeHost = (hostSlash != std::string::npos) ? base.substr(0, hostSlash + 1) : base + "/";
+        result = schemeHost;
+    }
+
+    for (size_t i = 0; i < segments.size(); ++i) {
+        result += UrlEncodePathSegment(segments[i]);
+        if (i + 1 < segments.size()) result += '/';
+    }
+
+    return Utf8ToWide(result);
+}
+
+std::string RewriteHlsManifestUrisToAbsolute(const std::wstring& manifestUrl, const std::string& manifestText) {
+    if (!IsRemoteMediaUrl(manifestUrl)) return manifestText;
+    std::string result;
+    result.reserve(manifestText.size() + 1024);
+    std::istringstream input(manifestText);
+    std::string line;
+    while (std::getline(input, line)) {
+        // trim trailing \r
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        // skip tags and blank lines
+        if (line.empty() || line[0] == '#') {
+            result += line + "\n";
+            continue;
+        }
+        // line is a URI — resolve against manifest URL
+        std::wstring resolved = ResolveRelativeUrl(manifestUrl, Utf8ToWide(line));
+        std::string resolvedUtf8 = WideToUtf8(resolved);
+        // Append the resolved URI (with original fragment/query if the line had it)
+        result += resolvedUtf8 + "\n";
+    }
+    return result;
 }
 
 std::wstring ResolvePlaylistEntry(const std::wstring& playlistPath, const std::wstring& entry) {
     if (IsRemoteMediaUrl(entry) || IsAbsoluteLocalPath(entry)) return entry;
-    if (IsRemoteMediaUrl(playlistPath)) return JoinUrl(playlistPath, entry);
+    if (IsRemoteMediaUrl(playlistPath)) return ResolveRelativeUrl(playlistPath, entry);
     return JoinLocalPath(playlistPath, entry);
 }
 
@@ -132,7 +208,6 @@ struct RemoteFetchResult {
     std::string body;
 };
 
-#ifdef DLNA_HAS_LIBCURL
 struct CurlGlobalInit {
     CurlGlobalInit() {
         curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -141,6 +216,48 @@ struct CurlGlobalInit {
         curl_global_cleanup();
     }
 };
+
+class CurlShareHandle {
+public:
+    CurlShareHandle() {
+        m_locks.resize(CURL_LOCK_DATA_LAST);
+        for (auto& lock : m_locks) {
+            lock = std::make_unique<std::mutex>();
+        }
+        m_share = curl_share_init();
+        if (!m_share) return;
+        curl_share_setopt(m_share, CURLSHOPT_LOCKFUNC, &CurlShareHandle::LockCallback);
+        curl_share_setopt(m_share, CURLSHOPT_UNLOCKFUNC, &CurlShareHandle::UnlockCallback);
+        curl_share_setopt(m_share, CURLSHOPT_USERDATA, this);
+        curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+        curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+        curl_share_setopt(m_share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+    }
+    ~CurlShareHandle() {
+        if (m_share) curl_share_cleanup(m_share);
+    }
+    CURLSH* Get() const { return m_share; }
+
+private:
+    static void LockCallback(CURL*, curl_lock_data data, curl_lock_access, void* userPtr) {
+        auto* self = static_cast<CurlShareHandle*>(userPtr);
+        self->m_locks[data]->lock();
+    }
+    static void UnlockCallback(CURL*, curl_lock_data data, void* userPtr) {
+        auto* self = static_cast<CurlShareHandle*>(userPtr);
+        self->m_locks[data]->unlock();
+    }
+
+    CURLSH* m_share = nullptr;
+    std::vector<std::unique_ptr<std::mutex>> m_locks;
+};
+
+CURLSH* GetSharedCurlHandle() {
+    static CurlGlobalInit init;
+    (void)init;
+    static CurlShareHandle share;
+    return share.Get();
+}
 
 size_t CurlWriteBody(char* ptr, size_t size, size_t nmemb, void* userdata) {
     auto* result = static_cast<RemoteFetchResult*>(userdata);
@@ -159,6 +276,26 @@ size_t CurlWriteStream(char* ptr, size_t size, size_t nmemb, void* userdata) {
     return (*writeChunk)(ptr, bytes) ? bytes : 0;
 }
 
+size_t CurlHeaderStream(char* buffer, size_t size, size_t nitems, void* userdata) {
+    auto* onHeader = static_cast<const std::function<void(const std::string&, const std::string&)>*>(userdata);
+    size_t bytes = size * nitems;
+    if (onHeader && *onHeader) {
+        std::string header(buffer, bytes);
+        size_t colon = header.find(':');
+        if (colon != std::string::npos) {
+            std::string key = header.substr(0, colon);
+            std::string value = header.substr(colon + 1);
+            while (!value.empty() && (value.back() == '\r' || value.back() == '\n' || value.back() == ' ')) value.pop_back();
+            size_t valStart = value.find_first_not_of(" \t");
+            if (valStart != std::string::npos) value = value.substr(valStart);
+            (*onHeader)(key, value);
+        } else if (header == "\r\n" || header == "\n") {
+            (*onHeader)("", ""); // empty key/value signals end of headers
+        }
+    }
+    return bytes;
+}
+
 CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutSeconds) {
     static CurlGlobalInit init;
     (void)init;
@@ -169,9 +306,15 @@ CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutS
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "DLNA-Server/1.4");
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSeconds);
+    curl_easy_setopt(curl, CURLOPT_FTP_RESPONSE_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_FTP_USE_EPSV, 1L);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errorBuffer);
+    if (CURLSH* share = GetSharedCurlHandle()) {
+        curl_easy_setopt(curl, CURLOPT_SHARE, share);
+    }
     return curl;
 }
 
@@ -193,7 +336,7 @@ RemoteFetchResult CurlCapture(const std::wstring& url, bool headOnly, bool listO
     long responseCode = 0;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &responseCode);
     if (result.truncated) {
-        LogPrint(L"[remote:parse] Remote content truncated after %d bytes: %ls", kMaxCurlOutputBytes, url.c_str());
+        LogPrint(L"[remote:parse] Remote content truncated after %d bytes: %ls", kMaxCurlOutputBytes, RedactUrlForLog(url).c_str());
     } else if (code == CURLE_OK) {
         curl_off_t length = -1;
         curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &length);
@@ -201,7 +344,7 @@ RemoteFetchResult CurlCapture(const std::wstring& url, bool headOnly, bool listO
         result.ok = true;
     } else {
         if (responseCode == 401 || responseCode == 403 || code == CURLE_LOGIN_DENIED) {
-            LogPrint(L"[remote:auth] Remote content unavailable: authentication failed for %ls", url.c_str());
+            LogPrint(L"[remote:auth] Remote content unavailable: authentication failed for %ls", RedactUrlForLog(url).c_str());
         } else {
             LogPrint(L"[remote:network] Remote content unavailable: %hs", errorBuffer[0] ? errorBuffer : curl_easy_strerror(code));
         }
@@ -214,7 +357,9 @@ bool CurlStream(const std::wstring& url,
                 bool useRange,
                 long long startByte,
                 long long endByte,
-                const std::function<bool(const char*, size_t)>& writeChunk) {
+                const std::function<bool(const char*, size_t)>& writeChunk,
+                const std::vector<std::string>& reqHeaders,
+                const std::function<void(const std::string&, const std::string&)>& onHeader) {
     char errorBuffer[CURL_ERROR_SIZE] = {};
     CURL* curl = CreateCurlHandle(url, errorBuffer, 0L);
     if (!curl) {
@@ -228,31 +373,36 @@ bool CurlStream(const std::wstring& url,
         curl_easy_setopt(curl, CURLOPT_RANGE, rangeText.c_str());
     }
 
+    struct curl_slist* chunk = nullptr;
+    for (const auto& header : reqHeaders) {
+        chunk = curl_slist_append(chunk, header.c_str());
+    }
+    if (chunk) {
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
+    }
+
+    if (onHeader) {
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, CurlHeaderStream);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &onHeader);
+    }
+
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, kCurlLowSpeedLimitBytes);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, kCurlLowSpeedTimeSeconds);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, CurlWriteStream);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &writeChunk);
     CURLcode code = curl_easy_perform(curl);
+    
+    if (chunk) {
+        curl_slist_free_all(chunk);
+    }
+    
     curl_easy_cleanup(curl);
     if (code != CURLE_OK) {
         LogPrint(L"Remote content unavailable: %hs", errorBuffer[0] ? errorBuffer : curl_easy_strerror(code));
         return false;
     }
-    return true;
+return true;
 }
-#else
-RemoteFetchResult CurlCapture(const std::wstring&, bool, bool) {
-    LogPrint(L"Remote content unavailable: libcurl support was not enabled at build time.");
-    return {};
-}
-
-bool CurlStream(const std::wstring&,
-                bool,
-                long long,
-                long long,
-                const std::function<bool(const char*, size_t)>&) {
-    LogPrint(L"Remote content unavailable: libcurl support was not enabled at build time.");
-    return false;
-}
-#endif
 
 std::string ReadLocalTextFile(const std::wstring& path) {
 #ifdef _WIN32
@@ -276,8 +426,13 @@ std::string ReadLocalTextFile(const std::wstring& path) {
 #endif
 }
 
-std::string ReadSourceText(const std::wstring& source) {
-    if (IsRemoteMediaUrl(source)) return CurlCapture(source, false, false).body;
+std::string ReadSourceText(const std::wstring& source, bool* ok = nullptr) {
+    if (IsRemoteMediaUrl(source)) {
+        RemoteFetchResult fetch = CurlCapture(source, false, false);
+        if (ok) *ok = fetch.ok;
+        return fetch.body;
+    }
+    if (ok) *ok = true;
     return ReadLocalTextFile(source);
 }
 
@@ -341,6 +496,18 @@ std::vector<PlaylistEntry> ParseM3u(const std::wstring& playlistPath, const std:
         pendingTitle.clear();
         pendingSubtitle.clear();
     }
+    if (!pendingTitle.empty() || !pendingSubtitle.empty()) {
+        // trailing EXTINF or subtitle directive after last URI
+        // apply to last entry so playlist metadata is not lost
+        if (!entries.empty()) {
+            if (!pendingTitle.empty()) {
+                entries.back().title = pendingTitle;
+            }
+            if (!pendingSubtitle.empty()) {
+                entries.back().subtitlePath = pendingSubtitle;
+            }
+        }
+    }
     return entries;
 }
 
@@ -378,7 +545,7 @@ std::vector<PlaylistEntry> ParsePls(const std::wstring& playlistPath, const std:
         }
 
         if (index <= 0 || index > kMaxPlsIndex) {
-            LogPrint(L"[remote:parse] Ignoring out-of-range PLS index %d in %ls", index, playlistPath.c_str());
+            LogPrint(L"[remote:parse] Ignoring out-of-range PLS index %d in %ls", index, RedactUrlForLog(playlistPath).c_str());
             continue;
         }
         if (parsed.size() < static_cast<size_t>(index)) {
@@ -400,8 +567,7 @@ std::vector<PlaylistEntry> ParsePls(const std::wstring& playlistPath, const std:
 }
 
 bool IsSupportedScheme(const std::string& value) {
-    return HasScheme(value, "smb") || HasScheme(value, "smbs") ||
-           HasScheme(value, "ftp") || HasScheme(value, "ftps") ||
+    return HasScheme(value, "ftp") || HasScheme(value, "ftps") ||
            HasScheme(value, "http") || HasScheme(value, "https");
 }
 
@@ -424,8 +590,64 @@ std::string ParseUnixListName(const std::string& trimmed) {
     return pos < trimmed.size() ? trimmed.substr(pos) : std::string();
 }
 
+bool TryParseDosListLine(const std::string& trimmed, std::string& outName, bool& outIsDirectory) {
+    size_t pos = 0;
+    auto skipDigits = [&](size_t count) -> bool {
+        if (pos + count > trimmed.size()) return false;
+        for (size_t i = 0; i < count; ++i) {
+            if (!std::isdigit(static_cast<unsigned char>(trimmed[pos + i]))) return false;
+        }
+        pos += count;
+        return true;
+    };
+    if (!skipDigits(2) || pos >= trimmed.size() || trimmed[pos] != '-') return false;
+    ++pos;
+    if (!skipDigits(2) || pos >= trimmed.size() || trimmed[pos] != '-') return false;
+    ++pos;
+    if (!(skipDigits(2) || skipDigits(4))) return false;
+    if (pos >= trimmed.size() || trimmed[pos] != ' ') return false;
+
+    size_t afterDate = trimmed.find_first_not_of(' ', pos);
+    if (afterDate == std::string::npos) return false;
+    size_t afterTime = trimmed.find_first_of(' ', afterDate);
+    if (afterTime == std::string::npos) return false;
+    std::string timeToken = trimmed.substr(afterDate, afterTime - afterDate);
+    if (timeToken.find(':') == std::string::npos) return false;
+
+    size_t afterTimeSpace = trimmed.find_first_not_of(' ', afterTime);
+    if (afterTimeSpace == std::string::npos) return false;
+
+    const std::string dirMarker = "<DIR>";
+    bool isDirectory = trimmed.compare(afterTimeSpace, dirMarker.size(), dirMarker) == 0;
+
+    size_t nameStart;
+    if (isDirectory) {
+        nameStart = trimmed.find_first_not_of(' ', afterTimeSpace + dirMarker.size());
+    } else {
+        size_t sizeEnd = trimmed.find_first_of(' ', afterTimeSpace);
+        if (sizeEnd == std::string::npos) return false;
+        std::string sizeToken = trimmed.substr(afterTimeSpace, sizeEnd - afterTimeSpace);
+        if (sizeToken.empty() || sizeToken.find_first_not_of("0123456789") != std::string::npos) return false;
+        nameStart = trimmed.find_first_not_of(' ', sizeEnd);
+    }
+    if (nameStart == std::string::npos) return false;
+
+    outName = trimmed.substr(nameStart);
+    outIsDirectory = isDirectory;
+    return true;
+}
+
 RemoteDirectoryEntry ClassifyRemoteDirectoryEntry(const std::wstring& baseUrl, const std::string& line) {
     std::string trimmed = TrimAscii(line);
+
+    std::string dosName;
+    bool dosIsDirectory = false;
+    if (TryParseDosListLine(trimmed, dosName, dosIsDirectory)) {
+        std::wstring name = Utf8ToWide(dosName);
+        std::wstring child = ChildUrl(baseUrl, name);
+        return { name, child, dosIsDirectory };
+    }
+
     const bool detailDirectory = !trimmed.empty() && trimmed[0] == 'd';
     const bool detailFile = !trimmed.empty() && trimmed[0] == '-';
     if ((detailDirectory || detailFile) && trimmed.find(' ') != std::string::npos) {
@@ -451,14 +673,76 @@ std::wstring ChildUrl(const std::wstring& directoryUrl, const std::wstring& chil
 }
 }
 
+bool IsHlsManifestText(const std::string& text) {
+    // RFC 8216: HLS-specific tags all start with literal "#EXT-X-"
+    // Plain M3U/IPTV compilation playlists only use #EXTM3U and #EXTINF
+    // Finding one "#EXT-X-" line is a reliable signal this is a single
+    // adaptive-bitrate stream not a compilation of separate items
+    std::istringstream stream(text);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        std::string trimmed = TrimAscii(line);
+        if (trimmed.rfind("#EXT-X-", 0) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+FetchedPlaylist FetchPlaylistOnce(const std::wstring& playlistPath) {
+    FetchedPlaylist result;
+    result.text = ReadSourceText(playlistPath, &result.fetchOk);
+    if (result.fetchOk) {
+        result.isHls = IsHlsManifestText(result.text);
+    }
+    return result;
+}
+
+HlsManifestFetchResult FetchHlsManifestForServing(const std::wstring& manifestUrl) {
+    HlsManifestFetchResult result;
+    bool fetchOk = true;
+    std::string text = ReadSourceText(manifestUrl, &fetchOk);
+    if (!fetchOk) {
+        LogPrint(L"[remote:network] HLS manifest unavailable for serving: %ls", RedactUrlForLog(manifestUrl).c_str());
+        return result;
+    }
+    result.fetchOk = true;
+    result.text = RewriteHlsManifestUrisToAbsolute(manifestUrl, text);
+    return result;
+}
+
 bool IsRemoteMediaUrl(const std::wstring& value) {
     return IsSupportedScheme(WideToUtf8(value));
 }
 
 bool IsNetworkShareUrl(const std::wstring& value) {
     std::string text = WideToUtf8(value);
-    return HasScheme(text, "smb") || HasScheme(text, "smbs") ||
-           HasScheme(text, "ftp") || HasScheme(text, "ftps");
+    return HasScheme(text, "ftp") || HasScheme(text, "ftps");
+}
+
+bool IsRemovedSmbSourcePath(const std::wstring& value) {
+    // SMB support was removed: libcurl's smb:// backend is SMB1/CIFS-only
+    // (no SMB2/3 dialect), which most current SMB servers refuse, and has no
+    // directory-listing capability at all for any dialect. This helper only
+    // exists to detect and reject a leftover smb:// entry from an existing
+    // config.ini with an explicit log message instead of a silent failure.
+    std::string text = WideToUtf8(value);
+    return HasScheme(text, "smb") || HasScheme(text, "smbs");
+}
+
+std::wstring RedactUrlForLog(const std::wstring& value) {
+    std::string text = WideToUtf8(value);
+    size_t schemeEnd = text.find("://");
+    if (schemeEnd == std::string::npos) return value;
+    size_t authorityStart = schemeEnd + 3;
+    size_t authorityEnd = text.find_first_of("/?#", authorityStart);
+    size_t at = text.find('@', authorityStart);
+    if (at == std::string::npos || (authorityEnd != std::string::npos && at > authorityEnd)) {
+        return value;
+    }
+    std::string redacted = text.substr(0, authorityStart) + "[redacted]@" + text.substr(at + 1);
+    return Utf8ToWide(redacted);
 }
 
 std::wstring SourceExtension(const std::wstring& value) {
@@ -489,8 +773,8 @@ std::wstring SourceStemName(const std::wstring& value) {
     return name.substr(0, dot);
 }
 
-std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath) {
-    std::string text = ReadSourceText(playlistPath);
+std::vector<PlaylistEntry> ParseFetchedPlaylistText(const std::wstring& playlistPath, const std::string& fetchedText) {
+    std::string text = fetchedText;
     if (text.size() >= 3 &&
         static_cast<unsigned char>(text[0]) == 0xef &&
         static_cast<unsigned char>(text[1]) == 0xbb &&
@@ -503,10 +787,17 @@ std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath)
     return ParseM3u(playlistPath, text);
 }
 
+std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath, bool* fetchFailed) {
+    bool fetchOk = true;
+    std::string text = ReadSourceText(playlistPath, &fetchOk);
+    if (fetchFailed) *fetchFailed = !fetchOk;
+    return ParseFetchedPlaylistText(playlistPath, text);
+}
+
 std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& directoryUrl) {
     if (!IsNetworkShareUrl(directoryUrl)) {
         if (IsRemoteMediaUrl(directoryUrl)) {
-            LogPrint(L"[remote:parse] HTTP directory listing is not supported: %ls", directoryUrl.c_str());
+            LogPrint(L"[remote:parse] HTTP directory listing is not supported: %ls", RedactUrlForLog(directoryUrl).c_str());
         }
         return {};
     }
@@ -515,7 +806,7 @@ std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& direct
     RemoteFetchResult fetch = CurlCapture(url, false, true);
     if (!fetch.ok) return {};
     if (fetch.body.empty()) {
-        LogPrint(L"Remote directory listing empty: %ls", url.c_str());
+        LogPrint(L"Remote directory listing empty: %ls", RedactUrlForLog(url).c_str());
     }
     std::string text = fetch.body;
 
@@ -536,15 +827,29 @@ std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& direct
 
 long long ProbeRemoteContentLength(const std::wstring& url) {
     if (!IsRemoteMediaUrl(url)) return 0;
+    
+    auto& limiter = GetRemoteProbeLimiter();
+    limiter.Acquire();
+    
+    auto cleanup = ScopeGuard([&]() { limiter.Release(); });
     return CurlCapture(url, true, false).contentLength;
+}
+
+namespace {
+    AdaptiveConcurrencyLimiter g_remoteProbeLimiter(4);
+}
+
+AdaptiveConcurrencyLimiter& GetRemoteProbeLimiter() {
+    return g_remoteProbeLimiter;
 }
 
 bool StreamRemoteContent(const std::wstring& url,
                          bool useRange,
                          long long startByte,
                          long long endByte,
-                         const std::function<bool(const char*, size_t)>& writeChunk) {
+                         const std::function<bool(const char*, size_t)>& writeChunk,
+                         const std::vector<std::string>& reqHeaders,
+                         const std::function<void(const std::string&, const std::string&)>& onHeader) {
     if (!IsRemoteMediaUrl(url)) return false;
-
-    return CurlStream(url, useRange, startByte, endByte, writeChunk);
+    return CurlStream(url, useRange, startByte, endByte, writeChunk, reqHeaders, onHeader);
 }

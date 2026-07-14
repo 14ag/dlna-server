@@ -4,6 +4,7 @@
 #include "media_sources.h"
 #include "netutils.h"
 #include "server.h"
+#include "settings_restart.h"
 
 #include <FL/Fl.H>
 #include <FL/Fl_Box.H>
@@ -173,12 +174,10 @@ private:
 class SettingsDialog : public Fl_Window {
 public:
     SettingsDialog()
-        : Fl_Window(500, 370, "DLNA Server Settings"),
-          m_serverName(120, 14, 190, 24, "Server Name:"),
-          m_httpPort(120, 44, 70, 24, "HTTP Port:"),
-          m_filePort(270, 44, 70, 24, "File Port:"),
+        : Fl_Window(500, 396, "DLNA Server Settings"),
+m_serverName(120, 14, 190, 24, "Server Name:"),
+          m_httpPort(120, 44, 190, 24, "HTTP Port:"),
           m_ipWhitelist(120, 74, 350, 24, "IP Whitelist:"),
-          m_runOnStartup(16, 112, 190, 24, "Run on startup"),
           m_debugLog(16, 138, 190, 24, "Debug Log (Write to file)"),
           m_defaultPlaylist(260, 112, 130, 24, "Default playlist"),
           m_defaultPlaylistAdd(400, 112, 70, 24, "Add..."),
@@ -188,19 +187,17 @@ public:
           m_showFileNames(16, 242, 230, 24, "Show file names instead of titles"),
           m_sortByTitle(16, 268, 230, 24, "Sort by title instead of file name"),
           m_proxyStreams(16, 294, 190, 24, "Proxy streams"),
-          m_restartButton(7, 340, 70, 24, "Restart"),
-          m_viewLogButton(84, 340, 70, 24, "View log"),
-          m_cancelButton(340, 340, 70, 24, "Cancel"),
-          m_okButton(417, 340, 70, 24, "OK"),
+          m_backgroundScan(16, 320, 230, 24, "Background scan (auto-rescan on changes)"),
+          m_viewLogButton(84, 366, 70, 24, "View log"),
+          m_cancelButton(340, 366, 70, 24, "Cancel"),
+          m_okButton(417, 366, 70, 24, "OK"),
           m_saved(false),
           m_restartRequested(false) {
         LoadFromConfig();
 
-        m_restartButton.tooltip("Restart server");
         m_viewLogButton.tooltip("View log");
         m_defaultPlaylistAdd.tooltip("Add default playlist entry");
 
-        m_restartButton.callback(RestartClicked, this);
         m_viewLogButton.callback(ShowLog, this);
         m_defaultPlaylist.callback(DefaultPlaylistToggled, this);
         m_defaultPlaylistAdd.callback(AddDefaultPlaylistEntry, this);
@@ -225,9 +222,7 @@ private:
     void LoadFromConfig() {
         m_serverName.value(ToUtf8(AppConfig.serverName).c_str());
         m_httpPort.value(std::to_string(AppConfig.port).c_str());
-        m_filePort.value(std::to_string(AppConfig.fileServerPort).c_str());
         m_ipWhitelist.value(ToUtf8(AppConfig.ipWhiteList).c_str());
-        m_runOnStartup.value(AppConfig.runOnBoot ? 1 : 0);
         m_debugLog.value(AppConfig.debugLog ? 1 : 0);
         m_defaultPlaylist.value(AppConfig.defaultPlaylistEnabled ? 1 : 0);
         m_artistAlbum.value(AppConfig.addArtistAlbumFolders ? 1 : 0);
@@ -236,32 +231,61 @@ private:
         m_showFileNames.value(AppConfig.showFileNamesInsteadOfTitles ? 1 : 0);
         m_sortByTitle.value(AppConfig.sortByTitle ? 1 : 0);
         m_proxyStreams.value(AppConfig.proxyStreams ? 1 : 0);
+        m_backgroundScan.value(AppConfig.backgroundScanEnabled ? 1 : 0);
     }
 
-    bool SaveToConfig() {
+bool SaveToConfig() {
         int httpPort = 0;
-        int filePort = 0;
-        if (!TryParsePortStrict(m_httpPort.value() ? m_httpPort.value() : "", httpPort) ||
-            !TryParsePortStrict(m_filePort.value() ? m_filePort.value() : "", filePort)) {
-            fl_alert("Ports must be between 1 and 65535.");
+        if (!TryParsePortStrict(m_httpPort.value() ? m_httpPort.value() : "", httpPort)) {
+            fl_alert("HTTP port must be between 1 and 65535.");
             return false;
         }
-        AppConfig.serverName = ToWide(m_serverName.value());
-        AppConfig.port = httpPort;
-        AppConfig.fileServerPort = filePort;
-        AppConfig.ipWhiteList = ToWide(m_ipWhitelist.value());
-        AppConfig.runOnBoot = m_runOnStartup.value() != 0;
-        AppConfig.debugLog = m_debugLog.value() != 0;
-        AppConfig.defaultPlaylistEnabled = m_defaultPlaylist.value() != 0;
-        if (AppConfig.defaultPlaylistPath.empty()) AppConfig.defaultPlaylistPath = AppConfig.GetDefaultPlaylistPath();
-        AppConfig.addArtistAlbumFolders = m_artistAlbum.value() != 0;
-        AppConfig.doNotShowAllMediaFolders = m_hideAllMedia.value() != 0;
-        AppConfig.flatFolderStyle = m_flatFolders.value() != 0;
-        AppConfig.showFileNamesInsteadOfTitles = m_showFileNames.value() != 0;
-        AppConfig.sortByTitle = m_sortByTitle.value() != 0;
-        AppConfig.proxyStreams = m_proxyStreams.value() != 0;
+        const std::wstring serverName = ToWide(m_serverName.value());
+        const std::wstring ipWhiteList = ToWide(m_ipWhitelist.value());
+        const bool debugLog = m_debugLog.value() != 0;
+        const bool defaultPlaylistEnabled = m_defaultPlaylist.value() != 0;
+        const bool addArtistAlbumFolders = m_artistAlbum.value() != 0;
+        const bool doNotShowAllMediaFolders = m_hideAllMedia.value() != 0;
+        const bool flatFolderStyle = m_flatFolders.value() != 0;
+        const bool showFileNamesInsteadOfTitles = m_showFileNames.value() != 0;
+        const bool sortByTitle = m_sortByTitle.value() != 0;
+        const bool proxyStreams = m_proxyStreams.value() != 0;
+        const bool backgroundScanEnabled = m_backgroundScan.value() != 0;
+
+        const ConfigSnapshot before = AppConfig.Snapshot();
+        AppConfig.Mutate([&](Config& cfg) {
+            cfg.serverName = serverName;
+            cfg.port = httpPort;
+            cfg.ipWhiteList = ipWhiteList;
+            cfg.debugLog = debugLog;
+            cfg.defaultPlaylistEnabled = defaultPlaylistEnabled;
+            if (cfg.defaultPlaylistPath.empty()) cfg.defaultPlaylistPath = cfg.GetDefaultPlaylistPath();
+            cfg.addArtistAlbumFolders = addArtistAlbumFolders;
+            cfg.doNotShowAllMediaFolders = doNotShowAllMediaFolders;
+            cfg.flatFolderStyle = flatFolderStyle;
+            cfg.showFileNamesInsteadOfTitles = showFileNamesInsteadOfTitles;
+            cfg.sortByTitle = sortByTitle;
+            cfg.proxyStreams = proxyStreams;
+            cfg.backgroundScanEnabled = backgroundScanEnabled;
+        });
         AppConfig.Save();
         LogPrint(L"Saved settings.");
+
+        m_restartRequested = false;
+        if (DLNAServer.IsRunning()) {
+            const ConfigSnapshot after = AppConfig.Snapshot();
+            std::vector<std::wstring> changed = DetermineSettingsRequiringRestart(before, after);
+            if (!changed.empty()) {
+                std::wstring names;
+                for (size_t i = 0; i < changed.size(); ++i) {
+                    if (i) names += L", ";
+                    names += changed[i];
+                }
+                std::string prompt = "A server restart is needed to apply changes to: " +
+                                      ToUtf8(names) + ".\n\nRestart server?";
+                m_restartRequested = (fl_choice("%s", "No", "Yes", nullptr, prompt.c_str()) == 1);
+            }
+        }
         return true;
     }
 
@@ -269,14 +293,6 @@ private:
         auto* self = static_cast<SettingsDialog*>(data);
         if (!self->SaveToConfig()) return;
         self->m_saved = true;
-        self->hide();
-    }
-
-    static void RestartClicked(Fl_Widget*, void* data) {
-        auto* self = static_cast<SettingsDialog*>(data);
-        if (!self->SaveToConfig()) return;
-        self->m_saved = true;
-        self->m_restartRequested = true;
         self->hide();
     }
 
@@ -304,9 +320,7 @@ private:
 
     Fl_Input m_serverName;
     Fl_Int_Input m_httpPort;
-    Fl_Int_Input m_filePort;
     Fl_Input m_ipWhitelist;
-    Fl_Check_Button m_runOnStartup;
     Fl_Check_Button m_debugLog;
     Fl_Check_Button m_defaultPlaylist;
     Fl_Button m_defaultPlaylistAdd;
@@ -316,7 +330,7 @@ private:
     Fl_Check_Button m_showFileNames;
     Fl_Check_Button m_sortByTitle;
     Fl_Check_Button m_proxyStreams;
-    Fl_Button m_restartButton;
+    Fl_Check_Button m_backgroundScan;
     Fl_Button m_viewLogButton;
     Fl_Button m_cancelButton;
     Fl_Button m_okButton;
@@ -411,16 +425,20 @@ private:
     }
 
     void SaveSourcesFromList() {
-        AppConfig.mediaSources.clear();
-        for (int i = 1; i <= m_sources.size(); ++i) {
-            const char* text = m_sources.text(i);
-            if (text && *text) {
-                AppConfig.mediaSources.push_back({ToWide(text), true});
+        size_t savedCount = 0;
+        AppConfig.Mutate([this, &savedCount](Config& cfg) {
+            cfg.mediaSources.clear();
+            for (int i = 1; i <= m_sources.size(); ++i) {
+                const char* text = m_sources.text(i);
+                if (text && *text) {
+                    cfg.mediaSources.push_back({ToWide(text)});
+                }
             }
-        }
+            savedCount = cfg.mediaSources.size();
+        });
         AppConfig.Save();
-        AppMedia.Scan();
-        LogPrint(L"Saved %d media source(s).", static_cast<int>(AppConfig.mediaSources.size()));
+        std::thread([]() { DLNAServer.Rescan(); }).detach();
+        LogPrint(L"Saved %d media source(s).", static_cast<int>(savedCount));
     }
 
     void RefreshEmptyState() {
@@ -445,7 +463,9 @@ private:
             m_startStopButton.deactivate();
         } else if (m_state == ServerUiState::Running) {
             const std::string endpoint = ToUtf8(DLNAServer.GetEndpoint());
-            const std::string label = "DLNA Server is running on " + endpoint;
+            const std::string label = DLNAServer.IsInitialScanInProgress()
+                ? ("DLNA Server is running on " + endpoint + " (scanning...)")
+                : ("DLNA Server is running on " + endpoint);
             m_status.copy_label(label.c_str());
             m_startStopButton.copy_label("Stop");
             m_startStopButton.tooltip("Stop server");
@@ -456,7 +476,7 @@ private:
             m_startStopButton.tooltip("Start server");
             m_startStopButton.activate();
         }
-        if (IsBusy()) {
+        if (IsBusy() || DLNAServer.IsInitialScanInProgress()) {
             m_addButton.deactivate();
             m_removeButton.deactivate();
             m_settingsButton.deactivate();
@@ -482,8 +502,16 @@ private:
         m_state = ServerUiState::Starting;
         RefreshStatus();
         m_worker = std::thread([this]() {
-            bool ok = DLNAServer.Start();
-            SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, ok ? "" : "Failed to start DLNA server. Open View log for details.");
+            std::wstring reason;
+            bool ok = DLNAServer.Start(reason);
+            std::string message;
+            if (!ok) {
+                message = "server could not start\n";
+                if (!reason.empty()) {
+                    message += WideToUtf8(reason);
+                }
+            }
+            SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, message);
         });
     }
 
@@ -566,7 +594,7 @@ private:
             }
             self->RestoreMainFocus();
         } else if (choice == 2) {
-            const char* typed = fl_input("Network share URL", "smb://user:pass@server/share");
+            const char* typed = fl_input("Network share URL", "ftp://user:pass@server:21/media");
             if (typed) selected = typed;
             self->RestoreMainFocus();
         }
@@ -628,7 +656,7 @@ private:
         if (DLNAServer.IsRunning()) {
             self->hide();
         } else {
-            self->hide();
+            std::exit(0);
         }
     }
 

@@ -1,9 +1,11 @@
 #include "contentdirectory.h"
 #include "config.h"
 #include "dlna_utils.h"
+#include "version.h"
 #include "log.h"
 #include "netutils.h"
 #include "network_sources.h"
+#include "server.h"
 #include <algorithm>
 #include <filesystem>
 #include <sstream>
@@ -138,10 +140,6 @@ bool ExtractTagValue(const std::string& req, const char* tag, std::string& value
     return false;
 }
 
-bool ExtractTag(const std::string& req, const char* tag, std::string& value) {
-    return ExtractTagValue(req, tag, value);
-}
-
 std::string SoapEnvelope(const std::string& body) {
     return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
            "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\n"
@@ -174,13 +172,34 @@ std::string EscapeWide(const std::wstring& value) {
     return XMLEscapeUtf8(WideToUtf8(value));
 }
 
+bool ShouldProxyRemoteUrl(const std::wstring& url) {
+    std::string text = WideToUtf8(url);
+    size_t schemeEnd = text.find("://");
+    if (schemeEnd == std::string::npos) return true;
+    std::string scheme = text.substr(0, schemeEnd);
+    if (scheme != "http" && scheme != "https") return true;
+    size_t authorityStart = schemeEnd + 3;
+    size_t authorityEnd = text.find_first_of("?/#", authorityStart);
+    size_t at = text.find('@', authorityStart);
+    if (at != std::string::npos && (authorityEnd == std::string::npos || at < authorityEnd)) {
+        return true;
+    }
+    return false;
+}
+
 std::string ItemProtocolInfo(const MediaItem& item) {
+    // HLS manifests must not go through kFormats (which excludes .m3u8 intentionally).
+    // Emit OP=01 (time-seek available) and CI=0 matching the android proxy pattern
+    // from j.java contentFeatures.dlna.org header. OP=00 (no seek) causes strict
+    // DLNA renderers to reject the <res> element and show the item as empty.
+    if (item.mimeType == L"video/mpegurl") {
+        return BuildHlsProtocolInfo();
+    }
     return BuildProtocolInfoForExtension(SourceExtension(item.path), item.mimeType, item.sizeBytes > 0);
 }
 
 void SortItems(std::vector<MediaItem>& items, const std::string& sortCriteria) {
-    const ConfigSnapshot cfg = AppConfig.Snapshot();
-    if (IsTitleSort(sortCriteria) || IsClassSort(sortCriteria) || (sortCriteria.empty() && cfg.sortByTitle)) {
+    if (IsTitleSort(sortCriteria) || IsClassSort(sortCriteria) || (sortCriteria.empty() && AppConfig.IsSortByTitleEnabled())) {
         const bool desc = IsDescendingSort(sortCriteria);
         const bool classSort = IsClassSort(sortCriteria);
         std::sort(items.begin(), items.end(), [desc, classSort](const MediaItem& a, const MediaItem& b) {
@@ -217,6 +236,19 @@ std::string ExtractQuotedCriteriaValue(const std::string& criteria) {
     return criteria.substr(first + 1, last - first - 1);
 }
 
+// Supports exactly one of: dc:title contains "...", upnp:class derivedfrom
+// "...", or upnp:class = "...". Per the ContentDirectory:1 spec's Search
+// Criteria String Syntax (Appendix B), a SearchCriteria string may combine
+// multiple property expressions with "and"/"or" -- that combined form is
+// NOT parsed here and falls through to the final return false below,
+// meaning a combined-criteria Search silently returns zero matches instead
+// of a partial or best-effort match. This is a known, accepted limitation:
+// the DLNA renderers this project targets in practice send single-clause
+// criteria almost exclusively (title-contains or class-derivedFrom), and
+// implementing a real boolean-expression parser for the full grammar is a
+// larger scope than this function's current callers need. If a renderer
+// in the wild is observed sending combined criteria and getting an
+// unexpectedly empty result, that is this code path -- start here.
 bool MatchesSearchCriteria(const MediaItem& item, const std::string& criteria) {
     const std::string normalized = ToLowerAscii(TrimAscii(criteria));
     if (normalized.empty() || normalized == "*" || normalized == "true") return true;
@@ -249,11 +281,12 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
     const int available = safeStart >= static_cast<int>(items.size()) ? 0 : static_cast<int>(items.size()) - safeStart;
     const int requested = requestedCount == 0 ? available : (std::min)(requestedCount, available);
     const auto childCounts = AppMedia.GetChildCounts(items);
-    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    const bool proxyStreams = AppConfig.IsProxyStreamsEnabled();
     const bool includeTitle = ApplyDidlFilter(filter, "dc:title");
     const bool includeClass = ApplyDidlFilter(filter, "upnp:class");
     const bool includeAlbumArt = ApplyDidlFilter(filter, "upnp:albumArtURI");
     const bool includeResource = ApplyDidlFilter(filter, "res");
+    const bool includeDate = ApplyDidlFilter(filter, "dc:date");
     std::string didl = "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" xmlns:dlna=\"urn:schemas-dlna-org:metadata-1-0/\" xmlns:sec=\"http://www.sec.co.kr/dlna\">";
     didl.reserve(256 + (static_cast<size_t>((std::max)(0, requested)) * 512));
     std::ostringstream entry;
@@ -272,9 +305,16 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
             didl += entry.str();
         } else {
             const bool hasKnownSize = it.sizeBytes > 0;
-            entry << "<item id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" restricted=\"1\">"
+            entry << "<item id=\"" << it.id << "\" parentID=\"" << it.parentId << "\" restricted=\"1\"";
+            if (!it.dcDate.empty() && it.rawDateMs > 0) {
+                entry << " rawDate=\"" << it.rawDateMs << "\"";
+            }
+            entry << ">"
                   << (includeTitle ? ("<dc:title>" + EscapeWide(it.title) + "</dc:title>") : std::string())
                   << (includeClass ? ("<upnp:class>" + EscapeWide(it.upnpClass) + "</upnp:class>") : std::string());
+            if (includeDate && !it.dcDate.empty()) {
+                entry << "<dc:date>" << it.dcDate << "</dc:date>";
+            }
             if (includeAlbumArt && !it.albumArtPath.empty()) {
                 entry << "<upnp:albumArtURI dlna:profileID=\"JPEG_TN\">http://" << hostUrl << "/albumart/" << it.id << "</upnp:albumArtURI>";
             }
@@ -283,12 +323,12 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
                 if (hasKnownSize) {
                     entry << " size=\"" << it.sizeBytes << "\"";
                 }
-                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !cfg.proxyStreams;
+                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !proxyStreams && !ShouldProxyRemoteUrl(it.path);
                 entry << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id))) << "</res>";
             }
             if (!it.subtitlePath.empty()) {
-                size_t dot = it.subtitlePath.rfind(L'.');
-                std::wstring subExtW = dot == std::wstring::npos ? L"" : it.subtitlePath.substr(dot + 1);
+                std::wstring subExtW = SourceExtension(it.subtitlePath);
+                if (!subExtW.empty() && subExtW.front() == L'.') subExtW.erase(0, 1);
                 std::string subExt = WideToUtf8(subExtW);
                 entry << "<sec:CaptionInfoEx sec:type=\"" << subExt << "\">"
                       << "http://" << hostUrl << "/subtitle/" << it.id
@@ -322,28 +362,24 @@ ContentDirectory& ContentDirectory::Get() {
     return instance;
 }
 
-std::string ContentDirectory::XMLEscape(const std::wstring& wstr) {
-    return XMLEscapeUtf8(WideToUtf8(wstr));
-}
-
-std::string ContentDirectory::GetDeviceDescriptionXML() {
+std::string ContentDirectory::GetDeviceDescriptionXML(const std::string& hostUrl) {
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     std::string deviceUUID = XMLEscapeUtf8(WideToUtf8(cfg.deviceUUID));
     std::string serverName = XMLEscapeUtf8(WideToUtf8(cfg.serverName));
     std::string manufacturer = XMLEscapeUtf8(WideToUtf8(cfg.deviceManufacturer));
     std::string modelName = XMLEscapeUtf8(WideToUtf8(cfg.deviceModelName));
     std::string presentationUrl = XMLEscapeUtf8(WideToUtf8(cfg.presentationUrl));
-
     std::stringstream ss;
     ss << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
        << "<root xmlns=\"urn:schemas-upnp-org:device-1-0\" xmlns:dlna=\"urn:schemas-dlna-org:device-1-0\">\n"
-       << "  <specVersion><major>1</major><minor>0</minor></specVersion>\n"
-       << "  <device>\n"
+       << "  <URLBase>http://" << hostUrl << "</URLBase>\n";
+    ss << "  <device>\n"
+       << "    <specVersion><major>1</major><minor>0</minor></specVersion>\n"
        << "    <deviceType>urn:schemas-upnp-org:device:MediaServer:1</deviceType>\n"
        << "    <friendlyName>" << serverName << "</friendlyName>\n"
        << "    <manufacturer>" << manufacturer << "</manufacturer>\n"
        << "    <modelName>" << modelName << "</modelName>\n"
-       << "    <modelNumber>1.4.0</modelNumber>\n"
+       << "    <modelNumber>" DLNA_SERVER_VERSION_STRING "</modelNumber>\n"
        << "    <modelURL>https://github.com/14ag/dlna-server</modelURL>\n"
        << "    <manufacturerURL>https://github.com/14ag/dlna-server</manufacturerURL>\n"
        << "    <serialNumber>12345</serialNumber>\n"
@@ -512,7 +548,7 @@ std::string ContentDirectory::HandleConnectionManagerControl(const std::string& 
 
     if (action == "GetCurrentConnectionInfo") {
         std::string idText;
-        if (!ExtractTag(req, "ConnectionID", idText)) {
+        if (!ExtractTagValue(req, "ConnectionID", idText)) {
             return SoapFault(402, "Invalid Args");
         }
         int connectionId = 0;
@@ -555,18 +591,25 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
     }
 
     if (action == "Search") {
+        if (!DLNAServer.IsInitialScanComplete()) {
+            // No content index exists yet at all (Start() has not reached
+            // ResetForRescan()). This is the only case 710 should represent --
+            // an in-progress-but-partially-populated index is a valid Browse
+            // target, not an error (see remediation workflow S1).
+            return SoapFault(710, "Content directory not yet initialized");
+        }
         std::string containerIdStr;
         std::string searchCriteria;
         std::string filter;
         std::string startingIndexStr;
         std::string requestedCountStr;
-        if (!ExtractTag(req, "ContainerID", containerIdStr) ||
-            !ExtractTag(req, "SearchCriteria", searchCriteria) ||
-            !ExtractTag(req, "StartingIndex", startingIndexStr) ||
-            !ExtractTag(req, "RequestedCount", requestedCountStr)) {
+        if (!ExtractTagValue(req, "ContainerID", containerIdStr) ||
+            !ExtractTagValue(req, "SearchCriteria", searchCriteria) ||
+            !ExtractTagValue(req, "StartingIndex", startingIndexStr) ||
+            !ExtractTagValue(req, "RequestedCount", requestedCountStr)) {
             return SoapFault(402, "Invalid Args");
         }
-        ExtractTag(req, "Filter", filter);
+        ExtractTagValue(req, "Filter", filter);
 
         int containerId = 0;
         int startingIndex = 0;
@@ -588,7 +631,7 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
             }
         }
         std::string sortCriteria;
-        ExtractTag(req, "SortCriteria", sortCriteria);
+        ExtractTagValue(req, "SortCriteria", sortCriteria);
         SortItems(results, sortCriteria);
         return BrowseSearchResponse("Search", results, startingIndex, requestedCount, hostUrl, filter, static_cast<int>(results.size()));
     }
@@ -597,20 +640,28 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         return SoapFault(401, "Invalid Action");
     }
 
+    if (!DLNAServer.IsInitialScanComplete()) {
+        // No content index exists yet at all (Start() has not reached
+        // ResetForRescan()). This is the only case 710 should represent --
+        // an in-progress-but-partially-populated index is a valid Browse
+        // target, not an error (see remediation workflow S1).
+        return SoapFault(710, "Content directory not yet initialized");
+    }
+
     std::string objIdStr;
     std::string browseFlag;
     std::string filter;
     std::string startingIndexStr;
     std::string requestedCountStr;
-    if (!ExtractTag(req, "ObjectID", objIdStr) ||
-        !ExtractTag(req, "BrowseFlag", browseFlag)) {
+    if (!ExtractTagValue(req, "ObjectID", objIdStr) ||
+        !ExtractTagValue(req, "BrowseFlag", browseFlag)) {
         return SoapFault(401, "Invalid XML");
     }
-    if (!ExtractTag(req, "StartingIndex", startingIndexStr) ||
-        !ExtractTag(req, "RequestedCount", requestedCountStr)) {
+    if (!ExtractTagValue(req, "StartingIndex", startingIndexStr) ||
+        !ExtractTagValue(req, "RequestedCount", requestedCountStr)) {
         return SoapFault(402, "Invalid Args");
     }
-    ExtractTag(req, "Filter", filter);
+    ExtractTagValue(req, "Filter", filter);
 
     int objId = 0;
     int startingIndex = 0;
@@ -629,14 +680,20 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         if (item.id == -1) return SoapFault(701, "No such object");
         results.push_back(item);
     } else if (browseFlag == "BrowseDirectChildren") {
-        if (AppMedia.GetItem(objId).id == -1) return SoapFault(701, "No such object");
-        results = AppMedia.GetChildren(objId);
+        std::vector<MediaItem> childrenResult;
+        auto status = AppMedia.TryGetChildren(objId, childrenResult);
+        if (status == MediaSources::GetChildrenResult::NotFound) {
+            return SoapFault(701, "No such object");
+        } else if (status == MediaSources::GetChildrenResult::NotAContainer) {
+            return SoapFault(706, "Not a container");
+        }
+        results = std::move(childrenResult);
     } else {
         return SoapFault(402, "Invalid Args");
     }
 
     std::string sortCriteria;
-    ExtractTag(req, "SortCriteria", sortCriteria);
+    ExtractTagValue(req, "SortCriteria", sortCriteria);
     SortItems(results, sortCriteria);
     int totalMatches = browseFlag == "BrowseMetadata" ? 1 : static_cast<int>(results.size());
     return BrowseSearchResponse("Browse", results, startingIndex, requestedCount, hostUrl, filter, totalMatches);

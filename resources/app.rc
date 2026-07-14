@@ -8,8 +8,8 @@ IDR_SERVER_ICON_120 RCDATA "server_icon_120.png"
 IDR_SERVER_ICON_256 RCDATA "server_icon_256.png"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION 1,4,0,0
- PRODUCTVERSION 1,4,0,0
+ FILEVERSION 1,6,0,0
+ PRODUCTVERSION 1,6,0,0
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -26,11 +26,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "dlna-server contributors"
             VALUE "FileDescription", "DLNA Server"
-            VALUE "FileVersion", "1.4.0"
+            VALUE "FileVersion", "1.6.0"
             VALUE "InternalName", "DLNA Server"
             VALUE "OriginalFilename", "DLNA Server.exe"
             VALUE "ProductName", "DLNA Server"
-            VALUE "ProductVersion", "1.4.0"
+            VALUE "ProductVersion", "1.6.0"
         END
     END
     BLOCK "VarFileInfo"
@@ -40,45 +40,40 @@ BEGIN
 END
 
 // Settings Dialog
-IDD_SETTINGS DIALOGEX 0, 0, 400, 326
+IDD_SETTINGS DIALOGEX 0, 0, 400, 360
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "DLNA Server Settings"
 FONT 10, "Segoe UI", 400, 0, 0x1
 BEGIN
-    GROUPBOX        "Server",IDC_STATIC,10,10,380,105
-    LTEXT           "Server name:",IDC_STATIC,22,30,80,10
+    GROUPBOX        "&Server",IDC_STATIC,10,10,380,105
+    LTEXT           "S&erver name:",IDC_STATIC,22,30,80,10
     EDITTEXT        IDC_EDT_SERVER_NAME,110,26,190,19,ES_AUTOHSCROLL
 
-    LTEXT           "HTTP port:",IDC_STATIC,22,58,80,10
-    EDITTEXT        IDC_EDT_PORT,110,54,58,19,ES_AUTOHSCROLL | ES_NUMBER
+    LTEXT           "&HTTP port: *",IDC_STATIC,22,58,80,10
+    EDITTEXT        IDC_EDT_PORT,110,54,190,19,ES_AUTOHSCROLL | ES_NUMBER
 
-    LTEXT           "File port:",IDC_STATIC,208,58,58,10
-    EDITTEXT        IDC_EDT_FILESERVER_PORT,274,54,58,19,ES_AUTOHSCROLL | ES_NUMBER
-
-    LTEXT           "IP whitelist:",IDC_STATIC,22,86,80,10
+    LTEXT           "&IP whitelist: *",IDC_STATIC,22,86,80,10
     EDITTEXT        IDC_EDT_IP_WHITELIST,110,82,260,19,ES_AUTOHSCROLL
 
-    GROUPBOX        "General",IDC_STATIC,10,127,185,66
-    CONTROL         "Run on Windows startup",IDC_CHK_RUN_ON_BOOT,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,149,158,12
-    CONTROL         "Debug log (write to file)",IDC_CHK_DEBUG_LOG,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,169,158,12
+    GROUPBOX        "&General",IDC_STATIC,10,127,185,66
+    CONTROL         "&Run on Windows startup",IDC_CHK_RUN_ON_BOOT,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,149,158,12
+    CONTROL         "&Debug log (write to file)",IDC_CHK_DEBUG_LOG,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,169,158,12
 
-    GROUPBOX        "Playlist",IDC_STATIC,205,127,185,66
-    CONTROL         "Default playlist",IDC_CHK_DEFAULT_PLAYLIST,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,217,149,110,12
-    PUSHBUTTON      "Add...",IDC_BTN_DEFAULT_PLAYLIST_ADD,316,166,58,19
+    GROUPBOX        "&Playlist",IDC_STATIC,205,127,185,66
+    CONTROL         "De&fault playlist",IDC_CHK_DEFAULT_PLAYLIST,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,217,149,110,12
+    PUSHBUTTON      "&Add...",IDC_BTN_DEFAULT_PLAYLIST_ADD,316,166,58,19
 
-    GROUPBOX        "Media browsing",IDC_STATIC,10,205,380,78
-    CONTROL         "Add artist/album folders to audio",IDC_CHK_ADD_ARTIST_ALBUM,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,227,170,12
-    CONTROL         "Do not show 'All Media' folders",IDC_CHK_HIDE_ALL_MEDIA,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,247,170,12
-    CONTROL         "Sort by title instead of file name",IDC_CHK_SORT_BY_TITLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,267,178,12
-    CONTROL         "Flat folders style",IDC_CHK_FLAT_FOLDERS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,210,227,130,12
-    CONTROL         "Show file names instead of titles",IDC_CHK_SHOW_FILE_NAMES,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,210,247,164,12
-    CONTROL         "Proxy streams",IDC_CHK_PROXY_STREAMS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,210,267,130,12
+    GROUPBOX        "&Media browsing",IDC_STATIC,10,205,380,108
+    CONTROL         "Add ar&tist/album folders to audio",IDC_CHK_ADD_ARTIST_ALBUM,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,227,170,12
+    CONTROL         "D&o not show 'All Media' folders",IDC_CHK_HIDE_ALL_MEDIA,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,247,170,12
+    CONTROL         "Sort &by title instead of file name",IDC_CHK_SORT_BY_TITLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,267,178,12
+    CONTROL         "F&lat folders style",IDC_CHK_FLAT_FOLDERS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,210,227,130,12
+    CONTROL         "Sho&w file names instead of titles",IDC_CHK_SHOW_FILE_NAMES,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,210,247,164,12
+    CONTROL         "Prox&y streams",IDC_CHK_PROXY_STREAMS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,210,267,130,12
+    CONTROL         "Ba&ckground scan (auto-rescan on changes)",IDC_CHK_BACKGROUND_SCAN,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,289,230,12
 
-    LTEXT           "* Server restart needed",IDC_STATIC,10,293,160,10,WS_DISABLED
-    PUSHBUTTON      "Restart",IDC_BTN_RESTART,10,301,58,19
-    PUSHBUTTON      "View log",IDC_BTN_VIEW_LOG,76,301,62,19
-    PUSHBUTTON      "Cancel",IDCANCEL,264,301,58,19
-    DEFPUSHBUTTON   "OK",IDOK,330,301,60,19
+    PUSHBUTTON      "Ca&ncel",IDCANCEL,264,325,58,19
+    DEFPUSHBUTTON   "O&K",IDOK,330,325,60,19
 END
 
 // Log Dialog

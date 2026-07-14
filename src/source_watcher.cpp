@@ -118,7 +118,7 @@ void HashLocalSource(uint64_t& hash, const std::wstring& source) {
 std::string ComputeMediaSourceSignature(const ConfigSnapshot& cfg) {
     uint64_t hash = kFnvOffset;
     for (const auto& source : cfg.mediaSources) {
-        if (!source.enabled || IsRemoteMediaUrl(source.path)) continue;
+        if (IsRemoteMediaUrl(source.path)) continue;
         HashLocalSource(hash, source.path);
     }
     if (cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty() && !IsRemoteMediaUrl(cfg.defaultPlaylistPath)) {
@@ -134,4 +134,8 @@ bool MediaSourcesHaveChanged(const ConfigSnapshot& cfg, std::string& signature) 
     if (next == signature) return false;
     signature = next;
     return true;
+}
+
+bool ShouldAutoRescan(const ConfigSnapshot& cfg, bool sourcesChanged) {
+    return cfg.backgroundScanEnabled && sourcesChanged;
 }

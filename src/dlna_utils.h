@@ -4,6 +4,9 @@
 #include <string>
 #include <vector>
 
+unsigned int ComputeSsdpStartupJitterMilliseconds();
+unsigned int ComputeSsdpNextAliveIntervalMilliseconds();
+
 struct AlbumArtCandidate {
     std::wstring fileName;
     std::wstring mimeType;
@@ -38,11 +41,23 @@ std::string BuildProtocolInfo(const MediaFormatInfo& info, bool hasKnownSize);
 std::string BuildProtocolInfoForExtension(const std::wstring& ext, const std::wstring& mimeType, bool hasKnownSize);
 std::string BuildContentFeatures(const MediaFormatInfo& info, bool hasKnownSize);
 std::string BuildContentFeaturesForExtension(const std::wstring& ext, const std::wstring& mimeType, bool hasKnownSize);
+std::string BuildHlsContentFeatures();
+std::string BuildHlsProtocolInfo();
+
+// Shared by BuildHlsContentFeatures, BuildSourceProtocolInfoList, and every
+// contentFeatures.dlna.org header the HTTP handlers build for an item whose
+// mimeType is video/mpegurl -- do not hand-copy this literal anywhere else.
+inline constexpr const char* kHlsProtocolContentFeatures =
+    "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
+
 std::string BuildSourceProtocolInfoList();
 std::string GetDlnaServerHeader();
-bool IsSubtitleExtension(const std::wstring& ext);
 std::string SubtitleMimeForExtension(const std::wstring& ext);
 bool NaturalLessWide(const std::wstring& left, const std::wstring& right);
 std::vector<AlbumArtCandidate> BuildAlbumArtCandidateNames(const std::wstring& stem);
+
+// helpers
+std::string WideToUtf8(const std::wstring& value);
+std::wstring Utf8ToWide(const std::string& value);
 
 #endif // DLNA_UTILS_H

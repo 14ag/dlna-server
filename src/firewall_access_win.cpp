@@ -1,22 +1,53 @@
 #include "firewall_access.h"
 #include "dlna_utils.h"
 #include "log.h"
+#include "netutils.h"
 
 #include <windows.h>
 #include <netfw.h>
 #include <shellapi.h>
 #include <oleauto.h>
+#include <functional>
 #include <string>
 #include <vector>
 
 namespace {
-const wchar_t* kTcpRuleName = L"DLNA Server HTTP TCP";
-const wchar_t* kUdpRuleName = L"DLNA Server SSDP UDP";
+constexpr uint64_t kFnvOffset = 1469598103934665603ULL;
+constexpr uint64_t kFnvPrime = 1099511628211ULL;
 const wchar_t* kRuleGroup = L"DLNA Server";
+// used as a name prefix match when the exe path of a previous install
+// is not known this happens after the exe moves or after the naming
+// scheme itself changes see BuildTcpRuleName and BuildUdpRuleName below
+const std::wstring kDlnaRuleNamePrefix = L"DLNA Server-";
 const LONG kProfiles = NET_FW_PROFILE2_DOMAIN | NET_FW_PROFILE2_PRIVATE | NET_FW_PROFILE2_PUBLIC;
 const LONG kProtocolTcp = 6;
 const LONG kProtocolUdp = 17;
 const int kSsdpPort = 1900;
+
+uint64_t HashModulePath(const std::wstring& path) {
+    uint64_t hash = kFnvOffset;
+    std::string utf8 = WideToUtf8(path);
+    for (unsigned char ch : utf8) {
+        hash ^= ch;
+        hash *= kFnvPrime;
+    }
+    return hash;
+}
+
+std::wstring BuildRuleSuffix(const std::wstring& exePath) {
+    uint64_t hash = HashModulePath(exePath);
+    std::wstring decimalText = std::to_wstring(hash);
+    size_t len = decimalText.length() < 5 ? decimalText.length() : 5;
+    return decimalText.substr(0, len);
+}
+
+std::wstring BuildTcpRuleName(const std::wstring& exePath) {
+    return L"DLNA Server-" + BuildRuleSuffix(exePath) + L" HTTP TCP";
+}
+
+std::wstring BuildUdpRuleName(const std::wstring& exePath) {
+    return L"DLNA Server-" + BuildRuleSuffix(exePath) + L" SSDP UDP";
+}
 
 struct ComInit {
     HRESULT hr;
@@ -237,17 +268,81 @@ void AddRemoval(std::vector<std::wstring>& removals, const std::wstring& name) {
     removals.push_back(name);
 }
 
-bool EvaluateFirewallRules(int port,
-                           bool collectRemovals,
+bool NameHasDlnaPrefix(const std::wstring& name) {
+    if (name.size() < kDlnaRuleNamePrefix.size()) {
+        return false;
+    }
+    return StringEqualsNoCase(name.substr(0, kDlnaRuleNamePrefix.size()), kDlnaRuleNamePrefix);
+}
+
+// visits every rule currently registered in the given collection
+// used by EvaluateFirewallRules for the allow check and by
+// CollectRulesByNamePrefix for the rename cleanup scan
+// factored out so both scans share one enumeration implementation
+bool ForEachFirewallRule(INetFwRules* rules,
+                         const std::function<void(INetFwRule*)>& visit,
+                         std::wstring& message) {
+    IUnknown* unknown = NULL;
+    HRESULT hr = rules->get__NewEnum(&unknown);
+    if (FAILED(hr) || !unknown) {
+        message = L"rule enumeration unavailable (" + FormatHresult(hr) + L")";
+        return false;
+    }
+
+    IEnumVARIANT* enumVariant = NULL;
+    hr = unknown->QueryInterface(IID_IEnumVARIANT, reinterpret_cast<void**>(&enumVariant));
+    unknown->Release();
+    if (FAILED(hr) || !enumVariant) {
+        message = L"rule enumeration interface unavailable (" + FormatHresult(hr) + L")";
+        return false;
+    }
+
+    VARIANT item;
+    VariantInit(&item);
+    ULONG fetched = 0;
+    while (enumVariant->Next(1, &item, &fetched) == S_OK) {
+        if (item.vt == VT_DISPATCH && item.pdispVal) {
+            INetFwRule* rule = NULL;
+            if (SUCCEEDED(item.pdispVal->QueryInterface(__uuidof(INetFwRule), reinterpret_cast<void**>(&rule))) && rule) {
+                visit(rule);
+                rule->Release();
+            }
+        }
+        VariantClear(&item);
+        VariantInit(&item);
+    }
+
+    enumVariant->Release();
+    return true;
+}
+
+// collects the Name of every rule whose Name starts with the DLNA
+// Server rule prefix regardless of ApplicationName
+// used only when todays generated rule name was not found the exe
+// path of whatever created the old rule is not known at that point
+// so matching by ApplicationName is not possible
+bool CollectRulesByNamePrefix(INetFwRules* rules, std::vector<std::wstring>& names, std::wstring& message) {
+    return ForEachFirewallRule(rules, [&](INetFwRule* rule) {
+        std::wstring name;
+        if (GetRuleString(rule, &INetFwRule::get_Name, name) && NameHasDlnaPrefix(name)) {
+            AddRemoval(names, name);
+        }
+    }, message);
+}
+
+bool EvaluateFirewallRules(bool collectRemovals,
                            bool& hasTcpAllow,
                            bool& hasUdpAllow,
+                           bool& currentTcpNamePresent,
+                           bool& currentUdpNamePresent,
                            std::vector<std::wstring>& removals,
                            std::wstring& message) {
     hasTcpAllow = false;
     hasUdpAllow = false;
+    currentTcpNamePresent = false;
+    currentUdpNamePresent = false;
     removals.clear();
     message.clear();
-    (void)port;
 
     ComInit com;
     if (FAILED(com.hr)) {
@@ -268,58 +363,43 @@ bool EvaluateFirewallRules(int port,
         return false;
     }
 
-    IUnknown* unknown = NULL;
-    hr = rules->get__NewEnum(&unknown);
-    if (FAILED(hr) || !unknown) {
-        rules->Release();
-        message = L"Firewall access check failed: rule enumeration unavailable (" + FormatHresult(hr) + L").";
-        return false;
-    }
+    const std::wstring tcpRuleName = BuildTcpRuleName(exePath);
+    const std::wstring udpRuleName = BuildUdpRuleName(exePath);
 
-    IEnumVARIANT* enumVariant = NULL;
-    hr = unknown->QueryInterface(IID_IEnumVARIANT, reinterpret_cast<void**>(&enumVariant));
-    unknown->Release();
-    if (FAILED(hr) || !enumVariant) {
-        rules->Release();
-        message = L"Firewall access check failed: rule enumeration interface unavailable (" + FormatHresult(hr) + L").";
-        return false;
-    }
+    std::wstring enumMessage;
+    bool enumerated = ForEachFirewallRule(rules, [&](INetFwRule* rule) {
+        std::wstring name;
+        std::wstring grouping;
+        GetRuleString(rule, &INetFwRule::get_Name, name);
+        GetRuleString(rule, &INetFwRule::get_Grouping, grouping);
 
-    VARIANT item;
-    VariantInit(&item);
-    ULONG fetched = 0;
-    while (enumVariant->Next(1, &item, &fetched) == S_OK) {
-        if (item.vt == VT_DISPATCH && item.pdispVal) {
-            INetFwRule* rule = NULL;
-            if (SUCCEEDED(item.pdispVal->QueryInterface(__uuidof(INetFwRule), reinterpret_cast<void**>(&rule))) && rule) {
-                std::wstring name;
-                std::wstring grouping;
-                GetRuleString(rule, &INetFwRule::get_Name, name);
-                GetRuleString(rule, &INetFwRule::get_Grouping, grouping);
-
-                if (RuleIsCompleteTcpAllow(rule, exePath)) {
-                    hasTcpAllow = true;
-                }
-                if (RuleIsCompleteUdpAllow(rule, exePath)) {
-                    hasUdpAllow = true;
-                }
-                if (collectRemovals &&
-                    (name == kTcpRuleName ||
-                     name == kUdpRuleName ||
-                     grouping == kRuleGroup ||
-                     RuleIsMatchingBlock(rule, exePath) ||
-                     RuleIsOldPortScopedTcpAllow(rule, exePath))) {
-                    AddRemoval(removals, name);
-                }
-                rule->Release();
-            }
+        if (RuleIsCompleteTcpAllow(rule, exePath)) {
+            hasTcpAllow = true;
         }
-        VariantClear(&item);
-        VariantInit(&item);
-    }
+        if (RuleIsCompleteUdpAllow(rule, exePath)) {
+            hasUdpAllow = true;
+        }
+        if (name == tcpRuleName) {
+            currentTcpNamePresent = true;
+        }
+        if (name == udpRuleName) {
+            currentUdpNamePresent = true;
+        }
+        if (collectRemovals &&
+            (name == tcpRuleName ||
+             name == udpRuleName ||
+             grouping == kRuleGroup ||
+             RuleIsMatchingBlock(rule, exePath) ||
+             RuleIsOldPortScopedTcpAllow(rule, exePath))) {
+            AddRemoval(removals, name);
+        }
+    }, enumMessage);
 
-    enumVariant->Release();
     rules->Release();
+    if (!enumerated) {
+        message = L"Firewall access check failed: " + enumMessage;
+        return false;
+    }
     return true;
 }
 
@@ -423,9 +503,9 @@ bool MessageIndicatesAccessDenied(const std::wstring& message) {
 }
 
 std::wstring BuildFirewallAccessSummary(int port) {
-    (void)port;
-    return L"DLNA Server needs Windows Firewall access for this app on TCP and UDP 1900"
-           L" on Domain, Private, and Public profiles, restricted to LocalSubnet.";
+    return L"DLNA Server needs Windows Firewall access for this app on TCP port " +
+           std::to_wstring(port) +
+           L" and UDP port 1900, on Domain, Private, and Public profiles, restricted to LocalSubnet.";
 }
 
 bool ConfigureFirewallAccessElevated(int port, std::wstring& message) {
@@ -449,11 +529,13 @@ bool ConfigureFirewallAccessElevated(int port, std::wstring& message) {
 
     bool hasTcpAllow = false;
     bool hasUdpAllow = false;
+    bool currentTcpNamed = false;
+    bool currentUdpNamed = false;
     std::vector<std::wstring> removals;
-    if (!EvaluateFirewallRules(port, true, hasTcpAllow, hasUdpAllow, removals, message)) {
+    if (!EvaluateFirewallRules(true, hasTcpAllow, hasUdpAllow, currentTcpNamed, currentUdpNamed, removals, message)) {
         return false;
     }
-    if (hasTcpAllow && hasUdpAllow) {
+    if (currentTcpNamed && currentUdpNamed) {
         message = L"Firewall access already configured.";
         return true;
     }
@@ -465,9 +547,21 @@ bool ConfigureFirewallAccessElevated(int port, std::wstring& message) {
         return false;
     }
 
-    bool ok = RemoveNamedRules(rules, removals, message) &&
-              AddRule(rules, kTcpRuleName, kProtocolTcp, 0, false, exePath, message) &&
-              AddRule(rules, kUdpRuleName, kProtocolUdp, kSsdpPort, true, exePath, message);
+    // todays generated name was not found on at least one protocol
+    // this is the first run or the exe moved or the naming scheme
+    // changed since the previous exe path is not known in any of
+    // those cases match by name prefix instead of application path
+    // every old rule with this prefix is removed before the fresh
+    // pair is added so exactly one current pair remains afterward
+    std::vector<std::wstring> staleNames = removals;
+    if (!CollectRulesByNamePrefix(rules, staleNames, message)) {
+        rules->Release();
+        return false;
+    }
+
+    bool ok = RemoveNamedRules(rules, staleNames, message) &&
+               AddRule(rules, BuildTcpRuleName(exePath).c_str(), kProtocolTcp, 0, false, exePath, message) &&
+               AddRule(rules, BuildUdpRuleName(exePath).c_str(), kProtocolUdp, kSsdpPort, true, exePath, message);
     rules->Release();
     if (!ok) {
         return false;
@@ -475,8 +569,10 @@ bool ConfigureFirewallAccessElevated(int port, std::wstring& message) {
 
     bool verifiedTcp = false;
     bool verifiedUdp = false;
+    bool verifiedTcpNamed = false;
+    bool verifiedUdpNamed = false;
     std::vector<std::wstring> unused;
-    if (!EvaluateFirewallRules(port, false, verifiedTcp, verifiedUdp, unused, message)) {
+    if (!EvaluateFirewallRules(false, verifiedTcp, verifiedUdp, verifiedTcpNamed, verifiedUdpNamed, unused, message)) {
         return false;
     }
     if (!verifiedTcp || !verifiedUdp) {
@@ -494,13 +590,15 @@ bool EnsureFirewallAccess(int port, FirewallAccessMode mode, std::wstring& messa
 
     bool hasTcpAllow = false;
     bool hasUdpAllow = false;
+    bool currentTcpNamed = false;
+    bool currentUdpNamed = false;
     std::vector<std::wstring> removals;
-    bool canReadRules = EvaluateFirewallRules(port, false, hasTcpAllow, hasUdpAllow, removals, message);
+    bool canReadRules = EvaluateFirewallRules(false, hasTcpAllow, hasUdpAllow, currentTcpNamed, currentUdpNamed, removals, message);
     bool readDenied = !canReadRules && MessageIndicatesAccessDenied(message);
     if (!canReadRules && !readDenied) {
         return false;
     }
-    if (canReadRules && hasTcpAllow && hasUdpAllow) {
+    if (canReadRules && hasTcpAllow && hasUdpAllow && currentTcpNamed && currentUdpNamed) {
         return true;
     }
 
@@ -512,7 +610,8 @@ bool EnsureFirewallAccess(int port, FirewallAccessMode mode, std::wstring& messa
     }
 
     std::wstring prompt = BuildFirewallAccessSummary(port) + L"\n\nAllow access now?";
-    int answer = MessageBoxW(NULL, prompt.c_str(), L"DLNA Server firewall access", MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON1);
+    int answer = MessageBoxW(NULL, prompt.c_str(), L"DLNA Server firewall access",
+                              MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON1 | MB_SETFOREGROUND | MB_TOPMOST);
     if (answer != IDYES) {
         message = L"Firewall access was declined.";
         return false;
@@ -528,7 +627,9 @@ bool EnsureFirewallAccess(int port, FirewallAccessMode mode, std::wstring& messa
 
     hasTcpAllow = false;
     hasUdpAllow = false;
-    if (!EvaluateFirewallRules(port, false, hasTcpAllow, hasUdpAllow, removals, message)) {
+    currentTcpNamed = false;
+    currentUdpNamed = false;
+    if (!EvaluateFirewallRules(false, hasTcpAllow, hasUdpAllow, currentTcpNamed, currentUdpNamed, removals, message)) {
         if (MessageIndicatesAccessDenied(message)) {
             message = L"Firewall access configured.";
             return true;

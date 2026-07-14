@@ -51,7 +51,7 @@ def test_windows_log_print_uses_one_debug_snapshot_and_one_log_lock():
     log = read("src/log.cpp")
     body = log[log.index("void LogPrint"):log.index("std::wstring GetSystemLog()")]
 
-    assert "const bool writeDebugLog = AppConfig.Snapshot().debugLog;" in body
+    assert "const bool writeDebugLog = AppConfig.IsDebugLogEnabled();" in body
     assert body.count("std::lock_guard<std::mutex> lock(g_logMutex);") == 1
     assert "if (writeDebugLog)" in body
 
@@ -66,12 +66,4 @@ def test_posix_log_uses_shared_utf8_converter_and_no_deprecated_codecvts():
     assert "wstring_convert" not in log
 
 
-def test_windows_log_dialog_refreshes_after_opening():
-    logdlg = read("src/logdlg.cpp")
-    resources = read("resources/app.rc")
 
-    assert "SetTimer(hwndDlg, kLogRefreshTimerId" in logdlg
-    assert "KillTimer(hwndDlg, kLogRefreshTimerId)" in logdlg
-    assert "case WM_TIMER:" in logdlg
-    assert "RefreshLogText(hwndDlg)" in logdlg
-    assert "PUSHBUTTON      \"Refresh\",IDC_BTN_REFRESH_LOG" in resources

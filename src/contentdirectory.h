@@ -9,7 +9,7 @@ class ContentDirectory {
 public:
     static ContentDirectory& Get();
 
-    std::string GetDeviceDescriptionXML();
+    std::string GetDeviceDescriptionXML(const std::string& hostUrl);
     std::string GetContentDirectoryXML();
     std::string GetConnectionManagerXML();
 
@@ -18,8 +18,6 @@ public:
 
 private:
     ContentDirectory() {}
-    
-    std::string XMLEscape(const std::wstring& str);
 };
 
 #define AppContent ContentDirectory::Get()

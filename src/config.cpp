@@ -194,11 +194,12 @@ Config::Config() : port(8200), fileServerPort(8201), flatFolderStyle(false), sho
     deviceModelName(L"dlna-server"),
     presentationUrl(L"/"),
     runOnBoot(false),
-    defaultPlaylistEnabled(false) {
+    defaultPlaylistEnabled(false),
+    backgroundScanEnabled(false) {
 }
 
 ConfigSnapshot Config::Snapshot() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     return ConfigSnapshot{
         serverName,
         port,
@@ -218,8 +219,30 @@ ConfigSnapshot Config::Snapshot() const {
         runOnBoot,
         defaultPlaylistEnabled,
         defaultPlaylistPath,
-        mediaSources
+        backgroundScanEnabled,
+        mediaSources,
+        networkInterfaceAllowList
     };
+}
+
+bool Config::IsDebugLogEnabled() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return debugLog;
+}
+
+int Config::GetPort() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return port;
+}
+
+bool Config::IsSortByTitleEnabled() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return sortByTitle;
+}
+
+bool Config::IsProxyStreamsEnabled() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return proxyStreams;
 }
 
 int ParsePortOrDefault(const std::unordered_map<std::string, std::string>& values, const char* key, int defaultValue) {
@@ -260,12 +283,12 @@ std::wstring Config::GetDefaultPlaylistPath() {
 void Config::SetRunOnBoot(bool enable) {
     HKEY hKey;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
-        if (enable) {
-            wchar_t exePath[MAX_PATH];
-            GetModuleFileNameW(NULL, exePath, MAX_PATH);
-            std::wstring val = std::wstring(L"\"") + exePath + L"\" --minimized";
-            RegSetValueExW(hKey, L"dlna-server", 0, REG_SZ, (const BYTE*)val.c_str(), (DWORD)((val.length() + 1) * sizeof(wchar_t)));
-        } else {
+if (enable) {
+        wchar_t exePath[MAX_PATH];
+        GetModuleFileNameW(NULL, exePath, MAX_PATH);
+        std::wstring val = std::wstring(L"\"") + exePath + L"\" --headless";
+        RegSetValueExW(hKey, L"dlna-server", 0, REG_SZ, (const BYTE*)val.c_str(), (DWORD)((val.length() + 1) * sizeof(wchar_t)));
+    } else {
             RegDeleteValueW(hKey, L"dlna-server");
         }
         RegCloseKey(hKey);
@@ -273,7 +296,7 @@ void Config::SetRunOnBoot(bool enable) {
 }
 
 void Config::Load() {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     std::wstring path = GetConfigPath();
     auto values = ReadConfigFile(path);
 
@@ -298,6 +321,7 @@ void Config::Load() {
     debugLog = ParseIntOrDefault(values, "DebugLog", 0) != 0;
     runOnBoot = ParseIntOrDefault(values, "RunOnBoot", 0) != 0;
     defaultPlaylistEnabled = ParseIntOrDefault(values, "DefaultPlaylistEnabled", 0) != 0;
+    backgroundScanEnabled = ParseIntOrDefault(values, "BackgroundScanEnabled", 0) != 0;
 
     ipWhiteList = Utf8ToWide(ConfigValueOrDefault(values, "IPWhiteList", ""));
     deviceUUID = Utf8ToWide(ConfigValueOrDefault(values, "DeviceUUID", ""));
@@ -311,20 +335,27 @@ void Config::Load() {
     if (deviceManufacturer.empty()) deviceManufacturer = L"dlna-server contributors";
     if (deviceModelName.empty()) deviceModelName = L"dlna-server";
     if (presentationUrl.empty()) presentationUrl = L"/";
+
+    bool needsSave = false;
     if (deviceUUID.empty()) {
         deviceUUID = GenerateUUID();
-        Save();
+        needsSave = true;
     }
 
     mediaSources.clear();
     std::wstring sourcesStr = Utf8ToWide(ConfigValueOrDefault(values, "MediaSources", ""));
     for (const auto& token : SplitConfigList(sourcesStr)) {
-        if (!token.empty()) mediaSources.push_back({ token, true });
+        if (!token.empty()) mediaSources.push_back({ token });
     }
+
+    networkInterfaceAllowList = Utf8ToWide(ConfigValueOrDefault(values, "NetworkInterfaceAllowList", ""));
+
+    lock.unlock();
+    if (needsSave) Save();
 }
 
 void Config::Save() {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     std::wstring path = GetConfigPath();
 
     std::wstring sourcesStr;
@@ -348,21 +379,17 @@ void Config::Save() {
     ss << "RunOnBoot=" << (runOnBoot ? 1 : 0) << "\n";
     ss << "DefaultPlaylistEnabled=" << (defaultPlaylistEnabled ? 1 : 0) << "\n";
     ss << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
+    ss << "BackgroundScanEnabled=" << (backgroundScanEnabled ? 1 : 0) << "\n";
     ss << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
     ss << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
     ss << "DeviceManufacturer=" << WideToUtf8(deviceManufacturer) << "\n";
     ss << "DeviceModelName=" << WideToUtf8(deviceModelName) << "\n";
     ss << "PresentationURL=" << WideToUtf8(presentationUrl) << "\n";
     ss << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";
+    ss << "NetworkInterfaceAllowList=" << WideToUtf8(networkInterfaceAllowList) << "\n";
 
-    FILE* fp = NULL;
-    if (_wfopen_s(&fp, path.c_str(), L"wb") == 0 && fp) {
-        static const unsigned char bom[] = { 0xEF, 0xBB, 0xBF };
-        fwrite(bom, 1, sizeof(bom), fp);
-        std::string content = ss.str();
-        fwrite(content.data(), 1, content.size(), fp);
-        fclose(fp);
-    } else {
+    static const std::string bom = "\xEF\xBB\xBF";
+    if (!WriteFileAtomicUtf8(path, bom + ss.str())) {
         LogPrint(L"Config save failed: %ls", path.c_str());
     }
 

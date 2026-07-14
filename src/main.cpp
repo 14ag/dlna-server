@@ -1,98 +1,220 @@
 #include <windows.h>
 #include <shellapi.h>
+#include <atomic>
+#include <chrono>
+#include <csignal>
+#include <iostream>
+#include <thread>
 #include "mainwindow.h"
 #include "config.h"
+#include "dlna_utils.h"
 #include "firewall_access.h"
+#include "log.h"
+#include "netutils.h"
+#include "server.h"
+#include "access_key_hook.h"
+#include "access_keys.h"
+#include "playlist_scan_concurrency.h"
+#include "cli_flags.h"
 #include "../resources/resource.h"
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 namespace {
-bool HasCommandLineToken(const wchar_t* token) {
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv) return false;
-    bool found = false;
-    for (int i = 1; i < argc; ++i) {
-        if (wcscmp(argv[i], token) == 0) {
-            found = true;
-            break;
+
+std::atomic<bool> g_headlessConsoleStop(false);
+HWND g_hwndMainForConsole = NULL;
+
+BOOL WINAPI HeadlessConsoleCtrlHandler(DWORD ctrlType) {
+    if (ctrlType == CTRL_C_EVENT || ctrlType == CTRL_BREAK_EVENT) {
+        g_headlessConsoleStop = true;
+        if (g_hwndMainForConsole) {
+            PostMessageW(g_hwndMainForConsole, WM_CLOSE, 0, 0);
         }
+        return TRUE;
     }
-    LocalFree(argv);
-    return found;
+    return FALSE;
 }
 
-bool TryRunFirewallHelper(int& exitCode) {
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    if (!argv) {
-        return false;
+void PrintUsage() {
+    std::wcerr << L"Usage: DLNA Server.exe [--help]\n";
+    std::wcerr << L"       DLNA Server.exe [OPTIONS...] --source PATH\n";
+    for (auto& entry : GetCliFlagTable()) {
+        std::wcerr << L"  " << entry.flag << L"  " << entry.meaning << L"\n";
     }
-
-    bool configureFirewall = false;
-    int port = 0;
-    for (int i = 1; i < argc; ++i) {
-        if (wcscmp(argv[i], L"--configure-firewall") == 0) {
-            configureFirewall = true;
-        } else if (wcscmp(argv[i], L"--port") == 0 && i + 1 < argc) {
-            port = _wtoi(argv[++i]);
-        }
-    }
-
-    LocalFree(argv);
-    if (!configureFirewall) {
-        return false;
-    }
-
-    AppConfig.Load();
-    if (port <= 0) {
-        port = AppConfig.port;
-    }
-
-    std::wstring message;
-    exitCode = ConfigureFirewallAccessElevated(port, message) ? 0 : 1;
-    return true;
 }
-}
+
+} // namespace
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
     (void)hPrevInstance;
     (void)pCmdLine;
-    int helperExitCode = 0;
-    if (TryRunFirewallHelper(helperExitCode)) {
-        return helperExitCode;
+
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) return 1;
+
+    bool configureFirewall = false;
+    bool startHeadless = false;
+    bool showHelp = false;
+    bool debugFlag = false;
+    int portArg = 0;
+    std::wstring runtimeName;
+    std::wstring runtimeUUID;
+    std::vector<std::wstring> runtimeSources;
+
+    for (int i = 1; i < argc; ++i) {
+        if (wcscmp(argv[i], L"--configure-firewall") == 0) {
+            configureFirewall = true;
+        } else if (wcscmp(argv[i], L"--headless") == 0 || wcscmp(argv[i], L"-h") == 0) {
+            startHeadless = true;
+        } else if (wcscmp(argv[i], L"--help") == 0) {
+            showHelp = true;
+        } else if (wcscmp(argv[i], L"--port") == 0 && i + 1 < argc) {
+            ++i;
+            if (!TryParsePortStrict(WideToUtf8(argv[i]), portArg)) portArg = 0;
+        } else if (wcscmp(argv[i], L"--name") == 0 && i + 1 < argc) {
+            runtimeName = argv[++i];
+        } else if (wcscmp(argv[i], L"--uuid") == 0 && i + 1 < argc) {
+            runtimeUUID = argv[++i];
+        } else if (wcscmp(argv[i], L"--source") == 0 && i + 1 < argc) {
+            runtimeSources.push_back(argv[++i]);
+        } else if (wcscmp(argv[i], L"--debug") == 0) {
+            debugFlag = true;
+        } else if (wcscmp(argv[i], L"--print-scan-concurrency") == 0 && i + 1 < argc) {
+            size_t n = static_cast<size_t>(_wtoi(argv[++i]));
+            std::cout << ComputePlaylistScanConcurrency(n) << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-mnemonics") == 0 && i + 1 < argc) {
+            std::wstring arg = argv[++i];
+            std::vector<std::wstring> labels;
+            size_t start = 0;
+            for (size_t j = 0; j <= arg.size(); ++j) {
+                if (j == arg.size() || arg[j] == L',') {
+                    labels.push_back(arg.substr(start, j - start));
+                    start = j + 1;
+                }
+            }
+            std::vector<wchar_t> result = AssignMnemonics(labels);
+            for (size_t j = 0; j < result.size(); ++j) {
+                if (j > 0) std::cout << ",";
+                if (result[j] != L'\0') {
+                    std::cout << static_cast<char>(result[j]);
+                }
+            }
+            std::cout << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-cue-state") == 0 && i + 1 < argc) {
+            std::wstring seq = argv[++i];
+            KeyboardCueState cs;
+            for (wchar_t ch : seq) {
+                if (ch == L'k' || ch == L'K') cs.OnKeyboardInput();
+                else if (ch == L'm' || ch == L'M') cs.OnMouseButtonInput();
+                std::cout << (cs.HideAccel() ? "1" : "0") << "," << (cs.HideFocus() ? "1" : "0") << std::endl;
+            }
+            LocalFree(argv);
+            return 0;
+        } else {
+            runtimeSources.push_back(argv[i]);
+        }
     }
+
+    if (showHelp) {
+        PrintUsage();
+        LocalFree(argv);
+        return 0;
+    }
+
+    if (configureFirewall) {
+        LocalFree(argv);
+        AppConfig.Load();
+        int port = portArg > 0 ? portArg : AppConfig.port;
+        std::wstring message;
+        return ConfigureFirewallAccessElevated(port, message) ? 0 : 1;
+    }
+
+    // Load config, then apply CLI overrides on top
+    AppConfig.Load();
+
+    if (portArg > 0 && portArg <= 65535) AppConfig.port = portArg;
+    if (!runtimeName.empty()) AppConfig.serverName = runtimeName;
+    if (!runtimeUUID.empty()) AppConfig.deviceUUID = runtimeUUID;
+    if (debugFlag) AppConfig.debugLog = true;
+    for (const auto& src : runtimeSources) {
+        AppConfig.mediaSources.push_back({src});
+    }
+
+    LocalFree(argv);
 
     // Check for single instance
     HANDLE hMutex = CreateMutexW(NULL, TRUE, L"dlna-server_SingleInstance_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        // Find existing window and show it
+        // Ask the existing instance to restore itself through
+        // MainWindow::RestoreAndFocusMainWindow (see mainwindow.cpp), which
+        // is the only code path that clears WS_EX_TOOLWINDOW when the
+        // running instance was originally started with --headless. Do NOT
+        // call ShowWindow/SetForegroundWindow directly here: this process
+        // cannot call methods on the other process's MainWindow instance,
+        // and skipping that code path is what left the window with a
+        // permanently "lite" frame (no icon, no min/max buttons, tiny
+        // close button) in the original bug.
         HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
         if (hwndExisting) {
-            ShowWindow(hwndExisting, SW_RESTORE);
-            SetForegroundWindow(hwndExisting);
+            PostMessageW(hwndExisting, MainWindow::WM_SHOW_EXISTING_INSTANCE, 0, 0);
         }
         return 0;
     }
 
-    // Parse command line for --minimized
-    bool startMinimized = HasCommandLineToken(L"--minimized");
+    // Attach console for headless mode output
+    bool consoleAttached = false;
+    FILE* fpOut = NULL;
+    FILE* fpErr = NULL;
+    if (startHeadless) {
+        consoleAttached = AttachConsole(ATTACH_PARENT_PROCESS) != 0;
+        if (consoleAttached && GetLastError() == ERROR_ACCESS_DENIED) {
+        } else if (!consoleAttached && GetLastError() == ERROR_INVALID_HANDLE) {
+            consoleAttached = false;
+        } else if (consoleAttached) {
+            _wfreopen_s(&fpOut, L"CONOUT$", L"w", stdout);
+            _wfreopen_s(&fpErr, L"CONOUT$", L"w", stderr);
+        }
 
-    AppConfig.Load();
+        if (AppConfig.debugLog) {
+            SetConsoleCtrlHandler(HeadlessConsoleCtrlHandler, TRUE);
+            if (consoleAttached) {
+                SetConsoleEchoEnabled(true);
+            }
+        }
+    }
+
+    if (!InstallAccessKeyHook()) {
+        // Non-fatal: keyboard cues will default to always-hidden Windows behaviour
+    }
 
     MainWindow app;
-    if (!app.Create(hInstance, startMinimized ? SW_HIDE : nCmdShow)) {
+    if (!app.Create(hInstance, startHeadless ? SW_HIDE : nCmdShow, startHeadless)) {
+        RemoveAccessKeyHook();
         return 0;
     }
 
-    if (startMinimized) {
-        PostMessageW(app.GetHwnd(), WM_COMMAND, IDC_BTN_STARTSTOP, 0);
+    HWND hwndMain = app.GetHwnd();
+    g_hwndMainForConsole = hwndMain;
+    if (startHeadless) {
+        if (!AppConfig.debugLog) {
+            std::wcout << L"\nserver is up" << std::flush;
+            FreeConsole();
+        }
+        PostMessageW(hwndMain, WM_COMMAND, IDC_BTN_STARTSTOP, 0);
     }
 
+    HWND hwndMainForNav = hwndMain;
     MSG msg = {};
     while (GetMessage(&msg, NULL, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        if (!IsDialogMessageW(hwndMainForNav, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
     }
 
     if (hMutex) {
@@ -100,5 +222,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         CloseHandle(hMutex);
     }
 
+    RemoveAccessKeyHook();
     return 0;
 }

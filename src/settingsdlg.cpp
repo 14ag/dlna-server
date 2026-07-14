@@ -1,8 +1,12 @@
 #include "settingsdlg.h"
+#include "settings_restart.h"
+#include "server.h"
 #include "logdlg.h"
 #include "dlna_utils.h"
 #include "modal_focus.h"
 #include "netutils.h"
+#include "access_keys.h"
+#include "help_dialog.h"
 #include "../resources/resource.h"
 #include <commctrl.h>
 #include <dwmapi.h>
@@ -13,6 +17,8 @@
 #include <string>
 
 namespace {
+
+bool g_restartRequested = false;
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -263,11 +269,14 @@ LRESULT CALLBACK PlaylistEntryProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 }
 
 INT_PTR SettingsDialog::Show(HWND hParent) {
+    g_restartRequested = false;
     ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hParent);
     INT_PTR result = DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCE(IDD_SETTINGS), hParent, DialogProc, 0);
     RestoreModalFocus(focusSnapshot, hParent);
     return result;
 }
+
+bool SettingsDialog::WasRestartRequested() { return g_restartRequested; }
 
 void SettingsDialog::OnInitDialog(HWND hwndDlg) {
     ApplyDialogFont(hwndDlg);
@@ -275,7 +284,6 @@ void SettingsDialog::OnInitDialog(HWND hwndDlg) {
     auto& cfg = AppConfig;
     SetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_NAME, cfg.serverName.c_str());
     SetDlgItemInt(hwndDlg, IDC_EDT_PORT, cfg.port, FALSE);
-    SetDlgItemInt(hwndDlg, IDC_EDT_FILESERVER_PORT, cfg.fileServerPort, FALSE);
     SetDlgItemTextW(hwndDlg, IDC_EDT_IP_WHITELIST, cfg.ipWhiteList.c_str());
 
     CheckDlgButton(hwndDlg, IDC_CHK_RUN_ON_BOOT, cfg.runOnBoot ? BST_CHECKED : BST_UNCHECKED);
@@ -287,40 +295,67 @@ void SettingsDialog::OnInitDialog(HWND hwndDlg) {
     CheckDlgButton(hwndDlg, IDC_CHK_SHOW_FILE_NAMES, cfg.showFileNamesInsteadOfTitles ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hwndDlg, IDC_CHK_SORT_BY_TITLE, cfg.sortByTitle ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hwndDlg, IDC_CHK_PROXY_STREAMS, cfg.proxyStreams ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(hwndDlg, IDC_CHK_BACKGROUND_SCAN, cfg.backgroundScanEnabled ? BST_CHECKED : BST_UNCHECKED);
     UpdateDefaultPlaylistButton(hwndDlg);
 }
 
 bool SettingsDialog::OnOK(HWND hwndDlg) {
-    auto& cfg = AppConfig;
-    
-    wchar_t buf[1024];
-    GetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_NAME, buf, 1024);
-    cfg.serverName = buf;
-    
     int httpPort = 0;
-    int fileServerPort = 0;
-    if (!ReadPortFromDialog(hwndDlg, IDC_EDT_PORT, L"HTTP port", httpPort) ||
-        !ReadPortFromDialog(hwndDlg, IDC_EDT_FILESERVER_PORT, L"File server port", fileServerPort)) {
+    if (!ReadPortFromDialog(hwndDlg, IDC_EDT_PORT, L"HTTP port", httpPort)) {
         return false;
     }
-    cfg.port = httpPort;
-    cfg.fileServerPort = fileServerPort;
-    
-    GetDlgItemTextW(hwndDlg, IDC_EDT_IP_WHITELIST, buf, 1024);
-    cfg.ipWhiteList = buf;
 
-    cfg.runOnBoot = (IsDlgButtonChecked(hwndDlg, IDC_CHK_RUN_ON_BOOT) == BST_CHECKED);
-    cfg.debugLog = (IsDlgButtonChecked(hwndDlg, IDC_CHK_DEBUG_LOG) == BST_CHECKED);
-    cfg.defaultPlaylistEnabled = (IsDlgButtonChecked(hwndDlg, IDC_CHK_DEFAULT_PLAYLIST) == BST_CHECKED);
-    if (cfg.defaultPlaylistPath.empty()) cfg.defaultPlaylistPath = cfg.GetDefaultPlaylistPath();
-    cfg.addArtistAlbumFolders = (IsDlgButtonChecked(hwndDlg, IDC_CHK_ADD_ARTIST_ALBUM) == BST_CHECKED);
-    cfg.doNotShowAllMediaFolders = (IsDlgButtonChecked(hwndDlg, IDC_CHK_HIDE_ALL_MEDIA) == BST_CHECKED);
-    cfg.flatFolderStyle = (IsDlgButtonChecked(hwndDlg, IDC_CHK_FLAT_FOLDERS) == BST_CHECKED);
-    cfg.showFileNamesInsteadOfTitles = (IsDlgButtonChecked(hwndDlg, IDC_CHK_SHOW_FILE_NAMES) == BST_CHECKED);
-    cfg.sortByTitle = (IsDlgButtonChecked(hwndDlg, IDC_CHK_SORT_BY_TITLE) == BST_CHECKED);
-    cfg.proxyStreams = (IsDlgButtonChecked(hwndDlg, IDC_CHK_PROXY_STREAMS) == BST_CHECKED);
-    
-    cfg.Save();
+    wchar_t nameBuf[1024];
+    GetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_NAME, nameBuf, 1024);
+    wchar_t whitelistBuf[1024];
+    GetDlgItemTextW(hwndDlg, IDC_EDT_IP_WHITELIST, whitelistBuf, 1024);
+    const bool runOnBoot = (IsDlgButtonChecked(hwndDlg, IDC_CHK_RUN_ON_BOOT) == BST_CHECKED);
+    const bool debugLog = (IsDlgButtonChecked(hwndDlg, IDC_CHK_DEBUG_LOG) == BST_CHECKED);
+    const bool defaultPlaylistEnabled = (IsDlgButtonChecked(hwndDlg, IDC_CHK_DEFAULT_PLAYLIST) == BST_CHECKED);
+    const bool addArtistAlbumFolders = (IsDlgButtonChecked(hwndDlg, IDC_CHK_ADD_ARTIST_ALBUM) == BST_CHECKED);
+    const bool doNotShowAllMediaFolders = (IsDlgButtonChecked(hwndDlg, IDC_CHK_HIDE_ALL_MEDIA) == BST_CHECKED);
+    const bool flatFolderStyle = (IsDlgButtonChecked(hwndDlg, IDC_CHK_FLAT_FOLDERS) == BST_CHECKED);
+    const bool showFileNamesInsteadOfTitles = (IsDlgButtonChecked(hwndDlg, IDC_CHK_SHOW_FILE_NAMES) == BST_CHECKED);
+    const bool sortByTitle = (IsDlgButtonChecked(hwndDlg, IDC_CHK_SORT_BY_TITLE) == BST_CHECKED);
+    const bool proxyStreams = (IsDlgButtonChecked(hwndDlg, IDC_CHK_PROXY_STREAMS) == BST_CHECKED);
+    const bool backgroundScanEnabled = (IsDlgButtonChecked(hwndDlg, IDC_CHK_BACKGROUND_SCAN) == BST_CHECKED);
+
+    const ConfigSnapshot before = AppConfig.Snapshot();
+    AppConfig.Mutate([&](Config& cfg) {
+        cfg.serverName = nameBuf;
+        cfg.port = httpPort;
+        cfg.ipWhiteList = whitelistBuf;
+        cfg.runOnBoot = runOnBoot;
+        cfg.debugLog = debugLog;
+        cfg.defaultPlaylistEnabled = defaultPlaylistEnabled;
+        if (cfg.defaultPlaylistPath.empty()) cfg.defaultPlaylistPath = cfg.GetDefaultPlaylistPath();
+        cfg.addArtistAlbumFolders = addArtistAlbumFolders;
+        cfg.doNotShowAllMediaFolders = doNotShowAllMediaFolders;
+        cfg.flatFolderStyle = flatFolderStyle;
+        cfg.showFileNamesInsteadOfTitles = showFileNamesInsteadOfTitles;
+        cfg.sortByTitle = sortByTitle;
+        cfg.proxyStreams = proxyStreams;
+        cfg.backgroundScanEnabled = backgroundScanEnabled;
+    });
+    AppConfig.Save();
+
+    g_restartRequested = false;
+    if (DLNAServer.IsRunning()) {
+        const ConfigSnapshot after = AppConfig.Snapshot();
+        std::vector<std::wstring> changed = DetermineSettingsRequiringRestart(before, after);
+        if (!changed.empty()) {
+            std::wstring names;
+            for (size_t i = 0; i < changed.size(); ++i) {
+                if (i) names += L", ";
+                names += changed[i];
+            }
+            std::wstring message = L"A server restart is needed to apply changes to: " + names +
+                                    L".\n\nRestart server?";
+            int answer = MessageBoxW(hwndDlg, message.c_str(), L"DLNA Server",
+                                      MB_ICONQUESTION | MB_YESNO | MB_DEFBUTTON2);
+            g_restartRequested = (answer == IDYES);
+        }
+    }
     return true;
 }
 
@@ -373,11 +408,23 @@ void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
     }
 }
 
+namespace {
+HMENU BuildSettingsMenuBar() {
+    HMENU bar = CreateMenu();
+    std::vector<std::wstring> labels = { L"Logs", L"Help" };
+    std::vector<wchar_t> assigned = AssignMnemonics(labels);
+    AppendMenuW(bar, MF_STRING, ID_MENU_LOGS, InsertMnemonicMarker(labels[0], assigned[0]).c_str());
+    AppendMenuW(bar, MF_STRING, ID_MENU_HELP, InsertMnemonicMarker(labels[1], assigned[1]).c_str());
+    return bar;
+}
+}
+
 INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     (void)lParam;
     switch (uMsg) {
     case WM_INITDIALOG:
         ApplyDarkFrame(hwndDlg);
+        SetMenu(hwndDlg, BuildSettingsMenuBar());
         OnInitDialog(hwndDlg);
         return (INT_PTR)TRUE;
         
@@ -390,12 +437,6 @@ INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
             EndDialog(hwndDlg, LOWORD(wParam));
             return (INT_PTR)TRUE;
         }
-        else if (LOWORD(wParam) == IDC_BTN_VIEW_LOG) {
-            ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hwndDlg);
-            LogDialog::Show(hwndDlg);
-            RestoreModalFocus(focusSnapshot, hwndDlg);
-            return (INT_PTR)TRUE;
-        }
         else if (LOWORD(wParam) == IDC_CHK_DEFAULT_PLAYLIST) {
             UpdateDefaultPlaylistButton(hwndDlg);
             return (INT_PTR)TRUE;
@@ -406,8 +447,16 @@ INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
             UpdateDefaultPlaylistButton(hwndDlg);
             return (INT_PTR)TRUE;
         }
-        else if (LOWORD(wParam) == IDC_BTN_RESTART) {
-            if (OnOK(hwndDlg)) EndDialog(hwndDlg, IDC_BTN_RESTART);
+        else if (LOWORD(wParam) == ID_MENU_LOGS) {
+            ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hwndDlg);
+            LogDialog::Show(hwndDlg);
+            RestoreModalFocus(focusSnapshot, hwndDlg);
+            return (INT_PTR)TRUE;
+        }
+        else if (LOWORD(wParam) == ID_MENU_HELP) {
+            ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hwndDlg);
+            HelpDialog::Show(hwndDlg);
+            RestoreModalFocus(focusSnapshot, hwndDlg);
             return (INT_PTR)TRUE;
         }
         break;

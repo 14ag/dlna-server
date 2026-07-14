@@ -31,6 +31,7 @@ if errorlevel 1 (
 )
 
 :run_build
+echo Please Wait. Building...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\build-release-assets.ps1" %*
 exit /b %ERRORLEVEL%
 
@@ -42,9 +43,10 @@ echo   build-assets.bat
 echo   build-assets.bat -Version 1.3.0
 echo   build-assets.bat -Version 1.3.0 -WslDistro Ubuntu
 echo   build-assets.bat --platform winx64,linux --no-clean
+echo   build-assets.bat --platform winx64 --no-clean
 echo.
 echo Assets:
-echo   output\winx64, output\winx86, output\linux, output\macos-x64, output\macos-arm64 by default
+echo   output\winx64, output\winx86, output\linux by default (macOS requires explicit --platform)
 echo.
 echo Options:
 echo   --platform comma-separated platforms: winx64, winx86, linux, macos-x64, macos-arm64

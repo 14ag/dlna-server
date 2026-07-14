@@ -7,6 +7,7 @@
 class SettingsDialog {
 public:
     static INT_PTR Show(HWND hParent);
+    static bool WasRestartRequested();
 
 private:
     static INT_PTR CALLBACK DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam);

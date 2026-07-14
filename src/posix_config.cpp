@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <sstream>
 #include <limits.h>
 #include <random>
 #include <sstream>
@@ -148,11 +149,12 @@ Config::Config()
       presentationUrl(L"/"),
       runOnBoot(false),
       defaultPlaylistEnabled(false),
-      defaultPlaylistPath(L"") {
+      defaultPlaylistPath(L""),
+      backgroundScanEnabled(false) {
 }
 
 ConfigSnapshot Config::Snapshot() const {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     return ConfigSnapshot{
         serverName,
         port,
@@ -172,8 +174,30 @@ ConfigSnapshot Config::Snapshot() const {
         runOnBoot,
         defaultPlaylistEnabled,
         defaultPlaylistPath,
-        mediaSources
+        backgroundScanEnabled,
+        mediaSources,
+        networkInterfaceAllowList
     };
+}
+
+bool Config::IsDebugLogEnabled() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return debugLog;
+}
+
+int Config::GetPort() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return port;
+}
+
+bool Config::IsSortByTitleEnabled() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return sortByTitle;
+}
+
+bool Config::IsProxyStreamsEnabled() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return proxyStreams;
 }
 
 int ParsePortOrDefault(const std::string& value, int fallback) {
@@ -214,15 +238,21 @@ std::wstring Config::GetDefaultPlaylistPath() {
     return Utf8ToWide(path.substr(0, slash + 1) + "default.m3u");
 }
 
+// Intentionally inert: the FLTK settings dialog no longer exposes a
+// "run on startup" control on POSIX (see remediation workflow Phase 6E),
+// so RunOnBoot in a legacy config.ini is read and persisted but never
+// acted on. Re-implement this only alongside an explicit XDG autostart
+// (.desktop) or launchd plist feature, not as a silent side effect here.
 void Config::SetRunOnBoot(bool) {
 }
 
 void Config::Load() {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     std::ifstream file(WideToUtf8(GetConfigPath()), std::ios::binary);
     if (!file) {
         if (deviceUUID.empty()) deviceUUID = GenerateUUID();
         if (defaultPlaylistPath.empty()) defaultPlaylistPath = GetDefaultPlaylistPath();
+        lock.unlock();
         Save();
         return;
     }
@@ -253,6 +283,7 @@ void Config::Load() {
         else if (key == "DebugLog") debugLog = ParseIntOrDefault(value, 0) != 0;
         else if (key == "RunOnBoot") runOnBoot = ParseIntOrDefault(value, 0) != 0;
         else if (key == "DefaultPlaylistEnabled") defaultPlaylistEnabled = ParseIntOrDefault(value, 0) != 0;
+        else if (key == "BackgroundScanEnabled") backgroundScanEnabled = ParseIntOrDefault(value, 0) != 0;
         else if (key == "DefaultPlaylistPath") defaultPlaylistPath = Utf8ToWide(value);
         else if (key == "IPWhiteList") ipWhiteList = Utf8ToWide(value);
         else if (key == "DeviceUUID") deviceUUID = Utf8ToWide(value);
@@ -262,9 +293,10 @@ void Config::Load() {
         else if (key == "MediaSources") {
             mediaSources.clear();
             for (const auto& token : SplitConfigList(Utf8ToWide(value))) {
-                if (!token.empty()) mediaSources.push_back({token, true});
+                if (!token.empty()) mediaSources.push_back({token});
             }
         }
+        else if (key == "NetworkInterfaceAllowList") networkInterfaceAllowList = Utf8ToWide(value);
     }
     if (serverName.empty()) serverName = DefaultServerName();
     if (defaultPlaylistPath.empty()) defaultPlaylistPath = GetDefaultPlaylistPath();
@@ -273,18 +305,14 @@ void Config::Load() {
     if (presentationUrl.empty()) presentationUrl = L"/";
     if (deviceUUID.empty()) {
         deviceUUID = GenerateUUID();
+        lock.unlock();
         Save();
     }
 }
 
 void Config::Save() {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     const std::wstring configPath = GetConfigPath();
-    std::ofstream file(WideToUtf8(configPath), std::ios::binary | std::ios::trunc);
-    if (!file) {
-        LogPrint(L"Config save failed: %ls", configPath.c_str());
-        return;
-    }
 
     std::wstring sourcesStr;
     for (size_t i = 0; i < mediaSources.size(); ++i) {
@@ -292,25 +320,32 @@ void Config::Save() {
         if (i + 1 < mediaSources.size()) sourcesStr += L"|";
     }
 
-    file << "\xEF\xBB\xBF";
-    file << "[Settings]\n";
-    file << "ServerName=" << WideToUtf8(serverName) << "\n";
-    file << "Port=" << port << "\n";
-    file << "FileServerPort=" << fileServerPort << "\n";
-    file << "FlatFolderStyle=" << (flatFolderStyle ? 1 : 0) << "\n";
-    file << "ShowFileNamesInsteadOfTitles=" << (showFileNamesInsteadOfTitles ? 1 : 0) << "\n";
-    file << "ProxyStreams=" << (proxyStreams ? 1 : 0) << "\n";
-    file << "SortByTitle=" << (sortByTitle ? 1 : 0) << "\n";
-    file << "DoNotShowAllMediaFolders=" << (doNotShowAllMediaFolders ? 1 : 0) << "\n";
-    file << "AddArtistAlbumFolders=" << (addArtistAlbumFolders ? 1 : 0) << "\n";
-    file << "DebugLog=" << (debugLog ? 1 : 0) << "\n";
-    file << "RunOnBoot=" << (runOnBoot ? 1 : 0) << "\n";
-    file << "DefaultPlaylistEnabled=" << (defaultPlaylistEnabled ? 1 : 0) << "\n";
-    file << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
-    file << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
-    file << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
-    file << "DeviceManufacturer=" << WideToUtf8(deviceManufacturer) << "\n";
-    file << "DeviceModelName=" << WideToUtf8(deviceModelName) << "\n";
-    file << "PresentationURL=" << WideToUtf8(presentationUrl) << "\n";
-    file << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";
+    std::ostringstream out;
+    out << "\xEF\xBB\xBF";
+    out << "[Settings]\n";
+    out << "ServerName=" << WideToUtf8(serverName) << "\n";
+    out << "Port=" << port << "\n";
+    out << "FileServerPort=" << fileServerPort << "\n";
+    out << "FlatFolderStyle=" << (flatFolderStyle ? 1 : 0) << "\n";
+    out << "ShowFileNamesInsteadOfTitles=" << (showFileNamesInsteadOfTitles ? 1 : 0) << "\n";
+    out << "ProxyStreams=" << (proxyStreams ? 1 : 0) << "\n";
+    out << "SortByTitle=" << (sortByTitle ? 1 : 0) << "\n";
+    out << "DoNotShowAllMediaFolders=" << (doNotShowAllMediaFolders ? 1 : 0) << "\n";
+    out << "AddArtistAlbumFolders=" << (addArtistAlbumFolders ? 1 : 0) << "\n";
+    out << "DebugLog=" << (debugLog ? 1 : 0) << "\n";
+    out << "RunOnBoot=" << (runOnBoot ? 1 : 0) << "\n";
+    out << "DefaultPlaylistEnabled=" << (defaultPlaylistEnabled ? 1 : 0) << "\n";
+    out << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
+    out << "BackgroundScanEnabled=" << (backgroundScanEnabled ? 1 : 0) << "\n";
+    out << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
+    out << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
+    out << "DeviceManufacturer=" << WideToUtf8(deviceManufacturer) << "\n";
+    out << "DeviceModelName=" << WideToUtf8(deviceModelName) << "\n";
+    out << "PresentationURL=" << WideToUtf8(presentationUrl) << "\n";
+    out << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";
+    out << "NetworkInterfaceAllowList=" << WideToUtf8(networkInterfaceAllowList) << "\n";
+
+    if (!WriteFileAtomicUtf8(configPath, out.str())) {
+        LogPrint(L"Config save failed: %ls", configPath.c_str());
+    }
 }
