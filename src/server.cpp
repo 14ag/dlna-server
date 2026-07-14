@@ -161,7 +161,7 @@ void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
     m_endpoints = std::move(endpoints);
 }
 
-bool Server::Start() {
+bool Server::Start(std::wstring& outReason) {
     if (m_running.load(std::memory_order_acquire)) return true;
     m_stopping.store(false, std::memory_order_release);
 
@@ -169,6 +169,7 @@ bool Server::Start() {
     IPWhitelist::Get().Load(cfg.ipWhiteList);
     if (!IsValidPort(cfg.port)) {
         LogPrint(L"Invalid HTTP port: %d", cfg.port);
+        outReason = L"Invalid port: " + std::to_wstring(cfg.port);
         return false;
     }
     if (cfg.fileServerPort != cfg.port) {
@@ -180,6 +181,7 @@ bool Server::Start() {
     if (!cfg.mediaSources.empty()) hasSource = true;
     if (!hasSource) {
         LogPrint(L"No media sources configured.");
+        outReason = L"No media sources configured";
         return false;
     }
 
@@ -187,6 +189,7 @@ bool Server::Start() {
         std::wstring firewallMessage;
         if (!EnsureFirewallAccess(cfg.port, FirewallAccessMode::Interactive, firewallMessage)) {
             LogPrint(L"%ls", firewallMessage.c_str());
+            outReason = L"Firewall access was denied";
             MessageBoxW(NULL, firewallMessage.c_str(), L"Firewall access required", MB_ICONWARNING | MB_OK);
             return false;
         }
@@ -199,6 +202,7 @@ bool Server::Start() {
     std::vector<NetworkEndpoint> endpoints = GetEndpoints();
     if (endpoints.empty()) {
         LogPrint(L"Failed to find any active network endpoint for discovery.");
+        outReason = L"No active network endpoints found";
         return false;
     }
 
@@ -231,11 +235,13 @@ bool Server::Start() {
 
     if (!HttpServer::Get().Start(cfg.port)) {
         LogPrint(L"Failed to start HTTP server.");
+        outReason = L"Failed to start HTTP server on port " + std::to_wstring(cfg.port);
         return false;
     }
 
     if (!SSDP::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
         LogPrint(L"Failed to start SSDP.");
+        outReason = L"Failed to start SSDP discovery";
         HttpServer::Get().Stop();
         return false;
     }

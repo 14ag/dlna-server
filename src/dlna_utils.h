@@ -56,4 +56,8 @@ std::string SubtitleMimeForExtension(const std::wstring& ext);
 bool NaturalLessWide(const std::wstring& left, const std::wstring& right);
 std::vector<AlbumArtCandidate> BuildAlbumArtCandidateNames(const std::wstring& stem);
 
+// helpers
+std::string WideToUtf8(const std::wstring& value);
+std::wstring Utf8ToWide(const std::string& value);
+
 #endif // DLNA_UTILS_H
