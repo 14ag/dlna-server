@@ -103,7 +103,7 @@ void HelpDialog::Show(HWND hParent) {
     int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - width) / 2;
     int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top) - height) / 2;
     HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, className, L"DLNA Server Help",
-        WS_CAPTION | WS_SYSMENU | WS_POPUP, x, y, width, height, hParent, NULL, GetModuleHandleW(NULL), &state);
+        WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_MINIMIZEBOX, x, y, width, height, hParent, NULL, GetModuleHandleW(NULL), &state);
     if (!hwnd) return;
     EnableWindow(hParent, FALSE);
     ShowWindow(hwnd, SW_SHOW);
