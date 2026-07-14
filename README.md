@@ -1,32 +1,31 @@
-# dlna-server
+![Banner](./assets/banner.webp)
+
+# DLNA Server
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![C++17](https://img.shields.io/badge/C++-17-blue.svg)](https://isocpp.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 
 dlna-server shares your videos, music, and photos with TVs, game consoles, and other DLNA-capable devices on your home network. Point it at a folder or a playlist, and any DLNA player on the same network can find it and start playing — no extra setup needed on the player's side.
-
-On Windows, it runs as a normal app with a tray icon. On Linux and macOS, you can use the desktop app or the command line.
 
 ## Features
 
 - Works with any standard DLNA player — smart TVs, game consoles, media boxes
 - Shows up on your network automatically, so players can find it without you typing in an address
 - Tells connected apps right away when you add or remove media, so your library stays up to date
-- Lets you skip to any point in a video instead of only playing from the start
-- Plays HLS streams (a format often used for live TV and internet radio) as one smooth item, not broken into pieces
-- Reads M3U, M3U8, and PLS playlists, including playlists that point to other playlists, and picks up subtitle files listed inside them
-- Can stream from FTP servers and web addresses, not just files on your own computer
+- Plays HLS streams
+- Reads M3U, M3U8, and PLS playlists, including playlists that point to other playlists that point to other playlists that point to other playlists, and picks up subtitle files listed inside them
+- Can stream from FTP servers and web addresses
 - Keeps track of the same file across rescans, so players don't lose their place in your library
 - Lets you limit access to specific devices or address ranges on your network
 - Automatically finds matching subtitles and cover art sitting next to your media files
-- On Windows, can set up its own firewall access for you, limited to devices on your own network
-
 
 
 ## Install
 
 Prebuilt binaries are available from the [Releases](https://github.com/anomalyco/dlna-server/releases) page:
 
-- **Windows** — download `DLNA-Server-win64.zip` or `DLNA-Server-win86.zip`, unzip, and run `DLNA Server.exe`.
-- **Linux** — download `dlna-server-x86_64.AppImage`, make it executable (`chmod +x dlna-server-x86_64.AppImage`), and run it. The AppImage bundles both the desktop GUI and the command-line server.
-- **macOS** — download `DLNA-Server.dmg`, open it, and drag `DLNA Server.app` to your Applications folder.
+- **Windows** — download  the `.exe`  and run it
 
 The desktop GUI starts by default on every platform. Use the Settings dialog to configure sources, port, and server name. The command-line flags described below override settings for a single session.
 
@@ -43,7 +42,7 @@ DLNA Server.exe --port 8200 --source C:\media
 dlna-server --port 8200 --source /path/to/media --source ftp://user:pass@host/media
 ```
 
-All flags work the same way regardless of platform: `--port`, `--name`, `--uuid`, `--debug`, `--source` (repeatable), `--help`, `--print-scan-concurrency`. Sources can be folders, playlist files (`.m3u`, `.m3u8`, `.pls`), or `ftp://`/`ftps://` URLs. On every platform, any unrecognized argument is treated as a media source path.
+Startup Flags: `--port`, `--name`, `--uuid`, `--debug`, `--source` (repeatable), `--help`, `--print-scan-concurrency`. Sources can be folders, playlist files (`.m3u`, `.m3u8`, `.pls`), or `ftp://`/`ftps://` URLs. On every platform, any unrecognized argument is treated as a media source path.
 
 ## Configuration
 
