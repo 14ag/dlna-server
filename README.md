@@ -7,7 +7,6 @@
 [![C++17](https://img.shields.io/badge/C++-17-blue.svg)](https://isocpp.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
 
-# dlna-server
 
 dlna-server shares your videos, music, and photos with TVs, game consoles, and other DLNA-capable devices on your home network. Point it at a folder or a playlist, and any DLNA player on the same network can find it and start playing — no extra setup needed on the player's side.
 
