@@ -3,6 +3,7 @@
 #include "log.h"
 #include "netutils.h"
 #include "access_keys.h"
+#include "hover_focus_state.h"
 #include "network_sources.h"
 #include "playlist_scan_concurrency.h"
 #include "server.h"
@@ -10,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -75,6 +77,27 @@ int main(int argc, char** argv) {
                 if (ch == 'k' || ch == 'K') cs.OnKeyboardInput();
                 else if (ch == 'm' || ch == 'M') cs.OnMouseButtonInput();
                 std::cout << (cs.HideAccel() ? "1" : "0") << "," << (cs.HideFocus() ? "1" : "0") << std::endl;
+            }
+            return 0;
+        }
+        else if (arg == "--print-hover-focus-state" && i + 1 < argc) {
+            std::string seq = argv[++i];
+            HoverFocusState state;
+            size_t start = 0;
+            while (start <= seq.size()) {
+                size_t comma = seq.find(',', start);
+                std::string token = seq.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                if (!token.empty()) {
+                    char code = token[0];
+                    int id = std::atoi(token.c_str() + 1);
+                    if (code == 'e') state.OnMouseEnter(id);
+                    else if (code == 'l') state.OnMouseLeave(id);
+                    else if (code == 'f') state.OnFocusGained(id);
+                    else if (code == 'b') state.OnFocusLost(id);
+                    std::cout << state.HighlightedControlId() << std::endl;
+                }
+                if (comma == std::string::npos) break;
+                start = comma + 1;
             }
             return 0;
         }

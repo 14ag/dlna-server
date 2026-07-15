@@ -17,6 +17,7 @@
 #include "server.h"
 #include "access_key_hook.h"
 #include "access_keys.h"
+#include "hover_focus_state.h"
 #include "playlist_scan_concurrency.h"
 #include "cli_flags.h"
 #include "../resources/resource.h"
@@ -115,6 +116,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 if (ch == L'k' || ch == L'K') cs.OnKeyboardInput();
                 else if (ch == L'm' || ch == L'M') cs.OnMouseButtonInput();
                 std::cout << (cs.HideAccel() ? "1" : "0") << "," << (cs.HideFocus() ? "1" : "0") << std::endl;
+            }
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-hover-focus-state") == 0 && i + 1 < argc) {
+            std::wstring seq = argv[++i];
+            HoverFocusState state;
+            size_t start = 0;
+            while (start <= seq.size()) {
+                size_t comma = seq.find(L',', start);
+                std::wstring token = seq.substr(start, comma == std::wstring::npos ? std::wstring::npos : comma - start);
+                if (!token.empty()) {
+                    wchar_t code = token[0];
+                    int id = _wtoi(token.c_str() + 1);
+                    if (code == L'e') state.OnMouseEnter(id);
+                    else if (code == L'l') state.OnMouseLeave(id);
+                    else if (code == L'f') state.OnFocusGained(id);
+                    else if (code == L'b') state.OnFocusLost(id);
+                    std::wcout << state.HighlightedControlId() << std::endl;
+                }
+                if (comma == std::wstring::npos) break;
+                start = comma + 1;
             }
             LocalFree(argv);
             return 0;
