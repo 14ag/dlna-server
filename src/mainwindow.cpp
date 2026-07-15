@@ -3,6 +3,7 @@
 #include "settingsdlg.h"
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <uxtheme.h>
 #include <shobjidl.h>
 #include <shellapi.h>
 #include <string>
@@ -16,6 +17,7 @@
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "uxtheme.lib")
 
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -34,6 +36,8 @@ const int kStatusHeight = 40;
 const int kButtonHeight = 32;
 const int kButtonGap = 8;
 const int kListTop = kToolbarHeight + kStatusHeight + 8;
+const int kFocusRingThickness = 2;
+const int kFocusRingGap = 2;
 const int kCornerDiameter = 8;
 const int kDefaultWindowWidth = 440;
 const int kDefaultWindowHeight = 600;
@@ -415,6 +419,11 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
     }
     SetWindowLongPtrW(m_hListSources, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
     m_listOldProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(m_hListSources, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(ListBoxProc)));
+    // Strip theming so the theme engine cannot apply a DWM-level focus border
+    // on the listbox NC frame (which would appear as blue lines on focus).
+    SetWindowTheme(m_hListSources, L"", L"");
+
+    UpdateListLayout(kDefaultWindowWidth, kDefaultWindowHeight);
 
     RefreshSourceList();
     UpdateDeleteButton();
@@ -705,6 +714,67 @@ void MainWindow::UpdateDeleteButton() {
     EnableWindow(m_hBtnDelete, deletionAllowed ? TRUE : FALSE);
 }
 
+void MainWindow::UpdateListLayout(int width, int height) {
+    const int ringSpace = kFocusRingThickness + kFocusRingGap;
+    int listLeft = kGutter + ringSpace;
+    int listTop = kListTop + ringSpace;
+    int listWidth = width - (kGutter * 2) - (ringSpace * 2);
+    int listHeight = height - kListTop - kGutter - (ringSpace * 2);
+    if (listWidth < 0) listWidth = 0;
+    if (listHeight < 0) listHeight = 0;
+
+    SetWindowPos(m_hListSources, NULL, listLeft, listTop, listWidth, listHeight, SWP_NOZORDER);
+
+    m_listRingRect.left = listLeft - kFocusRingGap;
+    m_listRingRect.top = listTop - kFocusRingGap;
+    m_listRingRect.right = listLeft + listWidth + kFocusRingGap;
+    m_listRingRect.bottom = listTop + listHeight + kFocusRingGap;
+}
+
+void MainWindow::ArmMouseTracking(HWND hwnd) {
+    auto it = m_mouseTracking.find(hwnd);
+    if (it != m_mouseTracking.end() && it->second) return;
+    TRACKMOUSEEVENT tme = {};
+    tme.cbSize = sizeof(tme);
+    tme.dwFlags = TME_LEAVE;
+    tme.hwndTrack = hwnd;
+    if (TrackMouseEvent(&tme)) {
+        m_mouseTracking[hwnd] = true;
+    }
+}
+
+void MainWindow::RepaintHighlightTransition(int before, int after) {
+    if (before == after) return;
+    auto repaintOne = [this](int id) {
+        if (id == HoverFocusState::kNoControl) return;
+        if (id == IDC_LIST_SOURCES) {
+            // RDW_ALLCHILDREN forces the listbox child to repaint its own area,
+            // preventing stale ring pixels on edges where the child clips the parent.
+            RedrawWindow(m_hwnd, &m_listRingRect, NULL,
+                         RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+        } else {
+            InvalidateRect(GetDlgItem(m_hwnd, id), NULL, TRUE);
+        }
+    };
+    repaintOne(before);
+    repaintOne(after);
+}
+
+void MainWindow::UpdateControlHover(HWND hwnd, int controlId, bool entered) {
+    if (!entered) m_mouseTracking[hwnd] = false;
+    const int before = m_hoverFocusState.HighlightedControlId();
+    if (entered) m_hoverFocusState.OnMouseEnter(controlId);
+    else m_hoverFocusState.OnMouseLeave(controlId);
+    RepaintHighlightTransition(before, m_hoverFocusState.HighlightedControlId());
+}
+
+void MainWindow::UpdateControlFocus(int controlId, bool gained) {
+    const int before = m_hoverFocusState.HighlightedControlId();
+    if (gained) m_hoverFocusState.OnFocusGained(controlId);
+    else m_hoverFocusState.OnFocusLost(controlId);
+    RepaintHighlightTransition(before, m_hoverFocusState.HighlightedControlId());
+}
+
 void MainWindow::RemoveSelectedSource() {
     if (IsBusy() || m_scanInProgress.load()) {
         return;
@@ -754,7 +824,11 @@ void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
     if (m_cueState.HideAccel()) drawFlags |= DT_HIDEPREFIX;
     DrawTextW(drawItem->hDC, text, -1, &rc, drawFlags);
 
-    if ((drawItem->itemState & ODS_FOCUS) && !m_cueState.HideFocus()) {
+    const int controlId = static_cast<int>(drawItem->CtlID);
+    const bool isHovered = (m_hoverFocusState.HoveredControlId() == controlId);
+    const bool isFocusedOnly = !isHovered && (m_hoverFocusState.FocusedControlId() == controlId);
+    const bool showFocusRing = isHovered || (isFocusedOnly && !m_cueState.HideFocus());
+    if (showFocusRing) {
         RECT focus = rc;
         InflateRect(&focus, -4, -4);
         HPEN focusPen = CreatePen(PS_SOLID, 1, kFocusColor);
@@ -811,6 +885,20 @@ void MainWindow::BeginRescan() {
 // IsDialogMessage keeps handling group navigation for them unchanged
 LRESULT CALLBACK MainWindow::ToolbarButtonProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     MainWindow* pThis = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    const int controlId = GetDlgCtrlID(hwnd);
+    if (pThis && uMsg == WM_MOUSEMOVE) {
+        pThis->ArmMouseTracking(hwnd);
+        pThis->UpdateControlHover(hwnd, controlId, true);
+    }
+    if (pThis && uMsg == WM_MOUSELEAVE) {
+        pThis->UpdateControlHover(hwnd, controlId, false);
+    }
+    if (pThis && uMsg == WM_SETFOCUS) {
+        pThis->UpdateControlFocus(controlId, true);
+    }
+    if (pThis && uMsg == WM_KILLFOCUS) {
+        pThis->UpdateControlFocus(controlId, false);
+    }
     if (uMsg == WM_KEYDOWN && (wParam == VK_UP || wParam == VK_DOWN)) {
         return 0;
     }
@@ -822,6 +910,45 @@ LRESULT CALLBACK MainWindow::ToolbarButtonProc(HWND hwnd, UINT uMsg, WPARAM wPar
 
 LRESULT CALLBACK MainWindow::ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     MainWindow* pThis = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (uMsg == WM_NCPAINT) {
+        // Suppress the system's blue focus border on the NC frame.
+        // We draw our own ring in the parent's WM_PAINT; the system border
+        // just draws over it and leaves ghost lines on focus change.
+        HDC hdc = GetWindowDC(hwnd);
+        if (hdc) {
+            RECT rcWindow;
+            GetWindowRect(hwnd, &rcWindow);
+            OffsetRect(&rcWindow, -rcWindow.left, -rcWindow.top);
+            HPEN borderPen = CreatePen(PS_SOLID, 1, kBorderColor);
+            HGDIOBJ oldPen = SelectObject(hdc, borderPen);
+            HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+            Rectangle(hdc, rcWindow.left, rcWindow.top, rcWindow.right, rcWindow.bottom);
+            SelectObject(hdc, oldBrush);
+            SelectObject(hdc, oldPen);
+            DeleteObject(borderPen);
+            ReleaseDC(hwnd, hdc);
+        }
+        return 0;
+    }
+
+    if (pThis && uMsg == WM_MOUSEMOVE) {
+        // Check that the mouse is actually inside the listbox.
+        // WM_MOUSEMOVE can fire with outside coords when the listbox
+        // has mouse capture (from WM_LBUTTONDOWN), which would otherwise
+        // keep the hover ring alive after the mouse leaves.
+        POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+        RECT rcClient;
+        GetClientRect(hwnd, &rcClient);
+        if (PtInRect(&rcClient, pt)) {
+            pThis->ArmMouseTracking(hwnd);
+            pThis->UpdateControlHover(hwnd, IDC_LIST_SOURCES, true);
+        } else {
+            pThis->UpdateControlHover(hwnd, IDC_LIST_SOURCES, false);
+        }
+    }
+    if (pThis && uMsg == WM_MOUSELEAVE) {
+        pThis->UpdateControlHover(hwnd, IDC_LIST_SOURCES, false);
+    }
     if (pThis && uMsg == WM_KILLFOCUS) {
         const bool gainedFocusIsDeleteButton = reinterpret_cast<HWND>(wParam) == pThis->m_hBtnDelete;
         pThis->m_focusState.OnListBoxLostFocus(gainedFocusIsDeleteButton);
@@ -829,6 +956,7 @@ LRESULT CALLBACK MainWindow::ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LP
             SendMessage(hwnd, LB_SETCURSEL, (WPARAM)-1, 0);
         }
         pThis->UpdateDeleteButton();
+        // Note: listbox ring is hover-only; no focus tracking here.
     }
     if (pThis && uMsg == WM_KEYDOWN && wParam == 'D' && !pThis->m_focusState.IsNoFocus()) {
         pThis->RemoveSelectedSource();
@@ -911,6 +1039,16 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             DrawTextW(hdc, L"Please add shared folders or files with Add.", -1, &rcSubtitle, DT_SINGLELINE | DT_TOP);
         }
 
+        if (m_hoverFocusState.HighlightedControlId() == IDC_LIST_SOURCES) {
+            HPEN ringPen = CreatePen(PS_SOLID, kFocusRingThickness, kFocusColor);
+            HGDIOBJ oldRingPen = SelectObject(hdc, ringPen);
+            HGDIOBJ oldRingBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+            Rectangle(hdc, m_listRingRect.left, m_listRingRect.top, m_listRingRect.right, m_listRingRect.bottom);
+            SelectObject(hdc, oldRingBrush);
+            SelectObject(hdc, oldRingPen);
+            DeleteObject(ringPen);
+        }
+
         SelectObject(hdc, hOldFont);
 
         EndPaint(hwnd, &ps);
@@ -930,20 +1068,23 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         SetWindowPos(m_hBtnStartStop, NULL, startLeft, buttonTop, kStartStopButtonWidth, kButtonHeight, SWP_NOZORDER);
         SetWindowPos(m_hBtnSettings, NULL, settingsLeft, buttonTop, kSettingsButtonWidth, kButtonHeight, SWP_NOZORDER);
 
-        int listWidth = width - (kGutter * 2);
-        int listHeight = height - kListTop - kGutter;
-        if (listWidth < 0) {
-            listWidth = 0;
-        }
-        if (listHeight < 0) {
-            listHeight = 0;
-        }
-        SetWindowPos(m_hListSources, NULL, kGutter, kListTop, listWidth, listHeight, SWP_NOZORDER);
+        UpdateListLayout(width, height);
 
         m_statusRect = { 0, kToolbarHeight, width, kToolbarHeight + kStatusHeight };
 
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
+    }
+    case WM_ACTIVATEAPP: {
+        if (!wParam) {
+            // App losing focus: clear hover so the ring does not persist
+            // when the user clicks outside the application window.
+            const int before = m_hoverFocusState.HighlightedControlId();
+            m_hoverFocusState.OnMouseLeave(m_hoverFocusState.HoveredControlId());
+            for (auto& kv : m_mouseTracking) kv.second = false;
+            RepaintHighlightTransition(before, m_hoverFocusState.HighlightedControlId());
+        }
+        return DefWindowProcW(hwnd, uMsg, wParam, lParam);
     }
     case WM_UPDATEUISTATE: {
         WORD action = LOWORD(wParam);
