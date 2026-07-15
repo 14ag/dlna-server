@@ -748,9 +748,14 @@ void MainWindow::RepaintHighlightTransition(int before, int after) {
     auto repaintOne = [this](int id) {
         if (id == HoverFocusState::kNoControl) return;
         if (id == IDC_LIST_SOURCES) {
-            // RDW_ALLCHILDREN forces the listbox child to repaint its own area,
-            // preventing stale ring pixels on edges where the child clips the parent.
-            RedrawWindow(m_hwnd, &m_listRingRect, NULL,
+            // Rectangle draws the ring pen centered on m_listRingRect
+            // GDI Rectangle excludes the bottom and right edges of the rect it is given
+            // a pen wider than 1px therefore paints asymmetrically outside the nominal rect
+            // erasing or repainting with that same unpadded rect can miss those pixels
+            // inflate the redraw target so it is a strict superset of the ring pen footprint
+            RECT ringRedrawRect = m_listRingRect;
+            InflateRect(&ringRedrawRect, kFocusRingThickness, kFocusRingThickness);
+            RedrawWindow(m_hwnd, &ringRedrawRect, NULL,
                          RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
         } else {
             InvalidateRect(GetDlgItem(m_hwnd, id), NULL, TRUE);
