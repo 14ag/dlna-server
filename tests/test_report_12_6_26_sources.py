@@ -10,8 +10,8 @@ def read(path: str) -> str:
 
 def test_server_restart_does_not_reload_config_or_fail_silently_on_endpoint_refresh():
     server = read("src/server.cpp")
-    start_body = server[server.index("bool Server::Start()"):server.index("bool Server::Rescan()")]
-    refresh_body = server[server.index("void Server::RefreshEndpoints"):server.index("bool Server::Start()")]
+    start_body = server[server.index("bool Server::Start(std::wstring& outReason)"):server.index("bool Server::Rescan()")]
+    refresh_body = server[server.index("void Server::RefreshEndpoints(const ConfigSnapshot& cfg)"):server.index("bool Server::Start(std::wstring& outReason)")]
 
     assert "AppConfig.Load();" not in start_body
     assert 'LogPrint(L"Network endpoint enumeration failed.' in refresh_body

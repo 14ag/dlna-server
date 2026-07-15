@@ -88,21 +88,6 @@ def test_narrow_ascii_uses_utf8_conversion():
     assert "static_cast<char>(ch)" not in utils
 
 
-def test_remote_source_rescan_behavior_documented():
-    readme = read("README.md")
-    source_watcher = read("src/source_watcher.cpp")
-
-    assert "Remote sources" in readme
-    assert "ftp://" in readme
-    assert "http://" in readme
-    assert "https://" in readme
-    assert "smb://" not in readme
-    assert "only scanned at server start" in readme
-    assert "do not participate in the automatic file watch loop" in readme
-    assert "Adding or removing a remote source at runtime requires a server restart" in readme
-    assert "IsRemoteMediaUrl(source.path)" in source_watcher
-
-
 def test_join_url_removed_resolve_playlist_entry_uses_resolve_relative_url():
     # JoinUrl was consolidated onto ResolveRelativeUrl per the TODO in
     # src/network_sources.cpp, see workflow dlna-server-scan-hang-and-

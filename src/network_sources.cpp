@@ -690,6 +690,28 @@ bool IsHlsManifestText(const std::string& text) {
     return false;
 }
 
+bool IsRecognizedPlaylistText(const std::wstring& path, const std::string& text) {
+    std::string body = text;
+    if (body.size() >= 3 &&
+        static_cast<unsigned char>(body[0]) == 0xef &&
+        static_cast<unsigned char>(body[1]) == 0xbb &&
+        static_cast<unsigned char>(body[2]) == 0xbf) {
+        body.erase(0, 3);
+    }
+    body = TrimAscii(body);
+
+    std::wstring ext = SourceExtension(path);
+    if (ext == L".pls") {
+        return ToLowerAscii(body).rfind("[playlist]", 0) == 0;
+    }
+    // RFC 8216 section 4 1: a Playlist file MUST begin with the literal
+    // tag #EXTM3U as its first line. Content that does not start with
+    // this tag is not a playlist -- an error page, redirect stub, or
+    // other non-manifest response -- regardless of the .m3u/.m3u8
+    // extension the URL happened to end in.
+    return body.rfind("#EXTM3U", 0) == 0;
+}
+
 FetchedPlaylist FetchPlaylistOnce(const std::wstring& playlistPath) {
     FetchedPlaylist result;
     result.text = ReadSourceText(playlistPath, &result.fetchOk);
