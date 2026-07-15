@@ -595,6 +595,12 @@ void MainWindow::CompleteServerOperation(ServerUiState finalState, const std::ws
     if (m_worker.joinable()) {
         m_worker.join();
     }
+    if (finalState == ServerUiState::Running) {
+        // prime the timer's change-detection so it always fires once the initial
+        // scan finishes, even when the scan ends before the first timer tick that
+        // would have seen it as in-progress
+        m_lastPolledScanInProgress = true;
+    }
     SetStatus(finalState, endpoint);
     if (!success && !message.empty()) {
         MessageBoxW(m_hwnd, message.c_str(), L"DLNA Server", MB_ICONWARNING | MB_OK);
