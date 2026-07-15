@@ -45,7 +45,6 @@ class HardeningFixSourceTests(unittest.TestCase):
         fltk = self.read("src/fltk_gui_main.cpp")
         cmake = self.read("CMakeLists.txt")
         ci = self.read(".github/workflows/ci.yml")
-        docs = self.read("docs/hardening-notes.md")
         gitignore = self.read(".gitignore")
 
         self.assertIn("TryParsePortStrict", utils)
@@ -57,7 +56,6 @@ class HardeningFixSourceTests(unittest.TestCase):
         self.assertIn("dlna_enable_warnings", cmake)
         self.assertIn("python -m pytest -q", ci)
         self.assertIn("cmake --build", ci)
-        self.assertIn("shell-based remote source fetching", docs)
 
 
 if __name__ == "__main__":

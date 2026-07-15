@@ -32,9 +32,13 @@ public:
     // consistently regardless of which code path revealed the window.
     static constexpr UINT WM_SHOW_EXISTING_INSTANCE = WM_APP + 20;
 
+    bool TryHandleAccessKeyChar(wchar_t ch);
+    void RefreshToolbarMnemonics();
+
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     static LRESULT CALLBACK ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK ToolbarButtonProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     LRESULT HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
     void AddTrayIcon();
@@ -57,7 +61,6 @@ private:
     bool IsRunning() const;
     void UpdateWakeLock();
     void SetControlsForState();
-    void RefreshToolbarMnemonics();
 
     HWND m_hwnd;
     HINSTANCE m_hInstance;
@@ -73,7 +76,9 @@ private:
     HWND m_hBtnStartStop;
     HWND m_hBtnSettings;
     HWND m_hListSources;
+    std::vector<wchar_t> m_lastMnemonics;
     WNDPROC m_listOldProc;
+    WNDPROC m_toolbarOldProc;
 
     KeyboardCueState m_cueState;
     ServerUiState m_state;
@@ -81,6 +86,8 @@ private:
     std::thread m_worker;
 
     bool m_startedHeadless;
+    bool m_lastPolledScanInProgress = false;
+    RECT m_statusRect = {0, 0, 0, 0};
     std::atomic<bool> m_scanInProgress;
     std::atomic<bool> m_scanningStatusActive;
     SourceListFocusState m_focusState;

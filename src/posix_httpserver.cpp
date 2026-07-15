@@ -332,7 +332,15 @@ ScopedFd client(clientSocket);
             SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
             return;
         }
-        if (hostUrl.empty()) hostUrl = "127.0.0.1:" + std::to_string(listenPort);
+        if (hostUrl.empty()) {
+            sockaddr_storage localAddr{};
+            socklen_t localAddrLen = sizeof(localAddr);
+            if (getsockname(clientSocket, reinterpret_cast<sockaddr*>(&localAddr), &localAddrLen) == 0) {
+                hostUrl = SockaddrToHostPort(reinterpret_cast<const SOCKADDR*>(&localAddr), listenPort);
+            } else {
+                hostUrl = clientIp + ":" + std::to_string(listenPort);
+            }
+        }
 
         const bool sendBody = method != "HEAD";
         auto sendText = [&](const std::string& status, const std::string& type, const std::string& body) {

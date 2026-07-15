@@ -3,7 +3,9 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <thread>
 #include "mainwindow.h"
 #include "config.h"
@@ -11,6 +13,7 @@
 #include "firewall_access.h"
 #include "log.h"
 #include "netutils.h"
+#include "network_sources.h"
 #include "server.h"
 #include "access_key_hook.h"
 #include "access_keys.h"
@@ -115,6 +118,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-is-recognized-playlist") == 0 && i + 2 < argc) {
+            std::wstring path = argv[++i];
+            std::wstring textFilePath = argv[++i];
+            std::ifstream file(WideToUtf8(textFilePath), std::ios::binary);
+            std::ostringstream ss;
+            ss << file.rdbuf();
+            std::cout << (IsRecognizedPlaylistText(path, ss.str()) ? "1" : "0") << std::endl;
+            LocalFree(argv);
+            return 0;
         } else {
             runtimeSources.push_back(argv[i]);
         }
@@ -211,6 +223,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     HWND hwndMainForNav = hwndMain;
     MSG msg = {};
     while (GetMessage(&msg, NULL, 0, 0)) {
+        if (msg.message == WM_CHAR && !(GetKeyState(VK_MENU) < 0)) {
+            if (app.TryHandleAccessKeyChar(static_cast<wchar_t>(msg.wParam))) {
+                continue; // consumed as an access key trigger, do not also dispatch it
+            }
+        }
         if (!IsDialogMessageW(hwndMainForNav, &msg)) {
             TranslateMessage(&msg);
             DispatchMessage(&msg);

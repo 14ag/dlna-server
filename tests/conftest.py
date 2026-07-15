@@ -138,6 +138,8 @@ def dlna_binary():
         root / "build_winx64" / "Release" / "DLNA Server.exe",
         root.parent / "build_winx64" / "Debug" / "DLNA Server.exe",
         root.parent / "build_winx64" / "Release" / "DLNA Server.exe",
+        root.parent / "output" / "winx64" / "DLNA Server.exe",
+        root.parent / "output" / "winx64" / "build" / "Release" / "DLNA Server.exe",
     ]
     for path in candidates:
         if path.exists():
