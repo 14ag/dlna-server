@@ -86,6 +86,7 @@ set(HEADERS
          src/fs_backend.h
          src/settings_restart.h
          src/source_list_focus.h
+         src/hover_focus_state.h
          src/modal_focus.h
          src/config.h
          src/ipwhitelist.h
