@@ -4,9 +4,11 @@
 #include <windows.h>
 #include "access_keys.h"
 #include "source_list_focus.h"
+#include "hover_focus_state.h"
 #include <string>
 #include <thread>
 #include <atomic>
+#include <unordered_map>
 
 enum class ServerUiState {
     Stopped,
@@ -50,6 +52,11 @@ private:
     void BeginRescan();
     void RefreshSourceList();
     void UpdateDeleteButton();
+    void ArmMouseTracking(HWND hwnd);
+    void UpdateControlHover(HWND hwnd, int controlId, bool entered);
+    void UpdateControlFocus(int controlId, bool gained);
+    void RepaintHighlightTransition(int before, int after);
+    void UpdateListLayout(int width, int height);
     int SelectedSourceIndex() const;
     HFONT CreateUiFont(int pixelSize, int weight, const wchar_t* faceName);
     void DrawToolbarButton(const DRAWITEMSTRUCT* drawItem);
@@ -91,6 +98,9 @@ private:
     std::atomic<bool> m_scanInProgress;
     std::atomic<bool> m_scanningStatusActive;
     SourceListFocusState m_focusState;
+    HoverFocusState m_hoverFocusState;
+    RECT m_listRingRect = {0, 0, 0, 0};
+    std::unordered_map<HWND, bool> m_mouseTracking;
 };
 
 #endif // MAINWINDOW_H

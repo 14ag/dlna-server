@@ -34,6 +34,8 @@ const int kStatusHeight = 40;
 const int kButtonHeight = 32;
 const int kButtonGap = 8;
 const int kListTop = kToolbarHeight + kStatusHeight + 8;
+const int kFocusRingThickness = 2;
+const int kFocusRingGap = 2;
 const int kCornerDiameter = 8;
 const int kDefaultWindowWidth = 440;
 const int kDefaultWindowHeight = 600;
@@ -416,6 +418,8 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
     SetWindowLongPtrW(m_hListSources, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
     m_listOldProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(m_hListSources, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(ListBoxProc)));
 
+    UpdateListLayout(kDefaultWindowWidth, kDefaultWindowHeight);
+
     RefreshSourceList();
     UpdateDeleteButton();
 
@@ -705,6 +709,64 @@ void MainWindow::UpdateDeleteButton() {
     EnableWindow(m_hBtnDelete, deletionAllowed ? TRUE : FALSE);
 }
 
+void MainWindow::UpdateListLayout(int width, int height) {
+    const int ringSpace = kFocusRingThickness + kFocusRingGap;
+    int listLeft = kGutter + ringSpace;
+    int listTop = kListTop + ringSpace;
+    int listWidth = width - (kGutter * 2) - (ringSpace * 2);
+    int listHeight = height - kListTop - kGutter - (ringSpace * 2);
+    if (listWidth < 0) listWidth = 0;
+    if (listHeight < 0) listHeight = 0;
+
+    SetWindowPos(m_hListSources, NULL, listLeft, listTop, listWidth, listHeight, SWP_NOZORDER);
+
+    m_listRingRect.left = listLeft - kFocusRingGap;
+    m_listRingRect.top = listTop - kFocusRingGap;
+    m_listRingRect.right = listLeft + listWidth + kFocusRingGap;
+    m_listRingRect.bottom = listTop + listHeight + kFocusRingGap;
+}
+
+void MainWindow::ArmMouseTracking(HWND hwnd) {
+    auto it = m_mouseTracking.find(hwnd);
+    if (it != m_mouseTracking.end() && it->second) return;
+    TRACKMOUSEEVENT tme = {};
+    tme.cbSize = sizeof(tme);
+    tme.dwFlags = TME_LEAVE;
+    tme.hwndTrack = hwnd;
+    if (TrackMouseEvent(&tme)) {
+        m_mouseTracking[hwnd] = true;
+    }
+}
+
+void MainWindow::RepaintHighlightTransition(int before, int after) {
+    if (before == after) return;
+    auto repaintOne = [this](int id) {
+        if (id == HoverFocusState::kNoControl) return;
+        if (id == IDC_LIST_SOURCES) {
+            InvalidateRect(m_hwnd, &m_listRingRect, TRUE);
+        } else {
+            InvalidateRect(GetDlgItem(m_hwnd, id), NULL, TRUE);
+        }
+    };
+    repaintOne(before);
+    repaintOne(after);
+}
+
+void MainWindow::UpdateControlHover(HWND hwnd, int controlId, bool entered) {
+    if (!entered) m_mouseTracking[hwnd] = false;
+    const int before = m_hoverFocusState.HighlightedControlId();
+    if (entered) m_hoverFocusState.OnMouseEnter(controlId);
+    else m_hoverFocusState.OnMouseLeave(controlId);
+    RepaintHighlightTransition(before, m_hoverFocusState.HighlightedControlId());
+}
+
+void MainWindow::UpdateControlFocus(int controlId, bool gained) {
+    const int before = m_hoverFocusState.HighlightedControlId();
+    if (gained) m_hoverFocusState.OnFocusGained(controlId);
+    else m_hoverFocusState.OnFocusLost(controlId);
+    RepaintHighlightTransition(before, m_hoverFocusState.HighlightedControlId());
+}
+
 void MainWindow::RemoveSelectedSource() {
     if (IsBusy() || m_scanInProgress.load()) {
         return;
@@ -754,7 +816,11 @@ void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
     if (m_cueState.HideAccel()) drawFlags |= DT_HIDEPREFIX;
     DrawTextW(drawItem->hDC, text, -1, &rc, drawFlags);
 
-    if ((drawItem->itemState & ODS_FOCUS) && !m_cueState.HideFocus()) {
+    const int controlId = static_cast<int>(drawItem->CtlID);
+    const bool isHovered = (m_hoverFocusState.HoveredControlId() == controlId);
+    const bool isFocusedOnly = !isHovered && (m_hoverFocusState.FocusedControlId() == controlId);
+    const bool showFocusRing = isHovered || (isFocusedOnly && !m_cueState.HideFocus());
+    if (showFocusRing) {
         RECT focus = rc;
         InflateRect(&focus, -4, -4);
         HPEN focusPen = CreatePen(PS_SOLID, 1, kFocusColor);
@@ -811,6 +877,20 @@ void MainWindow::BeginRescan() {
 // IsDialogMessage keeps handling group navigation for them unchanged
 LRESULT CALLBACK MainWindow::ToolbarButtonProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     MainWindow* pThis = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    const int controlId = GetDlgCtrlID(hwnd);
+    if (pThis && uMsg == WM_MOUSEMOVE) {
+        pThis->ArmMouseTracking(hwnd);
+        pThis->UpdateControlHover(hwnd, controlId, true);
+    }
+    if (pThis && uMsg == WM_MOUSELEAVE) {
+        pThis->UpdateControlHover(hwnd, controlId, false);
+    }
+    if (pThis && uMsg == WM_SETFOCUS) {
+        pThis->UpdateControlFocus(controlId, true);
+    }
+    if (pThis && uMsg == WM_KILLFOCUS) {
+        pThis->UpdateControlFocus(controlId, false);
+    }
     if (uMsg == WM_KEYDOWN && (wParam == VK_UP || wParam == VK_DOWN)) {
         return 0;
     }
@@ -822,6 +902,16 @@ LRESULT CALLBACK MainWindow::ToolbarButtonProc(HWND hwnd, UINT uMsg, WPARAM wPar
 
 LRESULT CALLBACK MainWindow::ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     MainWindow* pThis = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (pThis && uMsg == WM_MOUSEMOVE) {
+        pThis->ArmMouseTracking(hwnd);
+        pThis->UpdateControlHover(hwnd, IDC_LIST_SOURCES, true);
+    }
+    if (pThis && uMsg == WM_MOUSELEAVE) {
+        pThis->UpdateControlHover(hwnd, IDC_LIST_SOURCES, false);
+    }
+    if (pThis && uMsg == WM_SETFOCUS) {
+        pThis->UpdateControlFocus(IDC_LIST_SOURCES, true);
+    }
     if (pThis && uMsg == WM_KILLFOCUS) {
         const bool gainedFocusIsDeleteButton = reinterpret_cast<HWND>(wParam) == pThis->m_hBtnDelete;
         pThis->m_focusState.OnListBoxLostFocus(gainedFocusIsDeleteButton);
@@ -829,6 +919,7 @@ LRESULT CALLBACK MainWindow::ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LP
             SendMessage(hwnd, LB_SETCURSEL, (WPARAM)-1, 0);
         }
         pThis->UpdateDeleteButton();
+        pThis->UpdateControlFocus(IDC_LIST_SOURCES, false);
     }
     if (pThis && uMsg == WM_KEYDOWN && wParam == 'D' && !pThis->m_focusState.IsNoFocus()) {
         pThis->RemoveSelectedSource();
@@ -911,6 +1002,16 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             DrawTextW(hdc, L"Please add shared folders or files with Add.", -1, &rcSubtitle, DT_SINGLELINE | DT_TOP);
         }
 
+        if (m_hoverFocusState.HighlightedControlId() == IDC_LIST_SOURCES) {
+            HPEN ringPen = CreatePen(PS_SOLID, kFocusRingThickness, kFocusColor);
+            HGDIOBJ oldRingPen = SelectObject(hdc, ringPen);
+            HGDIOBJ oldRingBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+            Rectangle(hdc, m_listRingRect.left, m_listRingRect.top, m_listRingRect.right, m_listRingRect.bottom);
+            SelectObject(hdc, oldRingBrush);
+            SelectObject(hdc, oldRingPen);
+            DeleteObject(ringPen);
+        }
+
         SelectObject(hdc, hOldFont);
 
         EndPaint(hwnd, &ps);
@@ -930,15 +1031,7 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         SetWindowPos(m_hBtnStartStop, NULL, startLeft, buttonTop, kStartStopButtonWidth, kButtonHeight, SWP_NOZORDER);
         SetWindowPos(m_hBtnSettings, NULL, settingsLeft, buttonTop, kSettingsButtonWidth, kButtonHeight, SWP_NOZORDER);
 
-        int listWidth = width - (kGutter * 2);
-        int listHeight = height - kListTop - kGutter;
-        if (listWidth < 0) {
-            listWidth = 0;
-        }
-        if (listHeight < 0) {
-            listHeight = 0;
-        }
-        SetWindowPos(m_hListSources, NULL, kGutter, kListTop, listWidth, listHeight, SWP_NOZORDER);
+        UpdateListLayout(width, height);
 
         m_statusRect = { 0, kToolbarHeight, width, kToolbarHeight + kStatusHeight };
 
