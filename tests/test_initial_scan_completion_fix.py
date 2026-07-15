@@ -31,8 +31,8 @@ def _read(path: Path) -> str:
 
 
 def _extract_start_function(source_text: str) -> str:
-    """Return the body text of `bool Server::Start() {` ... matching close brace."""
-    match = re.search(r"bool\s+Server::Start\s*\(\s*\)\s*\{", source_text)
+    """Return the body text of `bool Server::Start(...) {` ... matching close brace."""
+    match = re.search(r"bool\s+Server::Start\s*\([^)]*\)\s*\{", source_text)
     assert match, "could not locate Server::Start() definition"
     start_idx = match.end()
     depth = 1

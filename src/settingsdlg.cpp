@@ -37,13 +37,13 @@ const int kLabelWidth = 84;
 const int kControlHeight = 32;
 const int kBrowseButtonWidth = 92;
 const int kPlaylistDialogWidth = 552;
-const int kPlaylistDialogHeight = 196;
 const int kPlaylistEditLeft = kDialogMargin + kLabelWidth + kLabelToControlGap;
 const int kPlaylistEditWidth = kPlaylistDialogWidth - (kDialogMargin * 2) - kLabelWidth - kLabelToControlGap - kRelatedControlGap - kBrowseButtonWidth;
 const int kPlaylistBrowseLeft = kPlaylistEditLeft + kPlaylistEditWidth + kRelatedControlGap;
 const int kPlaylistMovieTop = 16;
 const int kPlaylistSubtitleTop = kPlaylistMovieTop + kControlHeight + 12;
 const int kPlaylistAddTop = kPlaylistSubtitleTop + kControlHeight + 16;
+const int kPlaylistDialogHeight = 196;
 
 HFONT CreateScaledFont(HWND hwnd, int pixelSize, int weight, const wchar_t* faceName) {
     HDC hdc = GetDC(hwnd);
@@ -234,12 +234,15 @@ LRESULT CALLBACK PlaylistEntryProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         ApplyDarkFrame(hwnd);
         HFONT font = DialogBodyFont(hwnd);
         HWND movieLabel = CreateWindowW(L"STATIC", L"Movie path:", WS_VISIBLE | WS_CHILD, kDialogMargin, kPlaylistMovieTop + 8, kLabelWidth, 18, hwnd, NULL, NULL, NULL);
-        state->movieEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, kPlaylistEditLeft, kPlaylistMovieTop, kPlaylistEditWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_MOVIE)), NULL, NULL);
-        HWND movieBrowse = CreateWindowW(L"BUTTON", L"Browse...", WS_VISIBLE | WS_CHILD | WS_TABSTOP, kPlaylistBrowseLeft, kPlaylistMovieTop, kBrowseButtonWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_MOVIE_BROWSE)), NULL, NULL);
+        state->movieEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_GROUP | ES_AUTOHSCROLL, kPlaylistEditLeft, kPlaylistMovieTop, kPlaylistEditWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_MOVIE)), NULL, NULL);
+        // assign mnemonics for both Browse buttons and Add in one call so duplicate labels resolve distinctly
+        std::vector<std::wstring> plLabels = { L"Browse...", L"Browse...", L"Add" };
+        std::vector<wchar_t> plMnemonics = AssignMnemonics(plLabels);
+        HWND movieBrowse = CreateWindowW(L"BUTTON", InsertMnemonicMarker(plLabels[0], plMnemonics[0]).c_str(), WS_VISIBLE | WS_CHILD | WS_TABSTOP, kPlaylistBrowseLeft, kPlaylistMovieTop, kBrowseButtonWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_MOVIE_BROWSE)), NULL, NULL);
         HWND subtitleLabel = CreateWindowW(L"STATIC", L"Subtitle path:", WS_VISIBLE | WS_CHILD, kDialogMargin, kPlaylistSubtitleTop + 8, kLabelWidth, 18, hwnd, NULL, NULL, NULL);
         state->subtitleEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, kPlaylistEditLeft, kPlaylistSubtitleTop, kPlaylistEditWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_SUBTITLE)), NULL, NULL);
-        HWND subtitleBrowse = CreateWindowW(L"BUTTON", L"Browse...", WS_VISIBLE | WS_CHILD | WS_TABSTOP, kPlaylistBrowseLeft, kPlaylistSubtitleTop, kBrowseButtonWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_SUBTITLE_BROWSE)), NULL, NULL);
-        HWND add = CreateWindowW(L"BUTTON", L"Add", WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, kPlaylistBrowseLeft, kPlaylistAddTop, kBrowseButtonWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_ADD)), NULL, NULL);
+        HWND subtitleBrowse = CreateWindowW(L"BUTTON", InsertMnemonicMarker(plLabels[1], plMnemonics[1]).c_str(), WS_VISIBLE | WS_CHILD | WS_TABSTOP, kPlaylistBrowseLeft, kPlaylistSubtitleTop, kBrowseButtonWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_SUBTITLE_BROWSE)), NULL, NULL);
+        HWND add = CreateWindowW(L"BUTTON", InsertMnemonicMarker(plLabels[2], plMnemonics[2]).c_str(), WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, kPlaylistBrowseLeft, kPlaylistAddTop, kBrowseButtonWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_ADD)), NULL, NULL);
         HWND controls[] = { movieLabel, state->movieEdit, movieBrowse, subtitleLabel, state->subtitleEdit, subtitleBrowse, add };
         for (HWND control : controls) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         SetFocus(state->movieEdit);
@@ -268,10 +271,33 @@ LRESULT CALLBACK PlaylistEntryProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
 }
 
+static HHOOK g_settingsBackspaceHook = NULL;
+
+static LRESULT CALLBACK SettingsBackspaceHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    (void)wParam;
+    if (nCode >= 0) {
+        MSG* msg = reinterpret_cast<MSG*>(lParam);
+        if (msg->message == WM_KEYDOWN && msg->wParam == VK_BACK) {
+            wchar_t className[32] = {};
+            GetClassNameW(msg->hwnd, className, 32);
+            bool isLiveEdit = _wcsicmp(className, L"EDIT") == 0 &&
+                               !(GetWindowLongW(msg->hwnd, GWL_STYLE) & ES_READONLY);
+            if (!isLiveEdit) {
+                PostMessageW(GetParent(msg->hwnd), WM_CLOSE, 0, 0);
+                return 1;
+            }
+        }
+    }
+    return CallNextHookEx(NULL, nCode, wParam, lParam);
+}
+
 INT_PTR SettingsDialog::Show(HWND hParent) {
     g_restartRequested = false;
     ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hParent);
+    g_settingsBackspaceHook = SetWindowsHookExW(WH_MSGFILTER, SettingsBackspaceHookProc, NULL, GetCurrentThreadId());
     INT_PTR result = DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCE(IDD_SETTINGS), hParent, DialogProc, 0);
+    if (g_settingsBackspaceHook) UnhookWindowsHookEx(g_settingsBackspaceHook);
+    g_settingsBackspaceHook = NULL;
     RestoreModalFocus(focusSnapshot, hParent);
     return result;
 }
@@ -394,6 +420,22 @@ void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
     MSG msg = {};
     BOOL getResult = 0;
     while (!state.done && (getResult = GetMessageW(&msg, NULL, 0, 0)) > 0) {
+        if (msg.message == WM_KEYDOWN && msg.hwnd != hwnd) {
+            if (msg.wParam == VK_ESCAPE) {
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                continue;
+            }
+            if (msg.wParam == VK_BACK) {
+                wchar_t ctrlClassName[32] = {};
+                GetClassNameW(msg.hwnd, ctrlClassName, 32);
+                bool isLiveEdit = _wcsicmp(ctrlClassName, L"EDIT") == 0 &&
+                                   !(GetWindowLongW(msg.hwnd, GWL_STYLE) & ES_READONLY);
+                if (!isLiveEdit) {
+                    PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                    continue;
+                }
+            }
+        }
         if (!IsDialogMessageW(hwnd, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -460,6 +502,20 @@ INT_PTR CALLBACK SettingsDialog::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
             return (INT_PTR)TRUE;
         }
         break;
+
+    case WM_MENUCHAR:
+        if (HIWORD(wParam) == MF_POPUP) {
+            wchar_t ch = static_cast<wchar_t>(towupper(LOWORD(wParam)));
+            std::vector<std::wstring> labels = { L"Logs", L"Help" };
+            std::vector<wchar_t> mnemonics = AssignMnemonics(labels);
+            for (size_t i = 0; i < mnemonics.size(); ++i) {
+                if (mnemonics[i] != L'\0' && towupper(mnemonics[i]) == ch) {
+                    UINT cmd = (i == 0) ? ID_MENU_LOGS : ID_MENU_HELP;
+                    return (MNC_EXECUTE << 16) | cmd;
+                }
+            }
+        }
+        return 0;
     }
     return (INT_PTR)FALSE;
 }

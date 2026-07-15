@@ -42,12 +42,14 @@ const int kDeleteButtonWidth = 72;
 const int kStartStopButtonWidth = 72;
 const int kSettingsButtonWidth = 82;
 const int kSourcePromptWidth = 552;
-const int kSourcePromptHeight = 216;
 const int kSourcePromptContentWidth = kSourcePromptWidth - (kGutter * 2);
 const int kSourcePromptLabelHeight = 20;
 const int kSourcePromptEditTop = kGutter + kSourcePromptLabelHeight + 12;
 const int kSourcePromptHintTop = kSourcePromptEditTop + kButtonHeight + kButtonGap;
 const int kSourcePromptButtonTop = kSourcePromptHintTop + kSourcePromptLabelHeight + 20;
+const int kSourcePromptBottomMargin = kGutter;
+const int kDialogChromeAllowance = 40;
+const int kSourcePromptHeight = kSourcePromptButtonTop + kButtonHeight + kSourcePromptBottomMargin + kDialogChromeAllowance;
 const int IDC_SOURCE_EDIT = 4101;
 const int IDC_SOURCE_BROWSE_FOLDER = 4102;
 const int IDC_SOURCE_BROWSE_PLAYLIST = 4103;
@@ -190,17 +192,20 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         HWND label = CreateWindowW(L"STATIC", L"Add a folder, playlist file, or network share URL:",
             WS_VISIBLE | WS_CHILD, kGutter, kGutter, kSourcePromptContentWidth, kSourcePromptLabelHeight, hwnd, NULL, NULL, NULL);
         state->edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-            WS_VISIBLE | WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL,
+            WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_GROUP | ES_AUTOHSCROLL,
             kGutter, kSourcePromptEditTop, kSourcePromptContentWidth, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_EDIT)), NULL, NULL);
         HWND hint = CreateWindowW(L"STATIC", L"Example: ftp://user:pass@server:21/media",
             WS_VISIBLE | WS_CHILD, kGutter, kSourcePromptHintTop, kSourcePromptContentWidth, kSourcePromptLabelHeight, hwnd, NULL, NULL, NULL);
-        HWND folder = CreateWindowW(L"BUTTON", L"Folder...",
+        // assign mnemonics for all four buttons in one call so duplicate letters resolve correctly
+        std::vector<std::wstring> srcLabels = { L"Folder...", L"Playlist...", L"Add", L"Cancel" };
+        std::vector<wchar_t> srcMnemonics = AssignMnemonics(srcLabels);
+        HWND folder = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[0], srcMnemonics[0]).c_str(),
             WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_FOLDER)), NULL, NULL);
-        HWND playlist = CreateWindowW(L"BUTTON", L"Playlist...",
+        HWND playlist = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[1], srcMnemonics[1]).c_str(),
             WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter + 96 + kButtonGap, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_PLAYLIST)), NULL, NULL);
-        HWND add = CreateWindowW(L"BUTTON", L"Add",
+        HWND add = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[2], srcMnemonics[2]).c_str(),
             WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, kSourcePromptWidth - kGutter - 78 - kButtonGap - 78, kSourcePromptButtonTop, 78, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_ADD)), NULL, NULL);
-        HWND cancel = CreateWindowW(L"BUTTON", L"Cancel",
+        HWND cancel = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[3], srcMnemonics[3]).c_str(),
             WS_VISIBLE | WS_CHILD | WS_TABSTOP, kSourcePromptWidth - kGutter - 78, kSourcePromptButtonTop, 78, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_CANCEL)), NULL, NULL);
         HWND controls[] = { label, state->edit, hint, folder, playlist, add, cancel };
         for (HWND control : controls) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
@@ -273,6 +278,22 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
     MSG msg = {};
     BOOL getResult = 0;
     while (!state.done && (getResult = GetMessageW(&msg, NULL, 0, 0)) > 0) {
+        if (msg.message == WM_KEYDOWN && msg.hwnd != hwnd) {
+            if (msg.wParam == VK_ESCAPE) {
+                PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                continue;
+            }
+            if (msg.wParam == VK_BACK) {
+                wchar_t ctrlClassName[32] = {};
+                GetClassNameW(msg.hwnd, ctrlClassName, 32);
+                bool isLiveEdit = _wcsicmp(ctrlClassName, L"EDIT") == 0 &&
+                                   !(GetWindowLongW(msg.hwnd, GWL_STYLE) & ES_READONLY);
+                if (!isLiveEdit) {
+                    PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                    continue;
+                }
+            }
+        }
         if (!IsDialogMessageW(hwnd, &msg)) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -291,7 +312,7 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
 }
 
 MainWindow::MainWindow() : m_hwnd(NULL), m_hInstance(NULL), m_state(ServerUiState::Stopped),
-m_hBtnAdd(NULL), m_hBtnDelete(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL), m_listOldProc(NULL),
+m_hBtnAdd(NULL), m_hBtnDelete(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL), m_listOldProc(NULL), m_toolbarOldProc(NULL),
 m_startedHeadless(false), m_scanInProgress(false), m_scanningStatusActive(false) {
     m_hBgBrush = CreateSolidBrush(kPageColor);
     m_hDarkBrush = CreateSolidBrush(kControlColor);
@@ -346,8 +367,11 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
     m_hBodyFont = CreateUiFont(14, FW_NORMAL, L"Segoe UI Variable Text");
     m_hButtonFont = CreateUiFont(14, FW_NORMAL, L"Segoe UI Variable Text");
 
+    // button row is one navigation group and the source list is a second group
+    // WS_GROUP on the first control of each group is what IsDialogMessage uses
+    // to know where one group ends and the next begins
     m_hBtnAdd = CreateWindowExW(0, L"BUTTON", L"Add",
-        WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+        WS_TABSTOP | WS_GROUP | WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
         0, 0, kAddButtonWidth, kButtonHeight, m_hwnd, (HMENU)IDC_BTN_ADD, hInstance, NULL);
 
     m_hBtnDelete = CreateWindowExW(0, L"BUTTON", L"Delete",
@@ -369,8 +393,21 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
         SendMessage(m_hBtnSettings, WM_SETFONT, (WPARAM)m_hButtonFont, TRUE);
     }
 
+    // subclass all four toolbar buttons to swallow up and down arrow
+    // left and right arrow still reach default proc for IsDialogMessage
+    // group navigation on them
+    m_toolbarOldProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(m_hBtnAdd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(ToolbarButtonProc)));
+    SetWindowLongPtrW(m_hBtnAdd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+    SetWindowLongPtrW(m_hBtnDelete, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(ToolbarButtonProc));
+    SetWindowLongPtrW(m_hBtnDelete, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+    SetWindowLongPtrW(m_hBtnStartStop, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(ToolbarButtonProc));
+    SetWindowLongPtrW(m_hBtnStartStop, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+    SetWindowLongPtrW(m_hBtnSettings, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(ToolbarButtonProc));
+    SetWindowLongPtrW(m_hBtnSettings, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+
     m_hListSources = CreateWindowExW(0, L"LISTBOX", NULL,
-        WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_BORDER | LBS_HASSTRINGS | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_GROUP | WS_VSCROLL | WS_BORDER |
+        LBS_HASSTRINGS | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
         kGutter, kListTop, kDefaultWindowWidth - (kGutter * 2), kDefaultWindowHeight - kListTop - kGutter,
         m_hwnd, (HMENU)IDC_LIST_SOURCES, hInstance, NULL);
     if (m_hBodyFont) {
@@ -410,10 +447,47 @@ void MainWindow::RefreshToolbarMnemonics() {
     std::vector<std::wstring> stripped;
     for (auto& l : labels) stripped.push_back(StripMnemonicMarker(l));
     std::vector<wchar_t> assigned = AssignMnemonics(stripped);
+    m_lastMnemonics = assigned;
     SetWindowTextW(m_hBtnAdd, InsertMnemonicMarker(stripped[0], assigned[0]).c_str());
     SetWindowTextW(m_hBtnDelete, InsertMnemonicMarker(stripped[1], assigned[1]).c_str());
     SetWindowTextW(m_hBtnStartStop, InsertMnemonicMarker(stripped[2], assigned[2]).c_str());
     SetWindowTextW(m_hBtnSettings, InsertMnemonicMarker(stripped[3], assigned[3]).c_str());
+}
+
+bool MainWindow::TryHandleAccessKeyChar(wchar_t ch) {
+    if (m_cueState.HideAccel()) return false;
+
+    // Gate this on focus not being an editable text field: check GetFocus() is one of 
+    // the known non-edit controls before treating the char as an access key, so typing 
+    // inside any future edit control on the main window is never hijacked.
+    HWND focused = GetFocus();
+    if (focused != m_hListSources && focused != m_hBtnAdd && focused != m_hBtnDelete && 
+        focused != m_hBtnStartStop && focused != m_hBtnSettings) {
+        return false;
+    }
+
+    if (m_lastMnemonics.size() < 4) return false;
+    
+    wchar_t upCh = static_cast<wchar_t>(towupper(ch));
+    if (upCh == L'\0') return false;
+
+    if (upCh == static_cast<wchar_t>(towupper(m_lastMnemonics[0])) && IsWindowEnabled(m_hBtnAdd)) {
+        SendMessageW(m_hwnd, WM_COMMAND, IDC_BTN_ADD, 0);
+        return true;
+    }
+    if (upCh == static_cast<wchar_t>(towupper(m_lastMnemonics[1])) && IsWindowEnabled(m_hBtnDelete)) {
+        SendMessageW(m_hwnd, WM_COMMAND, IDC_BTN_DELETE, 0);
+        return true;
+    }
+    if (upCh == static_cast<wchar_t>(towupper(m_lastMnemonics[2])) && IsWindowEnabled(m_hBtnStartStop)) {
+        SendMessageW(m_hwnd, WM_COMMAND, IDC_BTN_STARTSTOP, 0);
+        return true;
+    }
+    if (upCh == static_cast<wchar_t>(towupper(m_lastMnemonics[3])) && IsWindowEnabled(m_hBtnSettings)) {
+        SendMessageW(m_hwnd, WM_COMMAND, IDC_BTN_SETTINGS, 0);
+        return true;
+    }
+    return false;
 }
 
 void MainWindow::SetStatus(ServerUiState state, const std::wstring& endpoint) {
@@ -520,6 +594,12 @@ void MainWindow::BeginRestartServer() {
 void MainWindow::CompleteServerOperation(ServerUiState finalState, const std::wstring& endpoint, bool success, const std::wstring& message) {
     if (m_worker.joinable()) {
         m_worker.join();
+    }
+    if (finalState == ServerUiState::Running) {
+        // prime the timer's change-detection so it always fires once the initial
+        // scan finishes, even when the scan ends before the first timer tick that
+        // would have seen it as in-progress
+        m_lastPolledScanInProgress = true;
     }
     SetStatus(finalState, endpoint);
     if (!success && !message.empty()) {
@@ -726,6 +806,20 @@ void MainWindow::BeginRescan() {
     }).detach();
 }
 
+// swallow up slash down arrow on toolbar buttons only
+// left slash right arrow still reach the default window proc so
+// IsDialogMessage keeps handling group navigation for them unchanged
+LRESULT CALLBACK MainWindow::ToolbarButtonProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    MainWindow* pThis = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (uMsg == WM_KEYDOWN && (wParam == VK_UP || wParam == VK_DOWN)) {
+        return 0;
+    }
+    if (pThis && pThis->m_toolbarOldProc) {
+        return CallWindowProcW(pThis->m_toolbarOldProc, hwnd, uMsg, wParam, lParam);
+    }
+    return DefWindowProcW(hwnd, uMsg, wParam, lParam);
+}
+
 LRESULT CALLBACK MainWindow::ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     MainWindow* pThis = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     if (pThis && uMsg == WM_KILLFOCUS) {
@@ -735,6 +829,10 @@ LRESULT CALLBACK MainWindow::ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LP
             SendMessage(hwnd, LB_SETCURSEL, (WPARAM)-1, 0);
         }
         pThis->UpdateDeleteButton();
+    }
+    if (pThis && uMsg == WM_KEYDOWN && wParam == 'D' && !pThis->m_focusState.IsNoFocus()) {
+        pThis->RemoveSelectedSource();
+        return 0;
     }
     if (pThis && uMsg == WM_KEYDOWN && wParam == VK_DELETE) {
         pThis->RemoveSelectedSource();
@@ -841,6 +939,8 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             listHeight = 0;
         }
         SetWindowPos(m_hListSources, NULL, kGutter, kListTop, listWidth, listHeight, SWP_NOZORDER);
+
+        m_statusRect = { 0, kToolbarHeight, width, kToolbarHeight + kStatusHeight };
 
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
@@ -954,8 +1054,12 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
     }
     case WM_TIMER: {
         if (wParam == kInitialScanPollTimerId) {
-            SetControlsForState();
-            InvalidateRect(m_hwnd, NULL, TRUE);
+            const bool scanInProgress = DLNAServer.IsInitialScanInProgress();
+            if (scanInProgress != m_lastPolledScanInProgress) {
+                m_lastPolledScanInProgress = scanInProgress;
+                SetControlsForState();
+                InvalidateRect(m_hwnd, NULL, TRUE);
+            }
         }
         return 0;
     }

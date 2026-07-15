@@ -69,9 +69,32 @@ void AppendNewLogText(HWND hwndDlg) {
 
 }
 
+static HHOOK g_logBackspaceHook = NULL;
+
+static LRESULT CALLBACK LogBackspaceHookProc(int nCode, WPARAM wParam, LPARAM lParam) {
+    (void)wParam;
+    if (nCode >= 0) {
+        MSG* msg = reinterpret_cast<MSG*>(lParam);
+        if (msg->message == WM_KEYDOWN && msg->wParam == VK_BACK) {
+            wchar_t className[32] = {};
+            GetClassNameW(msg->hwnd, className, 32);
+            bool isLiveEdit = _wcsicmp(className, L"EDIT") == 0 &&
+                               !(GetWindowLongW(msg->hwnd, GWL_STYLE) & ES_READONLY);
+            if (!isLiveEdit) {
+                PostMessageW(GetParent(msg->hwnd), WM_CLOSE, 0, 0);
+                return 1;
+            }
+        }
+    }
+    return CallNextHookEx(NULL, nCode, wParam, lParam);
+}
+
 INT_PTR LogDialog::Show(HWND hParent) {
     ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hParent);
+    g_logBackspaceHook = SetWindowsHookExW(WH_MSGFILTER, LogBackspaceHookProc, NULL, GetCurrentThreadId());
     INT_PTR result = DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCE(IDD_LOG), hParent, DialogProc, 0);
+    if (g_logBackspaceHook) UnhookWindowsHookEx(g_logBackspaceHook);
+    g_logBackspaceHook = NULL;
     RestoreModalFocus(focusSnapshot, hParent);
     return result;
 }
