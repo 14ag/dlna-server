@@ -25,6 +25,7 @@ bool IsNetworkShareUrl(const std::wstring& value);
 bool IsRemovedSmbSourcePath(const std::wstring& value);
 bool IsPlaylistSourcePath(const std::wstring& value);
 bool IsHlsManifestText(const std::string& text);
+bool IsRecognizedPlaylistText(const std::wstring& path, const std::string& text);
 std::wstring RedactUrlForLog(const std::wstring& value);
 std::wstring SourceExtension(const std::wstring& value);
 std::wstring SourceDisplayName(const std::wstring& value);

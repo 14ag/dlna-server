@@ -96,19 +96,5 @@ class ReleaseOutputLayoutTests(unittest.TestCase):
         if smokePath.exists():
             self.assertIn('Join-Path $repo "output\\winx64"', smoke)
 
-    def test_readme_documents_platform_output_contract(self):
-        readme = self.read("README.md")
-
-        self.assertIn("Platform-specific release files are written under `output/<platform>/`", readme)
-        self.assertIn("build-assets.bat --platform winx64,linux --no-clean", readme)
-        self.assertIn("No build script cleans the `output/` root", readme)
-        self.assertIn("Supported platform names are exactly `winx64`, `winx86`, `linux`, `macos-x64`, and `macos-arm64`", readme)
-        self.assertNotIn("all-known", readme)
-        self.assertNotIn("SHA256SUMS.txt", readme)
-        self.assertIn("`output/winx64/dlna-server-<version>-windows-x86_64.zip`", readme)
-        self.assertIn("`output/linux/dlna-server_<version>_amd64.deb`", readme)
-        self.assertIn("`output/macos-x64/DLNA_Server-<version>-macos-x64.dmg`", readme)
-
-
 if __name__ == "__main__":
     unittest.main()

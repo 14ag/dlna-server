@@ -3,13 +3,16 @@
 #include "log.h"
 #include "netutils.h"
 #include "access_keys.h"
+#include "network_sources.h"
 #include "playlist_scan_concurrency.h"
 #include "server.h"
 
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <thread>
 
 namespace {
@@ -73,6 +76,15 @@ int main(int argc, char** argv) {
                 else if (ch == 'm' || ch == 'M') cs.OnMouseButtonInput();
                 std::cout << (cs.HideAccel() ? "1" : "0") << "," << (cs.HideFocus() ? "1" : "0") << std::endl;
             }
+            return 0;
+        }
+        else if (arg == "--print-is-recognized-playlist" && i + 2 < argc) {
+            std::wstring path = Utf8ToWide(argv[++i]);
+            std::wstring textFilePath = Utf8ToWide(argv[++i]);
+            std::ifstream file(WideToUtf8(textFilePath), std::ios::binary);
+            std::ostringstream ss;
+            ss << file.rdbuf();
+            std::cout << (IsRecognizedPlaylistText(path, ss.str()) ? "1" : "0") << std::endl;
             return 0;
         }
         else if (arg == "--debug") AppConfig.debugLog = true;

@@ -391,6 +391,17 @@ void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx,
         return;
     }
 
+    if (!IsRecognizedPlaylistText(node.path, fetched.text)) {
+        LogPrint(L"[media:fetch-invalid] Fetched content is not a recognized HLS manifest or M3U/PLS playlist; skipping: %ls",
+                 RedactUrlForLog(node.path).c_str());
+        if (ctx->state.mediaDatabase) {
+            ctx->state.mediaDatabase->RecordScanError(
+                BuildStableContainerKey(node.parentId, SourceStemName(node.path), node.path, g_canonicalize),
+                L"Playlist content not recognized");
+        }
+        return;
+    }
+
     auto entries = ParseFetchedPlaylistText(node.path, fetched.text);
     if (entries.empty()) {
         LogPrint(L"Skipping playlist with no usable entries: %ls", RedactUrlForLog(node.path).c_str());

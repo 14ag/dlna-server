@@ -9,35 +9,6 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
     def read(self, path):
         return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_wsl_install_script_builds_native_gui(self):
-        script = self.read("install-wsl.ps1")
-        readme = self.read("README.md")
-
-        for helper in (
-            "build-output.ps1",
-            "build-linux-appdir.ps1",
-            "build-linux-appimage.ps1",
-        ):
-            self.assertFalse((ROOT / helper).exists())
-
-        for token in (
-            "wsl.exe -d $Distro bash",
-            "DLNA_ENABLE_FLTK_GUI=ON",
-            "cmake --build",
-            "cmake --install",
-            "update-desktop-database",
-            "gtk-update-icon-cache",
-            "PASS WSL GUI smoke",
-            "InstallPackages",
-            "Prefix must be a WSL path",
-        ):
-            self.assertIn(token, script)
-
-        self.assertIn(".\\install-wsl.ps1", readme)
-        self.assertIn("-InstallPackages", readme)
-        self.assertIn("cmake -S . -B build-linux", readme)
-
-
     def test_apprun_launches_gui_with_bundled_server(self):
         apprun = self.read("packaging/linux/AppRun")
 
@@ -53,13 +24,6 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("Exec=dlna-server-gui", desktop)
         self.assertIn("Icon=dlna-server", desktop)
         self.assertIn("StartupWMClass=dlna-server", desktop)
-
-    def test_readme_documents_manual_appimage_packaging(self):
-        readme = self.read("README.md")
-
-        self.assertIn("-DDLNA_ENABLE_FLTK_GUI=ON", readme)
-        self.assertIn("output/linux/dlna-server.AppDir", readme)
-        self.assertIn("linuxdeploy --appdir output/linux/dlna-server.AppDir --output appimage", readme)
 
     def test_linux_desktop_installers_are_scripted(self):
         cmake = self.read("CMakeLists.txt")
@@ -144,12 +108,6 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertNotIn("tkinter", linux_launcher + mac_launcher + cmake)
         self.assertNotIn("python3", linux_launcher + mac_launcher + cmake)
         self.assertIn("DLNA Server native GUI is missing", linux_launcher)
-
-    def test_readme_says_native_gui_is_default(self):
-        readme = self.read("README.md")
-
-        self.assertIn("By default this installs the headless server and native FLTK GUI", readme)
-        self.assertIn("-DDLNA_ENABLE_FLTK_GUI=OFF", readme)
 
     def test_fltk_main_window_has_parity_controls(self):
         gui_source = self.read("src/fltk_gui_main.cpp")

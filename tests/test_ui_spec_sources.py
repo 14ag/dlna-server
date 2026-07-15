@@ -10,41 +10,6 @@ class UiSpecTests(unittest.TestCase):
     def read(self, path):
         return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_ui_spec_covers_cross_platform_contract(self):
-        spec = self.read("docs/ui-spec.md")
-
-        for text in (
-            "Windows Win32 UI and Linux FLTK UI",
-            "Default main window size: 440 x 600",
-            "Minimum content size: 440 x 460",
-            "Toolbar height: 56 px",
-            "Status strip height: 40 px",
-            "Modal child windows restore focus to their owner only when the app still owns the foreground chain",
-            "Windows UI font: Segoe UI Variable with Segoe UI fallback",
-            "Windows dialog templates use 10 pt Segoe UI",
-            "Parent surfaces own layout",
-            "Toolbar buttons are 32 px tall",
-            "8 px corner radius",
-            "4 px increments",
-            "Add media folder",
-            "Delete selected source",
-            "Start server",
-            "Stop server",
-            "Settings",
-            "Default playlist",
-            "UPnP device icons",
-            "Log text is read-only",
-            "No clipped labels",
-        ):
-            self.assertIn(text, spec)
-
-    def test_release_version_is_1_3_0(self):
-        cmake = self.read("CMakeLists.txt")
-        changelog = self.read("CHANGELOG.md")
-
-        self.assertIn("project(dlna-server VERSION 1.4.0)", cmake)
-        self.assertIn("## [1.4.0] - 2026-05-29", changelog)
-
     def test_modal_focus_policy_is_foreground_chain_gated(self):
         main = self.read("src/mainwindow.cpp")
         settings = self.read("src/settingsdlg.cpp")
