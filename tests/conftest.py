@@ -134,11 +134,11 @@ def _teardown_server(proc, old_config, config_ini):
 def dlna_binary():
     root = Path(__file__).resolve().parent
     candidates = [
-        root / "build_winx64" / "Debug" / "DLNA Server.exe",
-        root / "build_winx64" / "Release" / "DLNA Server.exe",
-        root.parent / "build_winx64" / "Debug" / "DLNA Server.exe",
-        root.parent / "build_winx64" / "Release" / "DLNA Server.exe",
         root.parent / "output" / "winx64" / "DLNA Server.exe",
+        root.parent / "build_winx64" / "Release" / "DLNA Server.exe",
+        root.parent / "build_winx64" / "Debug" / "DLNA Server.exe",
+        root / "build_winx64" / "Release" / "DLNA Server.exe",
+        root / "build_winx64" / "Debug" / "DLNA Server.exe",
         root.parent / "output" / "winx64" / "build" / "Release" / "DLNA Server.exe",
     ]
     for path in candidates:

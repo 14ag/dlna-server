@@ -177,8 +177,9 @@ bool Server::Start(std::wstring& outReason) {
     }
 
     // Validate we have at least one source
-    bool hasSource = cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
-    if (!cfg.mediaSources.empty()) hasSource = true;
+    bool hasSource = !cfg.hasRuntimeSourceOverride &&
+                      cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
+    if (!cfg.effectiveMediaSources.empty()) hasSource = true;
     if (!hasSource) {
         LogPrint(L"No media sources configured.");
         outReason = L"No media sources configured";
@@ -291,7 +292,16 @@ void Server::Stop() {
     SSDP::Get().Stop();
     HttpServer::Get().Stop();
     JoinBackgroundScan();
-    
+
+    // A runtime --source override is scoped to a single "on" session. Once
+    // the server is fully stopped, the next Start() (manual or automatic)
+    // must serve config.ini's sources again, not a stale override. Phase 3
+    // depends on this: an incoming interrupt-restart calls Stop() first,
+    // which clears whatever override was active, and only then sets the
+    // NEW override before Start() -- so ordering here matters for both
+    // features and must not be changed independently of Phase 3.
+    AppConfig.ClearRuntimeSourceOverride();
+
     {
         std::lock_guard<std::mutex> lock(m_endpointMutex);
         m_endpoint = L"";

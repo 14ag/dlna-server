@@ -49,4 +49,4 @@ class TestCliFlagsSingleSource:
             capture_output=True, text=True, timeout=10)
         assert result.returncode == 0, result.stderr
         output = result.stdout + result.stderr
-        assert "--source PATH" in output
+        assert "--source \"pathA\",\"pathB\"" in output

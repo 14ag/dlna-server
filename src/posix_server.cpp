@@ -147,8 +147,9 @@ bool Server::Start(std::wstring& outReason) {
     if (cfg.fileServerPort != cfg.port) {
         LogPrint(L"FileServerPort is deprecated; serving media on Port %d.", cfg.port);
     }
-    bool hasSource = cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
-    if (!cfg.mediaSources.empty()) hasSource = true;
+    bool hasSource = !cfg.hasRuntimeSourceOverride &&
+                      cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
+    if (!cfg.effectiveMediaSources.empty()) hasSource = true;
     if (!hasSource) {
         LogPrint(L"No media sources configured; refusing to serve current directory.");
         outReason = L"No media sources configured";
@@ -223,6 +224,9 @@ void Server::Stop() {
     SSDP::Get().Stop();
     HttpServer::Get().Stop();
     JoinBackgroundScan();
+
+    AppConfig.ClearRuntimeSourceOverride();
+
     {
         std::lock_guard<std::mutex> lock(m_endpointMutex);
         m_endpoint.clear();

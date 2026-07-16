@@ -130,7 +130,8 @@ ConfigSnapshot Config::Snapshot() const {
         backgroundScanEnabled,
         mediaSources,
         networkInterfaceAllowList,
-        m_hasRuntimeSourceOverride ? m_runtimeSourceOverride : mediaSources
+        m_hasRuntimeSourceOverride ? m_runtimeSourceOverride : mediaSources,
+        m_hasRuntimeSourceOverride
     };
 }
 
