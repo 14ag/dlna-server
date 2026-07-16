@@ -7,5 +7,6 @@ std::vector<std::wstring> DetermineSettingsRequiringRestart(const ConfigSnapshot
     if (before.port != after.port) changed.push_back(L"HTTP Port");
     if (before.serverName != after.serverName) changed.push_back(L"Server Name");
     if (before.ipWhiteList != after.ipWhiteList) changed.push_back(L"IP Whitelist");
+    if (before.debugLog != after.debugLog) changed.push_back(L"Debug Log");
     return changed;
 }

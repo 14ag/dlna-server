@@ -11,6 +11,7 @@
 #include <thread>
 #include <atomic>
 #include "config.h"
+#include "dlna_utils.h"
 #include "media_sources.h"
 #include "modal_focus.h"
 #include "server.h"
@@ -332,6 +333,14 @@ MainWindow::~MainWindow() {
     }
     DLNAServer.Stop();
     SetThreadExecutionState(ES_CONTINUOUS);
+    if (m_hListSources) {
+        RevokeDragDrop(m_hListSources);
+    }
+    if (m_sourceDropTarget) {
+        m_sourceDropTarget->Release();
+        m_sourceDropTarget = nullptr;
+    }
+    OleUninitialize();
     RemoveTrayIcon();
     if (m_hBgBrush) DeleteObject(m_hBgBrush);
     if (m_hDarkBrush) DeleteObject(m_hDarkBrush);
@@ -422,6 +431,12 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
     // Strip theming so the theme engine cannot apply a DWM-level focus border
     // on the listbox NC frame (which would appear as blue lines on focus).
     SetWindowTheme(m_hListSources, L"", L"");
+
+    OleInitialize(NULL);
+    m_sourceDropTarget = new SourceListDropTarget(
+        [this]() { return IsBusy() || IsRunning(); },
+        [this](const std::vector<std::wstring>& paths) { HandleDroppedPaths(paths); });
+    RegisterDragDrop(m_hListSources, m_sourceDropTarget);
 
     UpdateListLayout(kDefaultWindowWidth, kDefaultWindowHeight);
 
@@ -852,24 +867,41 @@ void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
     DeleteObject(fillBrush);
 }
 
-void MainWindow::OpenFolderPicker() {
-    std::wstring selected = PromptForMediaSource(m_hwnd, m_hInstance);
-    if (selected.empty()) return;
-
+bool MainWindow::AddMediaSourceIfNew(const std::wstring& path) {
     bool alreadyPresent = false;
-    AppConfig.Mutate([&selected, &alreadyPresent](Config& cfg) {
+    AppConfig.Mutate([&path, &alreadyPresent](Config& cfg) {
         for (const auto& source : cfg.mediaSources) {
-            if (source.path == selected) {
+            if (source.path == path) {
                 alreadyPresent = true;
                 return;
             }
         }
-        cfg.mediaSources.push_back({selected});
+        cfg.mediaSources.push_back({path});
     });
-    if (alreadyPresent) return;
+    if (alreadyPresent) {
+        return false;
+    }
     AppConfig.Save();
     RefreshSourceList();
     std::thread([]() { DLNAServer.Rescan(); }).detach();
+    return true;
+}
+
+void MainWindow::OpenFolderPicker() {
+    std::wstring selected = PromptForMediaSource(m_hwnd, m_hInstance);
+    if (selected.empty()) return;
+    AddMediaSourceIfNew(selected);
+}
+
+void MainWindow::HandleDroppedPaths(const std::vector<std::wstring>& paths) {
+    if (IsBusy() || IsRunning()) {
+        return;
+    }
+    for (const auto& path : paths) {
+        if (IsSupportedLocalMediaOrPlaylistPath(path)) {
+            AddMediaSourceIfNew(path);
+        }
+    }
 }
 
 void MainWindow::BeginRescan() {
@@ -1179,6 +1211,26 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
     case WM_SHOW_EXISTING_INSTANCE: {
         RestoreAndFocusMainWindow();
         return 0;
+    }
+    case WM_REQUEST_SHUTDOWN: {
+        DestroyWindow(hwnd);
+        return 0;
+    }
+    case WM_COPYDATA: {
+        const COPYDATASTRUCT* cds = reinterpret_cast<const COPYDATASTRUCT*>(lParam);
+        if (cds && cds->dwData == kCopyDataSourceReplace && cds->lpData) {
+            std::wstring payload(reinterpret_cast<const wchar_t*>(cds->lpData));
+            std::vector<std::wstring> paths = ParseQuotedCommaList(payload);
+            std::vector<MediaSource> overrideSources;
+            for (const auto& path : paths) {
+                if (!path.empty()) overrideSources.push_back({path});
+            }
+            AppConfig.SetRuntimeSourceOverride(overrideSources);
+            if (DLNAServer.IsRunning()) {
+                std::thread([]() { DLNAServer.Rescan(); }).detach();
+            }
+        }
+        return TRUE;
     }
     case WM_TRAYICON: {
         if (lParam == WM_LBUTTONUP) {

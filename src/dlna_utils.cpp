@@ -2,6 +2,8 @@
 #include "version.h"
 
 #include "netutils.h"
+#include "network_sources.h"
+#include "fs_backend.h"
 #include <algorithm>
 #include <cctype>
 #include <cwctype>
@@ -457,4 +459,133 @@ unsigned int ComputeSsdpNextAliveIntervalMilliseconds() {
     static thread_local std::mt19937 generator(std::random_device{}());
     std::uniform_int_distribution<unsigned int> distribution(12u * 60u * 1000u, 14u * 60u * 1000u + 30u * 1000u);
     return distribution(generator);
+}
+
+std::wstring BuildQuotedCommaList(const std::vector<std::wstring>& values) {
+    std::wstring result;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            result += L",";
+        }
+        result += L"\"";
+        for (wchar_t ch : values[i]) {
+            if (ch == L'"') {
+                result += L"\"\"";
+            } else {
+                result += ch;
+            }
+        }
+        result += L"\"";
+    }
+    return result;
+}
+
+std::vector<std::wstring> ParseQuotedCommaList(const std::wstring& text) {
+    std::vector<std::wstring> fields;
+    size_t i = 0;
+    const size_t n = text.size();
+    while (i < n) {
+        while (i < n && (text[i] == L' ' || text[i] == L'\t')) {
+            ++i;
+        }
+        std::wstring field;
+        if (i < n && text[i] == L'"') {
+            ++i;
+            while (i < n) {
+                if (text[i] == L'"') {
+                    if (i + 1 < n && text[i + 1] == L'"') {
+                        field += L'"';
+                        i += 2;
+                        continue;
+                    }
+                    ++i;
+                    break;
+                }
+                field += text[i];
+                ++i;
+            }
+        } else {
+            while (i < n && text[i] != L',') {
+                field += text[i];
+                ++i;
+            }
+        }
+        fields.push_back(field);
+        while (i < n && (text[i] == L' ' || text[i] == L'\t')) {
+            ++i;
+        }
+        if (i < n && text[i] == L',') {
+            ++i;
+        } else {
+            break;
+        }
+    }
+    return fields;
+}
+
+std::vector<std::wstring> DecodeLegacyPipeDelimitedSources(const std::wstring& text) {
+    auto unescapeOne = [](const std::wstring& token) {
+        std::wstring out;
+        for (size_t i = 0; i < token.size(); ++i) {
+            if (token[i] == L'\\' && i + 1 < token.size()) {
+                wchar_t next = token[++i];
+                if (next == L'r') {
+                    out += L'\r';
+                } else if (next == L'n') {
+                    out += L'\n';
+                } else {
+                    out += next;
+                }
+            } else {
+                out += token[i];
+            }
+        }
+        return out;
+    };
+
+    std::vector<std::wstring> result;
+    bool escaping = false;
+    std::wstring token;
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (escaping) {
+            token += text[i];
+            escaping = false;
+            continue;
+        }
+        if (text[i] == L'\\') {
+            token += text[i];
+            escaping = true;
+            continue;
+        }
+        if (text[i] == L'|') {
+            result.push_back(unescapeOne(token));
+            token.clear();
+            continue;
+        }
+        token += text[i];
+    }
+    result.push_back(unescapeOne(token));
+    return result;
+}
+
+std::vector<std::wstring> AllSupportedSourceExtensions() {
+    std::vector<std::wstring> extensions;
+    for (const auto& format : kFormats) {
+        extensions.push_back(format.ext);
+    }
+    extensions.push_back(L".m3u");
+    extensions.push_back(L".m3u8");
+    extensions.push_back(L".pls");
+    return extensions;
+}
+
+bool IsSupportedLocalMediaOrPlaylistPath(const std::wstring& path) {
+    if (FsIsDirectory(path)) {
+        return true;
+    }
+    if (IsPlaylistSourcePath(path)) {
+        return true;
+    }
+    MediaFormatInfo info;
+    return GetMediaFormatForExtension(SourceExtension(path), info);
 }

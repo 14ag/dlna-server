@@ -7,6 +7,7 @@
 #include "netutils.h"
 #include "access_keys.h"
 #include "help_dialog.h"
+#include "context_menu_integration.h"
 #include "../resources/resource.h"
 #include <commctrl.h>
 #include <dwmapi.h>
@@ -322,6 +323,7 @@ void SettingsDialog::OnInitDialog(HWND hwndDlg) {
     CheckDlgButton(hwndDlg, IDC_CHK_SORT_BY_TITLE, cfg.sortByTitle ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hwndDlg, IDC_CHK_PROXY_STREAMS, cfg.proxyStreams ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hwndDlg, IDC_CHK_BACKGROUND_SCAN, cfg.backgroundScanEnabled ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(hwndDlg, IDC_CHK_CONTEXT_MENU, cfg.contextMenuIntegrationEnabled ? BST_CHECKED : BST_UNCHECKED);
     UpdateDefaultPlaylistButton(hwndDlg);
 }
 
@@ -345,6 +347,7 @@ bool SettingsDialog::OnOK(HWND hwndDlg) {
     const bool sortByTitle = (IsDlgButtonChecked(hwndDlg, IDC_CHK_SORT_BY_TITLE) == BST_CHECKED);
     const bool proxyStreams = (IsDlgButtonChecked(hwndDlg, IDC_CHK_PROXY_STREAMS) == BST_CHECKED);
     const bool backgroundScanEnabled = (IsDlgButtonChecked(hwndDlg, IDC_CHK_BACKGROUND_SCAN) == BST_CHECKED);
+    const bool contextMenuIntegrationEnabled = (IsDlgButtonChecked(hwndDlg, IDC_CHK_CONTEXT_MENU) == BST_CHECKED);
 
     const ConfigSnapshot before = AppConfig.Snapshot();
     AppConfig.Mutate([&](Config& cfg) {
@@ -362,8 +365,16 @@ bool SettingsDialog::OnOK(HWND hwndDlg) {
         cfg.sortByTitle = sortByTitle;
         cfg.proxyStreams = proxyStreams;
         cfg.backgroundScanEnabled = backgroundScanEnabled;
+        cfg.contextMenuIntegrationEnabled = contextMenuIntegrationEnabled;
     });
     AppConfig.Save();
+
+    {
+        std::wstring contextMenuMessage;
+        if (!EnsureContextMenuIntegration(contextMenuIntegrationEnabled, contextMenuMessage)) {
+            MessageBoxW(hwndDlg, contextMenuMessage.c_str(), L"Context menu integration", MB_ICONWARNING | MB_OK);
+        }
+    }
 
     g_restartRequested = false;
     if (DLNAServer.IsRunning()) {

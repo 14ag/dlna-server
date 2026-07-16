@@ -35,53 +35,6 @@ std::string Trim(const std::string& value) {
     return result;
 }
 
-std::wstring EscapeConfigListField(const std::wstring& value) {
-    std::wstring escaped;
-    for (wchar_t ch : value) {
-        if (ch == L'\\' || ch == L'|' || ch == L'\r' || ch == L'\n') {
-            escaped.push_back(L'\\');
-            if (ch == L'\r') escaped.push_back(L'r');
-            else if (ch == L'\n') escaped.push_back(L'n');
-            else escaped.push_back(ch);
-        } else {
-            escaped.push_back(ch);
-        }
-    }
-    return escaped;
-}
-
-std::vector<std::wstring> SplitConfigList(const std::wstring& value) {
-    std::vector<std::wstring> fields;
-    std::wstring current;
-    bool escaping = false;
-    for (wchar_t ch : value) {
-        if (escaping) {
-            if (ch == L'r') current.push_back(L'\r');
-            else if (ch == L'n') current.push_back(L'\n');
-            else if (ch == L'|' || ch == L'\\') current.push_back(ch);
-            else {
-                current.push_back(L'\\');
-                current.push_back(ch);
-            }
-            escaping = false;
-            continue;
-        }
-        if (ch == L'\\') {
-            escaping = true;
-            continue;
-        }
-        if (ch == L'|') {
-            fields.push_back(current);
-            current.clear();
-            continue;
-        }
-        current.push_back(ch);
-    }
-    if (escaping) current.push_back(L'\\');
-    fields.push_back(current);
-    return fields;
-}
-
 std::string AppRootConfigPath() {
 #ifdef __APPLE__
     char path[PATH_MAX];
@@ -176,7 +129,9 @@ ConfigSnapshot Config::Snapshot() const {
         defaultPlaylistPath,
         backgroundScanEnabled,
         mediaSources,
-        networkInterfaceAllowList
+        networkInterfaceAllowList,
+        m_hasRuntimeSourceOverride ? m_runtimeSourceOverride : mediaSources,
+        contextMenuIntegrationEnabled
     };
 }
 
@@ -259,6 +214,7 @@ void Config::Load() {
 
     std::string line;
     std::string section;
+    bool needsSave = false;
     while (std::getline(file, line)) {
         line = Trim(line);
         if (line.empty() || line[0] == '#' || line[0] == ';') continue;
@@ -284,6 +240,7 @@ void Config::Load() {
         else if (key == "RunOnBoot") runOnBoot = ParseIntOrDefault(value, 0) != 0;
         else if (key == "DefaultPlaylistEnabled") defaultPlaylistEnabled = ParseIntOrDefault(value, 0) != 0;
         else if (key == "BackgroundScanEnabled") backgroundScanEnabled = ParseIntOrDefault(value, 0) != 0;
+        else if (key == "ContextMenuIntegrationEnabled") contextMenuIntegrationEnabled = ParseIntOrDefault(value, 0) != 0;
         else if (key == "DefaultPlaylistPath") defaultPlaylistPath = Utf8ToWide(value);
         else if (key == "IPWhiteList") ipWhiteList = Utf8ToWide(value);
         else if (key == "DeviceUUID") deviceUUID = Utf8ToWide(value);
@@ -292,7 +249,13 @@ void Config::Load() {
         else if (key == "PresentationURL") presentationUrl = Utf8ToWide(value);
         else if (key == "MediaSources") {
             mediaSources.clear();
-            for (const auto& token : SplitConfigList(Utf8ToWide(value))) {
+            std::wstring sourcesRaw = Utf8ToWide(value);
+            std::vector<std::wstring> parsedSources = ParseQuotedCommaList(sourcesRaw);
+            if (parsedSources.empty() && sourcesRaw.find(L'|') != std::wstring::npos) {
+                parsedSources = DecodeLegacyPipeDelimitedSources(sourcesRaw);
+                needsSave = true;
+            }
+            for (const auto& token : parsedSources) {
                 if (!token.empty()) mediaSources.push_back({token});
             }
         }
@@ -305,7 +268,10 @@ void Config::Load() {
     if (presentationUrl.empty()) presentationUrl = L"/";
     if (deviceUUID.empty()) {
         deviceUUID = GenerateUUID();
-        lock.unlock();
+        needsSave = true;
+    }
+    lock.unlock();
+    if (needsSave) {
         Save();
     }
 }
@@ -314,11 +280,11 @@ void Config::Save() {
     std::unique_lock<std::shared_mutex> lock(m_mutex);
     const std::wstring configPath = GetConfigPath();
 
-    std::wstring sourcesStr;
-    for (size_t i = 0; i < mediaSources.size(); ++i) {
-        sourcesStr += EscapeConfigListField(mediaSources[i].path);
-        if (i + 1 < mediaSources.size()) sourcesStr += L"|";
+    std::vector<std::wstring> sourcePaths;
+    for (const auto& source : mediaSources) {
+        sourcePaths.push_back(source.path);
     }
+    std::wstring sourcesStr = BuildQuotedCommaList(sourcePaths);
 
     std::ostringstream out;
     out << "\xEF\xBB\xBF";
@@ -337,6 +303,7 @@ void Config::Save() {
     out << "DefaultPlaylistEnabled=" << (defaultPlaylistEnabled ? 1 : 0) << "\n";
     out << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
     out << "BackgroundScanEnabled=" << (backgroundScanEnabled ? 1 : 0) << "\n";
+    out << "ContextMenuIntegrationEnabled=" << (contextMenuIntegrationEnabled ? 1 : 0) << "\n";
     out << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
     out << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
     out << "DeviceManufacturer=" << WideToUtf8(deviceManufacturer) << "\n";

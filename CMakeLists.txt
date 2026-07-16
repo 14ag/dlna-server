@@ -54,9 +54,11 @@ set(SOURCES
          src/modal_focus.cpp
          src/config.cpp
          src/ipwhitelist.cpp
-         src/firewall_access_win.cpp
-         src/log.cpp
-     )
+          src/firewall_access_win.cpp
+          src/source_drop_target.cpp
+          src/context_menu_integration.cpp
+          src/log.cpp
+      )
 
 set(HEADERS
          src/access_keys.h
@@ -90,9 +92,12 @@ set(HEADERS
          src/modal_focus.h
          src/config.h
          src/ipwhitelist.h
-         src/firewall_access.h
-         src/log.h
-         resources/resource.h
+          src/firewall_access.h
+          src/source_drop_target.h
+          src/context_menu_integration.h
+          src/startup_mode.h
+          src/log.h
+          resources/resource.h
      )
 
     list(REMOVE_ITEM SOURCES src/main.cpp)

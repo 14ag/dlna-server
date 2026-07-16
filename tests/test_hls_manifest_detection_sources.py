@@ -21,8 +21,11 @@ class HlsManifestDetectionSourceTests(unittest.TestCase):
         self.assertIn("ReadSourceText(playlistPath", source)
 
     def test_m3u8_still_excluded_from_generic_playable_kformats(self):
+        import re
         utils = self.read("src/dlna_utils.cpp")
-        self.assertNotIn('L".m3u8"', utils)
+        match = re.search(r"const ExtensionFormat kFormats\[\] = \{(.*?)\};", utils, re.DOTALL)
+        self.assertIsNotNone(match)
+        self.assertNotIn('L".m3u8"', match.group(1))
 
 
 if __name__ == "__main__":
