@@ -1066,7 +1066,7 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         } else if (m_state == ServerUiState::Stopping) {
             statusText = L"stopping server...";
         } else if (m_state == ServerUiState::Running) {
-            statusText = L"Server running";
+            statusText = AppConfig.HasRuntimeSourceOverride() ? L"temporary source" : L"Server running";
         }
         DrawTextW(hdc, statusText.c_str(), -1, &rcStatusText, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
