@@ -89,3 +89,23 @@ AGENTS.MD
 tests/test media/test-clip.mp4
 tests/test media/test-clip.srt
 build*
+temp/help_err.txt
+temp/help_err2.txt
+temp/help_out.txt
+temp/help_out2.txt
+temp/dlna_server_test/config.ini
+temp/dlna_server_test/stderr.txt
+temp/dlna_server_test/stdout.txt
+temp/dlna_server_test2/config.ini
+temp/dlna_server_test2/stderr.txt
+temp/dlna_server_test2/stdout.txt
+temp/dlna_server_test3/config.ini
+temp/dlna_server_test3/stderr.txt
+temp/dlna_server_test3/stdout.txt
+temp/dlna_server_test4/config.ini
+temp/dlna_server_test4/stderr.txt
+temp/dlna_server_test4/stdout.txt
+temp/dlna_server_test5/config.ini
+temp/dlna_server_test5/stderr.txt
+temp/dlna_server_test5/stdout.txt
+temp/server_test/config.ini

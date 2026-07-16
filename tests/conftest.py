@@ -16,6 +16,9 @@ from tests.fixtures.soap_client import (
     parse_system_update_id_response,
 )
 
+if os.name == "nt":
+    import ctypes
+
 
 class ServerClient:
     def __init__(self, base_url, binary_dir):
