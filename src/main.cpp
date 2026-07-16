@@ -22,7 +22,6 @@
 #include "access_keys.h"
 #include "hover_focus_state.h"
 #include "playlist_scan_concurrency.h"
-#include "context_menu_integration.h"
 #include "cli_flags.h"
 #include "../resources/resource.h"
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
@@ -208,16 +207,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             auto snap = AppConfig.Snapshot();
             for (const auto& src : snap.mediaSources) {
                 std::wcout << src.path << std::endl;
-            }
-            LocalFree(argv);
-            return 0;
-        } else if (wcscmp(argv[i], L"--print-context-menu-command-line") == 0 && i + 1 < argc) {
-            std::wcout << BuildContextMenuCommandLine(argv[++i]) << std::endl;
-            LocalFree(argv);
-            return 0;
-        } else if (wcscmp(argv[i], L"--print-context-menu-extensions") == 0) {
-            for (const auto& ext : ContextMenuTargetExtensions()) {
-                std::wcout << ext << std::endl;
             }
             LocalFree(argv);
             return 0;

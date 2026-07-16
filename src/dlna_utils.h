@@ -72,12 +72,6 @@ std::vector<std::wstring> ParseQuotedCommaList(const std::wstring& text);
 // and the raw text still contains an unescaped pipe character
 std::vector<std::wstring> DecodeLegacyPipeDelimitedSources(const std::wstring& text);
 
-// every extension GetMediaFormatForExtension recognizes plus every
-// playlist extension IsPlaylistSourcePath recognizes used by both the
-// drag and drop filter and the context menu registration so the set of
-// supported extensions is defined in exactly one place
-std::vector<std::wstring> AllSupportedSourceExtensions();
-
 // true for a directory or for a file whose extension this server already
 // knows how to serve as media or already recognizes as a playlist
 // used by the source list drag and drop target to filter dropped files

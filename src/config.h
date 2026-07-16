@@ -39,9 +39,6 @@ struct ConfigSnapshot {
     // equals mediaSources unless a CLI supplied runtime override is active
     // never written by Save and never read by Load
     std::vector<MediaSource> effectiveMediaSources;
-    // persisted toggle for the settings checkbox that adds or removes
-    // the right click context menu entries see context_menu_integration h
-    bool contextMenuIntegrationEnabled;
 };
 
 class Config {
@@ -71,7 +68,6 @@ public:
     bool runOnBoot;
     bool defaultPlaylistEnabled;
     bool backgroundScanEnabled;
-    bool contextMenuIntegrationEnabled;
     std::wstring defaultPlaylistPath;
     
     // INVARIANT: as of this writing, every direct (unlocked) read of this
