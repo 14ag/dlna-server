@@ -21,6 +21,7 @@
 #include "access_key_hook.h"
 #include "access_keys.h"
 #include "hover_focus_state.h"
+#include "input_gate.h"
 #include "playlist_scan_concurrency.h"
 #include "cli_flags.h"
 #include "../resources/resource.h"
@@ -163,6 +164,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-any-field-has-content") == 0 && i + 1 < argc) {
+            std::wstring csv = argv[++i];
+            std::vector<int> lens;
+            size_t start = 0;
+            while (start <= csv.size()) {
+                size_t comma = csv.find(L',', start);
+                std::wstring token = csv.substr(start, comma == std::wstring::npos ? std::wstring::npos : comma - start);
+                if (!token.empty()) lens.push_back(_wtoi(token.c_str()));
+                if (comma == std::wstring::npos) break;
+                start = comma + 1;
+            }
+            std::wcout << (AnyFieldHasContent(lens) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-is-recognized-playlist") == 0 && i + 2 < argc) {
             std::wstring path = argv[++i];
             std::wstring textFilePath = argv[++i];
@@ -201,6 +216,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 if (name == L"Debug Log") found = true;
             }
             std::wcout << (found ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-media-browsing-restart-required") == 0 && i + 2 < argc) {
+            auto parseFlags = [](const std::wstring& bits, ConfigSnapshot& snap) {
+                snap.addArtistAlbumFolders        = bits.size() > 0 && bits[0] == L'1';
+                snap.doNotShowAllMediaFolders     = bits.size() > 1 && bits[1] == L'1';
+                snap.sortByTitle                  = bits.size() > 2 && bits[2] == L'1';
+                snap.flatFolderStyle              = bits.size() > 3 && bits[3] == L'1';
+                snap.showFileNamesInsteadOfTitles = bits.size() > 4 && bits[4] == L'1';
+                snap.proxyStreams                 = bits.size() > 5 && bits[5] == L'1';
+                snap.backgroundScanEnabled        = bits.size() > 6 && bits[6] == L'1';
+            };
+            ConfigSnapshot before{};
+            ConfigSnapshot after{};
+            parseFlags(argv[++i], before);
+            parseFlags(argv[++i], after);
+            std::vector<std::wstring> changed = DetermineSettingsRequiringRestart(before, after);
+            std::wcout << (changed.empty() ? L"0" : L"1") << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-should-allow-source-drop") == 0 && i + 1 < argc) {

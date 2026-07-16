@@ -4,6 +4,7 @@
 #include "netutils.h"
 #include "access_keys.h"
 #include "hover_focus_state.h"
+#include "input_gate.h"
 #include "network_sources.h"
 #include "playlist_scan_concurrency.h"
 #include "server.h"
@@ -122,6 +123,20 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
+        else if (arg == "--print-any-field-has-content" && i + 1 < argc) {
+            std::string csv = argv[++i];
+            std::vector<int> lens;
+            size_t start = 0;
+            while (start <= csv.size()) {
+                size_t comma = csv.find(',', start);
+                std::string token = csv.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+                if (!token.empty()) lens.push_back(std::atoi(token.c_str()));
+                if (comma == std::string::npos) break;
+                start = comma + 1;
+            }
+            std::cout << (AnyFieldHasContent(lens) ? "1" : "0") << std::endl;
+            return 0;
+        }
         else if (arg == "--print-is-recognized-playlist" && i + 2 < argc) {
             std::wstring path = Utf8ToWide(argv[++i]);
             std::wstring textFilePath = Utf8ToWide(argv[++i]);
@@ -160,6 +175,27 @@ int main(int argc, char** argv) {
                 if (name == L"Debug Log") found = true;
             }
             std::wcout << (found ? L"1" : L"0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-media-browsing-restart-required" && i + 2 < argc) {
+            // Fixed field order: AddArtistAlbum,DoNotShowAllMedia,SortByTitle,
+            // FlatFolders,ShowFileNames,ProxyStreams,BackgroundScan.
+            // Each argument is a 7-character string of '0'/'1' in that order.
+            auto parseFlags = [](const std::string& bits, ConfigSnapshot& snap) {
+                snap.addArtistAlbumFolders        = bits.size() > 0 && bits[0] == '1';
+                snap.doNotShowAllMediaFolders     = bits.size() > 1 && bits[1] == '1';
+                snap.sortByTitle                  = bits.size() > 2 && bits[2] == '1';
+                snap.flatFolderStyle              = bits.size() > 3 && bits[3] == '1';
+                snap.showFileNamesInsteadOfTitles = bits.size() > 4 && bits[4] == '1';
+                snap.proxyStreams                 = bits.size() > 5 && bits[5] == '1';
+                snap.backgroundScanEnabled        = bits.size() > 6 && bits[6] == '1';
+            };
+            ConfigSnapshot before{};
+            ConfigSnapshot after{};
+            parseFlags(argv[++i], before);
+            parseFlags(argv[++i], after);
+            std::vector<std::wstring> changed = DetermineSettingsRequiringRestart(before, after);
+            std::wcout << (changed.empty() ? L"0" : L"1") << std::endl;
             return 0;
         }
         else if (arg == "--print-is-supported-source-path" && i + 1 < argc) {

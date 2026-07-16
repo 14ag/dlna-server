@@ -144,9 +144,6 @@ bool Server::Start(std::wstring& outReason) {
         outReason = L"Invalid port: " + std::to_wstring(cfg.port);
         return false;
     }
-    if (cfg.fileServerPort != cfg.port) {
-        LogPrint(L"FileServerPort is deprecated; serving media on Port %d.", cfg.port);
-    }
     bool hasSource = !cfg.hasRuntimeSourceOverride &&
                       cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
     if (!cfg.effectiveMediaSources.empty()) hasSource = true;

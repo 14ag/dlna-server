@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(dlna-server VERSION 1.4.0)
+project(dlna-server VERSION 1.7.0)
 
 configure_file(${CMAKE_SOURCE_DIR}/src/version.h.in ${CMAKE_BINARY_DIR}/generated/version.h @ONLY)
 
@@ -88,6 +88,7 @@ set(HEADERS
          src/settings_restart.h
          src/source_list_focus.h
          src/hover_focus_state.h
+         src/input_gate.h
          src/modal_focus.h
          src/config.h
          src/ipwhitelist.h

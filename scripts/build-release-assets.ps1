@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "",
+    [string]$Version = "1.7.0",
     [string]$WslDistro = "Ubuntu",
     [string]$Platform = "winx64,winx86,linux",
     [Alias("no-clean")]
@@ -273,7 +273,7 @@ New-SourceReleaseArchive -ArchivePath $sourceZip
 
 if ($selectedPlatforms -contains "winx64") {
     if (Invoke-CmakeBuild -BuildDir "build-release-winx64" -Arch "x64" -InstallDir $platformDirs["winx64"]) {
-        Compress-Archive -LiteralPath (Join-Path $platformDirs["winx64"] "DLNA Server.exe") -DestinationPath (Join-Path $platformDirs["winx64"] "dlna-server-$Version-windows-x86_64.zip") -Force
+        Compress-Archive -LiteralPath (Join-Path $platformDirs["winx64"] "DLNA Server.exe") -DestinationPath (Join-Path $platformDirs["winx64"] "dlna-server-$Version-windows-x64.zip") -Force
     }
 }
 

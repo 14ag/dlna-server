@@ -13,7 +13,7 @@ inline std::vector<CliFlagInfo> GetCliFlagTable() {
         { L"--name NAME", L"UPnP friendly server name override" },
         { L"--uuid UUID", L"Device UUID override" },
         { L"--source \"pathA\",\"pathB\"", L"Add one or more media sources replaces the current session sources not saved to config" },
-        { L"--kill-server, -k", L"Stop the running server and close the app overrides every other flag" },
+        { L"--kill-server, -k", L"Stop the running server and close the app" },
         { L"--debug", L"Enable debug logging" },
         { L"--configure-firewall", L"Run firewall helper and exit" },
         { L"--help", L"Show this help and exit" }
