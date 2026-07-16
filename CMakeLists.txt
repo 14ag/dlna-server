@@ -56,7 +56,6 @@ set(SOURCES
          src/ipwhitelist.cpp
           src/firewall_access_win.cpp
           src/source_drop_target.cpp
-          src/context_menu_integration.cpp
           src/log.cpp
       )
 
@@ -94,7 +93,6 @@ set(HEADERS
          src/ipwhitelist.h
           src/firewall_access.h
           src/source_drop_target.h
-          src/context_menu_integration.h
           src/startup_mode.h
           src/log.h
           resources/resource.h

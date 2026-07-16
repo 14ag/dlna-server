@@ -175,8 +175,7 @@ ConfigSnapshot Config::Snapshot() const {
         backgroundScanEnabled,
         mediaSources,
         networkInterfaceAllowList,
-        m_hasRuntimeSourceOverride ? m_runtimeSourceOverride : mediaSources,
-        contextMenuIntegrationEnabled
+        m_hasRuntimeSourceOverride ? m_runtimeSourceOverride : mediaSources
     };
 }
 
@@ -277,7 +276,6 @@ void Config::Load() {
     runOnBoot = ParseIntOrDefault(values, "RunOnBoot", 0) != 0;
     defaultPlaylistEnabled = ParseIntOrDefault(values, "DefaultPlaylistEnabled", 0) != 0;
     backgroundScanEnabled = ParseIntOrDefault(values, "BackgroundScanEnabled", 0) != 0;
-    contextMenuIntegrationEnabled = ParseIntOrDefault(values, "ContextMenuIntegrationEnabled", 0) != 0;
 
     ipWhiteList = Utf8ToWide(ConfigValueOrDefault(values, "IPWhiteList", ""));
     deviceUUID = Utf8ToWide(ConfigValueOrDefault(values, "DeviceUUID", ""));
@@ -342,7 +340,6 @@ void Config::Save() {
     ss << "DefaultPlaylistEnabled=" << (defaultPlaylistEnabled ? 1 : 0) << "\n";
     ss << "DefaultPlaylistPath=" << WideToUtf8(defaultPlaylistPath) << "\n";
     ss << "BackgroundScanEnabled=" << (backgroundScanEnabled ? 1 : 0) << "\n";
-    ss << "ContextMenuIntegrationEnabled=" << (contextMenuIntegrationEnabled ? 1 : 0) << "\n";
     ss << "IPWhiteList=" << WideToUtf8(ipWhiteList) << "\n";
     ss << "DeviceUUID=" << WideToUtf8(deviceUUID) << "\n";
     ss << "DeviceManufacturer=" << WideToUtf8(deviceManufacturer) << "\n";

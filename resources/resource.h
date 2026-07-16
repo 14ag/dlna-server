@@ -31,7 +31,6 @@
 #define IDC_CHK_DEBUG_LOG               411
 #define IDC_CHK_SORT_BY_TITLE           412
 #define IDC_CHK_BACKGROUND_SCAN         421
-#define IDC_CHK_CONTEXT_MENU            420
 #define IDC_EDT_SERVER_NAME             413
 #define IDC_EDT_PORT                    414
 #define IDC_EDT_FILESERVER_PORT         415

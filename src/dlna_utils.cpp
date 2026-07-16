@@ -568,17 +568,6 @@ std::vector<std::wstring> DecodeLegacyPipeDelimitedSources(const std::wstring& t
     return result;
 }
 
-std::vector<std::wstring> AllSupportedSourceExtensions() {
-    std::vector<std::wstring> extensions;
-    for (const auto& format : kFormats) {
-        extensions.push_back(format.ext);
-    }
-    extensions.push_back(L".m3u");
-    extensions.push_back(L".m3u8");
-    extensions.push_back(L".pls");
-    return extensions;
-}
-
 bool IsSupportedLocalMediaOrPlaylistPath(const std::wstring& path) {
     if (FsIsDirectory(path)) {
         return true;
