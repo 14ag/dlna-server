@@ -32,7 +32,7 @@ class ReleaseOutputLayoutTests(unittest.TestCase):
         self.assertIn('Join-Path $output "winx64"', script)
         self.assertIn('Join-Path $output "winx86"', script)
         self.assertIn('Join-Path $output "macos-x64"', script)
-        self.assertIn('dlna-server-$Version-windows-x86_64.zip', script)
+        self.assertIn('dlna-server-$Version-windows-x64.zip', script)
         self.assertIn('dlna-server-$Version-windows-x86.zip', script)
         self.assertNotIn('Remove-RootNonReleaseFiles', script)
         self.assertNotIn('Remove-RootPlatformArtifacts', script)

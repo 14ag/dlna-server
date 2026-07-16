@@ -13,6 +13,7 @@
 #include "config.h"
 #include "dlna_utils.h"
 #include "media_sources.h"
+#include "input_gate.h"
 #include "modal_focus.h"
 #include "server.h"
 
@@ -214,11 +215,17 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             WS_VISIBLE | WS_CHILD | WS_TABSTOP, kSourcePromptWidth - kGutter - 78, kSourcePromptButtonTop, 78, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_CANCEL)), NULL, NULL);
         HWND controls[] = { label, state->edit, hint, folder, playlist, add, cancel };
         for (HWND control : controls) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        EnableWindow(GetDlgItem(hwnd, IDC_SOURCE_ADD), FALSE);
         SetFocus(state->edit);
         return 0;
     }
     case WM_COMMAND: {
         int id = LOWORD(wParam);
+        if (id == IDC_SOURCE_EDIT && HIWORD(wParam) == EN_CHANGE) {
+            EnableWindow(GetDlgItem(hwnd, IDC_SOURCE_ADD),
+                         AnyFieldHasContent({ GetWindowTextLengthW(state->edit) }) ? TRUE : FALSE);
+            return 0;
+        }
         if (id == IDC_SOURCE_BROWSE_FOLDER) {
             std::wstring selected = BrowseFolder(hwnd);
             if (!selected.empty()) SetWindowTextW(state->edit, selected.c_str());

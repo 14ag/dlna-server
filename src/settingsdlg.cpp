@@ -6,6 +6,7 @@
 #include "modal_focus.h"
 #include "netutils.h"
 #include "access_keys.h"
+#include "input_gate.h"
 #include "help_dialog.h"
 #include "../resources/resource.h"
 #include <commctrl.h>
@@ -245,10 +246,18 @@ LRESULT CALLBACK PlaylistEntryProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         HWND add = CreateWindowW(L"BUTTON", InsertMnemonicMarker(plLabels[2], plMnemonics[2]).c_str(), WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, kPlaylistBrowseLeft, kPlaylistAddTop, kBrowseButtonWidth, kControlHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PLAYLIST_ADD)), NULL, NULL);
         HWND controls[] = { movieLabel, state->movieEdit, movieBrowse, subtitleLabel, state->subtitleEdit, subtitleBrowse, add };
         for (HWND control : controls) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        EnableWindow(GetDlgItem(hwnd, IDC_PLAYLIST_ADD), FALSE);
         SetFocus(state->movieEdit);
         return 0;
     }
     case WM_COMMAND:
+        if ((LOWORD(wParam) == IDC_PLAYLIST_MOVIE || LOWORD(wParam) == IDC_PLAYLIST_SUBTITLE) &&
+            HIWORD(wParam) == EN_CHANGE) {
+            EnableWindow(GetDlgItem(hwnd, IDC_PLAYLIST_ADD),
+                         AnyFieldHasContent({ GetWindowTextLengthW(state->movieEdit),
+                                               GetWindowTextLengthW(state->subtitleEdit) }) ? TRUE : FALSE);
+            return 0;
+        }
         if (LOWORD(wParam) == IDC_PLAYLIST_ADD) {
             FinishPlaylistEntry(hwnd, state, true);
             return 0;

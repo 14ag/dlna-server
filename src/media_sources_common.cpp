@@ -207,7 +207,9 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
             mime = L"audio/mpeg";
             uclass = L"object.item.audioItem.musicTrack";
         } else {
-            LogPrint(L"[media:reject-extension] Skipping media with unsupported extension '%ls': %ls", ext.c_str(), RedactUrlForLog(path).c_str());
+            if (IsRemoteMediaUrl(path)) {
+                LogPrint(L"[media:reject-extension] Skipping media with unsupported extension '%ls': %ls", ext.c_str(), RedactUrlForLog(path).c_str());
+            }
             return;
         }
     }
