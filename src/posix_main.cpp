@@ -7,6 +7,8 @@
 #include "network_sources.h"
 #include "playlist_scan_concurrency.h"
 #include "server.h"
+#include "settings_restart.h"
+#include "startup_mode.h"
 
 #include <atomic>
 #include <chrono>
@@ -25,13 +27,14 @@ void HandleSignal(int) {
 }
 
 void PrintUsage(const char* exe) {
-    std::cerr << "Usage: " << exe << " [--port 8200] [--name NAME] [--uuid UUID] [--debug] --source PATH_OR_URL [--source PATH_OR_URL...]\n";
+    std::cerr << "Usage: " << exe << " [--port 8200] [--name NAME] [--uuid UUID] [--debug] --source \"pathA\",\"pathB\"\n";
     std::cerr << "Sources can be folders, playlist files (.m3u, .m3u8, .pls), smb:// URLs, or ftp:// URLs.\n";
 }
 }
 
 int main(int argc, char** argv) {
     AppConfig.Load();
+    std::vector<std::wstring> runtimeSources;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--port" && i + 1 < argc) {
@@ -44,7 +47,21 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--name" && i + 1 < argc) AppConfig.serverName = Utf8ToWide(argv[++i]);
         else if (arg == "--uuid" && i + 1 < argc) AppConfig.deviceUUID = Utf8ToWide(argv[++i]);
-        else if (arg == "--source" && i + 1 < argc) AppConfig.mediaSources.push_back({Utf8ToWide(argv[++i])});
+        else if (arg == "--source" && i + 1 < argc) {
+            ++i;
+            std::vector<std::wstring> parsedSources = ParseQuotedCommaList(Utf8ToWide(argv[i]));
+            if (parsedSources.empty()) {
+                runtimeSources.push_back(Utf8ToWide(argv[i]));
+            } else {
+                for (auto& parsed : parsedSources) {
+                    runtimeSources.push_back(parsed);
+                }
+            }
+        }
+        else if (arg == "--kill-server" || arg == "-k") {
+            std::cerr << "kill-server is not supported on this platform" << std::endl;
+            return 1;
+        }
         else if (arg == "--print-scan-concurrency" && i + 1 < argc) {
             size_t n = static_cast<size_t>(std::atoll(argv[++i]));
             std::cout << ComputePlaylistScanConcurrency(n) << std::endl;
@@ -110,18 +127,71 @@ int main(int argc, char** argv) {
             std::cout << (IsRecognizedPlaylistText(path, ss.str()) ? "1" : "0") << std::endl;
             return 0;
         }
+        else if (arg == "--print-parse-quoted-comma-list" && i + 1 < argc) {
+            for (const auto& field : ParseQuotedCommaList(Utf8ToWide(argv[++i]))) {
+                std::wcout << field << std::endl;
+            }
+            return 0;
+        }
+        else if (arg == "--print-decode-legacy-pipe-sources" && i + 1 < argc) {
+            for (const auto& field : DecodeLegacyPipeDelimitedSources(Utf8ToWide(argv[++i]))) {
+                std::wcout << field << std::endl;
+            }
+            return 0;
+        }
+        else if (arg == "--print-should-start-headless" && i + 2 < argc) {
+            bool explicitFlag = std::string(argv[++i]) == "1";
+            bool hasSources = std::string(argv[++i]) == "1";
+            std::wcout << (ShouldStartHeadless(explicitFlag, hasSources) ? L"1" : L"0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-debug-log-requires-restart" && i + 2 < argc) {
+            ConfigSnapshot before{};
+            ConfigSnapshot after{};
+            before.debugLog = std::string(argv[++i]) == "1";
+            after.debugLog = std::string(argv[++i]) == "1";
+            std::vector<std::wstring> changed = DetermineSettingsRequiringRestart(before, after);
+            bool found = false;
+            for (const auto& name : changed) {
+                if (name == L"Debug Log") found = true;
+            }
+            std::wcout << (found ? L"1" : L"0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-is-supported-source-path" && i + 1 < argc) {
+            std::wcout << (IsSupportedLocalMediaOrPlaylistPath(Utf8ToWide(argv[++i])) ? L"1" : L"0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-media-sources") {
+            auto snap = AppConfig.Snapshot();
+            for (const auto& src : snap.mediaSources) {
+                std::wcout << src.path << std::endl;
+            }
+            return 0;
+        }
         else if (arg == "--debug") AppConfig.debugLog = true;
         else if (arg == "--help") { PrintUsage(argv[0]); return 0; }
-        else AppConfig.mediaSources.push_back({Utf8ToWide(arg)});
+        else runtimeSources.push_back(Utf8ToWide(arg));
     }
-    if (AppConfig.mediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
+    if (!runtimeSources.empty()) {
+        std::vector<MediaSource> overrideSources;
+        for (const auto& src : runtimeSources) {
+            overrideSources.push_back({src});
+        }
+        AppConfig.SetRuntimeSourceOverride(overrideSources);
+    }
+    if (AppConfig.mediaSources.empty() && !AppConfig.defaultPlaylistEnabled && runtimeSources.empty()) {
         PrintUsage(argv[0]);
         return 2;
     }
     std::signal(SIGPIPE, SIG_IGN);
     std::signal(SIGINT, HandleSignal);
     std::signal(SIGTERM, HandleSignal);
-    if (!DLNAServer.Start()) return 1;
+    std::wstring outReason;
+    if (!DLNAServer.Start(outReason)) {
+        std::wcerr << L"Failed to start server: " << outReason << std::endl;
+        return 1;
+    }
     while (!g_stop) std::this_thread::sleep_for(std::chrono::milliseconds(200));
     DLNAServer.Stop();
     return 0;

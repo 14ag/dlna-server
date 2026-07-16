@@ -60,4 +60,27 @@ std::vector<AlbumArtCandidate> BuildAlbumArtCandidateNames(const std::wstring& s
 std::string WideToUtf8(const std::wstring& value);
 std::wstring Utf8ToWide(const std::string& value);
 
+// new source list encoding a value is wrapped in double quotes
+// a literal double quote inside a value is written as two double quotes
+// values are separated by a single comma
+// an unquoted bare value with no comma is still accepted for one item
+std::wstring BuildQuotedCommaList(const std::vector<std::wstring>& values);
+std::vector<std::wstring> ParseQuotedCommaList(const std::wstring& text);
+
+// decodes the old pipe delimited MediaSources format from before this change
+// only used once per config file during Load if the new parser finds nothing
+// and the raw text still contains an unescaped pipe character
+std::vector<std::wstring> DecodeLegacyPipeDelimitedSources(const std::wstring& text);
+
+// every extension GetMediaFormatForExtension recognizes plus every
+// playlist extension IsPlaylistSourcePath recognizes used by both the
+// drag and drop filter and the context menu registration so the set of
+// supported extensions is defined in exactly one place
+std::vector<std::wstring> AllSupportedSourceExtensions();
+
+// true for a directory or for a file whose extension this server already
+// knows how to serve as media or already recognizes as a playlist
+// used by the source list drag and drop target to filter dropped files
+bool IsSupportedLocalMediaOrPlaylistPath(const std::wstring& path);
+
 #endif // DLNA_UTILS_H

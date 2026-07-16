@@ -40,7 +40,7 @@ BEGIN
 END
 
 // Settings Dialog
-IDD_SETTINGS DIALOGEX 0, 0, 400, 360
+IDD_SETTINGS DIALOGEX 0, 0, 400, 377
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "DLNA Server Settings"
 FONT 10, "Segoe UI", 400, 0, 0x1
@@ -63,7 +63,7 @@ BEGIN
     CONTROL         "De&fault playlist",IDC_CHK_DEFAULT_PLAYLIST,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,217,149,110,12
     PUSHBUTTON      "&Add...",IDC_BTN_DEFAULT_PLAYLIST_ADD,316,166,58,19
 
-    GROUPBOX        "&Media browsing",IDC_STATIC,10,205,380,108
+    GROUPBOX        "&Media browsing",IDC_STATIC,10,205,380,124
     CONTROL         "Add ar&tist/album folders to audio",IDC_CHK_ADD_ARTIST_ALBUM,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,227,170,12
     CONTROL         "D&o not show 'All Media' folders",IDC_CHK_HIDE_ALL_MEDIA,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,247,170,12
     CONTROL         "Sort &by title instead of file name",IDC_CHK_SORT_BY_TITLE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,267,178,12
@@ -71,9 +71,10 @@ BEGIN
     CONTROL         "Sho&w file names instead of titles",IDC_CHK_SHOW_FILE_NAMES,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,210,247,164,12
     CONTROL         "Prox&y streams",IDC_CHK_PROXY_STREAMS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,210,267,130,12
     CONTROL         "Ba&ckground scan (auto-rescan on changes)",IDC_CHK_BACKGROUND_SCAN,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,289,230,12
+    CONTROL         "Add r&ight click menu for folders and media files",IDC_CHK_CONTEXT_MENU,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,22,311,240,12
 
-    PUSHBUTTON      "Ca&ncel",IDCANCEL,264,325,58,19
-    DEFPUSHBUTTON   "O&K",IDOK,330,325,60,19
+    PUSHBUTTON      "Ca&ncel",IDCANCEL,264,341,58,19
+    DEFPUSHBUTTON   "O&K",IDOK,330,341,60,19
 END
 
 // Log Dialog

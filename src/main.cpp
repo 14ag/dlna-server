@@ -15,10 +15,14 @@
 #include "netutils.h"
 #include "network_sources.h"
 #include "server.h"
+#include "settings_restart.h"
+#include "source_drop_target.h"
+#include "startup_mode.h"
 #include "access_key_hook.h"
 #include "access_keys.h"
 #include "hover_focus_state.h"
 #include "playlist_scan_concurrency.h"
+#include "context_menu_integration.h"
 #include "cli_flags.h"
 #include "../resources/resource.h"
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
@@ -41,7 +45,7 @@ BOOL WINAPI HeadlessConsoleCtrlHandler(DWORD ctrlType) {
 
 void PrintUsage() {
     std::wcerr << L"Usage: DLNA Server.exe [--help]\n";
-    std::wcerr << L"       DLNA Server.exe [OPTIONS...] --source PATH\n";
+    std::wcerr << L"       DLNA Server.exe [OPTIONS...] --source \"pathA\",\"pathB\"\n";
     for (auto& entry : GetCliFlagTable()) {
         std::wcerr << L"  " << entry.flag << L"  " << entry.meaning << L"\n";
     }
@@ -61,6 +65,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     bool startHeadless = false;
     bool showHelp = false;
     bool debugFlag = false;
+    bool killServer = false;
     int portArg = 0;
     std::wstring runtimeName;
     std::wstring runtimeUUID;
@@ -81,7 +86,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         } else if (wcscmp(argv[i], L"--uuid") == 0 && i + 1 < argc) {
             runtimeUUID = argv[++i];
         } else if (wcscmp(argv[i], L"--source") == 0 && i + 1 < argc) {
-            runtimeSources.push_back(argv[++i]);
+            ++i;
+            std::vector<std::wstring> parsedSources = ParseQuotedCommaList(argv[i]);
+            if (parsedSources.empty()) {
+                runtimeSources.push_back(argv[i]);
+            } else {
+                for (auto& parsed : parsedSources) {
+                    runtimeSources.push_back(parsed);
+                }
+            }
+        } else if (wcscmp(argv[i], L"--kill-server") == 0 || wcscmp(argv[i], L"-k") == 0) {
+            killServer = true;
         } else if (wcscmp(argv[i], L"--debug") == 0) {
             debugFlag = true;
         } else if (wcscmp(argv[i], L"--print-scan-concurrency") == 0 && i + 1 < argc) {
@@ -149,9 +164,75 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::cout << (IsRecognizedPlaylistText(path, ss.str()) ? "1" : "0") << std::endl;
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-parse-quoted-comma-list") == 0 && i + 1 < argc) {
+            for (const auto& field : ParseQuotedCommaList(argv[++i])) {
+                std::wcout << field << std::endl;
+            }
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-decode-legacy-pipe-sources") == 0 && i + 1 < argc) {
+            for (const auto& field : DecodeLegacyPipeDelimitedSources(argv[++i])) {
+                std::wcout << field << std::endl;
+            }
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-should-start-headless") == 0 && i + 2 < argc) {
+            bool explicitFlag = wcscmp(argv[++i], L"1") == 0;
+            bool hasSources = wcscmp(argv[++i], L"1") == 0;
+            std::wcout << (ShouldStartHeadless(explicitFlag, hasSources) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-debug-log-requires-restart") == 0 && i + 2 < argc) {
+            ConfigSnapshot before{};
+            ConfigSnapshot after{};
+            before.debugLog = wcscmp(argv[++i], L"1") == 0;
+            after.debugLog = wcscmp(argv[++i], L"1") == 0;
+            std::vector<std::wstring> changed = DetermineSettingsRequiringRestart(before, after);
+            bool found = false;
+            for (const auto& name : changed) {
+                if (name == L"Debug Log") found = true;
+            }
+            std::wcout << (found ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-should-allow-source-drop") == 0 && i + 1 < argc) {
+            bool busyOrRunning = wcscmp(argv[++i], L"1") == 0;
+            std::wcout << (ShouldAllowSourceDrop(busyOrRunning) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-is-supported-source-path") == 0 && i + 1 < argc) {
+            std::wcout << (IsSupportedLocalMediaOrPlaylistPath(argv[++i]) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-media-sources") == 0) {
+            auto snap = AppConfig.Snapshot();
+            for (const auto& src : snap.mediaSources) {
+                std::wcout << src.path << std::endl;
+            }
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-context-menu-command-line") == 0 && i + 1 < argc) {
+            std::wcout << BuildContextMenuCommandLine(argv[++i]) << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-context-menu-extensions") == 0) {
+            for (const auto& ext : ContextMenuTargetExtensions()) {
+                std::wcout << ext << std::endl;
+            }
+            LocalFree(argv);
+            return 0;
         } else {
             runtimeSources.push_back(argv[i]);
         }
+    }
+
+    if (killServer) {
+        LocalFree(argv);
+        HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
+        if (hwndExisting) {
+            PostMessageW(hwndExisting, MainWindow::WM_REQUEST_SHUTDOWN, 0, 0);
+        }
+        return 0;
     }
 
     if (showHelp) {
@@ -175,9 +256,26 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (!runtimeName.empty()) AppConfig.serverName = runtimeName;
     if (!runtimeUUID.empty()) AppConfig.deviceUUID = runtimeUUID;
     if (debugFlag) AppConfig.debugLog = true;
-    for (const auto& src : runtimeSources) {
-        AppConfig.mediaSources.push_back({src});
+    if (!runtimeSources.empty()) {
+        HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
+        if (hwndExisting) {
+            std::wstring payload = BuildQuotedCommaList(runtimeSources);
+            COPYDATASTRUCT cds{};
+            cds.dwData = MainWindow::kCopyDataSourceReplace;
+            cds.cbData = static_cast<DWORD>((payload.size() + 1) * sizeof(wchar_t));
+            cds.lpData = const_cast<wchar_t*>(payload.c_str());
+            SendMessageW(hwndExisting, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds));
+            LocalFree(argv);
+            return 0;
+        }
+        std::vector<MediaSource> overrideSources;
+        for (const auto& src : runtimeSources) {
+            overrideSources.push_back({src});
+        }
+        AppConfig.SetRuntimeSourceOverride(overrideSources);
     }
+
+    startHeadless = ShouldStartHeadless(startHeadless, !runtimeSources.empty());
 
     LocalFree(argv);
 
