@@ -462,10 +462,15 @@ private:
             m_status.copy_label("stopping server...");
             m_startStopButton.deactivate();
         } else if (m_state == ServerUiState::Running) {
-            const std::string endpoint = ToUtf8(DLNAServer.GetEndpoint());
-            const std::string label = DLNAServer.IsInitialScanInProgress()
-                ? ("DLNA Server is running on " + endpoint + " (scanning...)")
-                : ("DLNA Server is running on " + endpoint);
+            std::string label;
+            if (AppConfig.HasRuntimeSourceOverride()) {
+                label = "temporary source";
+            } else {
+                const std::string endpoint = ToUtf8(DLNAServer.GetEndpoint());
+                label = DLNAServer.IsInitialScanInProgress()
+                    ? ("DLNA Server is running on " + endpoint + " (scanning...)")
+                    : ("DLNA Server is running on " + endpoint);
+            }
             m_status.copy_label(label.c_str());
             m_startStopButton.copy_label("Stop");
             m_startStopButton.tooltip("Stop server");
