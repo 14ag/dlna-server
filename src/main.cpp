@@ -315,22 +315,36 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     LocalFree(argv);
 
     // Check for single instance
+    // CreateMutexW with bInitialOwner=TRUE returns ERROR_ALREADY_EXISTS
+    // even when the previous owner has terminated (abandoned mutex).
+    // Without the WAIT_ABANDONED_0 check below, a killed/crashed process
+    // permanently prevents any new instance from starting until the zombie
+    // process is manually killed. See workflow: stale-mutex-remediation.
     HANDLE hMutex = CreateMutexW(NULL, TRUE, L"dlna-server_SingleInstance_Mutex");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        // Ask the existing instance to restore itself through
-        // MainWindow::RestoreAndFocusMainWindow (see mainwindow.cpp), which
-        // is the only code path that clears WS_EX_TOOLWINDOW when the
-        // running instance was originally started with --headless. Do NOT
-        // call ShowWindow/SetForegroundWindow directly here: this process
-        // cannot call methods on the other process's MainWindow instance,
-        // and skipping that code path is what left the window with a
-        // permanently "lite" frame (no icon, no min/max buttons, tiny
-        // close button) in the original bug.
-        HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
-        if (hwndExisting) {
-            PostMessageW(hwndExisting, MainWindow::WM_SHOW_EXISTING_INSTANCE, 0, 0);
+        DWORD waitResult = WaitForSingleObject(hMutex, 0);
+        if (waitResult != WAIT_ABANDONED_0) {
+            // Ask the existing instance to restore itself through
+            // MainWindow::RestoreAndFocusMainWindow (see mainwindow.cpp), which
+            // is the only code path that clears WS_EX_TOOLWINDOW when the
+            // running instance was originally started with --headless. Do NOT
+            // call ShowWindow/SetForegroundWindow directly here: this process
+            // cannot call methods on the other process's MainWindow instance,
+            // and skipping that code path is what left the window with a
+            // permanently "lite" frame (no icon, no min/max buttons, tiny
+            // close button) in the original bug.
+            HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
+            if (hwndExisting) {
+                PostMessageW(hwndExisting, MainWindow::WM_SHOW_EXISTING_INSTANCE, 0, 0);
+            }
+            return 0;
         }
-        return 0;
+        // WAIT_ABANDONED_0: previous instance terminated without releasing
+        // mutex. We now own it; continue with startup.
+        ReleaseMutex(hMutex);
+        // Re-acquire with WaitForSingleObject so the abandoned state is
+        // cleared and normal ownership semantics apply going forward.
+        WaitForSingleObject(hMutex, INFINITE);
     }
 
     // Attach console for headless mode output
