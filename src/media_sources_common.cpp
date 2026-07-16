@@ -144,7 +144,7 @@ void MediaSources::Scan() {
     };
     std::vector<SourceJob> jobs;
 
-    for (const auto& src : cfg.mediaSources) {
+    for (const auto& src : cfg.effectiveMediaSources) {
         if (IsRemovedSmbSourcePath(src.path)) {
             LogPrint(L"[media:smb-removed] SMB media sources are no longer supported; skipping: %ls",
                      RedactUrlForLog(src.path).c_str());
@@ -165,7 +165,7 @@ void MediaSources::Scan() {
         jobs.push_back({ctx, src, containerId});
     }
 
-    if (cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty() && DefaultPlaylistFileExists(cfg.defaultPlaylistPath)) {
+    if (!cfg.hasRuntimeSourceOverride && cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty() && DefaultPlaylistFileExists(cfg.defaultPlaylistPath)) {
         const int containerId = PublishContainer(database.get(), 0, L"Default playlist", cfg.defaultPlaylistPath, g_canonicalize);
         auto ctx = std::make_shared<PlaylistScanContext>();
         ctx->cfg = cfg;

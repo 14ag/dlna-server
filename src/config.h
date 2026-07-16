@@ -39,6 +39,11 @@ struct ConfigSnapshot {
     // equals mediaSources unless a CLI supplied runtime override is active
     // never written by Save and never read by Load
     std::vector<MediaSource> effectiveMediaSources;
+    // true iff effectiveMediaSources came from a runtime CLI override rather
+    // than from mediaSources. Lets consumers (Scan, Start, the source
+    // watcher) branch on override state without re-deriving it by comparing
+    // the two vectors above.
+    bool hasRuntimeSourceOverride = false;
 };
 
 class Config {

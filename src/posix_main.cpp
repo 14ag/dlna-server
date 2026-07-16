@@ -50,13 +50,17 @@ int main(int argc, char** argv) {
         else if (arg == "--source" && i + 1 < argc) {
             ++i;
             std::vector<std::wstring> parsedSources = ParseQuotedCommaList(Utf8ToWide(argv[i]));
+            std::vector<MediaSource> immediateOverride;
             if (parsedSources.empty()) {
                 runtimeSources.push_back(Utf8ToWide(argv[i]));
+                immediateOverride.push_back({Utf8ToWide(argv[i])});
             } else {
                 for (auto& parsed : parsedSources) {
                     runtimeSources.push_back(parsed);
+                    immediateOverride.push_back({parsed});
                 }
             }
+            AppConfig.SetRuntimeSourceOverride(immediateOverride);
         }
         else if (arg == "--kill-server" || arg == "-k") {
             std::cerr << "kill-server is not supported on this platform" << std::endl;
@@ -167,6 +171,50 @@ int main(int argc, char** argv) {
             for (const auto& src : snap.mediaSources) {
                 std::wcout << src.path << std::endl;
             }
+            return 0;
+        }
+        else if (arg == "--print-effective-media-sources") {
+            // Reflects effectiveMediaSources, i.e. what Scan() will actually
+            // publish for this process's current state. Differs from
+            // --print-media-sources whenever --source appeared earlier in
+            // argv than this flag (argument order matters: --source must be
+            // parsed first to install the override before this flag runs).
+            auto snap = AppConfig.Snapshot();
+            for (const auto& src : snap.effectiveMediaSources) {
+                std::wcout << src.path << std::endl;
+            }
+            return 0;
+        }
+        else if (arg == "--print-clear-override-then-effective") {
+            AppConfig.ClearRuntimeSourceOverride();
+            auto snap = AppConfig.Snapshot();
+            for (const auto& src : snap.effectiveMediaSources) {
+                std::wcout << src.path << std::endl;
+            }
+            return 0;
+        }
+        else if (arg == "--print-source-override-lifecycle" && i + 1 < argc) {
+            std::vector<std::wstring> parsedSources = ParseQuotedCommaList(Utf8ToWide(argv[++i]));
+            std::vector<MediaSource> overrideSources;
+            for (auto& parsed : parsedSources) {
+                if (!parsed.empty()) overrideSources.push_back({parsed});
+            }
+            AppConfig.SetRuntimeSourceOverride(overrideSources);
+
+            std::wstring reason;
+            if (!DLNAServer.Start(reason)) {
+                std::wcerr << L"start1 failed: " << reason << std::endl;
+                return 1;
+            }
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            std::wcout << L"--override-active--" << std::endl;
+            for (auto& s : AppConfig.Snapshot().effectiveMediaSources) std::wcout << s.path << std::endl;
+
+            DLNAServer.Stop();
+            std::wcout << L"--after-stop--" << std::endl;
+            for (auto& s : AppConfig.Snapshot().effectiveMediaSources) std::wcout << s.path << std::endl;
             return 0;
         }
         else if (arg == "--debug") AppConfig.debugLog = true;

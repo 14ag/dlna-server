@@ -70,6 +70,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     std::wstring runtimeUUID;
     std::vector<std::wstring> runtimeSources;
 
+    AppConfig.Load();
+
     for (int i = 1; i < argc; ++i) {
         if (wcscmp(argv[i], L"--configure-firewall") == 0) {
             configureFirewall = true;
@@ -87,13 +89,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         } else if (wcscmp(argv[i], L"--source") == 0 && i + 1 < argc) {
             ++i;
             std::vector<std::wstring> parsedSources = ParseQuotedCommaList(argv[i]);
+            std::vector<MediaSource> immediateOverride;
             if (parsedSources.empty()) {
                 runtimeSources.push_back(argv[i]);
+                immediateOverride.push_back({argv[i]});
             } else {
                 for (auto& parsed : parsedSources) {
                     runtimeSources.push_back(parsed);
+                    immediateOverride.push_back({parsed});
                 }
             }
+            // Apply immediately so subsequent --print-* hooks in this same
+            // argv see the override; post-loop application below is kept
+            // for the non-print normal-Start path and is idempotent here.
+            AppConfig.SetRuntimeSourceOverride(immediateOverride);
         } else if (wcscmp(argv[i], L"--kill-server") == 0 || wcscmp(argv[i], L"-k") == 0) {
             killServer = true;
         } else if (wcscmp(argv[i], L"--debug") == 0) {
@@ -210,6 +219,46 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-effective-media-sources") == 0) {
+            auto snap = AppConfig.Snapshot();
+            for (const auto& src : snap.effectiveMediaSources) {
+                std::wcout << src.path << std::endl;
+            }
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-clear-override-then-effective") == 0) {
+            AppConfig.ClearRuntimeSourceOverride();
+            auto snap = AppConfig.Snapshot();
+            for (const auto& src : snap.effectiveMediaSources) {
+                std::wcout << src.path << std::endl;
+            }
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-source-override-lifecycle") == 0 && i + 1 < argc) {
+            std::vector<std::wstring> parsedSources = ParseQuotedCommaList(argv[++i]);
+            std::vector<MediaSource> overrideSources;
+            for (auto& parsed : parsedSources) {
+                if (!parsed.empty()) overrideSources.push_back({parsed});
+            }
+            AppConfig.SetRuntimeSourceOverride(overrideSources);
+
+            std::wstring reason;
+            if (!DLNAServer.Start(reason)) {
+                std::wcerr << L"start1 failed: " << reason << std::endl;
+                LocalFree(argv);
+                return 1;
+            }
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            std::wcout << L"--override-active--" << std::endl;
+            for (auto& s : AppConfig.Snapshot().effectiveMediaSources) std::wcout << s.path << std::endl;
+
+            DLNAServer.Stop();
+            std::wcout << L"--after-stop--" << std::endl;
+            for (auto& s : AppConfig.Snapshot().effectiveMediaSources) std::wcout << s.path << std::endl;
+            LocalFree(argv);
+            return 0;
         } else {
             runtimeSources.push_back(argv[i]);
         }
@@ -237,9 +286,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         std::wstring message;
         return ConfigureFirewallAccessElevated(port, message) ? 0 : 1;
     }
-
-    // Load config, then apply CLI overrides on top
-    AppConfig.Load();
 
     if (portArg > 0 && portArg <= 65535) AppConfig.port = portArg;
     if (!runtimeName.empty()) AppConfig.serverName = runtimeName;

@@ -6,6 +6,7 @@
 #include "source_drop_target.h"
 #include "source_list_focus.h"
 #include "hover_focus_state.h"
+#include "config.h"
 #include <string>
 #include <thread>
 #include <atomic>
@@ -76,7 +77,15 @@ private:
     void BeginStartServer();
     void BeginStopServer();
     void BeginRestartServer();
+    // Interrupts a running session to serve a newly-arrived --source
+    // override: stops the server (which also clears any prior override,
+    // see Server::Stop()), installs the new override, then starts again.
+    // No-op if the server is not currently running -- callers should use
+    // AppConfig.SetRuntimeSourceOverride() + RefreshSourceList() directly
+    // for the not-running case, since there is nothing to interrupt.
+    void BeginSourceOverrideRestart(std::vector<MediaSource> overrideSources);
     void CompleteServerOperation(ServerUiState finalState, const std::wstring& endpoint, bool success, const std::wstring& message);
+    bool IsShowingOverrideSources() const;
     bool IsBusy() const;
     bool IsRunning() const;
     void UpdateWakeLock();

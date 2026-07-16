@@ -521,6 +521,7 @@ void MainWindow::SetStatus(ServerUiState state, const std::wstring& endpoint) {
     SetControlsForState();
     UpdateWakeLock();
     RefreshToolbarMnemonics();
+    RefreshSourceList();
     InvalidateRect(m_hwnd, NULL, TRUE);
 }
 
@@ -530,6 +531,16 @@ bool MainWindow::IsBusy() const {
 
 bool MainWindow::IsRunning() const {
     return m_state == ServerUiState::Running;
+}
+
+bool MainWindow::IsShowingOverrideSources() const {
+    // An override is only "being served" once the server that would serve
+    // it is actually running. If an override was set on a stopped instance
+    // (see the WM_COPYDATA not-running branch in Phase 3) the listbox must
+    // keep showing config.ini's list until Start() actually picks the
+    // override up -- otherwise the list and the Add/Delete affordances
+    // would desync from what a subsequent manual Start() would do.
+    return AppConfig.HasRuntimeSourceOverride() && IsRunning();
 }
 
 void MainWindow::UpdateWakeLock() {
@@ -610,6 +621,35 @@ void MainWindow::BeginRestartServer() {
             ok,
             ok ? DLNAServer.GetEndpoint() : L"",
             ok ? L"" : message.c_str()
+        };
+        PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+    });
+}
+
+void MainWindow::BeginSourceOverrideRestart(std::vector<MediaSource> overrideSources) {
+    if (IsBusy()) return;
+    if (m_worker.joinable()) m_worker.join();
+    SetStatus(ServerUiState::Stopping, m_statusEndpoint);
+    HWND target = m_hwnd;
+    m_worker = std::thread([target, overrideSources = std::move(overrideSources)]() {
+        DLNAServer.Stop();
+        // Set the NEW override only after Stop() has fully run, since
+        // Stop() unconditionally clears whatever override was active
+        // (Phase 2). Setting it before Stop() would have it wiped.
+        AppConfig.SetRuntimeSourceOverride(overrideSources);
+        PostMessageW(target, WM_SERVER_OPERATION_PROGRESS, static_cast<WPARAM>(ServerUiState::Starting), 0);
+        std::wstring reason;
+        bool ok = DLNAServer.Start(reason);
+        std::wstring message;
+        if (!ok) {
+            message = L"server could not start\n";
+            if (!reason.empty()) message += reason;
+        }
+        ServerOperationResult* result = new ServerOperationResult{
+            ok ? ServerUiState::Running : ServerUiState::Stopped,
+            ok,
+            ok ? DLNAServer.GetEndpoint() : L"",
+            ok ? L"" : message
         };
         PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
     });
@@ -710,7 +750,10 @@ void MainWindow::RestoreAndFocusMainWindow() {
 
 void MainWindow::RefreshSourceList() {
     SendMessage(m_hListSources, LB_RESETCONTENT, 0, 0);
-    for (const auto& src : AppConfig.mediaSources) {
+    const std::vector<MediaSource> displayed = IsShowingOverrideSources()
+        ? AppConfig.GetRuntimeSourceOverride()
+        : AppConfig.mediaSources;
+    for (const auto& src : displayed) {
         SendMessageW(m_hListSources, LB_ADDSTRING, 0, (LPARAM)src.path.c_str());
     }
     UpdateDeleteButton();
@@ -725,7 +768,8 @@ int MainWindow::SelectedSourceIndex() const {
 void MainWindow::UpdateDeleteButton() {
     if (!m_hBtnDelete) return;
     const bool hasSelection = !m_focusState.IsNoFocus();
-    const bool deletionAllowed = hasSelection && !IsBusy() && !m_scanInProgress.load();
+    const bool deletionAllowed = hasSelection && !IsBusy() && !m_scanInProgress.load()
+        && !IsShowingOverrideSources();
     EnableWindow(m_hBtnDelete, deletionAllowed ? TRUE : FALSE);
 }
 
@@ -796,7 +840,7 @@ void MainWindow::UpdateControlFocus(int controlId, bool gained) {
 }
 
 void MainWindow::RemoveSelectedSource() {
-    if (IsBusy() || m_scanInProgress.load()) {
+    if (IsBusy() || m_scanInProgress.load() || IsShowingOverrideSources()) {
         return;
     }
 
@@ -1225,9 +1269,22 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             for (const auto& path : paths) {
                 if (!path.empty()) overrideSources.push_back({path});
             }
-            AppConfig.SetRuntimeSourceOverride(overrideSources);
+            if (IsBusy()) {
+                // A start/stop/restart is already in flight for this
+                // instance; drop this request rather than racing it. The
+                // second process that sent this message simply gets no
+                // effect -- matches the existing guard pattern used by
+                // BeginStartServer/BeginStopServer/BeginRestartServer.
+                return TRUE;
+            }
             if (DLNAServer.IsRunning()) {
-                std::thread([]() { DLNAServer.Rescan(); }).detach();
+                BeginSourceOverrideRestart(std::move(overrideSources));
+            } else {
+                // Nothing is being served yet; there is no session to
+                // interrupt. Just install the override so the next manual
+                // Start() picks it up (Phase 1's effectiveMediaSources).
+                AppConfig.SetRuntimeSourceOverride(overrideSources);
+                RefreshSourceList();
             }
         }
         return TRUE;
