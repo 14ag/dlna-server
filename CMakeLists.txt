@@ -49,6 +49,7 @@ set(SOURCES
          src/bounded_thread_pool.cpp
          src/playlist_scan_concurrency.cpp
          src/media_sources_common.cpp
+         src/scan_cancellation.cpp
          src/fs_backend_win32.cpp
          src/settings_restart.cpp
          src/modal_focus.cpp
@@ -88,6 +89,7 @@ set(HEADERS
          src/settings_restart.h
          src/source_list_focus.h
          src/hover_focus_state.h
+         src/scan_cancellation.h
          src/input_gate.h
          src/modal_focus.h
          src/config.h
@@ -130,6 +132,7 @@ add_library(dlna_core STATIC
          src/posix_httpserver.cpp
          src/http_common.cpp
          src/media_sources_common.cpp
+         src/scan_cancellation.cpp
          src/fs_backend_posix.cpp
          src/posix_netutils.cpp
          src/posix_config.cpp
@@ -298,8 +301,9 @@ if(DLNA_BUILD_TESTS)
             src/source_watcher.cpp
             src/media_database.cpp
 src/media_scan_common.cpp
-         src/media_sources_common.cpp
-         src/bounded_thread_pool.cpp
+          src/media_sources_common.cpp
+          src/scan_cancellation.cpp
+          src/bounded_thread_pool.cpp
             src/playlist_scan_concurrency.cpp
         )
         target_link_libraries(dlna-test PRIVATE dlna_core GTest::gtest_main)
