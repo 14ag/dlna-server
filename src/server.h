@@ -44,10 +44,12 @@ private:
     std::wstring m_endpoint;
     std::vector<NetworkEndpoint> m_endpoints;
     std::thread m_scanThread;
+    std::thread m_scanCompletionThread;
     std::thread m_watchThread;
     std::mutex m_scanMutex;
     std::mutex m_rescanMutex;
     mutable std::mutex m_endpointMutex;
+    std::mutex m_watchThreadMutex;
     std::mutex m_watchMutex;
     std::condition_variable m_watchCv;
     std::atomic<bool> m_stopWatch;

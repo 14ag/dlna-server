@@ -148,6 +148,7 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     if (m_running.load()) return true;
     m_endpoints = endpoints;
     m_uuidStr = WideToUtf8(uuid);
+    m_targets = BuildAdvertisedTargets(m_uuidStr);
     m_bootId = static_cast<unsigned int>(time(nullptr));
     m_configId = 1;
     m_ipv4Socket = CreateIPv4Socket(m_endpoints);
@@ -199,7 +200,7 @@ void SSDP::SendNotifyRound(const char* nts) {
             continue;
         }
 
-        for (const auto& target : BuildAdvertisedTargets(m_uuidStr)) {
+        for (const auto& target : m_targets) {
             std::stringstream ss;
             ss << "NOTIFY * HTTP/1.1\r\n"
                << "HOST: " << hostHeader << "\r\n";
@@ -308,7 +309,7 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
     const NetworkEndpoint* endpoint = SelectBestEndpoint(m_endpoints, remoteAddr);
     if (!endpoint || endpoint->family != remoteAddr->sa_family) return;
 
-    std::vector<SSDPTarget> targets = BuildAdvertisedTargets(m_uuidStr);
+    const std::vector<SSDPTarget>& targets = m_targets;
     std::vector<SSDPTarget> responses;
     if (ToLowerAscii(st) == "ssdp:all") {
         responses = targets;

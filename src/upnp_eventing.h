@@ -64,6 +64,12 @@ private:
     std::mutex m_mutex;
     std::condition_variable m_cv;
     std::unordered_map<std::string, Subscription> m_subscriptions;
+    // Mirrors m_subscriptions.size(), updated under m_mutex at every point
+    // m_subscriptions is mutated. Read with no lock from
+    // NotifySystemUpdateId() so a scan publishing thousands of items while
+    // nobody is subscribed does not pay for m_mutex at all. See Task 6 of
+    // dlna-server-concurrency-memory-fix-workflow-17-7-26.md.
+    std::atomic<size_t> m_subscriberCount{0};
     std::deque<NotifyJob> m_queue;
     std::thread m_worker;
     bool m_stopping = false;
@@ -73,7 +79,12 @@ private:
     // that is already the hard cap on how many jobs could ever be in
     // flight at once in the worst case (one per subscriber).
     std::unique_ptr<BoundedThreadPool> m_notifyPool;
-    int m_lastSystemUpdateId = 1;
+    // Atomic, not plain int: NotifySystemUpdateId()'s fast path (see Task 6
+    // of dlna-server-concurrency-memory-fix-workflow-17-7-26.md) writes
+    // this with no lock held whenever there are zero subscribers, so every
+    // other read/write of this field must also go through the atomic
+    // interface, never direct assignment.
+    std::atomic<int> m_lastSystemUpdateId{1};
     unsigned long long m_generation = 0;
     // GENA notify moderation (leading-edge-plus-trailing-edge debounce): a
     // publish burst dispatches its first update immediately, then coalesces

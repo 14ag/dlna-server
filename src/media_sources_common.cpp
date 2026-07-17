@@ -10,6 +10,7 @@
 #include "task_group.h"
 #include "upnp_eventing.h"
 #include <shared_mutex>
+#include <thread>
 #include <algorithm>
 #include <ctime>
 #include <functional>
@@ -23,6 +24,10 @@
 namespace {
 
 constexpr const wchar_t* kScanDepthLogCode = L"[media:scan-depth]";
+// Initial reserve for MediaSources::m_items, set in ResetForRescan. See
+// Task 7 of dlna-server-concurrency-memory-fix-workflow-17-7-26.md for why
+// this exists and why it is a mitigation, not a full fix.
+constexpr size_t kInitialCatalogReserve = 4096;
 
 bool DefaultPlaylistFileExists(const std::wstring& path) {
     return FsIsRegularFile(path);
@@ -63,7 +68,6 @@ std::wstring NameOfPath(const std::wstring& path) {
 
 void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
     if (IsRemoteMediaUrl(item.path)) return;
-    std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
     std::wstring folder = item.path;
     size_t slash = folder.find_last_of(L"\\/");
     folder = slash == std::wstring::npos ? L"." : folder.substr(0, slash);
@@ -72,45 +76,80 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
     std::wstring stem = SourceStemName(fileName);
     const std::wstring stemKey = folder + L"\n" + stem;
 
-    auto stemCached = state.perStemAlbumArt.find(stemKey);
-    if (stemCached != state.perStemAlbumArt.end()) {
-        item.albumArtPath = stemCached->second.first;
-        item.albumArtMime = stemCached->second.second;
-        return;
+    bool stemCacheKnown = false;
+    std::pair<std::wstring, std::wstring> stemCacheValue;
+    bool folderCacheKnown = false;
+    std::pair<std::wstring, std::wstring> folderCacheValue;
+    {
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        auto stemCached = state.perStemAlbumArt.find(stemKey);
+        if (stemCached != state.perStemAlbumArt.end()) {
+            stemCacheKnown = true;
+            stemCacheValue = stemCached->second;
+        }
+        auto folderCached = state.folderAlbumArt.find(folder);
+        if (folderCached != state.folderAlbumArt.end()) {
+            folderCacheKnown = true;
+            folderCacheValue = folderCached->second;
+        }
     }
 
-    std::vector<AlbumArtCandidate> perStemCandidates = {
-        { stem + L".jpg", L"image/jpeg" },
-        { stem + L".jpeg", L"image/jpeg" },
-        { stem + L".png", L"image/png" },
-    };
-    for (const auto& candidate : perStemCandidates) {
-        std::wstring candidatePath = folder + L"\\" + candidate.fileName;
-        if (FsIsRegularFile(candidatePath)) {
-            item.albumArtPath = candidatePath;
-            item.albumArtMime = candidate.mimeType;
-            state.perStemAlbumArt[stemKey] = { item.albumArtPath, item.albumArtMime };
+    if (stemCacheKnown) {
+        if (!stemCacheValue.first.empty()) {
+            item.albumArtPath = stemCacheValue.first;
+            item.albumArtMime = stemCacheValue.second;
+            return;
+        }
+    } else {
+        // No lock held for these stat calls: concurrent scan workers in
+        // the same PlaylistScanContext must not be serialized on
+        // filesystem I/O latency here. See SEI CERT CON05-C/POS52-C.
+        std::vector<AlbumArtCandidate> perStemCandidates = {
+            { stem + L".jpg", L"image/jpeg" },
+            { stem + L".jpeg", L"image/jpeg" },
+            { stem + L".png", L"image/png" },
+        };
+        for (const auto& candidate : perStemCandidates) {
+            std::wstring candidatePath = folder + L"\\" + candidate.fileName;
+            if (FsIsRegularFile(candidatePath)) {
+                stemCacheValue = { candidatePath, candidate.mimeType };
+                break;
+            }
+        }
+        // Another worker may have written this same cache key while this
+        // worker was doing the unlocked stat calls above. The write below
+        // is idempotent (the same folder/stem always resolves to the same
+        // result), so an overwrite here is harmless: it only means two
+        // workers each paid the stat cost once instead of one waiting on
+        // the other.
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        state.perStemAlbumArt[stemKey] = stemCacheValue;
+        if (!stemCacheValue.first.empty()) {
+            item.albumArtPath = stemCacheValue.first;
+            item.albumArtMime = stemCacheValue.second;
             return;
         }
     }
-    state.perStemAlbumArt[stemKey] = { L"", L"" };
 
-    auto folderCached = state.folderAlbumArt.find(folder);
-    if (folderCached != state.folderAlbumArt.end()) {
-        item.albumArtPath = folderCached->second.first;
-        item.albumArtMime = folderCached->second.second;
+    if (folderCacheKnown) {
+        item.albumArtPath = folderCacheValue.first;
+        item.albumArtMime = folderCacheValue.second;
         return;
     }
+
     for (const auto& candidate : BuildAlbumArtCandidateNames(L"")) {
         std::wstring candidatePath = folder + L"\\" + candidate.fileName;
         if (FsIsRegularFile(candidatePath)) {
-            item.albumArtPath = candidatePath;
-            item.albumArtMime = candidate.mimeType;
-            state.folderAlbumArt[folder] = { item.albumArtPath, item.albumArtMime };
-            return;
+            folderCacheValue = { candidatePath, candidate.mimeType };
+            break;
         }
     }
-    state.folderAlbumArt[folder] = { L"", L"" };
+    {
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        state.folderAlbumArt[folder] = folderCacheValue;
+    }
+    item.albumArtPath = folderCacheValue.first;
+    item.albumArtMime = folderCacheValue.second;
 }
 
 } // namespace
@@ -136,6 +175,7 @@ void MediaSources::Scan() {
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     auto database = std::make_shared<MediaDatabase>();
     database->Load(MediaDatabase::DefaultDatabasePath());
+    database->BeginScanPass();
 
     struct SourceJob {
         std::shared_ptr<PlaylistScanContext> ctx;
@@ -173,11 +213,22 @@ void MediaSources::Scan() {
         jobs.push_back({ctx, MediaSource{cfg.defaultPlaylistPath}, containerId});
     }
 
-    TaskGroup sourceGroup;
+    // Each top-level source job runs on its own dedicated thread, never on
+    // PlaylistScanPool. RunPlaylistDispatcher (reached via ScanPlaylistTree,
+    // called directly here or indirectly from ScanFolder/ScanNetworkFolder
+    // when they discover a nested playlist) submits leaf ScanOnePlaylistNode
+    // tasks onto PlaylistScanPool and blocks waiting for them. If the job
+    // that is doing that blocking were itself a PlaylistScanPool task, a
+    // config with enough concurrently-blocked source jobs (>= the pool's
+    // fixed worker count, or fewer sources each containing a nested
+    // playlist) would leave zero pool workers free to ever run the leaf
+    // tasks being waited on -- a permanent deadlock. See Task 9 of
+    // dlna-server-concurrency-memory-fix-workflow-17-7-26.md and SEI CERT
+    // TPS01-J. Do not change this back to PlaylistScanPool::Get().Submit(...).
+    std::vector<std::thread> sourceThreads;
+    sourceThreads.reserve(jobs.size());
     for (auto& job : jobs) {
-        sourceGroup.Enter();
-        PlaylistScanPool::Get().Submit([this, &job, &sourceGroup]() {
-            TaskGroupLeaveGuard leave(sourceGroup);
+        sourceThreads.emplace_back([this, &job]() {
             LogPrint(L"Scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
             if (IsPlaylistSourcePath(job.source.path)) {
                 ScanPlaylistTree(job.ctx, job.source.path, job.containerId);
@@ -189,10 +240,17 @@ void MediaSources::Scan() {
             LogPrint(L"Finished scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
         });
     }
-    sourceGroup.Wait();
+    for (auto& sourceThread : sourceThreads) {
+        sourceThread.join();
+    }
 
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
     AppEvents.NotifySystemUpdateId(newUpdateId);
+    const size_t prunedRecordCount = database->PruneUntouched();
+    if (prunedRecordCount > 0) {
+        LogPrint(L"Pruned %zu stale media-cache record(s) not present in this scan pass.",
+                 prunedRecordCount);
+    }
     if (!database->Save(MediaDatabase::DefaultDatabasePath())) {
         LogPrint(L"Media database save failed: %ls", MediaDatabase::DefaultDatabasePath().c_str());
     }
@@ -526,16 +584,14 @@ MediaSources::GetChildrenResult MediaSources::TryGetChildren(int objId, std::vec
 }
 
 std::vector<MediaItem> MediaSources::GetDescendants(int parentId) {
-    std::vector<MediaItem> items;
-    std::unordered_map<int, std::vector<size_t>> childrenByParent;
-    {
-        std::shared_lock<std::shared_mutex> lock(m_mutex);
-        items = m_items;
-        childrenByParent = m_childrenByParent;
-    }
-
+    // Read AppConfig's own setting before taking m_mutex, not while holding
+    // it: AppConfig.IsSortByTitleEnabled() takes Config's own separate
+    // mutex, and there is no reason to hold two unrelated locks
+    // simultaneously for longer than necessary.
+    const bool sortByTitle = AppConfig.IsSortByTitleEnabled();
     std::vector<MediaItem> result;
-    AppendDescendants(items, childrenByParent, parentId, AppConfig.IsSortByTitleEnabled(), result);
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    AppendDescendants(m_items, m_childrenByParent, parentId, sortByTitle, result);
     return result;
 }
 
@@ -571,6 +627,15 @@ void MediaSources::ResetForRescan() {
         m_items.clear();
         m_idToIndex.clear();
         m_childrenByParent.clear();
+        // Reserving up front does not remove the possibility of a
+        // reallocation-while-locked stall for a library larger than this
+        // capacity (std::vector growth is only amortized O(1), a single
+        // triggering push is not O(1)), it only pushes the first
+        // reallocation past the common case. A structural fix (switching
+        // m_items to a container that never invalidates existing element
+        // storage on growth, e.g. std::deque) is a larger change that also
+        // touches m_idToIndex's index scheme and is out of scope here.
+        m_items.reserve(kInitialCatalogReserve);
 
         MediaItem root{};
         root.id = 0;

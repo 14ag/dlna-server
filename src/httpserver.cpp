@@ -49,6 +49,8 @@ struct ScopedHandle {
     ~ScopedHandle() {
         if (valid()) CloseHandle(handle);
     }
+    ScopedHandle(const ScopedHandle&) = delete;
+    ScopedHandle& operator=(const ScopedHandle&) = delete;
     bool valid() const { return handle != INVALID_HANDLE_VALUE && handle != NULL; }
     HANDLE get() const { return handle; }
 

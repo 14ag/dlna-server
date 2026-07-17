@@ -104,14 +104,22 @@ void Server::JoinBackgroundScan() {
 void Server::StartWatchMode() {
     StopWatchMode();
     m_stopWatch.store(false);
+    std::lock_guard<std::mutex> lock(m_watchThreadMutex);
     m_watchThread = std::thread(&Server::WatchLoop, this);
 }
 
 void Server::StopWatchMode() {
     m_stopWatch.store(true);
     m_watchCv.notify_all();
-    if (m_watchThread.joinable()) {
-        m_watchThread.join();
+    std::thread threadToJoin;
+    {
+        std::lock_guard<std::mutex> lock(m_watchThreadMutex);
+        if (m_watchThread.joinable()) {
+            threadToJoin = std::move(m_watchThread);
+        }
+    }
+    if (threadToJoin.joinable()) {
+        threadToJoin.join();
     }
 }
 
@@ -248,12 +256,17 @@ bool Server::Start(std::wstring& outReason) {
     // Do not JoinBackgroundScan() here: Start() must return once the device is
     // advertised, not once the library is fully indexed. The scan continues on
     // m_scanThread; StartWatchMode() begins after Start() returns via a small
-    // completion hook below.
-    std::thread([this]() {
+    // completion hook below. This hook thread is stored in
+    // m_scanCompletionThread and joined at the top of Stop(), never
+    // detached, so it can never outlive this singleton.
+    if (m_scanCompletionThread.joinable()) {
+        m_scanCompletionThread.join();
+    }
+    m_scanCompletionThread = std::thread([this]() {
         JoinBackgroundScan();
         m_initialScanInProgress.store(false, std::memory_order_release);
         StartWatchMode();
-    }).detach();
+    });
     return true;
 }
 
@@ -283,6 +296,16 @@ void Server::Stop() {
     m_stopping.store(true, std::memory_order_release);
     
     LogPrint(L"Stopping server");
+
+    // Join the post-scan completion hook (see Start()) before anything
+    // else. That hook calls StartWatchMode() as its last step; joining it
+    // here guarantees StartWatchMode() has either already run or will
+    // never run before StopWatchMode() below executes, so there is no
+    // window where StopWatchMode() finds no watch thread yet, returns,
+    // and then StartWatchMode() creates one that nothing will ever stop.
+    if (m_scanCompletionThread.joinable()) {
+        m_scanCompletionThread.join();
+    }
 
     StopWatchMode();
     SSDP::Get().Stop();

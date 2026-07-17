@@ -46,6 +46,14 @@ struct ConfigSnapshot {
     bool hasRuntimeSourceOverride = false;
 };
 
+struct DeviceDescriptionConfig {
+    std::wstring deviceUUID;
+    std::wstring serverName;
+    std::wstring deviceManufacturer;
+    std::wstring deviceModelName;
+    std::wstring presentationUrl;
+};
+
 class Config {
 public:
     static Config& Get();
@@ -53,6 +61,15 @@ public:
     void Load();
     void Save();
     ConfigSnapshot Snapshot() const;
+
+    // Lightweight alternative to Snapshot() for callers (such as
+    // ContentDirectory::GetDeviceDescriptionXML, invoked on every
+    // /description.xml request) that only need these five fields and must
+    // not pay for copying mediaSources/effectiveMediaSources on every call.
+    DeviceDescriptionConfig GetDeviceDescriptionConfig() const {
+        std::shared_lock<std::shared_mutex> lock(m_mutex);
+        return DeviceDescriptionConfig{ deviceUUID, serverName, deviceManufacturer, deviceModelName, presentationUrl };
+    }
     
     // Properties
     std::wstring serverName;

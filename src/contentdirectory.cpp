@@ -363,7 +363,7 @@ ContentDirectory& ContentDirectory::Get() {
 }
 
 std::string ContentDirectory::GetDeviceDescriptionXML(const std::string& hostUrl) {
-    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    const DeviceDescriptionConfig cfg = AppConfig.GetDeviceDescriptionConfig();
     std::string deviceUUID = XMLEscapeUtf8(WideToUtf8(cfg.deviceUUID));
     std::string serverName = XMLEscapeUtf8(WideToUtf8(cfg.serverName));
     std::string manufacturer = XMLEscapeUtf8(WideToUtf8(cfg.deviceManufacturer));

@@ -95,6 +95,7 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
 
     m_endpoints = endpoints;
     m_uuidStr = WideToUtf8(uuid);
+    m_targets = BuildAdvertisedTargets(m_uuidStr);
     m_bootId = static_cast<unsigned int>(time(nullptr));
     m_configId = 1;
 
@@ -254,7 +255,7 @@ void SSDP::CloseSockets() {
 }
 
 void SSDP::SendNotifyRound(const char* nts) {
-    std::vector<SSDPTarget> targets = BuildAdvertisedTargets(m_uuidStr);
+    const std::vector<SSDPTarget>& targets = m_targets;
     std::string serverHeader = GetDlnaServerHeader();
 
     for (const auto& endpoint : m_endpoints) {
@@ -452,7 +453,7 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
         return;
     }
 
-    std::vector<SSDPTarget> targets = BuildAdvertisedTargets(m_uuidStr);
+    const std::vector<SSDPTarget>& targets = m_targets;
     std::vector<const SSDPTarget*> responses;
     if (_stricmp(st.c_str(), "ssdp:all") == 0) {
         for (const auto& target : targets) {
