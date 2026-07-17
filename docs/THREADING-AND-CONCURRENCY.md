@@ -5,12 +5,12 @@
 - Guarded by a `std::shared_mutex`. `Snapshot()` takes a shared (read) lock and returns a `ConfigSnapshot` by value — callers get an immutable, self-consistent copy instead of holding a lock while doing unrelated work.
 - Any write to a `Config` field that can happen after `Server::Start()` — i.e., after the background scan thread and HTTP worker threads exist — must go through `Config::Mutate(fn)`, which takes the same lock `Snapshot()`/`Load()`/`Save()` use. Writing a public field directly from another thread at that point is a data race; the class comment in `config.h` states this explicitly. One-time command-line parsing before `Server::Start()` may write fields directly, since no other thread exists yet to race with it.
 
-## MediaSources (`media_sources.h`/`.cpp`, `posix_media_sources.cpp`)
+## MediaSources (`media_sources.h`, `media_sources_common.cpp`)
 
-- Guarded by a plain `std::mutex` (`m_mutex`) protecting `m_items`, `m_idToIndex`, `m_childrenByParent`.
-- Scans build an entirely separate `MediaIndexState` with no shared references into the live state, then swap it in under the lock in one call (`SwapScannedState`) — the lock is held only for the `std::move` assignments, not for the scan itself, which can take arbitrarily long against a slow FTP source.
-- `GetChildren`, `TryGetChildren`, `GetDescendants`, `GetItem`, `GetChildCounts` all copy data out under the lock rather than returning references, so callers never hold the lock past the call.
-- Only one scan thread runs at a time — `StartBackgroundScan()` joins any previous scan thread (via a moved-out `std::thread` handle, joined outside `m_scanMutex`) before starting a new one.
+- Guarded by a `std::shared_mutex` (`m_mutex`) protecting `m_items`, `m_idToIndex`, `m_childrenByParent`.
+- Scans *do not* use a swap model. Each source thread publishes items incrementally — `PublishItem()` and `PublishContainer()` acquire the mutex in exclusive mode for a single insert/index-update and release it immediately. Readers (`GetChildren`, `TryGetChildren`, `GetDescendants`, `GetItem`, `GetChildCounts`) take a shared (read) lock and copy data out by value, so callers never hold the lock past the call. A reader browsing the tree during a scan sees whatever items have been published so far — the tree is never partially-constructed in a "locked half" sense, but it is incrementally populated.
+- Source dispatch threads run in parallel (one `std::thread` per source, launched directly rather than through the thread pool, to avoid pool-exhaustion deadlock when nested playlists need fetch workers). Inside each source, `ScanFolder` and `ScanOnePlaylistNode` may check `ScanCancellation::IsCancelled()` cooperatively.
+- Only one scan invocation runs at a time — `StartBackgroundScan()` joins any previous scan thread (via a moved-out `std::thread` handle, joined outside `m_scanMutex`) before starting a new one. The watch loop calls `RequestCancel()` before triggering a replacement scan.
 
 ## HTTP server threading
 
@@ -34,6 +34,14 @@
 
 - One worker thread drains a `std::deque<NotifyJob>` under `m_mutex`/`m_cv`. Each job carries a `generation` counter; `ClearSubscriptions()` (called on `HttpServer::Stop()`) increments the generation and clears the queue, and the worker discards any job whose generation doesn't match current — this prevents an in-flight HTTP callback to a stale subscriber from being sent after the server has logically restarted eventing.
 - Queue is bounded (`kMaxQueuedNotifyJobs = 256`); at capacity, the oldest job is dropped rather than blocking the caller (`NotifySystemUpdateId`, called from the scan-completion path).
+
+## ScanCancellation (`scan_cancellation.h`/`.cpp`)
+
+A process-wide singleton (`ScanCancellation::Get()`) that provides a lightweight cancellation flag for media scans. The watch loop and UI both call `RequestCancel()` before triggering a new scan, and long-running scan paths check `IsCancelled()` periodically (`m_cancelled` is a plain `std::atomic<bool>`). No lock is involved — callers read and write through relaxed atomics.
+
+## TaskGroup (`task_group.h`)
+
+A simple counter + condition-variable helper for tracking a set of concurrent work items. `Enter()` increments a pending count, `Leave()` decrements it and notifies waiters, and `Wait()` blocks until the count reaches zero. `TaskGroupLeaveGuard` provides RAII-style leave-on-destroy. Used for coordinating sequenced HTTP proxy and remote-fetch work without tying lifetimes to individual threads.
 
 ## General patterns worth knowing before touching this code
 

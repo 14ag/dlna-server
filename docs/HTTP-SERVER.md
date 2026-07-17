@@ -16,6 +16,21 @@ Implemented in `src/httpserver.cpp` (Windows) and `src/posix_httpserver.cpp` (PO
 - Both sides check `IPWhitelist::Get().IsAllowed(clientIp)` right after `accept()`, before any request is read, and respond `403 Forbidden` if the address isn't allowed.
 - HTTP/1.1 keep-alive is honored based on the `Connection` header and, absent one, the request's HTTP version (`ShouldKeepAlive`).
 
+## Host header resolution
+
+The server resolves the effective host URL per request for generating `<res>` URLs in DIDL-Lite responses and for `URLBase`:
+
+1. Reads the `Host` header from the request.
+2. If `Host` is a loopback address (`localhost`, `127.0.0.1`, `[::1]`, `[0:0:0:0:0:0:0:1]`), it is replaced with `GetRoutableHostUrl()` — which picks the best non-loopback endpoint for the configured port and interface allowlist. This ensures that a DLNA renderer on another machine receives a reachable `<res>` URL even if the original Browse request came through a local proxy.
+3. If `Host` was empty or loopback-replaced, falls back to `getsockname()` on the client socket, then to `clientIP:port`.
+4. The resolved `hostUrl` is passed to `ContentDirectory` for DIDL-Lite generation and used as the `Host` value in upstream proxy requests.
+
+All media responses (`/media/`, `/subtitle/`, `/albumart/`) include a `transferMode.dlna.org: Streaming` header, per the DLNA guideline for HTTP streaming.
+
+## Second-instance source bypass (Windows)
+
+When a second `DLNA Server.exe` instance is launched with `--source` and an existing main window is already running (`FindWindowW("dlna-server_Main")`), the second instance sends the source list to the first instance via `WM_COPYDATA` (`kCopyDataSourceReplace = 1`) and exits immediately. The first instance receives the message in `MainWindow::HandleMessage`, sets the runtime source override, and restarts the server with the new sources. This avoids having to stop the GUI and relaunch.
+
 ## Routes
 
 | Method | Path | Purpose |

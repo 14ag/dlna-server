@@ -2,6 +2,7 @@
 
 # DLNA Server
 
+[![Version](https://img.shields.io/badge/Version-1.7.0-blue.svg)](https://github.com/14ag/dlna-server/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![C++17](https://img.shields.io/badge/C++-17-blue.svg)](https://isocpp.org/)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
@@ -23,7 +24,7 @@ dlna-server shares your videos, music, and photos with TVs, game consoles, and o
 
 ## Install
 
-Prebuilt binaries are available from the [Releases](https://github.com/anomalyco/dlna-server/releases) page:
+See [`CHANGELOG.md`](CHANGELOG.md) for the full release history. Prebuilt binaries are available from the [Releases](https://github.com/14ag/dlna-server/releases) page:
 
 - **Windows** — download  the `.exe`  and run it
 
@@ -42,7 +43,9 @@ DLNA Server.exe --port 8200 --source C:\media
 dlna-server --port 8200 --source /path/to/media --source ftp://user:pass@host/media
 ```
 
-Startup Flags: `--port`, `--name`, `--uuid`, `--debug`, `--source` (repeatable), `--help`, `--print-scan-concurrency`. Sources can be folders, playlist files (`.m3u`, `.m3u8`, `.pls`), or `ftp://`/`ftps://` URLs. On every platform, any unrecognized argument is treated as a media source path.
+Startup Flags: `--port`, `--name`, `--uuid`, `--debug`, `--source` (repeatable), `--help`, `--kill-server`/`-k` (Windows), `--headless`, `--configure-firewall` (Windows), `--print-scan-concurrency <n>`. Sources can be folders, playlist files (`.m3u`, `.m3u8`, `.pls`), or `ftp://`/`ftps://` URLs. On every platform, any unrecognized argument is treated as a media source path. Providing a source via `--source` forces headless mode regardless of `--headless`.
+
+`--print-scan-concurrency <n>` evaluates the playlist scan concurrency formula for a given number of items and exits — useful for tuning the internal thread budget without running a full scan. `--kill-server` (`-k`) stops a running Windows instance via the named pipe. `--configure-firewall --port <n>` opens the Windows firewall rule and exits.
 
 ## Configuration
 
