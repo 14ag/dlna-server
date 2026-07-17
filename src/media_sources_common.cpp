@@ -441,6 +441,27 @@ void MediaSources::RunPlaylistDispatcher(std::shared_ptr<PlaylistScanContext> ct
 
 void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx, const PendingPlaylistNode& node, TaskGroupLeaveGuard& guard) {
     (void)guard;
+    
+    // builds a printable single line preview of fetched text for diagnostic logging
+    // strips carriage returns and line feeds so the log stays one line per event
+    // truncates to a fixed length so a large or binary body cannot flood debug log
+    auto BuildFetchPreview = [](const std::string& text) -> std::wstring {
+        constexpr size_t kPreviewMaxBytes = 200;
+        std::string preview = text.substr(0, (std::min)(text.size(), kPreviewMaxBytes));
+        std::string cleaned;
+        cleaned.reserve(preview.size());
+        for (char ch : preview) {
+            if (ch == '\r' || ch == '\n') {
+                cleaned += ' ';
+            } else if (static_cast<unsigned char>(ch) < 0x20 || static_cast<unsigned char>(ch) > 0x7e) {
+                cleaned += '.';
+            } else {
+                cleaned += ch;
+            }
+        }
+        return Utf8ToWide(cleaned);
+    };
+
     if (AppScanCancel.IsCancelled()) {
         LogPrint(L"[media:cancelled] Skipping playlist node fetch: %ls", RedactUrlForLog(node.path).c_str());
         return;
@@ -456,6 +477,7 @@ void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx,
     if (!fetched.fetchOk) {
         LogPrint(L"[media:fetch-failed] Playlist could not be fetched; treating as unavailable rather than empty: %ls",
                  RedactUrlForLog(node.path).c_str());
+        LogPrint(L"[media:fetch-failed] this branch means CurlCapture reported ok=false check debug log lines tagged remote network or remote auth immediately before this one for the http status or curl error string");
         if (ctx->state.mediaDatabase) {
             ctx->state.mediaDatabase->RecordScanError(
                 BuildStableContainerKey(node.parentId, SourceStemName(node.path), node.path, g_canonicalize),
@@ -471,8 +493,10 @@ void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx,
     }
 
     if (!IsRecognizedPlaylistText(node.path, fetched.text)) {
-        LogPrint(L"[media:fetch-invalid] Fetched content is not a recognized HLS manifest or M3U/PLS playlist; skipping: %ls",
-                 RedactUrlForLog(node.path).c_str());
+        LogPrint(L"[media:fetch-invalid] Fetched content is not a recognized HLS manifest or M3U/PLS playlist; skipping: %ls bytes=%zu preview=[%ls]",
+                 RedactUrlForLog(node.path).c_str(),
+                 fetched.text.size(),
+                 BuildFetchPreview(fetched.text).c_str());
         if (ctx->state.mediaDatabase) {
             ctx->state.mediaDatabase->RecordScanError(
                 BuildStableContainerKey(node.parentId, SourceStemName(node.path), node.path, g_canonicalize),
