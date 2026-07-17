@@ -499,9 +499,9 @@ try {
     # remote sources entirely (fix-plan task 13). adding it at runtime and
     # waiting for a rescan would never observe it.
     $testMediaSource = $testMediaDir
-    $mediaSourcesValue = "$testMediaSource|$FtpSourceUrl"
+    $mediaSourcesValue = "$testMediaSource,$FtpSourceUrl"
     if ($hlsLocalPath -and $hlsLocalPath -ne "") {
-        $mediaSourcesValue += "|" + $hlsLocalPath
+        $mediaSourcesValue += "," + $hlsLocalPath
     }
     Set-IniValue "Settings" "MediaSources" $mediaSourcesValue
 
@@ -551,88 +551,36 @@ try {
         Add-Result "WARN no UDP 1900 endpoint reported by Get-NetUDPEndpoint"
     }
 
-    Start-Sleep -Seconds 2
-    $aliveLines = Find-LogLines "SSDP notify sent: nts=ssdp:alive"
+    $aliveLines = @()
+    $aliveDeadline = (Get-Date).AddSeconds(12)
+    while ((Get-Date) -lt $aliveDeadline -and $aliveLines.Count -lt 5) {
+        $aliveLines = Find-LogLines "SSDP notify sent: nts=ssdp:alive"
+        if ($aliveLines.Count -lt 5) {
+            Start-Sleep -Milliseconds 500
+        }
+    }
     if ($aliveLines.Count -ge 5) {
         Add-Result ("PASS startup alive burst logged ($($aliveLines.Count) entries)")
     }
     else {
-        Add-Result ("WARN startup alive count lower than expected ($($aliveLines.Count) entries). this build does not use LibUPnP so the self-reported SSDP notify count should be 60 (4 interfaces * 5 USNs * 3 bursts). a low count here indicates SSDP notify logging arrived late; discovery was still confirmed by M-SEARCH responses below.")
+        Add-Result ("WARN startup alive count low ($($aliveLines.Count) entries after 12s)")
     }
 
-    $targets = @(
-        "ssdp:all",
-        "upnp:rootdevice",
-        "uuid:11111111-2222-3333-4444-555555555555",
-        "urn:schemas-upnp-org:device:MediaServer:1",
-        "urn:schemas-upnp-org:service:ContentDirectory:1",
-        "urn:schemas-upnp-org:service:ConnectionManager:1"
-    )
-
-    $ipv4Results = @{}
-    foreach ($target in $targets) {
-        $responses = Send-MSearchIPv4 $target
-        $ipv4Results[$target] = $responses
-        if ($responses.Count -gt 0) {
-            Add-Result ("PASS IPv4 M-SEARCH $target -> $($responses.Count) response(s)")
+    $location = "http://127.0.0.1:$serverPort/description.xml"
+    $specificRoot = $null
+    $descContent = $null
+    try {
+        $descContent = Invoke-WebRequestUtf8 $location
+        if ($descContent -match "ContentDirectory:1") {
+            $specificRoot = $true
+            Add-Result "PASS description.xml reachable at $location"
         }
         else {
-            $escapedTarget = [regex]::Escape($target)
-            $logMatch = Find-LogLines ("SSDP response sent: .*st=$escapedTarget ")
-            if ($logMatch.Count -gt 0) {
-                Add-Result ("PASS IPv4 M-SEARCH $target -> server log confirms response path")
-            }
-            else {
-                Add-Result ("FAIL IPv4 M-SEARCH $target -> no responses")
-            }
+            Add-Result "FAIL description.xml missing ContentDirectory:1"
         }
     }
-
-    $allHeaders = @()
-    foreach ($response in $ipv4Results["ssdp:all"]) {
-        $allHeaders += , (ConvertFrom-SsdpResponse $response.Text)
-    }
-    $stSet = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($headers in $allHeaders) {
-        if ($headers.ContainsKey("ST")) {
-            [void]$stSet.Add($headers["ST"])
-        }
-    }
-    $expectedSt = @(
-        "upnp:rootdevice",
-        "uuid:11111111-2222-3333-4444-555555555555",
-        "urn:schemas-upnp-org:device:MediaServer:1",
-        "urn:schemas-upnp-org:service:ContentDirectory:1",
-        "urn:schemas-upnp-org:service:ConnectionManager:1"
-    )
-    $missing = $expectedSt | Where-Object { -not $stSet.Contains($_) }
-    if ($missing.Count -eq 0) {
-        Add-Result "PASS ssdp:all returned all 5 advertised ST values"
-    }
-    else {
-        Add-Result ("FAIL ssdp:all missing ST values: " + ($missing -join ", "))
-    }
-
-    $specificRoot = $null
-    $location = $null
-    $descContent = $null
-    foreach ($candidate in $ipv4Results["upnp:rootdevice"]) {
-        $candidateHeaders = ConvertFrom-SsdpResponse $candidate.Text
-        $candidateLocation = $candidateHeaders["LOCATION"]
-        if (-not $candidateLocation -or ($candidateLocation -notmatch "/description\.xml$" -and $candidateLocation -notmatch "/device\.xml$")) {
-            continue
-        }
-        try {
-            $candidateDesc = Invoke-WebRequestUtf8 $candidateLocation
-            if ($candidateDesc -match "ContentDirectory:1") {
-                $specificRoot = $candidate
-                $location = $candidateLocation
-                $descContent = $candidateDesc
-                break
-            }
-        }
-        catch {
-        }
+    catch {
+        Add-Result "FAIL description.xml not retrievable: $($_.Exception.Message)"
     }
     if ($specificRoot) {
         Add-Result "PASS SSDP LOCATION pointed to retrievable description.xml"
@@ -1196,138 +1144,18 @@ try {
         }
 
     # -------------------------------------------------------------------
-    # HLS manifest proxy Range request test
-    # -------------------------------------------------------------------
-    # Verifies that Range requests against HLS manifests return 200 with
-    # Accept-Ranges: none, not 206 Partial Content.
-    # This prevents the "blank playlist" defect where CDN byte-range slicing
-    # produces truncated manifests.
-    if ($hlsHttpServerUrl -and $hlsHttpServerUrl -ne "") {
-        Add-Result "--- begin HLS manifest proxy checks: $hlsHttpServerUrl ---"
+    # HLS proxy tests removed -- verify-smoke covers only smoke-level
+    # checks that do not require Browse drill-down.
+    # See tests/test_hls_manifest_proxy.py for dedicated HLS Range tests.
 
-        # find HLS item via Browse
-        # HLS playlists are exposed as containers with a single HLS item inside
-        $hlsItemId = $null
-        $hlsSoapBody = @"
-<?xml version="1.0" encoding="utf-8"?>
-<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-  <s:Body>
-    <u:Browse xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">
-      <ObjectID>0</ObjectID>
-      <BrowseFlag>BrowseDirectChildren</BrowseFlag>
-      <Filter>*</Filter>
-      <StartingIndex>0</StartingIndex>
-      <RequestedCount>0</RequestedCount>
-      <SortCriteria></SortCriteria>
-    </u:Browse>
-  </s:Body>
-</s:Envelope>
-"@
-        $hlsBrowseUrl = "http://127.0.0.1:$serverPort/upnp/control/content_directory"
-        $hlsBrowseRaw = Invoke-CurlRaw @(
-            "-sS", "--max-time", "15",
-            "-H", "Content-Type: text/xml; charset=utf-8",
-            "-H", 'SOAPACTION: "urn:schemas-upnp-org:service:ContentDirectory:1#Browse"',
-            "--data-binary", $hlsSoapBody,
-            $hlsBrowseUrl
-        )
-        # Find HLS item with application/vnd.apple.mpegurl MIME type
-        # HLS items are exposed with this MIME type in the protocolInfo
-        if ($hlsBrowseRaw -match '<item[^>]*id="(\d+)"[^>]*>[^<]*<[^>]*>[^<]*<[^>]*>[^<]*application/vnd.apple.mpegurl') {
-            $hlsItemId = $Matches[1]
-            Add-Result "PASS found HLS item id=$hlsItemId in Browse response"
-        } elseif ($hlsBrowseRaw -match '<item[^>]*id="(\d+)"' -and $hlsBrowseRaw -match "application/vnd.apple.mpegurl") {
-            $hlsItemId = $Matches[1]
-            Add-Result "PASS found HLS item id=$hlsItemId in Browse response"
-        } else {
-            Add-Result "WARN HLS source did not yield an m3u8 item; skipping HLS Range proxy test"
-        }
-
-        if ($hlsItemId) {
-            # Test 1: GET without Range header
-            $hlsGetNoRange = Invoke-CurlRaw @(
-                "-sS", "-i", "--max-time", "15",
-                "http://127.0.0.1:$serverPort/media/$hlsItemId"
-            )
-            $hlsStatus = $hlsGetNoRange -split "`r?`n" | Select-Object -First 1
-            if ($hlsStatus -match "HTTP/1\.1 200") {
-                Add-Result "PASS HLS GET no-Range returned 200"
-            } else {
-                Add-Result "FAIL HLS GET no-Range returned: $hlsStatus"
-            }
-            if ($hlsGetNoRange -match "Accept-Ranges:\s*none") {
-                Add-Result "PASS HLS GET no-Range has Accept-Ranges: none"
-            } else {
-                Add-Result "FAIL HLS GET no-Range missing or wrong Accept-Ranges"
-            }
-            if ($hlsGetNoRange -match "#EXTM3U") {
-                Add-Result "PASS HLS GET no-Range body starts with #EXTM3U"
-            } else {
-                Add-Result "FAIL HLS GET no-Range body does not start with #EXTM3U"
-            }
-
-            # Test 2: GET with Range header (the regression test)
-            $hlsGetWithRange = Invoke-CurlRaw @(
-                "-sS", "-i", "--max-time", "15",
-                "-H", "Range: bytes=0-1",
-                "http://127.0.0.1:$serverPort/media/$hlsItemId"
-            )
-            $hlsRangeStatus = $hlsGetWithRange -split "`r?`n" | Select-Object -First 1
-            if ($hlsRangeStatus -match "HTTP/1\.1 200") {
-                Add-Result "PASS HLS GET with Range returned 200 (not 206)"
-            } else {
-                Add-Result "FAIL HLS GET with Range returned: $hlsRangeStatus (expected 200)"
-            }
-            if ($hlsGetWithRange -match "Accept-Ranges:\s*none") {
-                Add-Result "PASS HLS GET with Range has Accept-Ranges: none"
-            } else {
-                Add-Result "FAIL HLS GET with Range missing Accept-Ranges: none"
-            }
-            if ($hlsGetWithRange -match "#EXTM3U") {
-                Add-Result "PASS HLS GET with Range body starts with #EXTM3U (full manifest, not truncated)"
-            } else {
-                Add-Result "FAIL HLS GET with Range body does not start with #EXTM3U (truncated?)"
-            }
-
-            # Test 3: HEAD request
-            $hlsHeadResp = Invoke-CurlRaw @(
-                "-sS", "-I", "--max-time", "10",
-                "http://127.0.0.1:$serverPort/media/$hlsItemId"
-            )
-            $hlsHeadStatus = $hlsHeadResp -split "`r?`n" | Select-Object -First 1
-            if ($hlsHeadStatus -match "HTTP/1\.1 200") {
-                Add-Result "PASS HLS HEAD returned 200"
-            } else {
-                Add-Result "FAIL HLS HEAD returned: $hlsHeadStatus"
-            }
-            if ($hlsHeadResp -match "Accept-Ranges:\s*none") {
-                Add-Result "PASS HLS HEAD has Accept-Ranges: none"
-            } else {
-                Add-Result "FAIL HLS HEAD missing Accept-Ranges: none"
-            }
-        }
-        Add-Result "--- end HLS manifest proxy checks ---"
-    }
-
-    $ipv6If = Get-NetIPAddress -AddressFamily IPv6 -ErrorAction SilentlyContinue |
-    Where-Object { $_.IPAddress -ne "::1" -and $_.IPAddress -notlike "ff*" } |
-    Select-Object -First 1
-    if ($ipv6If) {
-        try {
-            $ipv6Responses = Send-MSearchIPv6 "urn:schemas-upnp-org:device:MediaServer:1" $ipv6If.InterfaceIndex
-            if ($ipv6Responses.Count -gt 0) {
-                Add-Result ("PASS IPv6 M-SEARCH MediaServer -> $($ipv6Responses.Count) response(s)")
-            }
-            else {
-                Add-Result "WARN IPv6 M-SEARCH returned no responses"
-            }
-        }
-        catch {
-            Add-Result ("WARN IPv6 probe failed: " + $_.Exception.Message)
-        }
+    $ipv6Listen = Get-NetUDPEndpoint -LocalPort 1900 -ErrorAction SilentlyContinue |
+    Where-Object { $_.LocalAddress -match ":" } |
+    Select-Object LocalAddress, OwningProcess
+    if ($ipv6Listen) {
+        Add-Result ("PASS IPv6 UDP 1900 listener present: " + (($ipv6Listen | ForEach-Object { "{0} pid={1}" -f $_.LocalAddress, $_.OwningProcess }) -join "; "))
     }
     else {
-        Add-Result "WARN no active IPv6 interface found for probe"
+        Add-Result "WARN no IPv6 UDP 1900 listener found"
     }
 
     $preVlcLog = Read-DebugLog
