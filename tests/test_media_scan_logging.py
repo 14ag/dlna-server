@@ -31,6 +31,4 @@ def test_local_unsupported_extension_is_silent(dlna_binary, tmp_path):
         _teardown_server(proc, old_config, config_ini)
 
 
-@pytest.mark.skip(reason="requires local FTP test server fixture")
-def test_remote_unsupported_extension_still_logs(run_server_headless, ftp_test_server):
-    pass
+
