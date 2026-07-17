@@ -196,7 +196,7 @@ CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutS
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "DLNA-Server/1.4");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "DLNA-Server/1.7");
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSeconds);
     curl_easy_setopt(curl, CURLOPT_FTP_RESPONSE_TIMEOUT, 30L);
