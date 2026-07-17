@@ -1,5 +1,6 @@
 #include "server.h"
 #include "config.h"
+#include "scan_cancellation.h"
 #include "dlna_utils.h"
 #include "log.h"
 #include "media_sources.h"
@@ -172,6 +173,7 @@ void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
 bool Server::Start(std::wstring& outReason) {
     if (m_running.load(std::memory_order_acquire)) return true;
     m_stopping.store(false, std::memory_order_release);
+    AppScanCancel.BeginScan();
 
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     IPWhitelist::Get().Load(cfg.ipWhiteList);
@@ -276,6 +278,7 @@ bool Server::Rescan() {
     // published item tree while another caller is still publishing into
     // it from a scan that has not finished yet
     std::lock_guard<std::mutex> rescanLock(m_rescanMutex);
+    AppScanCancel.BeginScan();
     AppMedia.ResetForRescan();
     if (m_running.load(std::memory_order_acquire)) {
         // StartBackgroundScan only launches the scan thread and returns
@@ -294,7 +297,8 @@ bool Server::Rescan() {
 void Server::Stop() {
     if (!m_running.exchange(false, std::memory_order_acq_rel)) return;
     m_stopping.store(true, std::memory_order_release);
-    
+    AppScanCancel.RequestCancel();
+
     LogPrint(L"Stopping server");
 
     // Join the post-scan completion hook (see Start()) before anything

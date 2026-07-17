@@ -2,6 +2,7 @@
 #include "dlna_utils.h"
 #include "log.h"
 #include "netutils.h"
+#include "scan_cancellation.h"
 
 #include <algorithm>
 #include <cctype>
@@ -296,6 +297,11 @@ size_t CurlHeaderStream(char* buffer, size_t size, size_t nitems, void* userdata
     return bytes;
 }
 
+int ScanCancelXferInfo(void* /*clientp*/, curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
+                       curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
+    return AppScanCancel.IsCancelled() ? 1 : 0;
+}
+
 CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutSeconds) {
     static CurlGlobalInit init;
     (void)init;
@@ -315,6 +321,8 @@ CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutS
     if (CURLSH* share = GetSharedCurlHandle()) {
         curl_easy_setopt(curl, CURLOPT_SHARE, share);
     }
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, ScanCancelXferInfo);
     return curl;
 }
 

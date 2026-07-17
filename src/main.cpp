@@ -23,6 +23,7 @@
 #include "hover_focus_state.h"
 #include "input_gate.h"
 #include "playlist_scan_concurrency.h"
+#include "scan_cancellation.h"
 #include "cli_flags.h"
 #include "../resources/resource.h"
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
@@ -108,6 +109,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             killServer = true;
         } else if (wcscmp(argv[i], L"--debug") == 0) {
             debugFlag = true;
+        } else if (wcscmp(argv[i], L"--print-scan-cancellation-lifecycle") == 0) {
+            AppScanCancel.BeginScan();
+            std::wcout << (AppScanCancel.IsCancelled() ? L"1" : L"0") << std::endl;
+            AppScanCancel.RequestCancel();
+            std::wcout << (AppScanCancel.IsCancelled() ? L"1" : L"0") << std::endl;
+            AppScanCancel.BeginScan();
+            std::wcout << (AppScanCancel.IsCancelled() ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-scan-concurrency") == 0 && i + 1 < argc) {
             size_t n = static_cast<size_t>(_wtoi(argv[++i]));
             std::cout << ComputePlaylistScanConcurrency(n) << std::endl;
