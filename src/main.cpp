@@ -209,6 +209,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-resolve-relative-url") == 0 && i + 2 < argc) {
+            std::wstring baseUrl = argv[++i];
+            std::wstring relativeUrl = argv[++i];
+            std::wcout << ResolveRelativeUrl(baseUrl, relativeUrl) << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-rewrite-hls-manifest") == 0 && i + 2 < argc) {
+            std::wstring baseUrl = argv[++i];
+            std::wstring textFilePath = argv[++i];
+            std::ifstream file(WideToUtf8(textFilePath), std::ios::binary);
+            std::ostringstream ss;
+            ss << file.rdbuf();
+            std::cout << RewriteHlsManifestUrisToAbsolute(baseUrl, ss.str()) << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-should-start-headless") == 0 && i + 2 < argc) {
             bool explicitFlag = wcscmp(argv[++i], L"1") == 0;
             bool hasSources = wcscmp(argv[++i], L"1") == 0;
