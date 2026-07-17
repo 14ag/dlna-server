@@ -38,5 +38,6 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
 
 bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList, std::vector<NetworkEndpoint>& endpoints);
 const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& endpoints, const SOCKADDR* remoteAddr);
+std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList);
 
 #endif // NETUTILS_H

@@ -332,6 +332,17 @@ ScopedFd client(clientSocket);
             SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
             return;
         }
+        // Override loopback/non-routable Host headers so proxy URLs in
+        // DIDL-Lite responses are reachable by other LAN devices.
+        if (!hostUrl.empty()) {
+            std::string lower = ToLowerAscii(hostUrl);
+            if (lower.rfind("localhost", 0) == 0 ||
+                lower.rfind("127.0.0.1", 0) == 0 ||
+                lower.rfind("[::1]", 0) == 0 ||
+                lower.rfind("[0:0:0:0:0:0:0:1]", 0) == 0) {
+                hostUrl = GetRoutableHostUrl(listenPort, AppConfig.networkInterfaceAllowList);
+            }
+        }
         if (hostUrl.empty()) {
             sockaddr_storage localAddr{};
             socklen_t localAddrLen = sizeof(localAddr);

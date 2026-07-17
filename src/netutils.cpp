@@ -389,3 +389,22 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
     DeleteFileW(tempPath.c_str());
     return false;
 }
+
+std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
+    static std::string cached;
+    static bool cachedInit = false;
+    if (!cachedInit) {
+        std::vector<NetworkEndpoint> endpoints;
+        if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
+            for (const auto& ep : endpoints) {
+                // first non-link-local endpoint is the best routable address
+                if (!ep.isLinkLocal) {
+                    cached = ep.address + ":" + std::to_string(port);
+                    break;
+                }
+            }
+        }
+        cachedInit = true;
+    }
+    return cached;
+}
