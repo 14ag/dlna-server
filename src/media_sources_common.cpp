@@ -9,6 +9,7 @@
 #include "playlist_scan_concurrency.h"
 #include "task_group.h"
 #include "upnp_eventing.h"
+#include "scan_cancellation.h"
 #include <shared_mutex>
 #include <thread>
 #include <algorithm>
@@ -246,6 +247,12 @@ void MediaSources::Scan() {
 
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
     AppEvents.NotifySystemUpdateId(newUpdateId);
+
+    if (AppScanCancel.IsCancelled()) {
+        LogPrint(L"Scan cancelled before completion; media-cache.tsv left unmodified.");
+        return;
+    }
+
     const size_t prunedRecordCount = database->PruneUntouched();
     if (prunedRecordCount > 0) {
         LogPrint(L"Pruned %zu stale media-cache record(s) not present in this scan pass.",
@@ -404,6 +411,14 @@ void MediaSources::RunPlaylistDispatcher(std::shared_ptr<PlaylistScanContext> ct
             node = std::move(ctx->pendingQueue.front());
             ctx->pendingQueue.pop_front();
         }
+
+        if (AppScanCancel.IsCancelled()) {
+            LogPrint(L"[media:cancelled] Discarding queued playlist node: %ls", RedactUrlForLog(node.path).c_str());
+            ctx->group.Leave();
+            ctx->queueCv.notify_all();
+            continue;
+        }
+
         ctx->limiter.Acquire();
         PlaylistScanPool::Get().Submit([this, ctx, node]() {
             // the leave guard must go out of scope and run group Leave
@@ -426,6 +441,10 @@ void MediaSources::RunPlaylistDispatcher(std::shared_ptr<PlaylistScanContext> ct
 
 void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx, const PendingPlaylistNode& node, TaskGroupLeaveGuard& guard) {
     (void)guard;
+    if (AppScanCancel.IsCancelled()) {
+        LogPrint(L"[media:cancelled] Skipping playlist node fetch: %ls", RedactUrlForLog(node.path).c_str());
+        return;
+    }
     if (node.depth > kMaxPlaylistRecursionDepth) {
         LogPrint(L"[media:scan-depth] Skipping playlist due to recursion depth limit: %ls",
                  RedactUrlForLog(node.path).c_str());
@@ -494,12 +513,17 @@ void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx,
 }
 
 void MediaSources::ScanNetworkFolder(std::shared_ptr<PlaylistScanContext> sourceContext, const std::wstring& folderUrl, int parentId, int depth) {
-    if (depth > 8) {
-        LogPrint(L"%ls Skipping network folder due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(folderUrl).c_str());
+    if (depth > 8 || AppScanCancel.IsCancelled()) {
+        if (AppScanCancel.IsCancelled()) {
+            LogPrint(L"[media:cancelled] Network folder scan cancelled: %ls", RedactUrlForLog(folderUrl).c_str());
+        } else {
+            LogPrint(L"%ls Skipping network folder due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(folderUrl).c_str());
+        }
         return;
     }
 
     for (const auto& entry : ListRemoteDirectory(folderUrl)) {
+        if (AppScanCancel.IsCancelled()) break;
         if (IsPlaylistSourcePath(entry.url)) {
             ScanPlaylistTree(sourceContext, entry.url, parentId, SourceStemName(entry.name));
             continue;
@@ -523,8 +547,12 @@ void MediaSources::ScanNetworkFolder(std::shared_ptr<PlaylistScanContext> source
 }
 
 void MediaSources::ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext, const std::wstring& rootPath, int parentId, int depth) {
-    if (depth > 64) {
-        LogPrint(L"%ls Skipping folder due to recursion depth limit: %ls", kScanDepthLogCode, rootPath.c_str());
+    if (depth > 64 || AppScanCancel.IsCancelled()) {
+        if (AppScanCancel.IsCancelled()) {
+            LogPrint(L"[media:cancelled] Folder scan cancelled: %ls", rootPath.c_str());
+        } else {
+            LogPrint(L"%ls Skipping folder due to recursion depth limit: %ls", kScanDepthLogCode, rootPath.c_str());
+        }
         return;
     }
 
@@ -538,6 +566,7 @@ void MediaSources::ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext
     }
 
     for (const auto& entry : entries) {
+        if (AppScanCancel.IsCancelled()) break;
         if (entry.isDirectory) {
             if (sourceContext->cfg.flatFolderStyle) {
                 ScanFolder(sourceContext, entry.fullPath, parentId, depth + 1);

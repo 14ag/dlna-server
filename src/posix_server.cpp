@@ -1,5 +1,6 @@
 #include "server.h"
 #include "config.h"
+#include "scan_cancellation.h"
 #include "contentdirectory.h"
 #include "dlna_utils.h"
 #include "httpserver.h"
@@ -145,6 +146,7 @@ void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
 bool Server::Start(std::wstring& outReason) {
     if (m_running.load(std::memory_order_acquire)) return true;
     m_stopping.store(false, std::memory_order_release);
+    AppScanCancel.BeginScan();
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     IPWhitelist::Get().Load(cfg.ipWhiteList);
     if (!IsValidPort(cfg.port)) {
@@ -217,6 +219,7 @@ bool Server::Rescan() {
     // serialize the whole reset then scan sequence per caller
     // see src/server.cpp Server::Rescan for the full rationale
     std::lock_guard<std::mutex> rescanLock(m_rescanMutex);
+    AppScanCancel.BeginScan();
     AppMedia.ResetForRescan();
     if (m_running.load(std::memory_order_acquire)) {
         StartBackgroundScan();
@@ -230,6 +233,7 @@ bool Server::Rescan() {
 void Server::Stop() {
     if (!m_running.exchange(false, std::memory_order_acq_rel)) return;
     m_stopping.store(true, std::memory_order_release);
+    AppScanCancel.RequestCancel();
     if (m_scanCompletionThread.joinable()) {
         m_scanCompletionThread.join();
     }

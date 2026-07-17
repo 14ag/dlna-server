@@ -7,6 +7,7 @@
 #include "input_gate.h"
 #include "network_sources.h"
 #include "playlist_scan_concurrency.h"
+#include "scan_cancellation.h"
 #include "server.h"
 #include "settings_restart.h"
 #include "startup_mode.h"
@@ -66,6 +67,15 @@ int main(int argc, char** argv) {
         else if (arg == "--kill-server" || arg == "-k") {
             std::cerr << "kill-server is not supported on this platform" << std::endl;
             return 1;
+        }
+        else if (arg == "--print-scan-cancellation-lifecycle") {
+            AppScanCancel.BeginScan();
+            std::cout << (AppScanCancel.IsCancelled() ? "1" : "0") << std::endl;
+            AppScanCancel.RequestCancel();
+            std::cout << (AppScanCancel.IsCancelled() ? "1" : "0") << std::endl;
+            AppScanCancel.BeginScan();
+            std::cout << (AppScanCancel.IsCancelled() ? "1" : "0") << std::endl;
+            return 0;
         }
         else if (arg == "--print-scan-concurrency" && i + 1 < argc) {
             size_t n = static_cast<size_t>(std::atoll(argv[++i]));
