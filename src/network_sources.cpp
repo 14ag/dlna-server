@@ -635,9 +635,25 @@ std::wstring ResolveRelativeUrl(const std::wstring& baseUrl, const std::wstring&
         }
     }
 
+    // Strip scheme://host/ from baseDir before path-segment processing.
+    // The scheme+host is reconstructed separately at lines 679-684, and
+    // including it in segments causes the scheme (e.g., "https:") to be
+    // re-encoded via UrlEncodePathSegment as "https%3A".
+    std::string baseDirPath = baseDir;
+    {
+        size_t sd = baseDirPath.find("://");
+        if (sd != std::string::npos) {
+            size_t he = baseDirPath.find('/', sd + 3);
+            if (he != std::string::npos) {
+                baseDirPath = baseDirPath.substr(he + 1);
+            } else {
+                baseDirPath.clear();
+            }
+        }
+    }
     // split baseDir path segments
     std::vector<std::string> segments;
-    std::stringstream baseParts(baseDir);
+    std::stringstream baseParts(baseDirPath);
     std::string seg;
     while (std::getline(baseParts, seg, '/')) {
         if (!seg.empty()) segments.push_back(seg);

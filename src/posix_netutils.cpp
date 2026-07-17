@@ -267,3 +267,21 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
     std::remove(WideToUtf8(tempPath).c_str());
     return false;
 }
+
+std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
+    static std::string cached;
+    static bool cachedInit = false;
+    if (!cachedInit) {
+        std::vector<NetworkEndpoint> endpoints;
+        if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
+            for (const auto& ep : endpoints) {
+                if (!ep.isLinkLocal) {
+                    cached = ep.address + ":" + std::to_string(port);
+                    break;
+                }
+            }
+        }
+        cachedInit = true;
+    }
+    return cached;
+}
