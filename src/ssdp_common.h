@@ -3,12 +3,7 @@
 
 #include <string>
 #include <vector>
-#include "ssdp.h" // DelayedSearchResponse
-
-struct SSDPTarget {
-    std::string st;
-    std::string usn;
-};
+#include "ssdp.h" // DelayedSearchResponse, SSDPTarget
 
 // The 5 standard targets this device advertises: root device, device UUID,
 // MediaServer:1, ContentDirectory:1, ConnectionManager:1.

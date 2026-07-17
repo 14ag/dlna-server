@@ -30,5 +30,11 @@ public:
 };
 
 constexpr size_t kPlaylistScanPoolSize = 20;
+// 10x the worker count: deep enough that a normal burst of newly
+// discovered nodes never blocks a producer, shallow enough that a
+// pathological library cannot queue unbounded pending work in memory.
+// This value is a heuristic starting point, not a measured constant --
+// revisit if profiling shows producers blocking under normal load.
+constexpr size_t kPlaylistScanPoolMaxQueueDepth = kPlaylistScanPoolSize * 10;
 
 #endif // PLAYLIST_SCAN_CONCURRENCY_H
