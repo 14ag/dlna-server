@@ -26,11 +26,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "dlna-server contributors"
             VALUE "FileDescription", "DLNA Server"
-            VALUE "FileVersion", "1.6.0"
+            VALUE "FileVersion", "1.7.0"
             VALUE "InternalName", "DLNA Server"
             VALUE "OriginalFilename", "DLNA Server.exe"
             VALUE "ProductName", "DLNA Server"
-            VALUE "ProductVersion", "1.6.0"
+            VALUE "ProductVersion", "1.7.0"
         END
     END
     BLOCK "VarFileInfo"
