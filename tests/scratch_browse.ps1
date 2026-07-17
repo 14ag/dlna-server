@@ -3,6 +3,16 @@ $configPath = "output\winx64\config.ini"
 $exePath = "output\winx64\DLNA Server.exe"
 $mediaDir = "tests\test media\test-hls-playlist.m3u8"
 
+# --------------- URL startup check ---------------
+$remoteSourceUrl = "https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist.m3u8"
+try {
+    $headResponse = Invoke-WebRequest -Uri $remoteSourceUrl -Method Head -UseBasicParsing -ErrorAction Stop
+    if ($headResponse.StatusCode -ge 400) { throw "HTTP $($headResponse.StatusCode)" }
+} catch {
+    Write-Host "SKIP: External fixture unavailable ($remoteSourceUrl) - $($_.Exception.Message)"
+    exit 0
+}
+
 # --------------- config ---------------
 function Set-IniValue($section, $key, $value) {
     if (Test-Path $configPath) { $lines = @(Get-Content -LiteralPath $configPath -Encoding UTF8) }
