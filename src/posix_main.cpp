@@ -168,6 +168,21 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
+        else if (arg == "--print-resolve-relative-url" && i + 2 < argc) {
+            std::wstring baseUrl = Utf8ToWide(argv[++i]);
+            std::wstring relativeUrl = Utf8ToWide(argv[++i]);
+            std::wcout << ResolveRelativeUrl(baseUrl, relativeUrl) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-rewrite-hls-manifest" && i + 2 < argc) {
+            std::wstring baseUrl = Utf8ToWide(argv[++i]);
+            std::wstring textFilePath = Utf8ToWide(argv[++i]);
+            std::ifstream file(WideToUtf8(textFilePath), std::ios::binary);
+            std::ostringstream ss;
+            ss << file.rdbuf();
+            std::cout << RewriteHlsManifestUrisToAbsolute(baseUrl, ss.str()) << std::endl;
+            return 0;
+        }
         else if (arg == "--print-should-start-headless" && i + 2 < argc) {
             bool explicitFlag = std::string(argv[++i]) == "1";
             bool hasSources = std::string(argv[++i]) == "1";
