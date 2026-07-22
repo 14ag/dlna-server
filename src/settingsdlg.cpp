@@ -8,6 +8,8 @@
 #include "access_keys.h"
 #include "input_gate.h"
 #include "help_dialog.h"
+#include "ui_font.h"
+#include "dark_frame.h"
 #include "../resources/resource.h"
 #include <commctrl.h>
 #include <dwmapi.h>
@@ -20,10 +22,6 @@
 namespace {
 
 bool g_restartRequested = false;
-
-#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
-#endif
 
 #pragma comment(lib, "dwmapi.lib")
 const int IDC_PLAYLIST_MOVIE = 6101;
@@ -46,45 +44,13 @@ const int kPlaylistSubtitleTop = kPlaylistMovieTop + kControlHeight + 12;
 const int kPlaylistAddTop = kPlaylistSubtitleTop + kControlHeight + 16;
 const int kPlaylistDialogHeight = 196;
 
-HFONT CreateScaledFont(HWND hwnd, int pixelSize, int weight, const wchar_t* faceName) {
-    HDC hdc = GetDC(hwnd);
-    int dpiY = hdc ? GetDeviceCaps(hdc, LOGPIXELSY) : 96;
-    if (hdc) {
-        ReleaseDC(hwnd, hdc);
-    }
-
-    return CreateFontW(-MulDiv(pixelSize, dpiY, 96), 0, 0, 0, weight, FALSE, FALSE, FALSE,
-                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, faceName);
-}
-
 HFONT DialogBodyFont(HWND hwnd) {
     static HFONT font = CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI Variable Text");
     return font ? font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
 }
 
-void ApplyDarkFrame(HWND hwnd) {
-    BOOL darkFrame = TRUE;
-    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkFrame, sizeof(darkFrame));
-}
-
-BOOL CALLBACK SetChildFontProc(HWND child, LPARAM fontParam) {
-    SendMessageW(child, WM_SETFONT, static_cast<WPARAM>(fontParam), TRUE);
-    return TRUE;
-}
-
 void ApplyDialogFont(HWND hwnd) {
-    HFONT font = DialogBodyFont(hwnd);
-    SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-    EnumChildWindows(hwnd, SetChildFontProc, reinterpret_cast<LPARAM>(font));
-}
-
-std::wstring TrimWide(const std::wstring& value) {
-    size_t start = 0;
-    while (start < value.size() && iswspace(value[start])) ++start;
-    size_t end = value.size();
-    while (end > start && iswspace(value[end - 1])) --end;
-    return value.substr(start, end - start);
+    ApplyFontToWindowAndChildren(hwnd, DialogBodyFont(hwnd));
 }
 
 std::wstring GetDlgText(HWND hwnd, int id) {

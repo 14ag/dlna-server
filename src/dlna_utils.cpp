@@ -129,6 +129,20 @@ std::string TrimAscii(const std::string& value) {
     return value.substr(start, end - start);
 }
 
+std::wstring TrimWide(const std::wstring& value) {
+    size_t start = 0;
+    while (start < value.size() && std::iswspace(value[start])) {
+        ++start;
+    }
+
+    size_t end = value.size();
+    while (end > start && std::iswspace(value[end - 1])) {
+        --end;
+    }
+
+    return value.substr(start, end - start);
+}
+
 std::string ToLowerAscii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));

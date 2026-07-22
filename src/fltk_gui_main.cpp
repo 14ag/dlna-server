@@ -4,6 +4,7 @@
 #include "media_sources.h"
 #include "netutils.h"
 #include "server.h"
+#include "server_close_policy.h"
 #include "settings_restart.h"
 
 #include <FL/Fl.H>
@@ -658,10 +659,10 @@ private:
 
     static void CloseRequested(Fl_Widget*, void* data) {
         auto* self = static_cast<MainWindow*>(data);
-        if (DLNAServer.IsRunning()) {
-            self->hide();
-        } else {
+        if (ShouldCloseNow(DLNAServer.IsRunning(), self->IsBusy())) {
             std::exit(0);
+        } else {
+            self->hide();
         }
     }
 

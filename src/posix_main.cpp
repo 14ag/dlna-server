@@ -9,6 +9,8 @@
 #include "playlist_scan_concurrency.h"
 #include "scan_cancellation.h"
 #include "server.h"
+#include "upnp_eventing.h"
+#include "server_close_policy.h"
 #include "settings_restart.h"
 #include "startup_mode.h"
 
@@ -162,6 +164,10 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
+        else if (arg == "--print-trim-wide" && i + 1 < argc) {
+            std::wcout << TrimWide(Utf8ToWide(argv[++i])) << std::endl;
+            return 0;
+        }
         else if (arg == "--print-decode-legacy-pipe-sources" && i + 1 < argc) {
             for (const auto& field : DecodeLegacyPipeDelimitedSources(Utf8ToWide(argv[++i]))) {
                 std::wcout << field << std::endl;
@@ -187,6 +193,12 @@ int main(int argc, char** argv) {
             bool explicitFlag = std::string(argv[++i]) == "1";
             bool hasSources = std::string(argv[++i]) == "1";
             std::wcout << (ShouldStartHeadless(explicitFlag, hasSources) ? L"1" : L"0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-should-close-now" && i + 2 < argc) {
+            bool isRunning = std::string(argv[++i]) == "1";
+            bool isBusy = std::string(argv[++i]) == "1";
+            std::wcout << (ShouldCloseNow(isRunning, isBusy) ? L"1" : L"0") << std::endl;
             return 0;
         }
         else if (arg == "--print-debug-log-requires-restart" && i + 2 < argc) {
@@ -225,6 +237,21 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--print-is-supported-source-path" && i + 1 < argc) {
             std::wcout << (IsSupportedLocalMediaOrPlaylistPath(Utf8ToWide(argv[++i])) ? L"1" : L"0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-routable-host-url-twice" && i + 2 < argc) {
+            int portOne = 0;
+            int portTwo = 0;
+            if (!TryParsePortStrict(argv[++i], portOne)) portOne = 0;
+            if (!TryParsePortStrict(argv[++i], portTwo)) portTwo = 0;
+            std::string first = GetRoutableHostUrl(portOne, L"");
+            std::string second = GetRoutableHostUrl(portTwo, L"");
+            std::cout << first << std::endl;
+            std::cout << second << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-notify-pool-worker-count") {
+            std::cout << kMaxUpnpNotifyWorkers << std::endl;
             return 0;
         }
         else if (arg == "--print-media-sources") {

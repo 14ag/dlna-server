@@ -25,6 +25,8 @@
 #include "playlist_scan_concurrency.h"
 #include "scan_cancellation.h"
 #include "cli_flags.h"
+#include "upnp_eventing.h"
+#include "server_close_policy.h"
 #include "../resources/resource.h"
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
@@ -203,6 +205,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-trim-wide") == 0 && i + 1 < argc) {
+            std::wcout << TrimWide(argv[++i]) << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-decode-legacy-pipe-sources") == 0 && i + 1 < argc) {
             for (const auto& field : DecodeLegacyPipeDelimitedSources(argv[++i])) {
                 std::wcout << field << std::endl;
@@ -228,6 +234,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             bool explicitFlag = wcscmp(argv[++i], L"1") == 0;
             bool hasSources = wcscmp(argv[++i], L"1") == 0;
             std::wcout << (ShouldStartHeadless(explicitFlag, hasSources) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-should-close-now") == 0 && i + 2 < argc) {
+            bool isRunning = wcscmp(argv[++i], L"1") == 0;
+            bool isBusy = wcscmp(argv[++i], L"1") == 0;
+            std::wcout << (ShouldCloseNow(isRunning, isBusy) ? L"1" : L"0") << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-debug-log-requires-restart") == 0 && i + 2 < argc) {
@@ -268,6 +280,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             return 0;
         } else if (wcscmp(argv[i], L"--print-is-supported-source-path") == 0 && i + 1 < argc) {
             std::wcout << (IsSupportedLocalMediaOrPlaylistPath(argv[++i]) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-routable-host-url-twice") == 0 && i + 2 < argc) {
+            int portOne = 0;
+            int portTwo = 0;
+            if (!TryParsePortStrict(WideToUtf8(argv[++i]), portOne)) portOne = 0;
+            if (!TryParsePortStrict(WideToUtf8(argv[++i]), portTwo)) portTwo = 0;
+            std::string first = GetRoutableHostUrl(portOne, L"");
+            std::string second = GetRoutableHostUrl(portTwo, L"");
+            std::cout << first << std::endl;
+            std::cout << second << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-notify-pool-worker-count") == 0) {
+            std::cout << kMaxUpnpNotifyWorkers << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-media-sources") == 0) {

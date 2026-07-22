@@ -2,35 +2,19 @@
 #include "modal_focus.h"
 #include "cli_flags.h"
 #include "settings_help.h"
+#include "ui_font.h"
+#include "dark_frame.h"
 #include <dwmapi.h>
 #include <string>
 #include <Richedit.h>
 
 #pragma comment(lib, "dwmapi.lib")
 
-#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
-#endif
-
 namespace {
 
-HFONT CreateHelpFont(HWND hwnd) {
-    HDC hdc = GetDC(hwnd);
-    int dpiY = hdc ? GetDeviceCaps(hdc, LOGPIXELSY) : 96;
-    if (hdc) ReleaseDC(hwnd, hdc);
-    return CreateFontW(-MulDiv(14, dpiY, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Variable Text");
-}
-
 HFONT HelpBodyFont(HWND hwnd) {
-    static HFONT font = CreateHelpFont(hwnd);
+    static HFONT font = CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI Variable Text");
     return font ? font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-}
-
-void ApplyDarkFrame(HWND hwnd) {
-    BOOL darkFrame = TRUE;
-    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkFrame, sizeof(darkFrame));
 }
 
 struct HelpDialogState {
