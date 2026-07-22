@@ -548,8 +548,17 @@ private:
                 m_pendingSuccess = true;
                 m_pendingMessage.clear();
             }
-            bool ok = DLNAServer.Start();
-            SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, ok ? "" : "Server stopped. Failed to restart on the new port.");
+            std::wstring reason;
+            bool ok = DLNAServer.Start(reason);
+            std::string message;
+            if (!ok) {
+                message = "Server stopped. Failed to restart on the new port.";
+                if (!reason.empty()) {
+                    message += " ";
+                    message += WideToUtf8(reason);
+                }
+            }
+            SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, message);
         });
     }
 
