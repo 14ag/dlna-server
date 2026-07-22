@@ -2,6 +2,7 @@
 #include "dlna_utils.h"
 #include "log.h"
 #include "netutils.h"
+#include "scan_cancellation.h"
 
 #include <algorithm>
 #include <cctype>
@@ -10,6 +11,11 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
+
+std::string UrlWithoutQueryOrFragment(const std::string& value);
+std::string UrlEncodePathSegment(const std::string& value);
+std::wstring ResolveRelativeUrl(const std::wstring& baseUrl, const std::wstring& relativeUrl);
+std::string RewriteHlsManifestUrisToAbsolute(const std::wstring& manifestUrl, const std::string& manifestText);
 
 namespace {
     class ScopeGuard {
@@ -34,8 +40,6 @@ constexpr long kCurlCaptureTimeoutSeconds = 30L;
 constexpr long kCurlLowSpeedLimitBytes = 1L;
 constexpr long kCurlLowSpeedTimeSeconds = 30L;
 
-std::wstring TrimWide(const std::wstring& value);
-
 bool HasScheme(const std::string& value, const char* scheme) {
     std::string prefix = std::string(scheme) + "://";
     return ToLowerAscii(value).rfind(prefix, 0) == 0;
@@ -50,43 +54,10 @@ bool IsAbsoluteLocalPath(const std::wstring& value) {
     return !value.empty() && (value[0] == L'/' || value[0] == L'\\');
 }
 
-std::string UrlWithoutQueryOrFragment(const std::string& value) {
-    size_t end = value.find_first_of("?#");
-    return end == std::string::npos ? value : value.substr(0, end);
-}
-
 std::wstring ParentLocalPath(const std::wstring& value) {
     size_t slash = value.find_last_of(L"\\/");
     if (slash == std::wstring::npos) return L".";
     return value.substr(0, slash);
-}
-
-std::string UrlEncodePathSegment(const std::string& value) {
-    static const char* hex = "0123456789ABCDEF";
-    std::string out;
-    for (size_t i = 0; i < value.size(); ++i) {
-        const unsigned char ch = static_cast<unsigned char>(value[i]);
-        if (ch == '%' && i + 2 < value.size() &&
-            std::isxdigit(static_cast<unsigned char>(value[i + 1])) &&
-            std::isxdigit(static_cast<unsigned char>(value[i + 2]))) {
-            out.push_back('%');
-            out.push_back(value[i + 1]);
-            out.push_back(value[i + 2]);
-            i += 2;
-            continue;
-        }
-        if ((ch >= 'a' && ch <= 'z') ||
-            (ch >= 'A' && ch <= 'Z') ||
-            (ch >= '0' && ch <= '9') ||
-            ch == '-' || ch == '_' || ch == '.' || ch == '~') {
-            out.push_back(static_cast<char>(ch));
-        } else {
-            out.push_back('%');
-            out.push_back(hex[ch >> 4]);
-            out.push_back(hex[ch & 0x0f]);
-        }
-    }
-    return out;
 }
 
 std::wstring JoinLocalPath(const std::wstring& baseFile, const std::wstring& entry) {
@@ -99,94 +70,6 @@ std::wstring JoinLocalPath(const std::wstring& baseFile, const std::wstring& ent
 #endif
     if (!parent.empty() && parent.back() != L'\\' && parent.back() != L'/') parent.push_back(slash);
     return parent + entry;
-}
-
-std::wstring ResolveRelativeUrl(const std::wstring& baseUrl, const std::wstring& relativeUrl) {
-    if (IsRemoteMediaUrl(relativeUrl)) return relativeUrl;
-
-    std::string base = UrlWithoutQueryOrFragment(WideToUtf8(baseUrl));
-    // remove filename part to get base directory
-    size_t slash = base.find_last_of('/');
-    std::string baseDir;
-    if (slash != std::string::npos && slash > 7) { // >7 to keep scheme://host/
-        baseDir = base.substr(0, slash + 1);
-    } else {
-        baseDir = base;
-        if (!baseDir.empty() && baseDir.back() != '/') baseDir += '/';
-    }
-
-    std::string rel = WideToUtf8(relativeUrl);
-    // remove leading slash if present (absolute-path relative to scheme://host)
-    if (!rel.empty() && rel[0] == '/') {
-        // keep scheme://host/ from base
-        size_t hostEnd = base.find('/', 8); // after scheme://host
-        if (hostEnd != std::string::npos) {
-            baseDir = base.substr(0, hostEnd + 1);
-            rel = rel.substr(1);
-        } else {
-            baseDir = base + "/";
-            rel = rel.substr(1);
-        }
-    }
-
-    // split baseDir path segments
-    std::vector<std::string> segments;
-    std::stringstream baseParts(baseDir);
-    std::string seg;
-    while (std::getline(baseParts, seg, '/')) {
-        if (!seg.empty()) segments.push_back(seg);
-    }
-
-    // process relative segments
-    std::stringstream relParts(rel);
-    while (std::getline(relParts, seg, '/')) {
-        if (seg.empty() || seg == ".") continue;
-        if (seg == "..") {
-            if (!segments.empty()) segments.pop_back();
-        } else {
-            segments.push_back(seg);
-        }
-    }
-
-    // reconstruct path
-    std::string result;
-    // rebuild scheme://host/
-    size_t schemeEnd = base.find("://");
-    size_t hostSlash = base.find('/', schemeEnd != std::string::npos ? schemeEnd + 3 : 0);
-    if (schemeEnd != std::string::npos) {
-        std::string schemeHost = (hostSlash != std::string::npos) ? base.substr(0, hostSlash + 1) : base + "/";
-        result = schemeHost;
-    }
-
-    for (size_t i = 0; i < segments.size(); ++i) {
-        result += UrlEncodePathSegment(segments[i]);
-        if (i + 1 < segments.size()) result += '/';
-    }
-
-    return Utf8ToWide(result);
-}
-
-std::string RewriteHlsManifestUrisToAbsolute(const std::wstring& manifestUrl, const std::string& manifestText) {
-    if (!IsRemoteMediaUrl(manifestUrl)) return manifestText;
-    std::string result;
-    result.reserve(manifestText.size() + 1024);
-    std::istringstream input(manifestText);
-    std::string line;
-    while (std::getline(input, line)) {
-        // trim trailing \r
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        // skip tags and blank lines
-        if (line.empty() || line[0] == '#') {
-            result += line + "\n";
-            continue;
-        }
-        // line is a URI — resolve against manifest URL
-        std::wstring resolved = ResolveRelativeUrl(manifestUrl, Utf8ToWide(line));
-        std::string resolvedUtf8 = WideToUtf8(resolved);
-        // Append the resolved URI (with original fragment/query if the line had it)
-        result += resolvedUtf8 + "\n";
-    }
-    return result;
 }
 
 std::wstring ResolvePlaylistEntry(const std::wstring& playlistPath, const std::wstring& entry) {
@@ -296,6 +179,11 @@ size_t CurlHeaderStream(char* buffer, size_t size, size_t nitems, void* userdata
     return bytes;
 }
 
+int ScanCancelXferInfo(void* /*clientp*/, curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
+                       curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
+    return AppScanCancel.IsCancelled() ? 1 : 0;
+}
+
 CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutSeconds) {
     static CurlGlobalInit init;
     (void)init;
@@ -306,7 +194,7 @@ CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutS
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "DLNA-Server/1.4");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "DLNA-Server/1.7");
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSeconds);
     curl_easy_setopt(curl, CURLOPT_FTP_RESPONSE_TIMEOUT, 30L);
@@ -315,6 +203,8 @@ CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutS
     if (CURLSH* share = GetSharedCurlHandle()) {
         curl_easy_setopt(curl, CURLOPT_SHARE, share);
     }
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, ScanCancelXferInfo);
     return curl;
 }
 
@@ -439,14 +329,6 @@ std::string ReadSourceText(const std::wstring& source, bool* ok = nullptr) {
 std::wstring TitleFromEntry(const std::wstring& location) {
     std::wstring stem = SourceStemName(location);
     return stem.empty() ? SourceDisplayName(location) : stem;
-}
-
-std::wstring TrimWide(const std::wstring& value) {
-    size_t start = 0;
-    while (start < value.size() && iswspace(value[start])) ++start;
-    size_t end = value.size();
-    while (end > start && iswspace(value[end - 1])) --end;
-    return value.substr(start, end - start);
 }
 
 std::string UnquotePlaylistValue(std::string value) {
@@ -671,6 +553,155 @@ std::wstring ChildUrl(const std::wstring& directoryUrl, const std::wstring& chil
     if (base.empty() || base.back() != '/') base.push_back('/');
     return Utf8ToWide(base + UrlEncodePathSegment(WideToUtf8(childName)));
 }
+}
+
+std::string UrlWithoutQueryOrFragment(const std::string& value) {
+    size_t end = value.find_first_of("?#");
+    return end == std::string::npos ? value : value.substr(0, end);
+}
+
+std::string UrlEncodePathSegment(const std::string& value) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    for (size_t i = 0; i < value.size(); ++i) {
+        const unsigned char ch = static_cast<unsigned char>(value[i]);
+        if (ch == '%' && i + 2 < value.size() &&
+            std::isxdigit(static_cast<unsigned char>(value[i + 1])) &&
+            std::isxdigit(static_cast<unsigned char>(value[i + 2]))) {
+            out.push_back('%');
+            out.push_back(value[i + 1]);
+            out.push_back(value[i + 2]);
+            i += 2;
+            continue;
+        }
+        if ((ch >= 'a' && ch <= 'z') ||
+            (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+            out.push_back(static_cast<char>(ch));
+        } else {
+            out.push_back('%');
+            out.push_back(hex[ch >> 4]);
+            out.push_back(hex[ch & 0x0f]);
+        }
+    }
+    return out;
+}
+
+std::wstring ResolveRelativeUrl(const std::wstring& baseUrl, const std::wstring& relativeUrl) {
+    if (IsRemoteMediaUrl(relativeUrl)) return relativeUrl;
+
+    std::string base = UrlWithoutQueryOrFragment(WideToUtf8(baseUrl));
+    // remove filename part to get base directory
+    size_t slash = base.find_last_of('/');
+    std::string baseDir;
+    if (slash != std::string::npos && slash > 7) { // >7 to keep scheme://host/
+        baseDir = base.substr(0, slash + 1);
+    } else {
+        baseDir = base;
+        if (!baseDir.empty() && baseDir.back() != '/') baseDir += '/';
+    }
+
+    std::string relFull = WideToUtf8(relativeUrl);
+    // RFC 3986 section 3 4 and 3 5 the query and fragment components are
+    // opaque to path processing and must be split off before any path
+    // segment work happens they are reattached byte for byte at the end
+    // never percent re encoded here since a signed CDN URL token lives in
+    // this exact byte sequence and any transformation invalidates it
+    size_t querySplit = relFull.find_first_of("?#");
+    std::string rel = querySplit == std::string::npos ? relFull : relFull.substr(0, querySplit);
+    std::string relQueryAndFragment = querySplit == std::string::npos ? std::string() : relFull.substr(querySplit);
+
+    // remove leading slash if present (absolute-path relative to scheme://host)
+    if (!rel.empty() && rel[0] == '/') {
+        // keep scheme://host/ from base
+        size_t hostEnd = base.find('/', 8); // after scheme://host
+        if (hostEnd != std::string::npos) {
+            baseDir = base.substr(0, hostEnd + 1);
+            rel = rel.substr(1);
+        } else {
+            baseDir = base + "/";
+            rel = rel.substr(1);
+        }
+    }
+
+    // Strip scheme://host/ from baseDir before path-segment processing.
+    // The scheme+host is reconstructed separately at lines 679-684, and
+    // including it in segments causes the scheme (e.g., "https:") to be
+    // re-encoded via UrlEncodePathSegment as "https%3A".
+    std::string baseDirPath = baseDir;
+    {
+        size_t sd = baseDirPath.find("://");
+        if (sd != std::string::npos) {
+            size_t he = baseDirPath.find('/', sd + 3);
+            if (he != std::string::npos) {
+                baseDirPath = baseDirPath.substr(he + 1);
+            } else {
+                baseDirPath.clear();
+            }
+        }
+    }
+    // split baseDir path segments
+    std::vector<std::string> segments;
+    std::stringstream baseParts(baseDirPath);
+    std::string seg;
+    while (std::getline(baseParts, seg, '/')) {
+        if (!seg.empty()) segments.push_back(seg);
+    }
+
+    // process relative segments (query and fragment already removed above)
+    std::stringstream relParts(rel);
+    while (std::getline(relParts, seg, '/')) {
+        if (seg.empty() || seg == ".") continue;
+        if (seg == "..") {
+            if (!segments.empty()) segments.pop_back();
+        } else {
+            segments.push_back(seg);
+        }
+    }
+
+    // reconstruct path
+    std::string result;
+    // rebuild scheme://host/
+    size_t schemeEnd = base.find("://");
+    size_t hostSlash = base.find('/', schemeEnd != std::string::npos ? schemeEnd + 3 : 0);
+    if (schemeEnd != std::string::npos) {
+        std::string schemeHost = (hostSlash != std::string::npos) ? base.substr(0, hostSlash + 1) : base + "/";
+        result = schemeHost;
+    }
+
+    for (size_t i = 0; i < segments.size(); ++i) {
+        result += UrlEncodePathSegment(segments[i]);
+        if (i + 1 < segments.size()) result += '/';
+    }
+
+    // reattach the original query and fragment unchanged per RFC 3986 5 3
+    result += relQueryAndFragment;
+
+    return Utf8ToWide(result);
+}
+
+std::string RewriteHlsManifestUrisToAbsolute(const std::wstring& manifestUrl, const std::string& manifestText) {
+    if (!IsRemoteMediaUrl(manifestUrl)) return manifestText;
+    std::string result;
+    result.reserve(manifestText.size() + 1024);
+    std::istringstream input(manifestText);
+    std::string line;
+    while (std::getline(input, line)) {
+        // trim trailing \r
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        // skip tags and blank lines
+        if (line.empty() || line[0] == '#') {
+            result += line + "\n";
+            continue;
+        }
+        // line is a URI — resolve against manifest URL
+        std::wstring resolved = ResolveRelativeUrl(manifestUrl, Utf8ToWide(line));
+        std::string resolvedUtf8 = WideToUtf8(resolved);
+        // Append the resolved URI (with original fragment/query if the line had it)
+        result += resolvedUtf8 + "\n";
+    }
+    return result;
 }
 
 bool IsHlsManifestText(const std::string& text) {

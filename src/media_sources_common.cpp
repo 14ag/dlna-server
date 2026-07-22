@@ -9,7 +9,9 @@
 #include "playlist_scan_concurrency.h"
 #include "task_group.h"
 #include "upnp_eventing.h"
+#include "scan_cancellation.h"
 #include <shared_mutex>
+#include <thread>
 #include <algorithm>
 #include <ctime>
 #include <functional>
@@ -23,6 +25,10 @@
 namespace {
 
 constexpr const wchar_t* kScanDepthLogCode = L"[media:scan-depth]";
+// Initial reserve for MediaSources::m_items, set in ResetForRescan. See
+// Task 7 of dlna-server-concurrency-memory-fix-workflow-17-7-26.md for why
+// this exists and why it is a mitigation, not a full fix.
+constexpr size_t kInitialCatalogReserve = 4096;
 
 bool DefaultPlaylistFileExists(const std::wstring& path) {
     return FsIsRegularFile(path);
@@ -63,7 +69,6 @@ std::wstring NameOfPath(const std::wstring& path) {
 
 void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
     if (IsRemoteMediaUrl(item.path)) return;
-    std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
     std::wstring folder = item.path;
     size_t slash = folder.find_last_of(L"\\/");
     folder = slash == std::wstring::npos ? L"." : folder.substr(0, slash);
@@ -72,45 +77,124 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
     std::wstring stem = SourceStemName(fileName);
     const std::wstring stemKey = folder + L"\n" + stem;
 
-    auto stemCached = state.perStemAlbumArt.find(stemKey);
-    if (stemCached != state.perStemAlbumArt.end()) {
-        item.albumArtPath = stemCached->second.first;
-        item.albumArtMime = stemCached->second.second;
-        return;
+    bool stemCacheKnown = false;
+    std::pair<std::wstring, std::wstring> stemCacheValue;
+    bool folderCacheKnown = false;
+    std::pair<std::wstring, std::wstring> folderCacheValue;
+    {
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        auto stemCached = state.perStemAlbumArt.find(stemKey);
+        if (stemCached != state.perStemAlbumArt.end()) {
+            stemCacheKnown = true;
+            stemCacheValue = stemCached->second;
+        }
+        auto folderCached = state.folderAlbumArt.find(folder);
+        if (folderCached != state.folderAlbumArt.end()) {
+            folderCacheKnown = true;
+            folderCacheValue = folderCached->second;
+        }
     }
 
-    std::vector<AlbumArtCandidate> perStemCandidates = {
-        { stem + L".jpg", L"image/jpeg" },
-        { stem + L".jpeg", L"image/jpeg" },
-        { stem + L".png", L"image/png" },
-    };
-    for (const auto& candidate : perStemCandidates) {
-        std::wstring candidatePath = folder + L"\\" + candidate.fileName;
-        if (FsIsRegularFile(candidatePath)) {
-            item.albumArtPath = candidatePath;
-            item.albumArtMime = candidate.mimeType;
-            state.perStemAlbumArt[stemKey] = { item.albumArtPath, item.albumArtMime };
+    if (stemCacheKnown) {
+        if (!stemCacheValue.first.empty()) {
+            item.albumArtPath = stemCacheValue.first;
+            item.albumArtMime = stemCacheValue.second;
+            return;
+        }
+    } else {
+        // No lock held for these stat calls: concurrent scan workers in
+        // the same PlaylistScanContext must not be serialized on
+        // filesystem I/O latency here. See SEI CERT CON05-C/POS52-C.
+        std::vector<AlbumArtCandidate> perStemCandidates = {
+            { stem + L".jpg", L"image/jpeg" },
+            { stem + L".jpeg", L"image/jpeg" },
+            { stem + L".png", L"image/png" },
+        };
+        for (const auto& candidate : perStemCandidates) {
+            std::wstring candidatePath = folder + L"\\" + candidate.fileName;
+            if (FsIsRegularFile(candidatePath)) {
+                stemCacheValue = { candidatePath, candidate.mimeType };
+                break;
+            }
+        }
+        // Another worker may have written this same cache key while this
+        // worker was doing the unlocked stat calls above. The write below
+        // is idempotent (the same folder/stem always resolves to the same
+        // result), so an overwrite here is harmless: it only means two
+        // workers each paid the stat cost once instead of one waiting on
+        // the other.
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        state.perStemAlbumArt[stemKey] = stemCacheValue;
+        if (!stemCacheValue.first.empty()) {
+            item.albumArtPath = stemCacheValue.first;
+            item.albumArtMime = stemCacheValue.second;
             return;
         }
     }
-    state.perStemAlbumArt[stemKey] = { L"", L"" };
 
-    auto folderCached = state.folderAlbumArt.find(folder);
-    if (folderCached != state.folderAlbumArt.end()) {
-        item.albumArtPath = folderCached->second.first;
-        item.albumArtMime = folderCached->second.second;
+    if (folderCacheKnown) {
+        item.albumArtPath = folderCacheValue.first;
+        item.albumArtMime = folderCacheValue.second;
         return;
     }
+
     for (const auto& candidate : BuildAlbumArtCandidateNames(L"")) {
         std::wstring candidatePath = folder + L"\\" + candidate.fileName;
         if (FsIsRegularFile(candidatePath)) {
-            item.albumArtPath = candidatePath;
-            item.albumArtMime = candidate.mimeType;
-            state.folderAlbumArt[folder] = { item.albumArtPath, item.albumArtMime };
+            folderCacheValue = { candidatePath, candidate.mimeType };
+            break;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        state.folderAlbumArt[folder] = folderCacheValue;
+    }
+    item.albumArtPath = folderCacheValue.first;
+    item.albumArtMime = folderCacheValue.second;
+}
+
+// finds a companion subtitle file for a local video item using a single
+// cached directory listing per folder instead of one stat call per
+// candidate subtitle extension per file see the workflow document task 9
+void SetSubtitleIfExists(MediaIndexState& state, MediaItem& item) {
+    if (IsRemoteMediaUrl(item.path) || item.upnpClass != L"object.item.videoItem") return;
+
+    std::wstring folder = item.path;
+    size_t slash = folder.find_last_of(L"\\/");
+    folder = slash == std::wstring::npos ? L"." : folder.substr(0, slash);
+
+    bool namesKnown = false;
+    std::unordered_set<std::wstring> namesCopy;
+    {
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        auto cached = state.folderFileNames.find(folder);
+        if (cached != state.folderFileNames.end()) {
+            namesKnown = true;
+            namesCopy = cached->second;
+        }
+    }
+
+    if (!namesKnown) {
+        // no lock held for this listing call same rationale as the
+        // unlocked stat calls in SetAlbumArtIfExists above
+        std::vector<FsDirEntry> entries;
+        FsListDirectory(folder, entries);
+        for (const auto& entry : entries) {
+            if (!entry.isDirectory) namesCopy.insert(ToLowerWide(entry.name));
+        }
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        state.folderFileNames[folder] = namesCopy;
+    }
+
+    std::wstring stem = SourceStemName(item.path);
+    static const wchar_t* kSubExts[] = { L".srt", L".vtt", L".sub", L".ass", L".ssa", L".smi", L".txt" };
+    for (const wchar_t* subExt : kSubExts) {
+        std::wstring candidateName = ToLowerWide(stem + subExt);
+        if (namesCopy.find(candidateName) != namesCopy.end()) {
+            item.subtitlePath = folder + L"\\" + stem + subExt;
             return;
         }
     }
-    state.folderAlbumArt[folder] = { L"", L"" };
 }
 
 } // namespace
@@ -136,6 +220,7 @@ void MediaSources::Scan() {
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     auto database = std::make_shared<MediaDatabase>();
     database->Load(MediaDatabase::DefaultDatabasePath());
+    database->BeginScanPass();
 
     struct SourceJob {
         std::shared_ptr<PlaylistScanContext> ctx;
@@ -144,7 +229,7 @@ void MediaSources::Scan() {
     };
     std::vector<SourceJob> jobs;
 
-    for (const auto& src : cfg.mediaSources) {
+    for (const auto& src : cfg.effectiveMediaSources) {
         if (IsRemovedSmbSourcePath(src.path)) {
             LogPrint(L"[media:smb-removed] SMB media sources are no longer supported; skipping: %ls",
                      RedactUrlForLog(src.path).c_str());
@@ -165,7 +250,7 @@ void MediaSources::Scan() {
         jobs.push_back({ctx, src, containerId});
     }
 
-    if (cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty() && DefaultPlaylistFileExists(cfg.defaultPlaylistPath)) {
+    if (!cfg.hasRuntimeSourceOverride && cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty() && DefaultPlaylistFileExists(cfg.defaultPlaylistPath)) {
         const int containerId = PublishContainer(database.get(), 0, L"Default playlist", cfg.defaultPlaylistPath, g_canonicalize);
         auto ctx = std::make_shared<PlaylistScanContext>();
         ctx->cfg = cfg;
@@ -173,11 +258,22 @@ void MediaSources::Scan() {
         jobs.push_back({ctx, MediaSource{cfg.defaultPlaylistPath}, containerId});
     }
 
-    TaskGroup sourceGroup;
+    // Each top-level source job runs on its own dedicated thread, never on
+    // PlaylistScanPool. RunPlaylistDispatcher (reached via ScanPlaylistTree,
+    // called directly here or indirectly from ScanFolder/ScanNetworkFolder
+    // when they discover a nested playlist) submits leaf ScanOnePlaylistNode
+    // tasks onto PlaylistScanPool and blocks waiting for them. If the job
+    // that is doing that blocking were itself a PlaylistScanPool task, a
+    // config with enough concurrently-blocked source jobs (>= the pool's
+    // fixed worker count, or fewer sources each containing a nested
+    // playlist) would leave zero pool workers free to ever run the leaf
+    // tasks being waited on -- a permanent deadlock. See Task 9 of
+    // dlna-server-concurrency-memory-fix-workflow-17-7-26.md and SEI CERT
+    // TPS01-J. Do not change this back to PlaylistScanPool::Get().Submit(...).
+    std::vector<std::thread> sourceThreads;
+    sourceThreads.reserve(jobs.size());
     for (auto& job : jobs) {
-        sourceGroup.Enter();
-        PlaylistScanPool::Get().Submit([this, &job, &sourceGroup]() {
-            TaskGroupLeaveGuard leave(sourceGroup);
+        sourceThreads.emplace_back([this, &job]() {
             LogPrint(L"Scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
             if (IsPlaylistSourcePath(job.source.path)) {
                 ScanPlaylistTree(job.ctx, job.source.path, job.containerId);
@@ -189,10 +285,23 @@ void MediaSources::Scan() {
             LogPrint(L"Finished scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
         });
     }
-    sourceGroup.Wait();
+    for (auto& sourceThread : sourceThreads) {
+        sourceThread.join();
+    }
 
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
     AppEvents.NotifySystemUpdateId(newUpdateId);
+
+    if (AppScanCancel.IsCancelled()) {
+        LogPrint(L"Scan cancelled before completion; media-cache.tsv left unmodified.");
+        return;
+    }
+
+    const size_t prunedRecordCount = database->PruneUntouched();
+    if (prunedRecordCount > 0) {
+        LogPrint(L"Pruned %zu stale media-cache record(s) not present in this scan pass.",
+                 prunedRecordCount);
+    }
     if (!database->Save(MediaDatabase::DefaultDatabasePath())) {
         LogPrint(L"Media database save failed: %ls", MediaDatabase::DefaultDatabasePath().c_str());
     }
@@ -207,7 +316,9 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
             mime = L"audio/mpeg";
             uclass = L"object.item.audioItem.musicTrack";
         } else {
-            LogPrint(L"[media:reject-extension] Skipping media with unsupported extension '%ls': %ls", ext.c_str(), RedactUrlForLog(path).c_str());
+            if (IsRemoteMediaUrl(path)) {
+                LogPrint(L"[media:reject-extension] Skipping media with unsupported extension '%ls': %ls", ext.c_str(), RedactUrlForLog(path).c_str());
+            }
             return;
         }
     }
@@ -252,21 +363,8 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
         if (IsRemoteMediaUrl(subtitleOverride)) {
             LogPrint(L"Playlist subtitle resolved to remote URL: %ls", RedactUrlForLog(subtitleOverride).c_str());
         }
-    } else if (!IsRemoteMediaUrl(path) && uclass == L"object.item.videoItem") {
-        std::wstring stem = SourceStemName(path);
-
-        std::wstring folder = path;
-        size_t slash = folder.find_last_of(L"\\/");
-        folder = slash == std::wstring::npos ? L"." : folder.substr(0, slash);
-
-        static const wchar_t* kSubExts[] = { L".srt", L".vtt", L".sub", L".ass", L".ssa", L".smi", L".txt" };
-        for (const wchar_t* subExt : kSubExts) {
-            std::wstring candidate = folder + L"\\" + stem + subExt;
-            if (FsIsRegularFile(candidate)) {
-                fileInfo.subtitlePath = candidate;
-                break;
-            }
-        }
+    } else {
+        SetSubtitleIfExists(state, fileInfo);
     }
 
     SetAlbumArtIfExists(state, fileInfo);
@@ -344,6 +442,14 @@ void MediaSources::RunPlaylistDispatcher(std::shared_ptr<PlaylistScanContext> ct
             node = std::move(ctx->pendingQueue.front());
             ctx->pendingQueue.pop_front();
         }
+
+        if (AppScanCancel.IsCancelled()) {
+            LogPrint(L"[media:cancelled] Discarding queued playlist node: %ls", RedactUrlForLog(node.path).c_str());
+            ctx->group.Leave();
+            ctx->queueCv.notify_all();
+            continue;
+        }
+
         ctx->limiter.Acquire();
         PlaylistScanPool::Get().Submit([this, ctx, node]() {
             // the leave guard must go out of scope and run group Leave
@@ -366,6 +472,31 @@ void MediaSources::RunPlaylistDispatcher(std::shared_ptr<PlaylistScanContext> ct
 
 void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx, const PendingPlaylistNode& node, TaskGroupLeaveGuard& guard) {
     (void)guard;
+    
+    // builds a printable single line preview of fetched text for diagnostic logging
+    // strips carriage returns and line feeds so the log stays one line per event
+    // truncates to a fixed length so a large or binary body cannot flood debug log
+    auto BuildFetchPreview = [](const std::string& text) -> std::wstring {
+        constexpr size_t kPreviewMaxBytes = 200;
+        std::string preview = text.substr(0, (std::min)(text.size(), kPreviewMaxBytes));
+        std::string cleaned;
+        cleaned.reserve(preview.size());
+        for (char ch : preview) {
+            if (ch == '\r' || ch == '\n') {
+                cleaned += ' ';
+            } else if (static_cast<unsigned char>(ch) < 0x20 || static_cast<unsigned char>(ch) > 0x7e) {
+                cleaned += '.';
+            } else {
+                cleaned += ch;
+            }
+        }
+        return Utf8ToWide(cleaned);
+    };
+
+    if (AppScanCancel.IsCancelled()) {
+        LogPrint(L"[media:cancelled] Skipping playlist node fetch: %ls", RedactUrlForLog(node.path).c_str());
+        return;
+    }
     if (node.depth > kMaxPlaylistRecursionDepth) {
         LogPrint(L"[media:scan-depth] Skipping playlist due to recursion depth limit: %ls",
                  RedactUrlForLog(node.path).c_str());
@@ -377,6 +508,7 @@ void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx,
     if (!fetched.fetchOk) {
         LogPrint(L"[media:fetch-failed] Playlist could not be fetched; treating as unavailable rather than empty: %ls",
                  RedactUrlForLog(node.path).c_str());
+        LogPrint(L"[media:fetch-failed] this branch means CurlCapture reported ok=false check debug log lines tagged remote network or remote auth immediately before this one for the http status or curl error string");
         if (ctx->state.mediaDatabase) {
             ctx->state.mediaDatabase->RecordScanError(
                 BuildStableContainerKey(node.parentId, SourceStemName(node.path), node.path, g_canonicalize),
@@ -392,8 +524,10 @@ void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx,
     }
 
     if (!IsRecognizedPlaylistText(node.path, fetched.text)) {
-        LogPrint(L"[media:fetch-invalid] Fetched content is not a recognized HLS manifest or M3U/PLS playlist; skipping: %ls",
-                 RedactUrlForLog(node.path).c_str());
+        LogPrint(L"[media:fetch-invalid] Fetched content is not a recognized HLS manifest or M3U/PLS playlist; skipping: %ls bytes=%zu preview=[%ls]",
+                 RedactUrlForLog(node.path).c_str(),
+                 fetched.text.size(),
+                 BuildFetchPreview(fetched.text).c_str());
         if (ctx->state.mediaDatabase) {
             ctx->state.mediaDatabase->RecordScanError(
                 BuildStableContainerKey(node.parentId, SourceStemName(node.path), node.path, g_canonicalize),
@@ -434,12 +568,17 @@ void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx,
 }
 
 void MediaSources::ScanNetworkFolder(std::shared_ptr<PlaylistScanContext> sourceContext, const std::wstring& folderUrl, int parentId, int depth) {
-    if (depth > 8) {
-        LogPrint(L"%ls Skipping network folder due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(folderUrl).c_str());
+    if (depth > 8 || AppScanCancel.IsCancelled()) {
+        if (AppScanCancel.IsCancelled()) {
+            LogPrint(L"[media:cancelled] Network folder scan cancelled: %ls", RedactUrlForLog(folderUrl).c_str());
+        } else {
+            LogPrint(L"%ls Skipping network folder due to recursion depth limit: %ls", kScanDepthLogCode, RedactUrlForLog(folderUrl).c_str());
+        }
         return;
     }
 
     for (const auto& entry : ListRemoteDirectory(folderUrl)) {
+        if (AppScanCancel.IsCancelled()) break;
         if (IsPlaylistSourcePath(entry.url)) {
             ScanPlaylistTree(sourceContext, entry.url, parentId, SourceStemName(entry.name));
             continue;
@@ -463,8 +602,12 @@ void MediaSources::ScanNetworkFolder(std::shared_ptr<PlaylistScanContext> source
 }
 
 void MediaSources::ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext, const std::wstring& rootPath, int parentId, int depth) {
-    if (depth > 64) {
-        LogPrint(L"%ls Skipping folder due to recursion depth limit: %ls", kScanDepthLogCode, rootPath.c_str());
+    if (depth > 64 || AppScanCancel.IsCancelled()) {
+        if (AppScanCancel.IsCancelled()) {
+            LogPrint(L"[media:cancelled] Folder scan cancelled: %ls", rootPath.c_str());
+        } else {
+            LogPrint(L"%ls Skipping folder due to recursion depth limit: %ls", kScanDepthLogCode, rootPath.c_str());
+        }
         return;
     }
 
@@ -478,6 +621,7 @@ void MediaSources::ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext
     }
 
     for (const auto& entry : entries) {
+        if (AppScanCancel.IsCancelled()) break;
         if (entry.isDirectory) {
             if (sourceContext->cfg.flatFolderStyle) {
                 ScanFolder(sourceContext, entry.fullPath, parentId, depth + 1);
@@ -524,16 +668,16 @@ MediaSources::GetChildrenResult MediaSources::TryGetChildren(int objId, std::vec
 }
 
 std::vector<MediaItem> MediaSources::GetDescendants(int parentId) {
-    std::vector<MediaItem> items;
-    std::unordered_map<int, std::vector<size_t>> childrenByParent;
-    {
-        std::shared_lock<std::shared_mutex> lock(m_mutex);
-        items = m_items;
-        childrenByParent = m_childrenByParent;
-    }
-
+    // GetDescendants has exactly one caller today the Search action in
+    // contentdirectory cpp which always filters this list by search
+    // criteria and then always calls SortItems on the filtered result
+    // sorting here before that filter and that second sort run would
+    // only be thrown away work so this always passes false for the
+    // sort argument see the workflow document task 8 for the full
+    // before and after reasoning
     std::vector<MediaItem> result;
-    AppendDescendants(items, childrenByParent, parentId, AppConfig.IsSortByTitleEnabled(), result);
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    AppendDescendants(m_items, m_childrenByParent, parentId, false, result);
     return result;
 }
 
@@ -548,10 +692,13 @@ MediaItem MediaSources::GetItem(int id) {
     return m;
 }
 
-std::unordered_map<int, int> MediaSources::GetChildCounts(const std::vector<MediaItem>& items) {
+std::unordered_map<int, int> MediaSources::GetChildCounts(const std::vector<MediaItem>& items, size_t rangeStart, size_t rangeCount) {
     std::unordered_map<int, int> counts;
+    const size_t safeStart = (std::min)(rangeStart, items.size());
+    const size_t safeEnd = (std::min)(safeStart + rangeCount, items.size());
     std::shared_lock<std::shared_mutex> lock(m_mutex);
-    for (const auto& item : items) {
+    for (size_t i = safeStart; i < safeEnd; ++i) {
+        const auto& item = items[i];
         if (!item.isFolder) continue;
         auto found = m_childrenByParent.find(item.id);
         counts[item.id] = found == m_childrenByParent.end() ? 0 : static_cast<int>(found->second.size());
@@ -569,6 +716,15 @@ void MediaSources::ResetForRescan() {
         m_items.clear();
         m_idToIndex.clear();
         m_childrenByParent.clear();
+        // Reserving up front does not remove the possibility of a
+        // reallocation-while-locked stall for a library larger than this
+        // capacity (std::vector growth is only amortized O(1), a single
+        // triggering push is not O(1)), it only pushes the first
+        // reallocation past the common case. A structural fix (switching
+        // m_items to a container that never invalidates existing element
+        // storage on growth, e.g. std::deque) is a larger change that also
+        // touches m_idToIndex's index scheme and is out of scope here.
+        m_items.reserve(kInitialCatalogReserve);
 
         MediaItem root{};
         root.id = 0;

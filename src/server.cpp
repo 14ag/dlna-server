@@ -1,5 +1,6 @@
 #include "server.h"
 #include "config.h"
+#include "scan_cancellation.h"
 #include "dlna_utils.h"
 #include "log.h"
 #include "media_sources.h"
@@ -104,14 +105,22 @@ void Server::JoinBackgroundScan() {
 void Server::StartWatchMode() {
     StopWatchMode();
     m_stopWatch.store(false);
+    std::lock_guard<std::mutex> lock(m_watchThreadMutex);
     m_watchThread = std::thread(&Server::WatchLoop, this);
 }
 
 void Server::StopWatchMode() {
     m_stopWatch.store(true);
     m_watchCv.notify_all();
-    if (m_watchThread.joinable()) {
-        m_watchThread.join();
+    std::thread threadToJoin;
+    {
+        std::lock_guard<std::mutex> lock(m_watchThreadMutex);
+        if (m_watchThread.joinable()) {
+            threadToJoin = std::move(m_watchThread);
+        }
+    }
+    if (threadToJoin.joinable()) {
+        threadToJoin.join();
     }
 }
 
@@ -164,6 +173,7 @@ void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
 bool Server::Start(std::wstring& outReason) {
     if (m_running.load(std::memory_order_acquire)) return true;
     m_stopping.store(false, std::memory_order_release);
+    AppScanCancel.BeginScan();
 
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     IPWhitelist::Get().Load(cfg.ipWhiteList);
@@ -172,13 +182,10 @@ bool Server::Start(std::wstring& outReason) {
         outReason = L"Invalid port: " + std::to_wstring(cfg.port);
         return false;
     }
-    if (cfg.fileServerPort != cfg.port) {
-        LogPrint(L"FileServerPort is deprecated; serving media on Port %d.", cfg.port);
-    }
-
     // Validate we have at least one source
-    bool hasSource = cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
-    if (!cfg.mediaSources.empty()) hasSource = true;
+    bool hasSource = !cfg.hasRuntimeSourceOverride &&
+                      cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
+    if (!cfg.effectiveMediaSources.empty()) hasSource = true;
     if (!hasSource) {
         LogPrint(L"No media sources configured.");
         outReason = L"No media sources configured";
@@ -251,12 +258,17 @@ bool Server::Start(std::wstring& outReason) {
     // Do not JoinBackgroundScan() here: Start() must return once the device is
     // advertised, not once the library is fully indexed. The scan continues on
     // m_scanThread; StartWatchMode() begins after Start() returns via a small
-    // completion hook below.
-    std::thread([this]() {
+    // completion hook below. This hook thread is stored in
+    // m_scanCompletionThread and joined at the top of Stop(), never
+    // detached, so it can never outlive this singleton.
+    if (m_scanCompletionThread.joinable()) {
+        m_scanCompletionThread.join();
+    }
+    m_scanCompletionThread = std::thread([this]() {
         JoinBackgroundScan();
         m_initialScanInProgress.store(false, std::memory_order_release);
         StartWatchMode();
-    }).detach();
+    });
     return true;
 }
 
@@ -266,6 +278,7 @@ bool Server::Rescan() {
     // published item tree while another caller is still publishing into
     // it from a scan that has not finished yet
     std::lock_guard<std::mutex> rescanLock(m_rescanMutex);
+    AppScanCancel.BeginScan();
     AppMedia.ResetForRescan();
     if (m_running.load(std::memory_order_acquire)) {
         // StartBackgroundScan only launches the scan thread and returns
@@ -284,14 +297,34 @@ bool Server::Rescan() {
 void Server::Stop() {
     if (!m_running.exchange(false, std::memory_order_acq_rel)) return;
     m_stopping.store(true, std::memory_order_release);
-    
+    AppScanCancel.RequestCancel();
+
     LogPrint(L"Stopping server");
+
+    // Join the post-scan completion hook (see Start()) before anything
+    // else. That hook calls StartWatchMode() as its last step; joining it
+    // here guarantees StartWatchMode() has either already run or will
+    // never run before StopWatchMode() below executes, so there is no
+    // window where StopWatchMode() finds no watch thread yet, returns,
+    // and then StartWatchMode() creates one that nothing will ever stop.
+    if (m_scanCompletionThread.joinable()) {
+        m_scanCompletionThread.join();
+    }
 
     StopWatchMode();
     SSDP::Get().Stop();
     HttpServer::Get().Stop();
     JoinBackgroundScan();
-    
+
+    // A runtime --source override is scoped to a single "on" session. Once
+    // the server is fully stopped, the next Start() (manual or automatic)
+    // must serve config.ini's sources again, not a stale override. Phase 3
+    // depends on this: an incoming interrupt-restart calls Stop() first,
+    // which clears whatever override was active, and only then sets the
+    // NEW override before Start() -- so ordering here matters for both
+    // features and must not be changed independently of Phase 3.
+    AppConfig.ClearRuntimeSourceOverride();
+
     {
         std::lock_guard<std::mutex> lock(m_endpointMutex);
         m_endpoint = L"";

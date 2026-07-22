@@ -117,11 +117,11 @@ void HashLocalSource(uint64_t& hash, const std::wstring& source) {
 
 std::string ComputeMediaSourceSignature(const ConfigSnapshot& cfg) {
     uint64_t hash = kFnvOffset;
-    for (const auto& source : cfg.mediaSources) {
+    for (const auto& source : cfg.effectiveMediaSources) {
         if (IsRemoteMediaUrl(source.path)) continue;
         HashLocalSource(hash, source.path);
     }
-    if (cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty() && !IsRemoteMediaUrl(cfg.defaultPlaylistPath)) {
+    if (!cfg.hasRuntimeSourceOverride && cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty() && !IsRemoteMediaUrl(cfg.defaultPlaylistPath)) {
         HashLocalSource(hash, cfg.defaultPlaylistPath);
     }
     std::ostringstream out;

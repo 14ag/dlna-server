@@ -280,7 +280,7 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
     const int safeStart = (std::max)(0, startingIndex);
     const int available = safeStart >= static_cast<int>(items.size()) ? 0 : static_cast<int>(items.size()) - safeStart;
     const int requested = requestedCount == 0 ? available : (std::min)(requestedCount, available);
-    const auto childCounts = AppMedia.GetChildCounts(items);
+    const auto childCounts = AppMedia.GetChildCounts(items, static_cast<size_t>(safeStart), static_cast<size_t>(requested));
     const bool proxyStreams = AppConfig.IsProxyStreamsEnabled();
     const bool includeTitle = ApplyDidlFilter(filter, "dc:title");
     const bool includeClass = ApplyDidlFilter(filter, "upnp:class");
@@ -363,7 +363,7 @@ ContentDirectory& ContentDirectory::Get() {
 }
 
 std::string ContentDirectory::GetDeviceDescriptionXML(const std::string& hostUrl) {
-    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    const DeviceDescriptionConfig cfg = AppConfig.GetDeviceDescriptionConfig();
     std::string deviceUUID = XMLEscapeUtf8(WideToUtf8(cfg.deviceUUID));
     std::string serverName = XMLEscapeUtf8(WideToUtf8(cfg.serverName));
     std::string manufacturer = XMLEscapeUtf8(WideToUtf8(cfg.deviceManufacturer));

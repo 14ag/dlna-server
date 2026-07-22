@@ -160,8 +160,27 @@ bool MediaDatabase::Save(const std::wstring& path) const {
     return false;
 }
 
-int MediaDatabase::GetOrCreateStableId(const std::wstring& canonicalKey) {
+void MediaDatabase::BeginScanPass() {
     std::lock_guard<std::mutex> lock(m_mutex);
+    m_touchedThisPass.clear();
+}
+
+size_t MediaDatabase::PruneUntouched() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    size_t erased = 0;
+    for (auto it = m_records.begin(); it != m_records.end();) {
+        if (m_touchedThisPass.find(it->first) == m_touchedThisPass.end()) {
+            it = m_records.erase(it);
+            ++erased;
+        } else {
+            ++it;
+        }
+    }
+    return erased;
+}
+
+int MediaDatabase::GetOrCreateStableIdLocked(const std::wstring& canonicalKey) {
+    m_touchedThisPass.insert(canonicalKey);
     auto found = m_records.find(canonicalKey);
     if (found != m_records.end()) {
         return found->second.id;
@@ -173,6 +192,11 @@ int MediaDatabase::GetOrCreateStableId(const std::wstring& canonicalKey) {
     int id = record.id;
     m_records[canonicalKey] = record;
     return id;
+}
+
+int MediaDatabase::GetOrCreateStableId(const std::wstring& canonicalKey) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return GetOrCreateStableIdLocked(canonicalKey);
 }
 
 int MediaDatabase::GetOrCreateStableContainerId(const std::wstring& canonicalKey) {
@@ -188,8 +212,8 @@ void MediaDatabase::MarkScanSuccess(const std::wstring& canonicalKey) {
 }
 
 void MediaDatabase::RecordScanError(const std::wstring& canonicalKey, const std::wstring& message) {
-    int id = GetOrCreateStableId(canonicalKey);   // locks and releases internally
     std::lock_guard<std::mutex> lock(m_mutex);
+    const int id = GetOrCreateStableIdLocked(canonicalKey);
     Record& record = m_records[canonicalKey];
     record.id = id;
     record.scanError = message;

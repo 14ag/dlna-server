@@ -14,6 +14,11 @@
 #include <thread>
 #include "netutils.h"
 
+struct SSDPTarget {
+    std::string st;
+    std::string usn;
+};
+
 struct DelayedSearchResponse {
 #ifdef _WIN32
     SOCKET socket;
@@ -72,6 +77,7 @@ private:
 
     std::vector<NetworkEndpoint> m_endpoints;
     std::string m_uuidStr;
+    std::vector<SSDPTarget> m_targets;
     unsigned int m_bootId;
     unsigned int m_configId;
 };

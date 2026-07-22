@@ -1,6 +1,8 @@
 #include "logdlg.h"
 #include "log.h"
 #include "modal_focus.h"
+#include "ui_font.h"
+#include "dark_frame.h"
 #include "../resources/resource.h"
 #include <dwmapi.h>
 
@@ -8,42 +10,15 @@ namespace {
 
 unsigned long long g_lastSeenSequence = 0;
 
-#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
-#endif
-
 #pragma comment(lib, "dwmapi.lib")
 
-HFONT CreateLogFont(HWND hwnd) {
-    HDC hdc = GetDC(hwnd);
-    int dpiY = hdc ? GetDeviceCaps(hdc, LOGPIXELSY) : 96;
-    if (hdc) {
-        ReleaseDC(hwnd, hdc);
-    }
-    return CreateFontW(-MulDiv(14, dpiY, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Variable Text");
-}
-
 HFONT LogFont(HWND hwnd) {
-    static HFONT font = CreateLogFont(hwnd);
+    static HFONT font = CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI Variable Text");
     return font ? font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
 }
 
-BOOL CALLBACK SetChildFontProc(HWND child, LPARAM fontParam) {
-    SendMessageW(child, WM_SETFONT, static_cast<WPARAM>(fontParam), TRUE);
-    return TRUE;
-}
-
 void ApplyDialogFont(HWND hwnd) {
-    HFONT font = LogFont(hwnd);
-    SendMessageW(hwnd, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-    EnumChildWindows(hwnd, SetChildFontProc, reinterpret_cast<LPARAM>(font));
-}
-
-void ApplyDarkFrame(HWND hwnd) {
-    BOOL darkFrame = TRUE;
-    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkFrame, sizeof(darkFrame));
+    ApplyFontToWindowAndChildren(hwnd, LogFont(hwnd));
 }
 
 void LoadInitialLogText(HWND hwndDlg) {

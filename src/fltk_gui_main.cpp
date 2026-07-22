@@ -4,6 +4,7 @@
 #include "media_sources.h"
 #include "netutils.h"
 #include "server.h"
+#include "server_close_policy.h"
 #include "settings_restart.h"
 
 #include <FL/Fl.H>
@@ -462,10 +463,15 @@ private:
             m_status.copy_label("stopping server...");
             m_startStopButton.deactivate();
         } else if (m_state == ServerUiState::Running) {
-            const std::string endpoint = ToUtf8(DLNAServer.GetEndpoint());
-            const std::string label = DLNAServer.IsInitialScanInProgress()
-                ? ("DLNA Server is running on " + endpoint + " (scanning...)")
-                : ("DLNA Server is running on " + endpoint);
+            std::string label;
+            if (AppConfig.HasRuntimeSourceOverride()) {
+                label = "temporary source";
+            } else {
+                const std::string endpoint = ToUtf8(DLNAServer.GetEndpoint());
+                label = DLNAServer.IsInitialScanInProgress()
+                    ? ("DLNA Server is running on " + endpoint + " (scanning...)")
+                    : ("DLNA Server is running on " + endpoint);
+            }
             m_status.copy_label(label.c_str());
             m_startStopButton.copy_label("Stop");
             m_startStopButton.tooltip("Stop server");
@@ -653,10 +659,10 @@ private:
 
     static void CloseRequested(Fl_Widget*, void* data) {
         auto* self = static_cast<MainWindow*>(data);
-        if (DLNAServer.IsRunning()) {
-            self->hide();
-        } else {
+        if (ShouldCloseNow(DLNAServer.IsRunning(), self->IsBusy())) {
             std::exit(0);
+        } else {
+            self->hide();
         }
     }
 

@@ -1,5 +1,6 @@
 #include "server.h"
 #include "config.h"
+#include "scan_cancellation.h"
 #include "contentdirectory.h"
 #include "dlna_utils.h"
 #include "httpserver.h"
@@ -79,14 +80,22 @@ void Server::JoinBackgroundScan() {
 void Server::StartWatchMode() {
     StopWatchMode();
     m_stopWatch.store(false);
+    std::lock_guard<std::mutex> lock(m_watchThreadMutex);
     m_watchThread = std::thread(&Server::WatchLoop, this);
 }
 
 void Server::StopWatchMode() {
     m_stopWatch.store(true);
     m_watchCv.notify_all();
-    if (m_watchThread.joinable()) {
-        m_watchThread.join();
+    std::thread threadToJoin;
+    {
+        std::lock_guard<std::mutex> lock(m_watchThreadMutex);
+        if (m_watchThread.joinable()) {
+            threadToJoin = std::move(m_watchThread);
+        }
+    }
+    if (threadToJoin.joinable()) {
+        threadToJoin.join();
     }
 }
 
@@ -137,6 +146,7 @@ void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
 bool Server::Start(std::wstring& outReason) {
     if (m_running.load(std::memory_order_acquire)) return true;
     m_stopping.store(false, std::memory_order_release);
+    AppScanCancel.BeginScan();
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     IPWhitelist::Get().Load(cfg.ipWhiteList);
     if (!IsValidPort(cfg.port)) {
@@ -144,11 +154,9 @@ bool Server::Start(std::wstring& outReason) {
         outReason = L"Invalid port: " + std::to_wstring(cfg.port);
         return false;
     }
-    if (cfg.fileServerPort != cfg.port) {
-        LogPrint(L"FileServerPort is deprecated; serving media on Port %d.", cfg.port);
-    }
-    bool hasSource = cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
-    if (!cfg.mediaSources.empty()) hasSource = true;
+    bool hasSource = !cfg.hasRuntimeSourceOverride &&
+                      cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty();
+    if (!cfg.effectiveMediaSources.empty()) hasSource = true;
     if (!hasSource) {
         LogPrint(L"No media sources configured; refusing to serve current directory.");
         outReason = L"No media sources configured";
@@ -192,12 +200,17 @@ bool Server::Start(std::wstring& outReason) {
     // Do not JoinBackgroundScan() here: Start() must return once the device is
     // advertised, not once the library is fully indexed. The scan continues on
     // m_scanThread; StartWatchMode() begins after Start() returns via a small
-    // completion hook below.
-    std::thread([this]() {
+    // completion hook below. This hook thread is stored in
+    // m_scanCompletionThread and joined at the top of Stop(), never
+    // detached, so it can never outlive this singleton.
+    if (m_scanCompletionThread.joinable()) {
+        m_scanCompletionThread.join();
+    }
+    m_scanCompletionThread = std::thread([this]() {
         JoinBackgroundScan();
         m_initialScanInProgress.store(false, std::memory_order_release);
         StartWatchMode();
-    }).detach();
+    });
     LogPrint(L"DLNA server running on %ls", endpointText.c_str());
     return true;
 }
@@ -206,6 +219,7 @@ bool Server::Rescan() {
     // serialize the whole reset then scan sequence per caller
     // see src/server.cpp Server::Rescan for the full rationale
     std::lock_guard<std::mutex> rescanLock(m_rescanMutex);
+    AppScanCancel.BeginScan();
     AppMedia.ResetForRescan();
     if (m_running.load(std::memory_order_acquire)) {
         StartBackgroundScan();
@@ -219,10 +233,17 @@ bool Server::Rescan() {
 void Server::Stop() {
     if (!m_running.exchange(false, std::memory_order_acq_rel)) return;
     m_stopping.store(true, std::memory_order_release);
+    AppScanCancel.RequestCancel();
+    if (m_scanCompletionThread.joinable()) {
+        m_scanCompletionThread.join();
+    }
     StopWatchMode();
     SSDP::Get().Stop();
     HttpServer::Get().Stop();
     JoinBackgroundScan();
+
+    AppConfig.ClearRuntimeSourceOverride();
+
     {
         std::lock_guard<std::mutex> lock(m_endpointMutex);
         m_endpoint.clear();

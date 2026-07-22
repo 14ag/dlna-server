@@ -1,6 +1,9 @@
 #include "mainwindow.h"
 #include "../resources/resource.h"
 #include "settingsdlg.h"
+#include "server_close_policy.h"
+#include "ui_font.h"
+#include "dark_frame.h"
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <uxtheme.h>
@@ -11,17 +14,15 @@
 #include <thread>
 #include <atomic>
 #include "config.h"
+#include "dlna_utils.h"
 #include "media_sources.h"
+#include "input_gate.h"
 #include "modal_focus.h"
 #include "server.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "uxtheme.lib")
-
-#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
-#endif
 
 #define WM_TRAYICON (WM_USER + 1)
 #define WM_SCAN_DONE (WM_USER + 2)
@@ -36,7 +37,7 @@ const int kStatusHeight = 40;
 const int kButtonHeight = 32;
 const int kButtonGap = 8;
 const int kListTop = kToolbarHeight + kStatusHeight + 8;
-const int kFocusRingThickness = 2;
+const int kFocusRingThickness = 1;
 const int kFocusRingGap = 2;
 const int kCornerDiameter = 8;
 const int kDefaultWindowWidth = 440;
@@ -71,26 +72,9 @@ COLORREF kTextColor = RGB(255, 255, 255);
 COLORREF kDisabledTextColor = RGB(132, 132, 132);
 COLORREF kSecondaryTextColor = RGB(200, 200, 200);
 
-HFONT CreateScaledFont(HWND hwnd, int pixelSize, int weight, const wchar_t* faceName) {
-    HDC hdc = GetDC(hwnd);
-    int dpiY = hdc ? GetDeviceCaps(hdc, LOGPIXELSY) : 96;
-    if (hdc) {
-        ReleaseDC(hwnd, hdc);
-    }
-
-    return CreateFontW(-MulDiv(pixelSize, dpiY, 96), 0, 0, 0, weight, FALSE, FALSE, FALSE,
-                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, faceName);
-}
-
 HFONT SourcePromptFont(HWND hwnd) {
     static HFONT font = CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI Variable Text");
     return font ? font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-}
-
-void ApplyDarkFrame(HWND hwnd) {
-    BOOL darkFrame = TRUE;
-    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkFrame, sizeof(darkFrame));
 }
 
 struct ServerOperationResult {
@@ -99,14 +83,6 @@ struct ServerOperationResult {
     std::wstring endpoint;
     std::wstring message;
 };
-
-std::wstring TrimWideInput(const std::wstring& value) {
-    size_t start = 0;
-    while (start < value.size() && iswspace(value[start])) ++start;
-    size_t end = value.size();
-    while (end > start && iswspace(value[end - 1])) --end;
-    return value.substr(start, end - start);
-}
 
 std::wstring BrowseFolder(HWND owner) {
     IFileOpenDialog* pFileOpen = nullptr;
@@ -175,7 +151,7 @@ void FinishSourcePrompt(HWND hwnd, SourcePromptState* state, bool accepted) {
         std::wstring text(length + 1, L'\0');
         GetWindowTextW(state->edit, &text[0], length + 1);
         text.resize(length);
-        state->value = TrimWideInput(text);
+        state->value = TrimWide(text);
         state->accepted = !state->value.empty();
     }
     state->done = true;
@@ -213,11 +189,17 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             WS_VISIBLE | WS_CHILD | WS_TABSTOP, kSourcePromptWidth - kGutter - 78, kSourcePromptButtonTop, 78, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_CANCEL)), NULL, NULL);
         HWND controls[] = { label, state->edit, hint, folder, playlist, add, cancel };
         for (HWND control : controls) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        EnableWindow(GetDlgItem(hwnd, IDC_SOURCE_ADD), FALSE);
         SetFocus(state->edit);
         return 0;
     }
     case WM_COMMAND: {
         int id = LOWORD(wParam);
+        if (id == IDC_SOURCE_EDIT && HIWORD(wParam) == EN_CHANGE) {
+            EnableWindow(GetDlgItem(hwnd, IDC_SOURCE_ADD),
+                         AnyFieldHasContent({ GetWindowTextLengthW(state->edit) }) ? TRUE : FALSE);
+            return 0;
+        }
         if (id == IDC_SOURCE_BROWSE_FOLDER) {
             std::wstring selected = BrowseFolder(hwnd);
             if (!selected.empty()) SetWindowTextW(state->edit, selected.c_str());
@@ -332,6 +314,14 @@ MainWindow::~MainWindow() {
     }
     DLNAServer.Stop();
     SetThreadExecutionState(ES_CONTINUOUS);
+    if (m_hListSources) {
+        RevokeDragDrop(m_hListSources);
+    }
+    if (m_sourceDropTarget) {
+        m_sourceDropTarget->Release();
+        m_sourceDropTarget = nullptr;
+    }
+    OleUninitialize();
     RemoveTrayIcon();
     if (m_hBgBrush) DeleteObject(m_hBgBrush);
     if (m_hDarkBrush) DeleteObject(m_hDarkBrush);
@@ -423,6 +413,12 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
     // on the listbox NC frame (which would appear as blue lines on focus).
     SetWindowTheme(m_hListSources, L"", L"");
 
+    OleInitialize(NULL);
+    m_sourceDropTarget = new SourceListDropTarget(
+        [this]() { return IsBusy() || IsRunning(); },
+        [this](const std::vector<std::wstring>& paths) { HandleDroppedPaths(paths); });
+    RegisterDragDrop(m_hListSources, m_sourceDropTarget);
+
     UpdateListLayout(kDefaultWindowWidth, kDefaultWindowHeight);
 
     RefreshSourceList();
@@ -506,6 +502,7 @@ void MainWindow::SetStatus(ServerUiState state, const std::wstring& endpoint) {
     SetControlsForState();
     UpdateWakeLock();
     RefreshToolbarMnemonics();
+    RefreshSourceList();
     InvalidateRect(m_hwnd, NULL, TRUE);
 }
 
@@ -515,6 +512,16 @@ bool MainWindow::IsBusy() const {
 
 bool MainWindow::IsRunning() const {
     return m_state == ServerUiState::Running;
+}
+
+bool MainWindow::IsShowingOverrideSources() const {
+    // An override is only "being served" once the server that would serve
+    // it is actually running. If an override was set on a stopped instance
+    // (see the WM_COPYDATA not-running branch in Phase 3) the listbox must
+    // keep showing config.ini's list until Start() actually picks the
+    // override up -- otherwise the list and the Add/Delete affordances
+    // would desync from what a subsequent manual Start() would do.
+    return AppConfig.HasRuntimeSourceOverride() && IsRunning();
 }
 
 void MainWindow::UpdateWakeLock() {
@@ -600,6 +607,35 @@ void MainWindow::BeginRestartServer() {
     });
 }
 
+void MainWindow::BeginSourceOverrideRestart(std::vector<MediaSource> overrideSources) {
+    if (IsBusy()) return;
+    if (m_worker.joinable()) m_worker.join();
+    SetStatus(ServerUiState::Stopping, m_statusEndpoint);
+    HWND target = m_hwnd;
+    m_worker = std::thread([target, overrideSources = std::move(overrideSources)]() {
+        DLNAServer.Stop();
+        // Set the NEW override only after Stop() has fully run, since
+        // Stop() unconditionally clears whatever override was active
+        // (Phase 2). Setting it before Stop() would have it wiped.
+        AppConfig.SetRuntimeSourceOverride(overrideSources);
+        PostMessageW(target, WM_SERVER_OPERATION_PROGRESS, static_cast<WPARAM>(ServerUiState::Starting), 0);
+        std::wstring reason;
+        bool ok = DLNAServer.Start(reason);
+        std::wstring message;
+        if (!ok) {
+            message = L"server could not start\n";
+            if (!reason.empty()) message += reason;
+        }
+        ServerOperationResult* result = new ServerOperationResult{
+            ok ? ServerUiState::Running : ServerUiState::Stopped,
+            ok,
+            ok ? DLNAServer.GetEndpoint() : L"",
+            ok ? L"" : message
+        };
+        PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+    });
+}
+
 void MainWindow::CompleteServerOperation(ServerUiState finalState, const std::wstring& endpoint, bool success, const std::wstring& message) {
     if (m_worker.joinable()) {
         m_worker.join();
@@ -617,16 +653,7 @@ void MainWindow::CompleteServerOperation(ServerUiState finalState, const std::ws
 }
 
 HFONT MainWindow::CreateUiFont(int pixelSize, int weight, const wchar_t* faceName) {
-    HDC hdc = GetDC(m_hwnd);
-    int dpiY = hdc ? GetDeviceCaps(hdc, LOGPIXELSY) : 96;
-    if (hdc) {
-        ReleaseDC(m_hwnd, hdc);
-    }
-
-    int height = -MulDiv(pixelSize, dpiY, 96);
-    return CreateFontW(height, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                       DEFAULT_PITCH | FF_DONTCARE, faceName);
+    return CreateScaledFont(m_hwnd, pixelSize, weight, faceName);
 }
 
 void MainWindow::AddTrayIcon() {
@@ -695,7 +722,10 @@ void MainWindow::RestoreAndFocusMainWindow() {
 
 void MainWindow::RefreshSourceList() {
     SendMessage(m_hListSources, LB_RESETCONTENT, 0, 0);
-    for (const auto& src : AppConfig.mediaSources) {
+    const std::vector<MediaSource> displayed = IsShowingOverrideSources()
+        ? AppConfig.GetRuntimeSourceOverride()
+        : AppConfig.mediaSources;
+    for (const auto& src : displayed) {
         SendMessageW(m_hListSources, LB_ADDSTRING, 0, (LPARAM)src.path.c_str());
     }
     UpdateDeleteButton();
@@ -710,7 +740,8 @@ int MainWindow::SelectedSourceIndex() const {
 void MainWindow::UpdateDeleteButton() {
     if (!m_hBtnDelete) return;
     const bool hasSelection = !m_focusState.IsNoFocus();
-    const bool deletionAllowed = hasSelection && !IsBusy() && !m_scanInProgress.load();
+    const bool deletionAllowed = hasSelection && !IsBusy() && !m_scanInProgress.load()
+        && !IsShowingOverrideSources();
     EnableWindow(m_hBtnDelete, deletionAllowed ? TRUE : FALSE);
 }
 
@@ -748,9 +779,14 @@ void MainWindow::RepaintHighlightTransition(int before, int after) {
     auto repaintOne = [this](int id) {
         if (id == HoverFocusState::kNoControl) return;
         if (id == IDC_LIST_SOURCES) {
-            // RDW_ALLCHILDREN forces the listbox child to repaint its own area,
-            // preventing stale ring pixels on edges where the child clips the parent.
-            RedrawWindow(m_hwnd, &m_listRingRect, NULL,
+            // Rectangle draws the ring pen centered on m_listRingRect
+            // GDI Rectangle excludes the bottom and right edges of the rect it is given
+            // a pen wider than 1px therefore paints asymmetrically outside the nominal rect
+            // erasing or repainting with that same unpadded rect can miss those pixels
+            // inflate the redraw target so it is a strict superset of the ring pen footprint
+            RECT ringRedrawRect = m_listRingRect;
+            InflateRect(&ringRedrawRect, kFocusRingThickness, kFocusRingThickness);
+            RedrawWindow(m_hwnd, &ringRedrawRect, NULL,
                          RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
         } else {
             InvalidateRect(GetDlgItem(m_hwnd, id), NULL, TRUE);
@@ -776,7 +812,7 @@ void MainWindow::UpdateControlFocus(int controlId, bool gained) {
 }
 
 void MainWindow::RemoveSelectedSource() {
-    if (IsBusy() || m_scanInProgress.load()) {
+    if (IsBusy() || m_scanInProgress.load() || IsShowingOverrideSources()) {
         return;
     }
 
@@ -847,24 +883,41 @@ void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
     DeleteObject(fillBrush);
 }
 
-void MainWindow::OpenFolderPicker() {
-    std::wstring selected = PromptForMediaSource(m_hwnd, m_hInstance);
-    if (selected.empty()) return;
-
+bool MainWindow::AddMediaSourceIfNew(const std::wstring& path) {
     bool alreadyPresent = false;
-    AppConfig.Mutate([&selected, &alreadyPresent](Config& cfg) {
+    AppConfig.Mutate([&path, &alreadyPresent](Config& cfg) {
         for (const auto& source : cfg.mediaSources) {
-            if (source.path == selected) {
+            if (source.path == path) {
                 alreadyPresent = true;
                 return;
             }
         }
-        cfg.mediaSources.push_back({selected});
+        cfg.mediaSources.push_back({path});
     });
-    if (alreadyPresent) return;
+    if (alreadyPresent) {
+        return false;
+    }
     AppConfig.Save();
     RefreshSourceList();
     std::thread([]() { DLNAServer.Rescan(); }).detach();
+    return true;
+}
+
+void MainWindow::OpenFolderPicker() {
+    std::wstring selected = PromptForMediaSource(m_hwnd, m_hInstance);
+    if (selected.empty()) return;
+    AddMediaSourceIfNew(selected);
+}
+
+void MainWindow::HandleDroppedPaths(const std::vector<std::wstring>& paths) {
+    if (IsBusy() || IsRunning()) {
+        return;
+    }
+    for (const auto& path : paths) {
+        if (IsSupportedLocalMediaOrPlaylistPath(path)) {
+            AddMediaSourceIfNew(path);
+        }
+    }
 }
 
 void MainWindow::BeginRescan() {
@@ -1029,7 +1082,7 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         } else if (m_state == ServerUiState::Stopping) {
             statusText = L"stopping server...";
         } else if (m_state == ServerUiState::Running) {
-            statusText = L"Server running";
+            statusText = AppConfig.HasRuntimeSourceOverride() ? L"temporary source" : L"Server running";
         }
         DrawTextW(hdc, statusText.c_str(), -1, &rcStatusText, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
@@ -1175,6 +1228,39 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         RestoreAndFocusMainWindow();
         return 0;
     }
+    case WM_REQUEST_SHUTDOWN: {
+        DestroyWindow(hwnd);
+        return 0;
+    }
+    case WM_COPYDATA: {
+        const COPYDATASTRUCT* cds = reinterpret_cast<const COPYDATASTRUCT*>(lParam);
+        if (cds && cds->dwData == kCopyDataSourceReplace && cds->lpData) {
+            std::wstring payload(reinterpret_cast<const wchar_t*>(cds->lpData));
+            std::vector<std::wstring> paths = ParseQuotedCommaList(payload);
+            std::vector<MediaSource> overrideSources;
+            for (const auto& path : paths) {
+                if (!path.empty()) overrideSources.push_back({path});
+            }
+            if (IsBusy()) {
+                // A start/stop/restart is already in flight for this
+                // instance; drop this request rather than racing it. The
+                // second process that sent this message simply gets no
+                // effect -- matches the existing guard pattern used by
+                // BeginStartServer/BeginStopServer/BeginRestartServer.
+                return TRUE;
+            }
+            if (DLNAServer.IsRunning()) {
+                BeginSourceOverrideRestart(std::move(overrideSources));
+            } else {
+                // Nothing is being served yet; there is no session to
+                // interrupt. Just install the override so the next manual
+                // Start() picks it up (Phase 1's effectiveMediaSources).
+                AppConfig.SetRuntimeSourceOverride(overrideSources);
+                RefreshSourceList();
+            }
+        }
+        return TRUE;
+    }
     case WM_TRAYICON: {
         if (lParam == WM_LBUTTONUP) {
             RestoreAndFocusMainWindow();
@@ -1186,10 +1272,10 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         return 0;
     }
     case WM_CLOSE: {
-        if (DLNAServer.IsRunning()) {
-            ShowWindow(hwnd, SW_HIDE);
-        } else {
+        if (ShouldCloseNow(DLNAServer.IsRunning(), IsBusy())) {
             DestroyWindow(hwnd);
+        } else {
+            ShowWindow(hwnd, SW_HIDE);
         }
         return 0;
     }

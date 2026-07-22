@@ -1,6 +1,6 @@
 # Media Scanning
 
-Implemented in `src/media_sources.cpp` (Windows) and `src/posix_media_sources.cpp` (POSIX), sharing dedup/ID logic from `src/media_scan_common.cpp` and playlist/remote-fetch logic from `src/network_sources.cpp`.
+Implemented in `src/media_sources_common.cpp` (compiled on both platforms, no platform-split file for this concern), sharing dedup/ID logic from `src/media_scan_common.cpp` and playlist/remote-fetch logic from `src/network_sources.cpp`.
 
 ## Scan lifecycle
 
@@ -8,10 +8,15 @@ Implemented in `src/media_sources.cpp` (Windows) and `src/posix_media_sources.cp
 
 1. Loads `MediaDatabase` from `media-cache.tsv` (stable IDs and prior scan-error state).
 2. Builds a fresh `MediaIndexState` — a `Root` item (id 0), then one top-level container per enabled `MediaSource`, plus one for the default playlist if enabled.
-3. Dispatches each source by type: `ScanPlaylist` for `.m3u`/`.m3u8`/`.pls` paths, `ScanNetworkFolder` for FTP/FTPS directory URLs, `ScanFolder` for local directories.
-4. Calls `BuildIndexes()` to construct the `idToIndex` / `childrenByParent` maps, then swaps the whole state into the live `MediaSources` instance under `m_mutex` — readers never observe a half-built tree.
-5. Increments `SystemUpdateID` and calls `UpnpEventManager::NotifySystemUpdateId()`, which fires GENA notifications to `ContentDirectory` subscribers.
-6. Saves `MediaDatabase` back to `media-cache.tsv`.
+3. Spawns one thread per media source (directly via `std::thread` or `std::async`, *not* through `BoundedThreadPool` — to avoid pool-exhaustion deadlock when playlist workers need to fetch nested playlists). Each source thread dispatches by type:
+   - `ScanPlaylistTree` for `.m3u`/`.m3u8`/`.pls` paths
+   - `ScanNetworkFolder` for FTP/FTPS directory URLs
+   - `ScanFolder` for local directories
+4. Sources publish items *incrementally* during scan — each call to `PublishItem()` or `PublishContainer()` acquires `m_mutex` (a `std::shared_mutex`) for the duration of the single insert/index update, then releases it. Readers (`GetChildren`, `TryGetChildren`, `GetDescendants`, `GetItem`, `GetChildCounts`) copy data out under a shared (read) lock, so concurrent browsing sees whatever has been scanned so far. There is no separate swap function — the live `MediaItems` vector, `idToIndex` map, and `childrenByParent` map are mutated directly during the scan, one item at a time.
+5. After all source threads complete (the scan-completion thread joins them from `JoinBackgroundScan`), `SystemUpdateID` is incremented and `UpnpEventManager::NotifySystemUpdateId()` fires GENA notifications to `ContentDirectory` subscribers.
+6. `MediaDatabase` is saved back to `media-cache.tsv`.
+
+Scan cancellation (`ScanCancellation::Get().RequestCancel()`, called by the watch loop and UI before triggering a new scan) is checked at multiple points during dispatch and per-source scanning — long-running sources (slow FTP listings, deep directory trees) abort early when `IsCancelled()` returns true. The partially-built `MediaIndexState` is discarded, and the next scan starts fresh. Cooperative, not preemptive — no thread is interrupted mid-I/O.
 
 Disabled sources, and (Windows/POSIX both) `smb://`/`smbs://` sources, are skipped with a log line rather than causing scan failure — SMB support was removed because libcurl's `smb://` backend is SMB1/CIFS-only, which most current servers refuse, and it has no directory-listing capability for any dialect.
 
@@ -27,12 +32,12 @@ A single static table maps extension → MIME type, UPnP class, DLNA profile, an
 
 ## Nested playlist behavior
 
-`ScanPlaylist` / `ScanPlaylistEntry` (recursion capped at depth 8, logged as `[media:scan-depth]` past that):
+A playlist source is dispatched through `ScanPlaylistTree()`, which seeds the `PlaylistScanContext.pendingQueue` and hands off to `RunPlaylistDispatcher()`. The dispatcher drains the queue using a dedicated 20-worker thread pool (`PlaylistScanPool`), running `ScanOnePlaylistNode()` per entry (recursion capped at depth 8, logged as `[media:scan-depth]` past that). `AdaptiveConcurrencyLimiter` bounds how many network fetches run in parallel.
 
 - If a fetch fails outright (network error, missing file), the entry is recorded as a scan error (`MediaDatabase::RecordScanError`) and skipped — it is **not** rendered as an empty folder, since an empty folder looks the same to a renderer as "correctly scanned, genuinely has no children," which hides the actual failure from anyone browsing the tree. (Top-level unreachable sources still surface as empty folders — see `docs/KNOWN-ISSUES.md`.)
-- If the fetched text is itself an HLS manifest, it's registered directly under the *current* parent container as a single stream item — it is never wrapped in an extra folder, since a folder whose only possible child is one manifest with no size or duration adds a browse hop for no benefit.
+- If the fetched text is itself an HLS manifest, it's registered directly under the *current* parent container as a single stream item — it is never wrapped in an extra folder, since a folder whose only child is one manifest with no size or duration adds a browse hop for no benefit.
 - If parsing yields zero usable entries, the nested playlist is skipped entirely rather than creating an empty container.
-- Otherwise, a container is created and each entry is added, recursing into further nested playlists as needed.
+- Otherwise, a container is created and each entry is added, recursing into further nested playlists as needed. Entries whose locations point to the current playlist's own path (self-reference) are dropped with a log warning to avoid infinite dispatch loops.
 
 ## Playlist formats
 

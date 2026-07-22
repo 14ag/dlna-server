@@ -62,6 +62,8 @@ HlsManifestFetchResult FetchHlsManifestForServing(const std::wstring& manifestUr
 
 std::wstring ResolveRelativeUrl(const std::wstring &baseUrl, const std::wstring &relativeUrl);
 
+std::string RewriteHlsManifestUrisToAbsolute(const std::wstring& manifestUrl, const std::string& manifestText);
+
 // parses already fetched playlist text with no network or file access
 std::vector<PlaylistEntry> ParseFetchedPlaylistText(const std::wstring& playlistPath, const std::string& text);
 

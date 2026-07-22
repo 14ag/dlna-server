@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <ctime>
 #include <ifaddrs.h>
+#include <mutex>
 #include <net/if.h>
 #include <netdb.h>
 #include <unistd.h>
@@ -266,4 +267,30 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
     }
     std::remove(WideToUtf8(tempPath).c_str());
     return false;
+}
+
+std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
+    // guarded because HandleClient calls this from many concurrent
+    // client threads on both platforms see the workflow document task 2
+    static std::mutex cacheMutex;
+    static std::string cachedHost;
+    static int cachedPort = 0;
+    static bool cachedValid = false;
+
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    if (!cachedValid || cachedPort != port) {
+        cachedHost.clear();
+        std::vector<NetworkEndpoint> endpoints;
+        if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
+            for (const auto& ep : endpoints) {
+                if (!ep.isLinkLocal) {
+                    cachedHost = ep.address + ":" + std::to_string(port);
+                    break;
+                }
+            }
+        }
+        cachedPort = port;
+        cachedValid = true;
+    }
+    return cachedHost;
 }
