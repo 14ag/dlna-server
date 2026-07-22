@@ -79,6 +79,12 @@ int main(int argc, char** argv) {
             std::cout << (AppScanCancel.IsCancelled() ? "1" : "0") << std::endl;
             return 0;
         }
+        else if (arg == "--print-config-load-lockstate") {
+            std::cout << "before load" << std::endl;
+            AppConfig.Load();
+            std::cout << "after load ok" << std::endl;
+            return 0;
+        }
         else if (arg == "--print-scan-concurrency" && i + 1 < argc) {
             size_t n = static_cast<size_t>(std::atoll(argv[++i]));
             std::cout << ComputePlaylistScanConcurrency(n) << std::endl;
@@ -306,7 +312,11 @@ int main(int argc, char** argv) {
             return 0;
         }
         else if (arg == "--debug") AppConfig.debugLog = true;
-        else if (arg == "--help") { PrintUsage(argv[0]); return 0; }
+        else if (arg == "--help") {
+            PrintUsage(argv[0]);
+            std::cerr.flush();
+            return 0;
+        }
         else runtimeSources.push_back(Utf8ToWide(arg));
     }
     if (!runtimeSources.empty()) {

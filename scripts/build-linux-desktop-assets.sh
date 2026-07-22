@@ -7,6 +7,7 @@ platform_dir=${DLNA_LINUX_PLATFORM_DIR:-"$repo_root/output/linux"}
 build_dir=${DLNA_LINUX_BUILD_DIR:-"$repo_root/build-release-linux"}
 release_stage_dir=${DLNA_LINUX_STAGE_DIR:-"$repo_root/build-release-linux-stage"}
 install_only=${DLNA_INSTALL_ONLY:-0}
+package_only=${DLNA_INSTALL_PACKAGE_ONLY:-0}
 if [ "$install_only" = "1" ]; then
     install_dir=${DLNA_LINUX_INSTALL_DIR:-/usr/local}
 else
@@ -111,10 +112,10 @@ cmake_args=(
     -DCMAKE_INSTALL_PREFIX="$install_dir"
 )
 
-if [ "$install_only" = "1" ]; then
-    cmake_args+=("-DDLNA_ENABLE_FLTK_GUI=OFF")
-else
+if [ "${DLNA_LINUX_GUI_BUILD:-1}" = "1" ]; then
     cmake_args+=("-DDLNA_ENABLE_FLTK_GUI=ON")
+else
+    cmake_args+=("-DDLNA_ENABLE_FLTK_GUI=OFF")
 fi
 
 if [ -n "${DLNA_FLTK_SOURCE_DIR:-}" ] && [ -d "$DLNA_FLTK_SOURCE_DIR" ]; then
@@ -130,11 +131,16 @@ if [ "$install_only" = "1" ]; then
     echo ""
     echo "DLNA Server installed to /usr/local"
     echo "  Headless: dlna-server --source /path/to/media"
+    echo "  GUI:      dlna-server-gui"
     exit 0
 fi
 cmake --install "$build_dir"
 
 cpack --config "$build_dir/CPackConfig.cmake" -B "$output_dir"
+
+if [ "$package_only" = "1" ]; then
+    exit 0
+fi
 
 rm -rf "$appdir"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/share"
