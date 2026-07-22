@@ -352,7 +352,7 @@ void UpnpEventManager::WorkerLoop() {
             }
         }
         if (!m_notifyPool) {
-            m_notifyPool = std::make_unique<BoundedThreadPool>(kMaxUpnpSubscriptions);
+            m_notifyPool = std::make_unique<BoundedThreadPool>(kMaxUpnpNotifyWorkers);
         }
         m_notifyPool->Submit([this, job]() { SendNotifyJob(job); });
     }

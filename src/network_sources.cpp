@@ -40,8 +40,6 @@ constexpr long kCurlCaptureTimeoutSeconds = 30L;
 constexpr long kCurlLowSpeedLimitBytes = 1L;
 constexpr long kCurlLowSpeedTimeSeconds = 30L;
 
-std::wstring TrimWide(const std::wstring& value);
-
 bool HasScheme(const std::string& value, const char* scheme) {
     std::string prefix = std::string(scheme) + "://";
     return ToLowerAscii(value).rfind(prefix, 0) == 0;
@@ -331,14 +329,6 @@ std::string ReadSourceText(const std::wstring& source, bool* ok = nullptr) {
 std::wstring TitleFromEntry(const std::wstring& location) {
     std::wstring stem = SourceStemName(location);
     return stem.empty() ? SourceDisplayName(location) : stem;
-}
-
-std::wstring TrimWide(const std::wstring& value) {
-    size_t start = 0;
-    while (start < value.size() && iswspace(value[start])) ++start;
-    size_t end = value.size();
-    while (end > start && iswspace(value[end - 1])) --end;
-    return value.substr(start, end - start);
 }
 
 std::string UnquotePlaylistValue(std::string value) {

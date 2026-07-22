@@ -28,6 +28,7 @@ struct HttpByteRange {
 };
 
 std::string TrimAscii(const std::string& value);
+std::wstring TrimWide(const std::wstring& value);
 std::string ToLowerAscii(std::string value);
 std::wstring ToLowerWide(std::wstring value);
 std::string FindHeaderValueCaseInsensitive(const std::string& request, const std::string& headerName);

@@ -1,6 +1,9 @@
 #include "mainwindow.h"
 #include "../resources/resource.h"
 #include "settingsdlg.h"
+#include "server_close_policy.h"
+#include "ui_font.h"
+#include "dark_frame.h"
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <uxtheme.h>
@@ -20,10 +23,6 @@
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "uxtheme.lib")
-
-#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
-#endif
 
 #define WM_TRAYICON (WM_USER + 1)
 #define WM_SCAN_DONE (WM_USER + 2)
@@ -73,26 +72,9 @@ COLORREF kTextColor = RGB(255, 255, 255);
 COLORREF kDisabledTextColor = RGB(132, 132, 132);
 COLORREF kSecondaryTextColor = RGB(200, 200, 200);
 
-HFONT CreateScaledFont(HWND hwnd, int pixelSize, int weight, const wchar_t* faceName) {
-    HDC hdc = GetDC(hwnd);
-    int dpiY = hdc ? GetDeviceCaps(hdc, LOGPIXELSY) : 96;
-    if (hdc) {
-        ReleaseDC(hwnd, hdc);
-    }
-
-    return CreateFontW(-MulDiv(pixelSize, dpiY, 96), 0, 0, 0, weight, FALSE, FALSE, FALSE,
-                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, faceName);
-}
-
 HFONT SourcePromptFont(HWND hwnd) {
     static HFONT font = CreateScaledFont(hwnd, 14, FW_NORMAL, L"Segoe UI Variable Text");
     return font ? font : reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
-}
-
-void ApplyDarkFrame(HWND hwnd) {
-    BOOL darkFrame = TRUE;
-    DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkFrame, sizeof(darkFrame));
 }
 
 struct ServerOperationResult {
@@ -101,14 +83,6 @@ struct ServerOperationResult {
     std::wstring endpoint;
     std::wstring message;
 };
-
-std::wstring TrimWideInput(const std::wstring& value) {
-    size_t start = 0;
-    while (start < value.size() && iswspace(value[start])) ++start;
-    size_t end = value.size();
-    while (end > start && iswspace(value[end - 1])) --end;
-    return value.substr(start, end - start);
-}
 
 std::wstring BrowseFolder(HWND owner) {
     IFileOpenDialog* pFileOpen = nullptr;
@@ -177,7 +151,7 @@ void FinishSourcePrompt(HWND hwnd, SourcePromptState* state, bool accepted) {
         std::wstring text(length + 1, L'\0');
         GetWindowTextW(state->edit, &text[0], length + 1);
         text.resize(length);
-        state->value = TrimWideInput(text);
+        state->value = TrimWide(text);
         state->accepted = !state->value.empty();
     }
     state->done = true;
@@ -679,16 +653,7 @@ void MainWindow::CompleteServerOperation(ServerUiState finalState, const std::ws
 }
 
 HFONT MainWindow::CreateUiFont(int pixelSize, int weight, const wchar_t* faceName) {
-    HDC hdc = GetDC(m_hwnd);
-    int dpiY = hdc ? GetDeviceCaps(hdc, LOGPIXELSY) : 96;
-    if (hdc) {
-        ReleaseDC(m_hwnd, hdc);
-    }
-
-    int height = -MulDiv(pixelSize, dpiY, 96);
-    return CreateFontW(height, 0, 0, 0, weight, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                       DEFAULT_PITCH | FF_DONTCARE, faceName);
+    return CreateScaledFont(m_hwnd, pixelSize, weight, faceName);
 }
 
 void MainWindow::AddTrayIcon() {
@@ -1307,10 +1272,10 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         return 0;
     }
     case WM_CLOSE: {
-        if (DLNAServer.IsRunning()) {
-            ShowWindow(hwnd, SW_HIDE);
-        } else {
+        if (ShouldCloseNow(DLNAServer.IsRunning(), IsBusy())) {
             DestroyWindow(hwnd);
+        } else {
+            ShowWindow(hwnd, SW_HIDE);
         }
         return 0;
     }

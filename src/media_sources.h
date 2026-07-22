@@ -58,6 +58,11 @@ struct MediaIndexState {
     std::unordered_map<std::wstring, int> containerKeys;
     std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> folderAlbumArt;
     std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> perStemAlbumArt;
+    // lowercased file names seen in a folder built once per folder from a
+    // single directory listing used by subtitle lookup so that finding a
+    // companion subtitle file never needs a stat call per candidate
+    // extension see the workflow document task 9
+    std::unordered_map<std::wstring, std::unordered_set<std::wstring>> folderFileNames;
     std::unordered_set<std::wstring> duplicateKeys;
     MediaDatabase* mediaDatabase = nullptr;
 
@@ -73,7 +78,10 @@ public:
     void Scan();
     std::vector<MediaItem> GetDescendants(int parentId);
     MediaItem GetItem(int id);
-    std::unordered_map<int, int> GetChildCounts(const std::vector<MediaItem>& items);
+    // rangeStart and rangeCount restrict the count computation to the
+    // page of items BuildDIDL is about to render not the full result
+    // set see the workflow document task 7 for why this matters
+    std::unordered_map<int, int> GetChildCounts(const std::vector<MediaItem>& items, size_t rangeStart, size_t rangeCount);
     int GetSystemUpdateID();
 
     enum class GetChildrenResult {

@@ -140,7 +140,7 @@ def test_task10_playlist_pool_uses_bounded_queue():
 
 def test_task10_notify_pool_unchanged():
     src = _read("src/upnp_eventing.cpp")
-    assert "make_unique<BoundedThreadPool>(kMaxUpnpSubscriptions)" in src
+    assert "make_unique<BoundedThreadPool>(kMaxUpnpNotifyWorkers)" in src
 
 
 def test_task11_media_database_pass_tracking_declared():

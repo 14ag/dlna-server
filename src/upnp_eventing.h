@@ -15,6 +15,13 @@
 
 inline constexpr size_t kMaxUpnpSubscriptions = 64;
 
+// GENA NOTIFY delivery is a background best effort job not a per
+// subscriber guarantee sizing the delivery pool to kMaxUpnpSubscriptions
+// would spawn up to 64 os threads the first time even one renderer ever
+// subscribes see the workflow document task 10 for the reasoning and the
+// reference implementation this size is compared against
+inline constexpr size_t kMaxUpnpNotifyWorkers = 8;
+
 class UpnpEventManager {
 public:
     static UpnpEventManager& Get();

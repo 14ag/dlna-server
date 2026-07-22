@@ -5,6 +5,7 @@
 #include <iphlpapi.h>
 #include <ws2tcpip.h>
 #include <algorithm>
+#include <mutex>
 #include <vector>
 
 #pragma comment(lib, "iphlpapi.lib")
@@ -391,20 +392,28 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
 }
 
 std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
-    static std::string cached;
-    static bool cachedInit = false;
-    if (!cachedInit) {
+    // guarded because HandleClient calls this from many concurrent
+    // client threads on both platforms see the workflow document task 2
+    static std::mutex cacheMutex;
+    static std::string cachedHost;
+    static int cachedPort = 0;
+    static bool cachedValid = false;
+
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    if (!cachedValid || cachedPort != port) {
+        cachedHost.clear();
         std::vector<NetworkEndpoint> endpoints;
         if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
             for (const auto& ep : endpoints) {
-                // first non-link-local endpoint is the best routable address
+                // first non link local endpoint is the best routable address
                 if (!ep.isLinkLocal) {
-                    cached = ep.address + ":" + std::to_string(port);
+                    cachedHost = ep.address + ":" + std::to_string(port);
                     break;
                 }
             }
         }
-        cachedInit = true;
+        cachedPort = port;
+        cachedValid = true;
     }
-    return cached;
+    return cachedHost;
 }

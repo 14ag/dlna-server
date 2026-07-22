@@ -153,6 +153,50 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
     item.albumArtMime = folderCacheValue.second;
 }
 
+// finds a companion subtitle file for a local video item using a single
+// cached directory listing per folder instead of one stat call per
+// candidate subtitle extension per file see the workflow document task 9
+void SetSubtitleIfExists(MediaIndexState& state, MediaItem& item) {
+    if (IsRemoteMediaUrl(item.path) || item.upnpClass != L"object.item.videoItem") return;
+
+    std::wstring folder = item.path;
+    size_t slash = folder.find_last_of(L"\\/");
+    folder = slash == std::wstring::npos ? L"." : folder.substr(0, slash);
+
+    bool namesKnown = false;
+    std::unordered_set<std::wstring> namesCopy;
+    {
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        auto cached = state.folderFileNames.find(folder);
+        if (cached != state.folderFileNames.end()) {
+            namesKnown = true;
+            namesCopy = cached->second;
+        }
+    }
+
+    if (!namesKnown) {
+        // no lock held for this listing call same rationale as the
+        // unlocked stat calls in SetAlbumArtIfExists above
+        std::vector<FsDirEntry> entries;
+        FsListDirectory(folder, entries);
+        for (const auto& entry : entries) {
+            if (!entry.isDirectory) namesCopy.insert(ToLowerWide(entry.name));
+        }
+        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        state.folderFileNames[folder] = namesCopy;
+    }
+
+    std::wstring stem = SourceStemName(item.path);
+    static const wchar_t* kSubExts[] = { L".srt", L".vtt", L".sub", L".ass", L".ssa", L".smi", L".txt" };
+    for (const wchar_t* subExt : kSubExts) {
+        std::wstring candidateName = ToLowerWide(stem + subExt);
+        if (namesCopy.find(candidateName) != namesCopy.end()) {
+            item.subtitlePath = folder + L"\\" + stem + subExt;
+            return;
+        }
+    }
+}
+
 } // namespace
 
 MediaSources& MediaSources::Get() {
@@ -319,21 +363,8 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
         if (IsRemoteMediaUrl(subtitleOverride)) {
             LogPrint(L"Playlist subtitle resolved to remote URL: %ls", RedactUrlForLog(subtitleOverride).c_str());
         }
-    } else if (!IsRemoteMediaUrl(path) && uclass == L"object.item.videoItem") {
-        std::wstring stem = SourceStemName(path);
-
-        std::wstring folder = path;
-        size_t slash = folder.find_last_of(L"\\/");
-        folder = slash == std::wstring::npos ? L"." : folder.substr(0, slash);
-
-        static const wchar_t* kSubExts[] = { L".srt", L".vtt", L".sub", L".ass", L".ssa", L".smi", L".txt" };
-        for (const wchar_t* subExt : kSubExts) {
-            std::wstring candidate = folder + L"\\" + stem + subExt;
-            if (FsIsRegularFile(candidate)) {
-                fileInfo.subtitlePath = candidate;
-                break;
-            }
-        }
+    } else {
+        SetSubtitleIfExists(state, fileInfo);
     }
 
     SetAlbumArtIfExists(state, fileInfo);
@@ -637,14 +668,16 @@ MediaSources::GetChildrenResult MediaSources::TryGetChildren(int objId, std::vec
 }
 
 std::vector<MediaItem> MediaSources::GetDescendants(int parentId) {
-    // Read AppConfig's own setting before taking m_mutex, not while holding
-    // it: AppConfig.IsSortByTitleEnabled() takes Config's own separate
-    // mutex, and there is no reason to hold two unrelated locks
-    // simultaneously for longer than necessary.
-    const bool sortByTitle = AppConfig.IsSortByTitleEnabled();
+    // GetDescendants has exactly one caller today the Search action in
+    // contentdirectory cpp which always filters this list by search
+    // criteria and then always calls SortItems on the filtered result
+    // sorting here before that filter and that second sort run would
+    // only be thrown away work so this always passes false for the
+    // sort argument see the workflow document task 8 for the full
+    // before and after reasoning
     std::vector<MediaItem> result;
     std::shared_lock<std::shared_mutex> lock(m_mutex);
-    AppendDescendants(m_items, m_childrenByParent, parentId, sortByTitle, result);
+    AppendDescendants(m_items, m_childrenByParent, parentId, false, result);
     return result;
 }
 
@@ -659,10 +692,13 @@ MediaItem MediaSources::GetItem(int id) {
     return m;
 }
 
-std::unordered_map<int, int> MediaSources::GetChildCounts(const std::vector<MediaItem>& items) {
+std::unordered_map<int, int> MediaSources::GetChildCounts(const std::vector<MediaItem>& items, size_t rangeStart, size_t rangeCount) {
     std::unordered_map<int, int> counts;
+    const size_t safeStart = (std::min)(rangeStart, items.size());
+    const size_t safeEnd = (std::min)(safeStart + rangeCount, items.size());
     std::shared_lock<std::shared_mutex> lock(m_mutex);
-    for (const auto& item : items) {
+    for (size_t i = safeStart; i < safeEnd; ++i) {
+        const auto& item = items[i];
         if (!item.isFolder) continue;
         auto found = m_childrenByParent.find(item.id);
         counts[item.id] = found == m_childrenByParent.end() ? 0 : static_cast<int>(found->second.size());

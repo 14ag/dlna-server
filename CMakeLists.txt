@@ -33,6 +33,8 @@ set(SOURCES
          src/settingsdlg.cpp
          src/logdlg.cpp
          src/help_dialog.cpp
+         src/ui_font.cpp
+         src/dark_frame.cpp
          src/server.cpp
          src/netutils.cpp
          src/httpserver.cpp
@@ -96,8 +98,11 @@ set(HEADERS
          src/ipwhitelist.h
           src/firewall_access.h
           src/source_drop_target.h
-          src/startup_mode.h
-          src/log.h
+            src/startup_mode.h
+            src/server_close_policy.h
+            src/ui_font.h
+            src/dark_frame.h
+            src/log.h
           resources/resource.h
      )
 
