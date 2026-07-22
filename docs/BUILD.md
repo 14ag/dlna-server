@@ -97,5 +97,26 @@ Parsed in the same way on every platform — overrides are applied after config 
 | `--source <path-or-url>` | Adds a media source; repeatable |
 | `--debug` | Enables debug logging (writes `debug.log` next to `config.ini`) |
 | `--help` | Prints usage and exits |
-| `--headless` (Windows only) | Starts without showing the main window |
-| `--configure-firewall --port <n>` (Windows only) | Runs the elevated firewall-rule helper and exits; invoked internally via `ShellExecuteW("runas", ...)`, not meant to be run by a user directly |
+| `--headless` (Windows only) | Starts without showing the main window; forced automatically when any runtime source is supplied via `--source` |
+| `--kill-server, -k` (Windows only) | Stops the running server instance via the named pipe and exits |
+| `--configure-firewall --port <n>` (Windows only) | Opens the Windows firewall rule and exits; invoked internally via `ShellExecuteW("runas", ...)`, not meant to be run by a user directly |
+| `--print-scan-concurrency <n>` | Evaluates the playlist scan concurrency formula for `n` items and exits — for tuning the internal thread budget without running a full scan |
+| `--print-scan-cancellation-lifecycle` | Exercises the `BeginScan()` → `IsCancelled()` → `RequestCancel()` cycle and prints the three state values (`0` or `1` each); validates cooperative cancellation state machine without a live scan |
+| `--print-mnemonics <csv-labels>` | Converts comma-separated labels to access-key mnemonics via `AssignMnemonics()`, prints the assigned key per label |
+| `--print-cue-state <seq>` | Drives a `KeyboardCueState` through a sequence of `k` (keyboard) and `m` (mouse) inputs, prints `HideAccel,HideFocus` after each step |
+| `--print-hover-focus-state <csv-events>` | Drives `HoverFocusState` through comma-separated event tokens (`e5`=enter id5, `l5`=leave id5, `f3`=focus id3, `b3`=blur id3), prints the highlighted control ID after each event |
+| `--print-any-field-has-content <csv-lengths>` | Passes a comma-separated list of field lengths to `AnyFieldHasContent()` and prints `1` if any has content, `0` otherwise |
+| `--print-is-recognized-playlist <path> <textfile>` | Reads `<textfile>`, passes its content to `IsRecognizedPlaylistText()` with the given path, prints `1` or `0` |
+| `--print-parse-quoted-comma-list <text>` | Parses `<text>` with `ParseQuotedCommaList()` and prints each field on its own line |
+| `--print-decode-legacy-pipe-sources <text>` | Decodes pipe-delimited sources via `DecodeLegacyPipeDelimitedSources()`, prints each entry on its own line |
+| `--print-resolve-relative-url <base> <relative>` | Resolves `<relative>` against `<base>` via `ResolveRelativeUrl()` and prints the result |
+| `--print-rewrite-hls-manifest <baseUrl> <textfile>` | Reads `<textfile>`, passes its content to `RewriteHlsManifestUrisToAbsolute()`, and prints the rewritten manifest |
+| `--print-should-start-headless <explicitFlag> <hasSources>` | Passes two `0`/`1` flags to `ShouldStartHeadless()` and prints the result (`0`/`1`) |
+| `--print-debug-log-requires-restart <before> <after>` | Compares `before` and `after` debug-log enablement (`0`/`1` each) via `DetermineSettingsRequiringRestart()`, prints `1` if a restart is needed |
+| `--print-media-browsing-restart-required <before-bits> <after-bits>` | Compares two 7-character bitmasks (flags: AddArtistAlbumFolders, DoNotShowAllMediaFolders, SortByTitle, FlatFolderStyle, ShowFileNamesInsteadOfTitles, ProxyStreams, BackgroundScanEnabled) via `DetermineSettingsRequiringRestart()`, prints `1` if restart is needed |
+| `--print-should-allow-source-drop <busyOrRunning>` | (Windows only) Passes `0`/`1` to `ShouldAllowSourceDrop(drag)`, prints `0`/`1` |
+| `--print-is-supported-source-path <path>` | Prints `1` if `<path>` is a supported local media or playlist path per `IsSupportedLocalMediaOrPlaylistPath()`, `0` otherwise |
+| `--print-media-sources` | Dumps current `mediaSources` from a fresh `Config::Snapshot()`, one path per line |
+| `--print-effective-media-sources` | Dumps `effectiveMediaSources` (sources + runtime overrides), one per line |
+| `--print-clear-override-then-effective` | Calls `ClearRuntimeSourceOverride()`, then dumps `effectiveMediaSources` — verifies that cleared-override state matches the persisted list |
+| `--print-source-override-lifecycle <quoted-comma-list>` | Sets runtime source override, starts the server, polls scan progress until complete, then stops — validates the override-start-stop lifecycle end-to-end |

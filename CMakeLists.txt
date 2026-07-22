@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(dlna-server VERSION 1.4.0)
+project(dlna-server VERSION 1.7.0)
 
 configure_file(${CMAKE_SOURCE_DIR}/src/version.h.in ${CMAKE_BINARY_DIR}/generated/version.h @ONLY)
 
@@ -33,6 +33,8 @@ set(SOURCES
          src/settingsdlg.cpp
          src/logdlg.cpp
          src/help_dialog.cpp
+         src/ui_font.cpp
+         src/dark_frame.cpp
          src/server.cpp
          src/netutils.cpp
          src/httpserver.cpp
@@ -49,14 +51,16 @@ set(SOURCES
          src/bounded_thread_pool.cpp
          src/playlist_scan_concurrency.cpp
          src/media_sources_common.cpp
+         src/scan_cancellation.cpp
          src/fs_backend_win32.cpp
          src/settings_restart.cpp
          src/modal_focus.cpp
          src/config.cpp
          src/ipwhitelist.cpp
-         src/firewall_access_win.cpp
-         src/log.cpp
-     )
+          src/firewall_access_win.cpp
+          src/source_drop_target.cpp
+          src/log.cpp
+      )
 
 set(HEADERS
          src/access_keys.h
@@ -87,12 +91,19 @@ set(HEADERS
          src/settings_restart.h
          src/source_list_focus.h
          src/hover_focus_state.h
+         src/scan_cancellation.h
+         src/input_gate.h
          src/modal_focus.h
          src/config.h
          src/ipwhitelist.h
-         src/firewall_access.h
-         src/log.h
-         resources/resource.h
+          src/firewall_access.h
+          src/source_drop_target.h
+            src/startup_mode.h
+            src/server_close_policy.h
+            src/ui_font.h
+            src/dark_frame.h
+            src/log.h
+          resources/resource.h
      )
 
     list(REMOVE_ITEM SOURCES src/main.cpp)
@@ -126,6 +137,7 @@ add_library(dlna_core STATIC
          src/posix_httpserver.cpp
          src/http_common.cpp
          src/media_sources_common.cpp
+         src/scan_cancellation.cpp
          src/fs_backend_posix.cpp
          src/posix_netutils.cpp
          src/posix_config.cpp
@@ -294,8 +306,9 @@ if(DLNA_BUILD_TESTS)
             src/source_watcher.cpp
             src/media_database.cpp
 src/media_scan_common.cpp
-         src/media_sources_common.cpp
-         src/bounded_thread_pool.cpp
+          src/media_sources_common.cpp
+          src/scan_cancellation.cpp
+          src/bounded_thread_pool.cpp
             src/playlist_scan_concurrency.cpp
         )
         target_link_libraries(dlna-test PRIVATE dlna_core GTest::gtest_main)

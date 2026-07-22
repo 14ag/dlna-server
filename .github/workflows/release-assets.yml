@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build Windows release zips
         shell: pwsh
-        run: scripts\build-release-assets.ps1 --platform winx64,winx86
+        run: scripts\build-release-assets.ps1 -Version 1.7.0 --platform winx64,winx86
       - name: Upload Windows assets
         uses: softprops/action-gh-release@v2
         with:

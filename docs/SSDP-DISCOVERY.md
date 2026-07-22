@@ -20,7 +20,7 @@ Implemented in `src/ssdp.cpp` (Windows) and `src/posix_ssdp.cpp` (POSIX), driven
 
 ## Advertised targets
 
-Five `NT`/`ST` targets are advertised per the UPnP Device Architecture, built from the device UUID (`BuildTargets`/`BuildAdvertisedTargets`):
+Five `NT`/`ST` targets are advertised per the UPnP Device Architecture, built from the device UUID (`BuildAdvertisedTargets`):
 
 ```
 upnp:rootdevice

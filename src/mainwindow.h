@@ -3,8 +3,10 @@
 
 #include <windows.h>
 #include "access_keys.h"
+#include "source_drop_target.h"
 #include "source_list_focus.h"
 #include "hover_focus_state.h"
+#include "config.h"
 #include <string>
 #include <thread>
 #include <atomic>
@@ -33,6 +35,12 @@ public:
     // WS_EX_TOOLWINDOW (see RestoreAndFocusMainWindow) is always cleared
     // consistently regardless of which code path revealed the window.
     static constexpr UINT WM_SHOW_EXISTING_INSTANCE = WM_APP + 20;
+    // asks this instance to stop the server and close entirely
+    // sent by a separate short lived process launched with kill server or k
+    static constexpr UINT WM_REQUEST_SHUTDOWN = WM_APP + 21;
+    // dwData discriminator used on the wm copydata messages this app sends
+    // to itself from a second process see main cpp for the sender side
+    static constexpr ULONG_PTR kCopyDataSourceReplace = 1;
 
     bool TryHandleAccessKeyChar(wchar_t ch);
     void RefreshToolbarMnemonics();
@@ -47,6 +55,12 @@ private:
     void RemoveTrayIcon();
     void ShowTrayMenu();
     void RestoreAndFocusMainWindow();
+    // adds one path as a media source if it is not already present
+    // returns true if it was actually added false if it was a duplicate
+    // does not check file type validity that is the caller's job see
+    // source drop target cpp for the file extension gate used by drag drop
+    bool AddMediaSourceIfNew(const std::wstring& path);
+    void HandleDroppedPaths(const std::vector<std::wstring>& paths);
     void OpenFolderPicker();
     void RemoveSelectedSource();
     void BeginRescan();
@@ -63,7 +77,15 @@ private:
     void BeginStartServer();
     void BeginStopServer();
     void BeginRestartServer();
+    // Interrupts a running session to serve a newly-arrived --source
+    // override: stops the server (which also clears any prior override,
+    // see Server::Stop()), installs the new override, then starts again.
+    // No-op if the server is not currently running -- callers should use
+    // AppConfig.SetRuntimeSourceOverride() + RefreshSourceList() directly
+    // for the not-running case, since there is nothing to interrupt.
+    void BeginSourceOverrideRestart(std::vector<MediaSource> overrideSources);
     void CompleteServerOperation(ServerUiState finalState, const std::wstring& endpoint, bool success, const std::wstring& message);
+    bool IsShowingOverrideSources() const;
     bool IsBusy() const;
     bool IsRunning() const;
     void UpdateWakeLock();
@@ -101,6 +123,7 @@ private:
     HoverFocusState m_hoverFocusState;
     RECT m_listRingRect = {0, 0, 0, 0};
     std::unordered_map<HWND, bool> m_mouseTracking;
+    SourceListDropTarget* m_sourceDropTarget = nullptr;
 };
 
 #endif // MAINWINDOW_H

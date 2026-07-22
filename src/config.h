@@ -35,6 +35,23 @@ struct ConfigSnapshot {
     bool backgroundScanEnabled;
     std::vector<MediaSource> mediaSources;
     std::wstring networkInterfaceAllowList;
+    // the media sources that should actually be scanned right now
+    // equals mediaSources unless a CLI supplied runtime override is active
+    // never written by Save and never read by Load
+    std::vector<MediaSource> effectiveMediaSources;
+    // true iff effectiveMediaSources came from a runtime CLI override rather
+    // than from mediaSources. Lets consumers (Scan, Start, the source
+    // watcher) branch on override state without re-deriving it by comparing
+    // the two vectors above.
+    bool hasRuntimeSourceOverride = false;
+};
+
+struct DeviceDescriptionConfig {
+    std::wstring deviceUUID;
+    std::wstring serverName;
+    std::wstring deviceManufacturer;
+    std::wstring deviceModelName;
+    std::wstring presentationUrl;
 };
 
 class Config {
@@ -44,6 +61,15 @@ public:
     void Load();
     void Save();
     ConfigSnapshot Snapshot() const;
+
+    // Lightweight alternative to Snapshot() for callers (such as
+    // ContentDirectory::GetDeviceDescriptionXML, invoked on every
+    // /description.xml request) that only need these five fields and must
+    // not pay for copying mediaSources/effectiveMediaSources on every call.
+    DeviceDescriptionConfig GetDeviceDescriptionConfig() const {
+        std::shared_lock<std::shared_mutex> lock(m_mutex);
+        return DeviceDescriptionConfig{ deviceUUID, serverName, deviceManufacturer, deviceModelName, presentationUrl };
+    }
     
     // Properties
     std::wstring serverName;
@@ -102,12 +128,36 @@ public:
     bool IsSortByTitleEnabled() const;
     bool IsProxyStreamsEnabled() const;
 
+    std::vector<MediaSource> GetRuntimeSourceOverride() const {
+        std::shared_lock<std::shared_mutex> lock(m_mutex);
+        return m_runtimeSourceOverride;
+    }
+
+    bool HasRuntimeSourceOverride() const {
+        std::shared_lock<std::shared_mutex> lock(m_mutex);
+        return m_hasRuntimeSourceOverride;
+    }
+
+    void SetRuntimeSourceOverride(std::vector<MediaSource> sources) {
+        std::unique_lock<std::shared_mutex> lock(m_mutex);
+        m_runtimeSourceOverride = std::move(sources);
+        m_hasRuntimeSourceOverride = true;
+    }
+
+    void ClearRuntimeSourceOverride() {
+        std::unique_lock<std::shared_mutex> lock(m_mutex);
+        m_runtimeSourceOverride.clear();
+        m_hasRuntimeSourceOverride = false;
+    }
+
 private:
     Config();
     std::wstring GenerateUUID();
     void SetRunOnBoot(bool enable);
 
     mutable std::shared_mutex m_mutex;
+    std::vector<MediaSource> m_runtimeSourceOverride;
+    bool m_hasRuntimeSourceOverride = false;
 };
 
 // Global config access

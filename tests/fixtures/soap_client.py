@@ -73,6 +73,12 @@ def parse_browse_response(xml_text):
     body = root.find(_ns("Body"))
     resp = body.find(_cdn("BrowseResponse"))
     if resp is None:
+        # Search and Browse share the same response schema (Result,
+        # NumberReturned, TotalMatches, UpdateID).  The server generates
+        # both through the same BrowseSearchResponse template, then wraps
+        # with either <u:BrowseResponse> or <u:SearchResponse>.
+        resp = body.find(_cdn("SearchResponse"))
+    if resp is None:
         fault = body.find(_ns("Fault"))
         if fault is not None:
             detail = fault.find("detail")

@@ -177,6 +177,7 @@ std::string UpnpEventManager::RegisterSubscription(const std::string& servicePat
     subscription.callbackUrl = callbackUrl;
     subscription.expiresAt = std::chrono::steady_clock::now() + std::chrono::seconds(timeoutSeconds);
     m_subscriptions[sid] = subscription;
+    m_subscriberCount.store(m_subscriptions.size(), std::memory_order_release);
     QueueInitialNotifyLocked(m_subscriptions[sid]);
     if (!m_queue.empty()) {
         StartWorkerLocked();
@@ -195,13 +196,16 @@ bool UpnpEventManager::RenewSubscription(const std::string& sid, int timeoutSeco
 
 bool UpnpEventManager::RemoveSubscription(const std::string& sid) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_subscriptions.erase(sid) > 0;
+    const bool erased = m_subscriptions.erase(sid) > 0;
+    m_subscriberCount.store(m_subscriptions.size(), std::memory_order_release);
+    return erased;
 }
 
 void UpnpEventManager::ClearSubscriptions() {
     std::lock_guard<std::mutex> lock(m_mutex);
     ++m_generation;
     m_subscriptions.clear();
+    m_subscriberCount.store(0, std::memory_order_release);
     m_queue.clear();
     m_trailingFirePending = false;
     m_lastDispatchTime = (std::chrono::steady_clock::time_point::min)();
@@ -212,6 +216,7 @@ void UpnpEventManager::DispatchNotifyToSubscribersLocked(int updateId, std::chro
     for (auto it = m_subscriptions.begin(); it != m_subscriptions.end();) {
         if (it->second.expiresAt <= now) {
             it = m_subscriptions.erase(it);
+            m_subscriberCount.store(m_subscriptions.size(), std::memory_order_release);
             continue;
         }
         if (IsContentDirectoryEventPath(it->second.servicePath)) {
@@ -228,8 +233,17 @@ void UpnpEventManager::DispatchNotifyToSubscribersLocked(int updateId, std::chro
 }
 
 void UpnpEventManager::NotifySystemUpdateId(int updateId) {
+    // Fast path: this field always needs to reflect the latest updateId,
+    // even while nobody is subscribed, so a renderer that subscribes later
+    // sees the correct value in QueueInitialNotifyLocked(). Updating this
+    // atomic costs nothing meaningful compared to taking m_mutex below, so
+    // it is done unconditionally, before the subscriber-count check.
+    m_lastSystemUpdateId.store(updateId, std::memory_order_relaxed);
+    if (m_subscriberCount.load(std::memory_order_acquire) == 0) {
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_lastSystemUpdateId = updateId;
 
     const auto now = std::chrono::steady_clock::now();
     if (now - m_lastDispatchTime >= m_minNotifyInterval) {
@@ -267,7 +281,7 @@ void UpnpEventManager::QueueInitialNotifyLocked(const Subscription& subscription
     job.sid = subscription.sid;
     job.sequence = 0;
     job.generation = m_generation;
-    job.body = MakeSystemUpdateBody(m_lastSystemUpdateId);
+    job.body = MakeSystemUpdateBody(m_lastSystemUpdateId.load(std::memory_order_relaxed));
     QueueNotifyJobLocked(std::move(job));
 }
 
@@ -290,6 +304,7 @@ void UpnpEventManager::QueueNotifyJobLocked(NotifyJob job) {
 void UpnpEventManager::ExpireSubscription(const std::string& sid) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_subscriptions.erase(sid);
+    m_subscriberCount.store(m_subscriptions.size(), std::memory_order_release);
 }
 
 void UpnpEventManager::StopWorker() {
@@ -337,7 +352,7 @@ void UpnpEventManager::WorkerLoop() {
             }
         }
         if (!m_notifyPool) {
-            m_notifyPool = std::make_unique<BoundedThreadPool>(kMaxUpnpSubscriptions);
+            m_notifyPool = std::make_unique<BoundedThreadPool>(kMaxUpnpNotifyWorkers);
         }
         m_notifyPool->Submit([this, job]() { SendNotifyJob(job); });
     }

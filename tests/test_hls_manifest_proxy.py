@@ -113,6 +113,49 @@ class HlsManifestProxyFixSourceTests(unittest.TestCase):
             self.assertIn("Accept-Ranges: none", src)
 
 
+# ---------------------------------------------------------------------------
+# Source-contract tests: proxy URL uses routable IP, not localhost
+# ---------------------------------------------------------------------------
+
+class ProxyUrlRoutableIpTests(unittest.TestCase):
+    def _read(self, path):
+        return (ROOT / path).read_text(encoding="utf-8")
+
+    def test_windows_httpserver_loopback_overridden_via_GetRoutableHostUrl(self):
+        src = self._read("src/httpserver.cpp")
+        self.assertIn("GetRoutableHostUrl", src,
+                      "httpserver.cpp must call GetRoutableHostUrl")
+
+    def test_posix_httpserver_loopback_overridden_via_GetRoutableHostUrl(self):
+        src = self._read("src/posix_httpserver.cpp")
+        self.assertIn("GetRoutableHostUrl", src,
+                      "posix_httpserver.cpp must call GetRoutableHostUrl")
+
+    def test_loopback_patterns_checked_in_windows(self):
+        src = self._read("src/httpserver.cpp")
+        self.assertIn('"localhost"', src)
+        self.assertIn('"127.0.0.1"', src)
+        self.assertIn('"[::1]"', src)
+
+    def test_loopback_patterns_checked_in_posix(self):
+        src = self._read("src/posix_httpserver.cpp")
+        self.assertIn('"localhost"', src)
+        self.assertIn('"127.0.0.1"', src)
+        self.assertIn('"[::1]"', src)
+
+    def test_GetRoutableHostUrl_declared_in_header(self):
+        hdr = self._read("src/netutils.h")
+        self.assertIn("GetRoutableHostUrl", hdr)
+
+    def test_GetRoutableHostUrl_implemented_on_windows(self):
+        src = self._read("src/netutils.cpp")
+        self.assertIn("GetRoutableHostUrl", src)
+
+    def test_GetRoutableHostUrl_implemented_on_posix(self):
+        src = self._read("src/posix_netutils.cpp")
+        self.assertIn("GetRoutableHostUrl", src)
+
+
 # =========================================================================
 # Black-box tests (use the live DLNA server binary)
 # =========================================================================

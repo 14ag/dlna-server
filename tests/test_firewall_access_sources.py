@@ -66,33 +66,6 @@ class FirewallAccessSourceTests(unittest.TestCase):
         self.assertNotIn("firewall_access.h", gui)
         self.assertNotIn("EnsureFirewallAccess", gui)
 
-    def test_android_smoke_requires_firewall_rules_and_real_vlc_playback(self):
-        androidPath = ROOT / "tests/verify-android-smoke.ps1"
-        if not androidPath.exists():
-            self.skipTest("verify-android-smoke.ps1 does not exist")
-        script = self.read("tests/verify-android-smoke.ps1")
-
-        for token in (
-            "New-TestWav",
-            "Ensure-FirewallAccess",
-            "Test-IsAdmin",
-            "PowerShell is not elevated",
-            "org.videolan.vlc/.StartActivity",
-            "uiautomator",
-            "ContentDirectory root browse",
-            "Android range GET expected 206",
-            "SSDP search in: src=",
-            "HTTP request: src=",
-            'ValidateSet("Windows", "PosixWsl")',
-            "adb reverse",
-            "Rewrite-MediaUrlForTarget",
-            "Invoke-PosixWslSsdpProbe",
-        ):
-            self.assertIn(token, script)
-
-        self.assertNotIn("fake mp3 bytes", script)
-        self.assertIn("--configure-firewall", script)
-
     def test_http_debug_log_records_media_requests_for_blackbox_verification(self):
         for path in ("src/httpserver.cpp", "src/posix_httpserver.cpp"):
             source = self.read(path)

@@ -1,4 +1,5 @@
 #include "httpserver.h"
+#include "http_common.h"
 #include "log.h"
 #include "config.h"
 #include "dlna_utils.h"
@@ -15,10 +16,7 @@
 #include <climits>
 #include <sstream>
 
-#define HTTP_BUF_SIZE 8192
-
 namespace {
-constexpr size_t kMaxSoapBodyBytes = 1024 * 1024;
 
 void SendAll(SOCKET s, const char* data, int len) {
     while (len > 0) {
@@ -49,6 +47,8 @@ struct ScopedHandle {
     ~ScopedHandle() {
         if (valid()) CloseHandle(handle);
     }
+    ScopedHandle(const ScopedHandle&) = delete;
+    ScopedHandle& operator=(const ScopedHandle&) = delete;
     bool valid() const { return handle != INVALID_HANDLE_VALUE && handle != NULL; }
     HANDLE get() const { return handle; }
 
@@ -74,52 +74,6 @@ void SetSocketKeepAliveIdleTimeout(SOCKET s) {
 void SetSocketNoDelay(SOCKET s) {
     int flag = 1;
     setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&flag), sizeof(flag));
-}
-
-std::string ConnectionHeader(bool keepAlive) {
-    return keepAlive ? "Connection: keep-alive\r\n" : "Connection: close\r\n";
-}
-
-bool ShouldKeepAlive(const std::string& req) {
-    std::string connectionValue = ToLowerAscii(FindHeaderValueCaseInsensitive(req, "Connection"));
-    if (connectionValue == "close") return false;
-    if (connectionValue == "keep-alive") return true;
-    // HTTP 1 1 default is keep-alive unless client says close
-    // HTTP 1 0 default is close unless client says keep-alive
-    // We check the first line for version
-    size_t firstLineEnd = req.find("\r\n");
-    if (firstLineEnd == std::string::npos) return false;
-    std::string firstLine = req.substr(0, firstLineEnd);
-    size_t lastSpace = firstLine.rfind(' ');
-    if (lastSpace == std::string::npos) return false;
-    std::string version = firstLine.substr(lastSpace + 1);
-    return version.find("1.1") != std::string::npos;
-}
-
-std::string SplitRequestTarget(const std::string& requestTarget) {
-    const size_t query = requestTarget.find('?');
-    return query == std::string::npos ? requestTarget : requestTarget.substr(0, query);
-}
-
-bool ValidateHostHeader(const std::string& host) {
-    if (host.empty()) return false;
-    for (unsigned char ch : host) {
-        if (ch <= 32 || ch == '/' || ch == '\\') return false;
-    }
-    return true;
-}
-
-bool ReadHttpRequestHeaders(SOCKET s, std::string& req) {
-    req.clear();
-    char buffer[HTTP_BUF_SIZE];
-    constexpr size_t kMaxHeaderBytes = 64 * 1024;
-    while (req.find("\r\n\r\n") == std::string::npos) {
-        int bytesRead = recv(s, buffer, sizeof(buffer), 0);
-        if (bytesRead <= 0) return false;
-        req.append(buffer, static_cast<size_t>(bytesRead));
-        if (req.size() > kMaxHeaderBytes) return false;
-    }
-    return true;
 }
 
 int IconResourceForPath(const std::string& path) {
@@ -371,7 +325,7 @@ void CALLBACK HttpServer::WorkerCallback(PTP_CALLBACK_INSTANCE, PVOID Context, P
 }
 
 void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) {
-    char buf[HTTP_BUF_SIZE];
+    char buf[kHttpBufSize];
     bool firstRequest = true;
 
     while (m_running.load()) {
@@ -381,7 +335,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
         firstRequest = false;
 
         std::string req;
-        if (!ReadHttpRequestHeaders(clientSocket, req)) return;
+        if (!ReadHttpRequestHeaders([clientSocket](char* buf, int len) { return recv(clientSocket, buf, len, 0); }, req)) return;
 
         bool keepAlive = ShouldKeepAlive(req);
 
@@ -404,6 +358,17 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
         if (!hostUrl.empty() && !ValidateHostHeader(hostUrl)) {
             SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
             return;
+        }
+        // Override loopback/non-routable Host headers so proxy URLs in
+        // DIDL-Lite responses are reachable by other LAN devices.
+        if (!hostUrl.empty()) {
+            std::string lower = ToLowerAscii(hostUrl);
+            if (lower.rfind("localhost", 0) == 0 ||
+                lower.rfind("127.0.0.1", 0) == 0 ||
+                lower.rfind("[::1]", 0) == 0 ||
+                lower.rfind("[0:0:0:0:0:0:0:1]", 0) == 0) {
+                hostUrl = GetRoutableHostUrl(listenPort, AppConfig.networkInterfaceAllowList);
+            }
         }
         if (hostUrl.empty()) {
             sockaddr_storage localAddr = {};

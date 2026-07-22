@@ -29,7 +29,9 @@ The file is written UTF-8 with a BOM (`Config::Save`), and read back tolerating 
 | `DeviceManufacturer` | string | `dlna-server contributors` | `<manufacturer>` in `description.xml` |
 | `DeviceModelName` | string | `dlna-server` | `<modelName>` in `description.xml` |
 | `PresentationURL` | string | `/` | `<presentationURL>` in `description.xml` |
-| `MediaSources` | string (`|`-delimited) | empty | Pipe-separated list of source paths/URLs. `\`, `|`, `\r`, `\n` are backslash-escaped on write and unescaped on read (`EscapeConfigListField`/`SplitConfigList`) so a path or URL containing a literal pipe still round-trips correctly |
+| `BackgroundScanEnabled` | bool (`0`/`1`) | `0` | Watch media folders for filesystem changes and trigger rescans automatically. Poll-based, 5‑second interval — see `source_watcher.cpp` |
+| `NetworkInterfaceAllowList` | string | empty | Comma-separated list of network adapter names to use for SSDP and HTTP. Empty means all adapters are eligible. Matching is case-insensitive substring match against the adapter's friendly name (Windows) or interface name (POSIX) — filtering is applied in `EnumerateNetworkEndpoints()` each time endpoints are refreshed |
+| `MediaSources` | string (quoted-comma list) | empty | Comma-separated list of source paths/URLs; each entry is double-quoted, embedded quotes are doubled (`""`). Written by `BuildQuotedCommaList`, parsed by `ParseQuotedCommaList`. Config files predating the comma format (legacy pipe-delimited, `|` separator with `\`-escaping) are still read via `DecodeLegacyPipeDelimitedSources` and silently upgraded on first save |
 
 ## Media source types
 
@@ -41,6 +43,10 @@ Each `MediaSources` entry is classified at scan time, not at config-parse time:
 - **Removed (SMB)** — `smb://`/`smbs://` entries are recognized and logged as unsupported rather than silently ignored, so an old config doesn't look like it lost a source for no reason
 
 `http://`/`https://` single-file sources are supported as playlist entries and as direct `--source` values, but are not walked as directories (no HTTP directory-listing support — see `ListRemoteDirectory` in `network_sources.cpp`).
+
+## Environment variable
+
+- `DLNA_SERVER_SKIP_FIREWALL` (Windows) — if set (to any value, including empty), `Server::Start()` skips the interactive firewall-access check. Useful in CI or when firewall rules are provisioned out-of-band.
 
 ## Runtime overrides
 

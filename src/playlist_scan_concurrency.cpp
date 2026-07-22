@@ -49,6 +49,6 @@ size_t AdaptiveConcurrencyLimiter::CurrentLimit() const {
 }
 
 BoundedThreadPool& PlaylistScanPool::Get() {
-    static BoundedThreadPool instance(kPlaylistScanPoolSize);
+    static BoundedThreadPool instance(kPlaylistScanPoolSize, kPlaylistScanPoolMaxQueueDepth);
     return instance;
 }

@@ -26,53 +26,6 @@ std::string ConfigValueOrDefault(const std::unordered_map<std::string, std::stri
     return it == values.end() ? std::string(defaultValue) : StripUtf8Bom(it->second);
 }
 
-std::wstring EscapeConfigListField(const std::wstring& value) {
-    std::wstring escaped;
-    for (wchar_t ch : value) {
-        if (ch == L'\\' || ch == L'|' || ch == L'\r' || ch == L'\n') {
-            escaped.push_back(L'\\');
-            if (ch == L'\r') escaped.push_back(L'r');
-            else if (ch == L'\n') escaped.push_back(L'n');
-            else escaped.push_back(ch);
-        } else {
-            escaped.push_back(ch);
-        }
-    }
-    return escaped;
-}
-
-std::vector<std::wstring> SplitConfigList(const std::wstring& value) {
-    std::vector<std::wstring> fields;
-    std::wstring current;
-    bool escaping = false;
-    for (wchar_t ch : value) {
-        if (escaping) {
-            if (ch == L'r') current.push_back(L'\r');
-            else if (ch == L'n') current.push_back(L'\n');
-            else if (ch == L'|' || ch == L'\\') current.push_back(ch);
-            else {
-                current.push_back(L'\\');
-                current.push_back(ch);
-            }
-            escaping = false;
-            continue;
-        }
-        if (ch == L'\\') {
-            escaping = true;
-            continue;
-        }
-        if (ch == L'|') {
-            fields.push_back(current);
-            current.clear();
-            continue;
-        }
-        current.push_back(ch);
-    }
-    if (escaping) current.push_back(L'\\');
-    fields.push_back(current);
-    return fields;
-}
-
 std::unordered_map<std::string, std::string> ParseConfigText(std::string text) {
     std::unordered_map<std::string, std::string> values;
     if (text.size() >= 3 &&
@@ -221,7 +174,9 @@ ConfigSnapshot Config::Snapshot() const {
         defaultPlaylistPath,
         backgroundScanEnabled,
         mediaSources,
-        networkInterfaceAllowList
+        networkInterfaceAllowList,
+        m_hasRuntimeSourceOverride ? m_runtimeSourceOverride : mediaSources,
+        m_hasRuntimeSourceOverride
     };
 }
 
@@ -343,8 +298,14 @@ void Config::Load() {
     }
 
     mediaSources.clear();
-    std::wstring sourcesStr = Utf8ToWide(ConfigValueOrDefault(values, "MediaSources", ""));
-    for (const auto& token : SplitConfigList(sourcesStr)) {
+    std::wstring sourcesRaw = Utf8ToWide(ConfigValueOrDefault(values, "MediaSources", ""));
+    std::vector<std::wstring> parsedSources = ParseQuotedCommaList(sourcesRaw);
+    if (parsedSources.empty() && sourcesRaw.find(L'|') != std::wstring::npos) {
+        // config file predates the quoted comma format upgrade it now
+        parsedSources = DecodeLegacyPipeDelimitedSources(sourcesRaw);
+        needsSave = true;
+    }
+    for (const auto& token : parsedSources) {
         if (!token.empty()) mediaSources.push_back({ token });
     }
 
@@ -358,11 +319,11 @@ void Config::Save() {
     std::unique_lock<std::shared_mutex> lock(m_mutex);
     std::wstring path = GetConfigPath();
 
-    std::wstring sourcesStr;
-    for (size_t i = 0; i < mediaSources.size(); i++) {
-        sourcesStr += EscapeConfigListField(mediaSources[i].path);
-        if (i < mediaSources.size() - 1) sourcesStr += L"|";
+    std::vector<std::wstring> sourcePaths;
+    for (const auto& source : mediaSources) {
+        sourcePaths.push_back(source.path);
     }
+    std::wstring sourcesStr = BuildQuotedCommaList(sourcePaths);
 
     std::ostringstream ss;
     ss << "[Settings]\n";
