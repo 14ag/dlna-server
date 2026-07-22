@@ -10,16 +10,41 @@ permissions:
   contents: write
 
 jobs:
+  notes:
+    runs-on: ubuntu-latest
+    outputs:
+      release_notes: ${{ steps.extract_notes.outputs.release_notes }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract Release Notes
+        id: extract_notes
+        shell: bash
+        run: |
+          # Extract first section after # Changelog or top heading
+          python3 -c "
+          import re, os
+          content = open('CHANGELOG.md', 'r', encoding='utf-8').read()
+          match = re.search(r'##\s+\[(.*?)\]\s*\n(.*?)(?=\n##\s+\[|\Z)', content, re.DOTALL)
+          if match:
+              notes = match.group(2).strip()
+          else:
+              notes = 'Release assets build.'
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
+              f.write('release_notes<<EOF\n' + notes + '\nEOF\n')
+          "
+
   windows:
+    needs: notes
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build Windows release zips
         shell: pwsh
-        run: scripts\build-release-assets.ps1 -Version 1.7.0 --platform winx64,winx86
+        run: scripts\build-release-assets.ps1 --platform winx64,winx86
       - name: Upload Windows assets
         uses: softprops/action-gh-release@v2
         with:
+          body: ${{ needs.notes.outputs.release_notes }}
           files: |
             output/dlna-server-*-source.zip
             output/winx64/*.zip
@@ -28,6 +53,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   linux:
+    needs: notes
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +73,7 @@ jobs:
       - name: Upload Linux assets
         uses: softprops/action-gh-release@v2
         with:
+          body: ${{ needs.notes.outputs.release_notes }}
           files: |
             output/linux/*.deb
             output/linux/*.AppImage
@@ -55,6 +82,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   macos:
+    needs: notes
     strategy:
       fail-fast: false
       matrix:
@@ -80,6 +108,8 @@ jobs:
       - name: Upload macOS asset
         uses: softprops/action-gh-release@v2
         with:
+          body: ${{ needs.notes.outputs.release_notes }}
           files: output/${{ matrix.platform }}/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

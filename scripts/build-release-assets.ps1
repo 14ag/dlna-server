@@ -16,9 +16,9 @@ function Invoke-NativeChecked {
 
     & $FilePath @Arguments
     if ($LASTEXITCODE -ne 0) {
-        Write-Warning "$FilePath failed with exit code $LASTEXITCODE"
-        return $false
+        throw "$FilePath failed with exit code $LASTEXITCODE"
     }
+
     return $true
 }
 
@@ -29,10 +29,10 @@ $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $output = Join-Path $repo "output"
 $releaseTools = Join-Path $repo "build-release-tools"
 $platformDirs = @{
-    "winx64" = Join-Path $output "winx64"
-    "winx86" = Join-Path $output "winx86"
-    "linux" = Join-Path $output "linux"
-    "macos-x64" = Join-Path $output "macos-x64"
+    "winx64"      = Join-Path $output "winx64"
+    "winx86"      = Join-Path $output "winx86"
+    "linux"       = Join-Path $output "linux"
+    "macos-x64"   = Join-Path $output "macos-x64"
     "macos-arm64" = Join-Path $output "macos-arm64"
 }
 $allPlatforms = @("winx64", "winx86", "linux", "macos-x64", "macos-arm64")
@@ -49,6 +49,8 @@ function Invoke-NativeChecked {
     if ($LASTEXITCODE -ne 0) {
         throw "$FilePath failed with exit code $LASTEXITCODE"
     }
+
+    return $true
 }
 
 function Get-Sha256Hex {
@@ -62,7 +64,8 @@ function Get-Sha256Hex {
     try {
         $hashBytes = $sha256.ComputeHash($stream)
         return -join ($hashBytes | ForEach-Object { $_.ToString("x2") })
-    } finally {
+    }
+    finally {
         $stream.Dispose()
         $sha256.Dispose()
     }
@@ -110,11 +113,13 @@ function Save-UrlIfMissing {
     $client = New-Object System.Net.WebClient
     try {
         $client.DownloadFile($Url, $Path)
-    } catch {
+    }
+    catch {
         Write-Warning "Download failed: $Url ($($_.Exception.Message))"
         Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
         return
-    } finally {
+    }
+    finally {
         $client.Dispose()
     }
 
@@ -186,35 +191,6 @@ function Test-SelectedPlatformPrerequisites {
     }
 }
 
-function Resolve-VcpkgRoot {
-    $candidateRoots = New-Object System.Collections.Generic.List[string]
-    if ($env:VCPKG_ROOT) {
-        $candidateRoots.Add($env:VCPKG_ROOT)
-    }
-    if ($env:USERPROFILE) {
-        $candidateRoots.Add((Join-Path $env:USERPROFILE "vcpkg"))
-    }
-
-    foreach ($candidateRoot in ($candidateRoots | Select-Object -Unique)) {
-        $toolchain = Join-Path $candidateRoot "scripts\buildsystems\vcpkg.cmake"
-        if (Test-Path -LiteralPath $toolchain) {
-            return $candidateRoot
-        }
-    }
-
-    throw "vcpkg toolchain not found. Windows assets require VCPKG_ROOT or $env:USERPROFILE\vcpkg with curl installed."
-}
-
-function Get-VcpkgTripletForArch {
-    param([Parameter(Mandatory = $true)][string]$Arch)
-
-    switch ($Arch) {
-        "x64" { return "x64-windows-static" }
-        "Win32" { return "x86-windows-static" }
-        default { throw "No vcpkg triplet configured for Windows architecture '$Arch'." }
-    }
-}
-
 function New-SourceReleaseArchive {
     param(
         [Parameter(Mandatory = $true)][string]$ArchivePath
@@ -223,76 +199,21 @@ function New-SourceReleaseArchive {
     Invoke-NativeChecked "git" @("-C", $repo, "archive", "--format", "zip", "--output", $ArchivePath, "HEAD")
 }
 
-function Invoke-CmakeBuild {
+function Invoke-LinuxReleaseAssets {
     param(
-        [Parameter(Mandatory = $true)][string]$BuildDir,
-        [Parameter(Mandatory = $true)][string]$Arch,
-        [Parameter(Mandatory = $true)][string]$InstallDir
+        [Parameter(Mandatory = $true)][string]$Version,
+        [Parameter(Mandatory = $true)][switch]$NoClean
     )
 
-    $fullBuildDir = Join-Path $repo $BuildDir
-    $vcpkgRoot = Resolve-VcpkgRoot
-    $vcpkgToolchain = Join-Path $vcpkgRoot "scripts\buildsystems\vcpkg.cmake"
-    $vcpkgTriplet = Get-VcpkgTripletForArch -Arch $Arch
-    $curlConfig = Join-Path $vcpkgRoot "installed\$vcpkgTriplet\share\curl\CURLConfig.cmake"
-    if (-not (Test-Path -LiteralPath $curlConfig)) {
-        throw "curl:$vcpkgTriplet not installed in vcpkg. Run: vcpkg install curl:$vcpkgTriplet"
-    }
+    $drive = $repo.Substring(0, 1).ToLowerInvariant()
+    $repoWsl = "/mnt/$drive" + $repo.Substring(2).Replace("\", "/")
+    $repoWslEscaped = $repoWsl.Replace("'", "'\''")
+    $toolsDir = Join-Path $releaseTools "windows"
+    $fltkTag = "release-1.4.5"
+    $fltkSha256 = "7715e69ce081fa9ce6da48bb0dd3b07a4cf2cf937813814c04272f36fff593ea"
+    $fltkSource = Join-Path $toolsDir "fltk-$fltkTag"
+    $fltkArchive = Join-Path $toolsDir "fltk-$fltkTag.tar.gz"
 
-    Remove-DirectoryInsideRepo -Path $fullBuildDir
-    $cmakeResult = Invoke-NativeChecked "cmake" @(
-        "-S", $repo,
-        "-B", $fullBuildDir,
-        "-A", $Arch,
-        "-DCMAKE_INSTALL_PREFIX=$InstallDir",
-        "-DCMAKE_TOOLCHAIN_FILE=$vcpkgToolchain",
-        "-DVCPKG_TARGET_TRIPLET=$vcpkgTriplet"
-    )
-    if (-not $cmakeResult) { return $false }
-    $buildResult = Invoke-NativeChecked "cmake" @("--build", $fullBuildDir, "--config", "Release", "--target", "install", "--", "/m")
-    if (-not $buildResult) { return $false }
-    return $true
-}
-
-if (-not $Version) {
-    $cmake = Get-Content -LiteralPath (Join-Path $repo "CMakeLists.txt") -Raw
-    if ($cmake -notmatch "project\(dlna-server VERSION ([0-9.]+)\)") {
-        throw "Could not read project version from CMakeLists.txt"
-    }
-    $Version = $Matches[1]
-}
-
-$selectedPlatforms = Resolve-SelectedPlatforms -Value $Platform
-Test-SelectedPlatformPrerequisites -Names $selectedPlatforms
-New-Item -ItemType Directory -Force -Path $output | Out-Null
-foreach ($selectedPlatform in $selectedPlatforms) {
-    Initialize-PlatformOutput -Name $selectedPlatform
-}
-$sourceZip = Join-Path $output "dlna-server-$Version-source.zip"
-New-SourceReleaseArchive -ArchivePath $sourceZip
-
-if ($selectedPlatforms -contains "winx64") {
-    if (Invoke-CmakeBuild -BuildDir "build-release-winx64" -Arch "x64" -InstallDir $platformDirs["winx64"]) {
-        Compress-Archive -LiteralPath (Join-Path $platformDirs["winx64"] "DLNA Server.exe") -DestinationPath (Join-Path $platformDirs["winx64"] "dlna-server-$Version-windows-x64.zip") -Force
-    }
-}
-
-if ($selectedPlatforms -contains "winx86") {
-    if (Invoke-CmakeBuild -BuildDir "build-release-winx86" -Arch "Win32" -InstallDir $platformDirs["winx86"]) {
-        Compress-Archive -LiteralPath (Join-Path $platformDirs["winx86"] "DLNA Server.exe") -DestinationPath (Join-Path $platformDirs["winx86"] "dlna-server-$Version-windows-x86.zip") -Force
-    }
-}
-
-$drive = $repo.Substring(0, 1).ToLowerInvariant()
-$repoWsl = "/mnt/$drive" + $repo.Substring(2).Replace("\", "/")
-$repoWslEscaped = $repoWsl.Replace("'", "'\''")
-$toolsDir = Join-Path $releaseTools "windows"
-$fltkTag = "release-1.4.5"
-$fltkSha256 = "7715e69ce081fa9ce6da48bb0dd3b07a4cf2cf937813814c04272f36fff593ea"
-$fltkSource = Join-Path $toolsDir "fltk-$fltkTag"
-$fltkArchive = Join-Path $toolsDir "fltk-$fltkTag.tar.gz"
-
-if ($selectedPlatforms -contains "linux") {
     if (-not (Test-Path -LiteralPath (Join-Path $fltkSource "CMakeLists.txt"))) {
         New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
         $fltkUrl = "https://github.com/fltk/fltk/archive/refs/tags/$fltkTag.tar.gz"
@@ -325,11 +246,15 @@ if ($selectedPlatforms -contains "linux") {
     $linuxStageWsl = "$repoWsl/build-release-linux-stage"
     $releaseToolsWsl = "/mnt/$drive" + (Join-Path $releaseTools "linux").Substring(2).Replace("\", "/")
     $noCleanValue = if ($NoClean) { "1" } else { "0" }
+    $sudoPassword = ""
+    if ($env:DLNA_SUDO_PASSWORD) {
+        $sudoPassword = $env:DLNA_SUDO_PASSWORD.Replace("'", "'\''")
+    }
     $bashTemplate = @'
 cd '__REPO_WSL__' &&
 tr -d '\r' < scripts/build-linux-desktop-assets.sh > /tmp/dlna-server-build-linux-desktop-assets.sh &&
 chmod +x /tmp/dlna-server-build-linux-desktop-assets.sh &&
-DLNA_REPO_ROOT='__REPO_WSL__' DLNA_OUTPUT_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_PLATFORM_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_STAGE_DIR='__LINUX_STAGE_WSL__' DLNA_RELEASE_TOOLS_DIR='__TOOLS_WSL__' DLNA_NO_CLEAN='__NO_CLEAN__' DLNA_FLTK_SOURCE_DIR='__FLTK_WSL__' LINUXDEPLOY='__LINUXDEPLOY_WSL__' APPIMAGE_RUNTIME='__RUNTIME_WSL__' DLNA_SERVER_VERSION='__VERSION__' bash /tmp/dlna-server-build-linux-desktop-assets.sh
+DLNA_REPO_ROOT='__REPO_WSL__' DLNA_OUTPUT_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_PLATFORM_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_STAGE_DIR='__LINUX_STAGE_WSL__' DLNA_RELEASE_TOOLS_DIR='__TOOLS_WSL__' DLNA_NO_CLEAN='__NO_CLEAN__' DLNA_FLTK_SOURCE_DIR='__FLTK_WSL__' LINUXDEPLOY='__LINUXDEPLOY_WSL__' APPIMAGE_RUNTIME='__RUNTIME_WSL__' DLNA_SUDO_PASSWORD='__SUDO_PASSWORD__' DLNA_SERVER_VERSION='__VERSION__' bash /tmp/dlna-server-build-linux-desktop-assets.sh
 '@
     $bashCommand = $bashTemplate.Replace("__REPO_WSL__", $repoWslEscaped)
     $bashCommand = $bashCommand.Replace("__LINUX_OUTPUT_WSL__", $linuxOutputWsl.Replace("'", "'\''"))
@@ -339,15 +264,73 @@ DLNA_REPO_ROOT='__REPO_WSL__' DLNA_OUTPUT_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_
     $bashCommand = $bashCommand.Replace("__FLTK_WSL__", $fltkWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__LINUXDEPLOY_WSL__", $linuxdeployWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__RUNTIME_WSL__", $runtimeWsl.Replace("'", "'\''"))
+    $bashCommand = $bashCommand.Replace("__SUDO_PASSWORD__", $sudoPassword)
     $bashCommand = $bashCommand.Replace("__VERSION__", $Version) -replace "`r?`n", " "
     Invoke-NativeChecked "wsl.exe" @("-d", $WslDistro, "--", "bash", "-lc", $bashCommand)
+}
+
+$selectedPlatforms = Resolve-SelectedPlatforms -Value $Platform
+Test-SelectedPlatformPrerequisites -Names $selectedPlatforms
+New-Item -ItemType Directory -Force -Path $output | Out-Null
+foreach ($selectedPlatform in $selectedPlatforms) {
+    Initialize-PlatformOutput -Name $selectedPlatform
+}
+
+if (-not $Version) {
+    $cmake = Get-Content -LiteralPath (Join-Path $repo "CMakeLists.txt") -Raw
+    if ($cmake -notmatch "project\(dlna-server VERSION ([0-9.]+)\)") {
+        throw "Could not read project version from CMakeLists.txt"
+    }
+    $Version = $Matches[1]
+}
+
+$sourceZip = Join-Path $output "dlna-server-$Version-source.zip"
+New-SourceReleaseArchive -ArchivePath $sourceZip
+
+if ($selectedPlatforms -contains "winx64") {
+    try {
+        & (Join-Path $PSScriptRoot "build-windows-assets.ps1") `
+            -Arch x64 `
+            -InstallDir $platformDirs["winx64"] `
+            -RepoRoot $repo `
+            -BuildDir (Join-Path $repo "build-release-winx64") `
+            -NoClean:$NoClean
+        Compress-Archive -LiteralPath (Join-Path $platformDirs["winx64"] "DLNA Server.exe") `
+            -DestinationPath (Join-Path $platformDirs["winx64"] "dlna-server-$Version-windows-x64.zip") -Force
+    } catch {
+        Write-Warning "winx64 build failed: $_"
+    }
+}
+
+if ($selectedPlatforms -contains "winx86") {
+    try {
+        & (Join-Path $PSScriptRoot "build-windows-assets.ps1") `
+            -Arch Win32 `
+            -InstallDir $platformDirs["winx86"] `
+            -RepoRoot $repo `
+            -BuildDir (Join-Path $repo "build-release-winx86") `
+            -NoClean:$NoClean
+        Compress-Archive -LiteralPath (Join-Path $platformDirs["winx86"] "DLNA Server.exe") `
+            -DestinationPath (Join-Path $platformDirs["winx86"] "dlna-server-$Version-windows-x86.zip") -Force
+    } catch {
+        Write-Warning "winx86 build failed: $_"
+    }
+}
+
+if ($selectedPlatforms -contains "linux") {
+    try {
+        Invoke-LinuxReleaseAssets -Version $Version -NoClean:$NoClean
+    }
+    catch {
+        Write-Warning "linux build failed: $_"
+    }
 
     $linuxAssets = Get-ChildItem -LiteralPath $platformDirs["linux"] -File |
-        Where-Object {
-            $_.Name -like "dlna-server_$($Version)_*.deb" -or
-            $_.Name -like "dlna-server-$Version-linux-*" -or
-            $_.Name -like "DLNA_Server-$Version-*.AppImage"
-        }
+    Where-Object {
+        $_.Name -like "dlna-server_$($Version)_*.deb" -or
+        $_.Name -like "dlna-server-$Version-linux-*" -or
+        $_.Name -like "DLNA_Server-$Version-*.AppImage"
+    }
     if (-not $linuxAssets) {
         Write-Warning "Linux build finished without producing Linux release assets in $($platformDirs["linux"])"
     }
@@ -368,7 +351,8 @@ foreach ($macPlatform in @("macos-x64", "macos-arm64")) {
             if (-not $result) {
                 Write-Warning "macOS build failed for $macPlatform"
             }
-        } finally {
+        }
+        finally {
             Remove-Item Env:\DLNA_MACOS_ARCH -ErrorAction SilentlyContinue
             Remove-Item Env:\DLNA_MACOS_PLATFORM_DIR -ErrorAction SilentlyContinue
             Remove-Item Env:\DLNA_NO_CLEAN -ErrorAction SilentlyContinue
@@ -378,11 +362,11 @@ foreach ($macPlatform in @("macos-x64", "macos-arm64")) {
 
 $platformAssets = foreach ($selectedPlatform in $selectedPlatforms) {
     Get-ChildItem -LiteralPath $platformDirs[$selectedPlatform] -File -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.Name -like "dlna-server-$Version-*" -or
-            $_.Name -like "dlna-server_$($Version)_*" -or
-            $_.Name -like "DLNA_Server-$Version-*"
-        }
+    Where-Object {
+        $_.Name -like "dlna-server-$Version-*" -or
+        $_.Name -like "dlna-server_$($Version)_*" -or
+        $_.Name -like "DLNA_Server-$Version-*"
+    }
 }
 if (-not (Test-Path -LiteralPath $sourceZip) -and -not $platformAssets) {
     Write-Warning "No release assets produced."
@@ -390,5 +374,5 @@ if (-not (Test-Path -LiteralPath $sourceZip) -and -not $platformAssets) {
 
 foreach ($selectedPlatform in $selectedPlatforms) {
     Get-ChildItem -LiteralPath $platformDirs[$selectedPlatform] -File -ErrorAction SilentlyContinue |
-        Select-Object @{Name = "Platform"; Expression = { $selectedPlatform } }, Name, Length, LastWriteTime
+    Select-Object @{Name = "Platform"; Expression = { $selectedPlatform } }, Name, Length, LastWriteTime
 }
