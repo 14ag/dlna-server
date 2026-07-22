@@ -6,7 +6,12 @@ version=${DLNA_SERVER_VERSION:-$(grep -E '^project\(dlna-server VERSION ' "$repo
 platform_dir=${DLNA_LINUX_PLATFORM_DIR:-"$repo_root/output/linux"}
 build_dir=${DLNA_LINUX_BUILD_DIR:-"$repo_root/build-release-linux"}
 release_stage_dir=${DLNA_LINUX_STAGE_DIR:-"$repo_root/build-release-linux-stage"}
-install_dir=${DLNA_LINUX_INSTALL_DIR:-"$release_stage_dir/install"}
+install_only=${DLNA_INSTALL_ONLY:-0}
+if [ "$install_only" = "1" ]; then
+    install_dir=${DLNA_LINUX_INSTALL_DIR:-/usr/local}
+else
+    install_dir=${DLNA_LINUX_INSTALL_DIR:-"$release_stage_dir/install"}
+fi
 output_dir=${DLNA_OUTPUT_DIR:-"$platform_dir"}
 
 case "$platform_dir" in /*) ;; *) platform_dir="$repo_root/$platform_dir" ;; esac
@@ -19,6 +24,20 @@ tools_dir=${DLNA_RELEASE_TOOLS_DIR:-"$repo_root/build-release-tools/linux"}
 case "$tools_dir" in /*) ;; *) tools_dir="$repo_root/$tools_dir" ;; esac
 linuxdeploy_version="1-alpha-20251107-1"
 linuxdeploy_sha256="c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
+
+sudo_run() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+        return
+    fi
+
+    if [ -n "${DLNA_SUDO_PASSWORD:-}" ]; then
+        printf '%s\n' "$DLNA_SUDO_PASSWORD" | sudo -S -p '' "$@"
+        return
+    fi
+
+    sudo -n "$@"
+}
 
 sha256_file() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -57,7 +76,7 @@ download_verified() {
     fi
 }
 
-if [ "${DLNA_NO_CLEAN:-0}" != "1" ]; then
+if [ "${DLNA_NO_CLEAN:-0}" != "1" ] && [ "$install_only" != "1" ]; then
     case "$platform_dir" in
         "$repo_root"/output/*) rm -rf "$platform_dir" ;;
         *) echo "Refusing to clean non-output platform dir: $platform_dir" >&2; exit 1 ;;
@@ -66,13 +85,37 @@ if [ "${DLNA_NO_CLEAN:-0}" != "1" ]; then
 fi
 mkdir -p "$output_dir" "$tools_dir" "$release_stage_dir"
 
+# Install build prerequisites if missing
+_pkgs=(
+    build-essential cmake pkg-config git
+    libcurl4-openssl-dev libx11-dev libxft-dev libxext-dev
+    libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev
+    libpng-dev libjpeg-dev zlib1g-dev
+    libgl1-mesa-dev libglu1-mesa-dev
+)
+_need=false
+for _p in "${_pkgs[@]}"; do
+    if ! dpkg -s "$_p" &>/dev/null; then _need=true; break; fi
+done
+if $_need; then
+    echo "[INFO] Installing build prerequisites..."
+    sudo_run env DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    sudo_run env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${_pkgs[@]}"
+fi
+unset _pkgs _need _p
+
 cmake_args=(
     -S "$repo_root"
     -B "$build_dir"
     -DCMAKE_BUILD_TYPE=Release
     -DCMAKE_INSTALL_PREFIX="$install_dir"
-    -DDLNA_ENABLE_FLTK_GUI=ON
 )
+
+if [ "$install_only" = "1" ]; then
+    cmake_args+=("-DDLNA_ENABLE_FLTK_GUI=OFF")
+else
+    cmake_args+=("-DDLNA_ENABLE_FLTK_GUI=ON")
+fi
 
 if [ -n "${DLNA_FLTK_SOURCE_DIR:-}" ] && [ -d "$DLNA_FLTK_SOURCE_DIR" ]; then
     cmake_args+=("-DFETCHCONTENT_SOURCE_DIR_FLTK=$DLNA_FLTK_SOURCE_DIR")
@@ -82,6 +125,13 @@ fi
 
 cmake "${cmake_args[@]}"
 cmake --build "$build_dir" --parallel "${DLNA_BUILD_JOBS:-2}"
+if [ "$install_only" = "1" ]; then
+    sudo_run cmake --install "$build_dir"
+    echo ""
+    echo "DLNA Server installed to /usr/local"
+    echo "  Headless: dlna-server --source /path/to/media"
+    exit 0
+fi
 cmake --install "$build_dir"
 
 cpack --config "$build_dir/CPackConfig.cmake" -B "$output_dir"

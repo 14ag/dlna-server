@@ -27,12 +27,24 @@ jobs:
       - name: Create assets folder if it does not exist
         run: mkdir -p assets
 
+      - name: Ensure README contains banner
+        shell: bash
+        run: |
+          BANNER='![Banner](./assets/banner.webp)'
+
+          # Create README if it doesn't exist
+          touch README.md
+
+          # Only prepend if the banner isn't already present anywhere
+          if ! grep -Fxq "$BANNER" README.md; then
+            {
+              printf '%s\n\n' "$BANNER"
+              cat README.md
+            } > README.md.tmp
+            mv README.md.tmp README.md
+          fi
+
       - name: Fetch banner image from backend
-        # VERCEL_URL is a GitHub Actions Variable (not secret) - set it in
-        # Settings > Secrets and variables > Actions > Variables tab
-        # example value: https://readme-banner-abc123.vercel.app/
-        # BANNER_KEY is a GitHub Actions Secret - set it in the Secrets tab
-        # it must match the BANNER_KEY set in Vercel environment variables
         env:
           BANNER_KEY: ${{ secrets.BANNER_KEY }}
         run: |
@@ -43,11 +55,14 @@ jobs:
             "${VERCEL_URL}/banner" \
             --output assets/banner.webp
 
-      - name: Commit and push if the image changed
+      - name: Commit and push if anything changed
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add assets/banner.webp
+
+          git add assets/banner.webp README.md
+
           git diff --cached --quiet && echo "no change" && exit 0
+
           git commit -m "chore: rotate banner"
           git push
