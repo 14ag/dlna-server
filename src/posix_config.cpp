@@ -166,9 +166,6 @@ std::wstring Config::GetConfigPath() {
 
 std::wstring Config::GenerateUUID() {
     std::random_device rd;
-    if (rd.entropy() == 0.0) {
-        LogPrint(L"UUID entropy source did not report nondeterministic entropy.");
-    }
     std::seed_seq seed{
         rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd(),
         rd(), rd(), rd(), rd(), rd(), rd(), rd(), rd()
@@ -310,7 +307,9 @@ void Config::Save() {
     out << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";
     out << "NetworkInterfaceAllowList=" << WideToUtf8(networkInterfaceAllowList) << "\n";
 
-    if (!WriteFileAtomicUtf8(configPath, out.str())) {
+    const bool writeOk = WriteFileAtomicUtf8(configPath, out.str());
+    lock.unlock();
+    if (!writeOk) {
         LogPrint(L"Config save failed: %ls", configPath.c_str());
     }
 }

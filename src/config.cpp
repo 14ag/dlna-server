@@ -350,9 +350,12 @@ void Config::Save() {
     ss << "NetworkInterfaceAllowList=" << WideToUtf8(networkInterfaceAllowList) << "\n";
 
     static const std::string bom = "\xEF\xBB\xBF";
-    if (!WriteFileAtomicUtf8(path, bom + ss.str())) {
+    const bool writeOk = WriteFileAtomicUtf8(path, bom + ss.str());
+    const bool runOnBootLocal = runOnBoot;
+    lock.unlock();
+    if (!writeOk) {
         LogPrint(L"Config save failed: %ls", path.c_str());
     }
 
-    SetRunOnBoot(runOnBoot);
+    SetRunOnBoot(runOnBootLocal);
 }
