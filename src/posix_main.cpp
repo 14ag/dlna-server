@@ -11,6 +11,7 @@
 #include "server.h"
 #include "upnp_eventing.h"
 #include "server_close_policy.h"
+#include "tray_notify.h"
 #include "settings_restart.h"
 #include "startup_mode.h"
 #include "posix_single_instance.h"
@@ -259,6 +260,16 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--print-notify-pool-worker-count") {
             std::cout << kMaxUpnpNotifyWorkers << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-tray-notify-decode" && i + 2 < argc) {
+            unsigned long rawLParam = static_cast<unsigned long>(std::strtoul(argv[++i], nullptr, 0));
+            unsigned short expectedIconId = static_cast<unsigned short>(std::atoi(argv[++i]));
+            switch (DecodeTrayNotifyEvent(rawLParam, expectedIconId)) {
+            case TrayNotifyAction::Activate: std::cout << "activate" << std::endl; break;
+            case TrayNotifyAction::ShowMenu: std::cout << "showmenu" << std::endl; break;
+            case TrayNotifyAction::None: std::cout << "none" << std::endl; break;
+            }
             return 0;
         }
         else if (arg == "--print-config-path") {

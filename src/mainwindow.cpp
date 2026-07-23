@@ -19,6 +19,7 @@
 #include "input_gate.h"
 #include "modal_focus.h"
 #include "server.h"
+#include "tray_notify.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "dwmapi.lib")
@@ -1277,12 +1278,15 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         return TRUE;
     }
     case WM_TRAYICON: {
-        if (lParam == WM_LBUTTONUP) {
+        switch (DecodeTrayNotifyEvent(static_cast<unsigned long>(lParam), TRAY_ID)) {
+        case TrayNotifyAction::Activate:
             RestoreAndFocusMainWindow();
-        } else if (lParam == WM_RBUTTONUP) {
+            break;
+        case TrayNotifyAction::ShowMenu:
             ShowTrayMenu();
-        } else if (lParam == WM_LBUTTONDBLCLK) {
-            RestoreAndFocusMainWindow();
+            break;
+        case TrayNotifyAction::None:
+            break;
         }
         return 0;
     }

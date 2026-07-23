@@ -1,10 +1,13 @@
 import os
 import shutil
 import subprocess
+import sys
 
 import pytest
 
 pytestmark = pytest.mark.posix_only
+if sys.platform == "win32":
+    pytest.skip("POSIX-only test", allow_module_level=True)
 
 CLI_CANDIDATES = ["./dlna-server", "/usr/bin/dlna-server", "/usr/local/bin/dlna-server"]
 GUI_CANDIDATES = ["./dlna-server-gui", "/usr/bin/dlna-server-gui", "/usr/local/bin/dlna-server-gui"]

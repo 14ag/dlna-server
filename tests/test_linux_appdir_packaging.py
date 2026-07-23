@@ -135,7 +135,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("Fl::focus(state->subtitle)", gui_source)
         self.assertIn("Fl::focus(&dialog)", gui_source)
         self.assertIn("void resize", gui_source)
-        self.assertIn("DLNAServer.Start()", gui_source)
+        self.assertIn("DLNAServer.Start(", gui_source)
         self.assertIn("DLNAServer.Stop()", gui_source)
         self.assertIn("AppConfig.Save()", gui_source)
         self.assertIn("DLNAServer.Rescan()", gui_source)

@@ -18,6 +18,7 @@
 ## Build And Dependencies
 
 - build windows assets using command `& .\build-assets.bat --platform winx64 2>&1 | Select-Object -Last 30`
+- build linux assets using command`wsl.exe -d Ubuntu -- bash -lc 'cd /mnt/c/Users/philip/sauce/dlna-server && DLNA_SUDO_PASSWORD=" " ./build-assets.sh' --install`
 - CMake requires libcurl. Do not add curl CLI or legacy IO fallback.
 - Windows build deps use vcpkg. Expected root is `$env:VCPKG_ROOT` or `$env:USERPROFILE\vcpkg`.
 - Windows curl packages: `curl:x64-windows-static` and `curl:x86-windows-static`.
