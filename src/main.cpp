@@ -27,6 +27,7 @@
 #include "cli_flags.h"
 #include "upnp_eventing.h"
 #include "server_close_policy.h"
+#include "tray_notify.h"
 #include "../resources/resource.h"
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
@@ -346,6 +347,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             DLNAServer.Stop();
             std::wcout << L"--after-stop--" << std::endl;
             for (auto& s : AppConfig.Snapshot().effectiveMediaSources) std::wcout << s.path << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-tray-notify-decode") == 0 && i + 2 < argc) {
+            unsigned long rawLParam = static_cast<unsigned long>(wcstoul(argv[++i], nullptr, 0));
+            unsigned short expectedIconId = static_cast<unsigned short>(_wtoi(argv[++i]));
+            switch (DecodeTrayNotifyEvent(rawLParam, expectedIconId)) {
+            case TrayNotifyAction::Activate: std::cout << "activate" << std::endl; break;
+            case TrayNotifyAction::ShowMenu: std::cout << "showmenu" << std::endl; break;
+            case TrayNotifyAction::None: std::cout << "none" << std::endl; break;
+            }
             LocalFree(argv);
             return 0;
         } else {

@@ -4,7 +4,7 @@
 #include "media_sources.h"
 #include "netutils.h"
 #include "server.h"
-#include "server_close_policy.h"
+
 #include "settings_restart.h"
 #include "posix_single_instance.h"
 
@@ -685,11 +685,7 @@ private:
 
     static void CloseRequested(Fl_Widget*, void* data) {
         auto* self = static_cast<MainWindow*>(data);
-        if (ShouldCloseNow(DLNAServer.IsRunning(), self->IsBusy())) {
-            std::exit(0);
-        } else {
-            self->hide();
-        }
+        self->hide();
     }
 
     static void PollLog(void* data) {
@@ -758,6 +754,7 @@ namespace {
 
 int main(int argc, char** argv) {
     std::signal(SIGPIPE, SIG_IGN);
+    Fl::lock();
     AppConfig.Load();
 
     // Single-instance lock: if another instance is running, tell it to

@@ -28,6 +28,7 @@ endfunction()
 if(WIN32)
 set(SOURCES
          src/access_keys.cpp
+         src/tray_notify.cpp
          src/access_key_hook.cpp
          src/mainwindow.cpp
          src/settingsdlg.cpp
@@ -64,6 +65,7 @@ set(SOURCES
 
 set(HEADERS
          src/access_keys.h
+         src/tray_notify.h
          src/cli_flags.h
          src/settings_help.h
          src/mainwindow.h
@@ -131,6 +133,7 @@ else()
 
 add_library(dlna_core STATIC
          src/access_keys.cpp
+         src/tray_notify.cpp
          src/posix_server.cpp
          src/posix_ssdp.cpp
          src/ssdp_common.cpp
@@ -191,9 +194,14 @@ add_library(dlna_core STATIC
                 FetchContent_Populate(fltk)
                 add_subdirectory(${fltk_SOURCE_DIR} ${fltk_BINARY_DIR} EXCLUDE_FROM_ALL)
             endif()
-            set(DLNA_FLTK_TARGET fltk)
+            set(DLNA_FLTK_TARGET fltk fltk_images)
         else()
             set(DLNA_FLTK_TARGET ${FLTK_LIBRARIES})
+        endif()
+        # Fl_PNG_Image requires fltk_images; ensure it is linked for
+        # both system-FLTK and FetchContent builds.
+        if(NOT DLNA_FLTK_TARGET MATCHES "fltk_images")
+            list(APPEND DLNA_FLTK_TARGET fltk_images)
         endif()
         add_executable(dlna-server-gui-native src/fltk_gui_main.cpp)
         set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
