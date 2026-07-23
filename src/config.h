@@ -173,4 +173,11 @@ private:
 // Global config access
 #define AppConfig Config::Get()
 
+// POSIX bundled-resource path resolution. Searches standard locations for a
+// resource file (icon PNG, etc.) and returns the first path found, or empty.
+// Available on POSIX builds where DLNA_RESOURCE_DIR is defined.
+#ifdef DLNA_POSIX
+std::string ResolveBundledResourcePath(const std::string& fileName);
+#endif
+
 #endif // CONFIG_H

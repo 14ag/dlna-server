@@ -1,11 +1,14 @@
 #include "config.h"
 #include "dlna_utils.h"
+#include "fs_backend.h"
 #include "log.h"
 #include "netutils.h"
 
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <pwd.h>
 #include <sstream>
 #include <limits.h>
 #include <random>
@@ -20,6 +23,31 @@
 #endif
 
 namespace {
+
+// Returns the directory containing the current executable by reading
+// /proc/self/exe (Linux) or _NSGetExecutablePath (macOS).
+std::string ExecutableDirectory() {
+#ifdef __APPLE__
+    char path[PATH_MAX];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) == 0) {
+        std::string exe(path);
+        const size_t slash = exe.find_last_of('/');
+        if (slash != std::string::npos) return exe.substr(0, slash);
+    }
+#else
+    char path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    if (len > 0) {
+        path[len] = '\0';
+        std::string exe(path);
+        const size_t slash = exe.find_last_of('/');
+        if (slash != std::string::npos) return exe.substr(0, slash);
+    }
+#endif
+    return ".";
+}
+
 std::string Trim(const std::string& value) {
     const char* ws = " \t\r\n";
     const size_t start = value.find_first_not_of(ws);
@@ -35,26 +63,69 @@ std::string Trim(const std::string& value) {
     return result;
 }
 
+// Per the XDG Base Directory Specification [R1]: "$XDG_CONFIG_HOME defines
+// the base directory relative to which user-specific configuration files
+// should be written. If $XDG_CONFIG_HOME is either not set or empty, a
+// default equal to $HOME/.config should be used." The spec additionally
+// requires: "All paths set in these environment variables must be
+// absolute. If an implementation encounters a relative path... it should
+// consider the path invalid and ignore it."
+std::string ResolveHomeDirectory() {
+    if (const char* home = std::getenv("HOME"); home && *home) {
+        return home;
+    }
+    // Fallback used by glibc/glib (g_get_home_dir()) when $HOME is unset:
+    // consult the passwd database for the invoking user.
+    if (struct passwd* pw = getpwuid(getuid()); pw && pw->pw_dir && *pw->pw_dir) {
+        return pw->pw_dir;
+    }
+    // Last resort. Logged by the caller so this degraded mode is visible.
+    return "/tmp";
+}
+
+std::string ResolveXdgConfigBase() {
+    if (const char* xdgConfigHome = std::getenv("XDG_CONFIG_HOME");
+        xdgConfigHome && *xdgConfigHome && xdgConfigHome[0] == '/') {
+        return xdgConfigHome;
+    }
+    return ResolveHomeDirectory() + "/.config";
+}
+
 std::string AppRootConfigPath() {
-#ifdef __APPLE__
-    char path[PATH_MAX];
-    uint32_t size = sizeof(path);
-    if (_NSGetExecutablePath(path, &size) == 0) {
-        std::string exe(path);
-        size_t slash = exe.find_last_of('/');
-        if (slash != std::string::npos) return exe.substr(0, slash + 1) + "config.ini";
+    const std::string configDir = ResolveXdgConfigBase() + "/dlna-server";
+    std::error_code ec;
+    std::filesystem::create_directories(configDir, ec);
+    // create_directories() is a documented no-op (returns false, ec clear)
+    // when the directory already exists -- safe to call on every launch,
+    // no separate "first run" bootstrap step is needed.
+    if (ec) {
+        // Directory could not be created (e.g. degraded /tmp fallback on a
+        // read-only root). Fall through and let the subsequent
+        // WriteFileAtomicUtf8() failure produce the existing, already
+        // logged "Config save failed" message rather than silently
+        // guessing at another location.
     }
-#else
-    char path[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
-    if (len > 0) {
-        path[len] = '\0';
-        std::string exe(path);
-        size_t slash = exe.find_last_of('/');
-        if (slash != std::string::npos) return exe.substr(0, slash + 1) + "config.ini";
+    return configDir + "/config.ini";
+}
+
+void MigrateLegacyConfigIfPresent(const std::wstring& newConfigPath) {
+    if (FsExists(newConfigPath)) return; // never overwrite live XDG data
+
+    char exePath[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (len <= 0) return;
+    exePath[len] = '\0';
+    std::string exe(exePath);
+    size_t slash = exe.find_last_of('/');
+    if (slash == std::string::npos) return;
+    std::wstring legacyPath = Utf8ToWide(exe.substr(0, slash + 1) + "config.ini");
+
+    if (!FsExists(legacyPath)) return;
+    std::error_code ec;
+    std::filesystem::copy_file(WideToUtf8(legacyPath), WideToUtf8(newConfigPath), ec);
+    if (!ec) {
+        LogPrint(L"Migrated legacy config from %ls to %ls", legacyPath.c_str(), newConfigPath.c_str());
     }
-#endif
-    return "config.ini";
 }
 
 int ParseIntOrDefault(const std::string& value, int fallback) {
@@ -77,6 +148,29 @@ std::wstring DefaultServerName() {
     return L"dlna-server";
 }
 
+}
+
+// Searches standard locations for a bundled resource file (icon PNG, etc.)
+// and returns the first existing path, or an empty string if not found.
+// Resolution order: DLNA_RESOURCE_DIR (compile-time), exe-dir, installed
+// system path (<exeDir>/../share/dlna-server/icons/), macOS bundle path
+// (<exeDir>/../Resources/).
+std::string ResolveBundledResourcePath(const std::string& fileName) {
+    if (fileName.empty()) return {};
+    const std::string exeDir = ExecutableDirectory();
+    const std::vector<std::string> candidates = {
+        std::string(DLNA_RESOURCE_DIR) + "/" + fileName,
+        exeDir + "/" + fileName,
+        exeDir + "/../share/dlna-server/icons/" + fileName,
+        exeDir + "/../Resources/" + fileName,
+    };
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(candidate, ec) && !ec) {
+            return candidate;
+        }
+    }
+    return {};
 }
 
 Config& Config::Get() {
@@ -200,6 +294,7 @@ void Config::SetRunOnBoot(bool) {
 
 void Config::Load() {
     std::unique_lock<std::shared_mutex> lock(m_mutex);
+    MigrateLegacyConfigIfPresent(GetConfigPath());
     std::ifstream file(WideToUtf8(GetConfigPath()), std::ios::binary);
     if (!file) {
         if (deviceUUID.empty()) deviceUUID = GenerateUUID();

@@ -6,6 +6,7 @@
 #include "server.h"
 #include "server_close_policy.h"
 #include "settings_restart.h"
+#include "posix_single_instance.h"
 
 #include <FL/Fl.H>
 #include <FL/Fl_Box.H>
@@ -18,6 +19,7 @@
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/Fl_Text_Buffer.H>
 #include <FL/Fl_Text_Display.H>
+#include <FL/Fl_PNG_Image.H>
 #include <FL/Fl_Window.H>
 #include <FL/fl_ask.H>
 #include <algorithm>
@@ -390,6 +392,21 @@ public:
         m_settingsButton.callback(ShowSettings, this);
         m_sources.callback(SourceSelectionChanged, this);
         end();
+
+        // Set WM class to match StartupWMClass in .desktop files
+        xclass("dlna-server");
+
+        // Load window icon from bundled resources
+        const std::string iconPath = ResolveBundledResourcePath("server_icon_48.png");
+        if (!iconPath.empty()) {
+            Fl_PNG_Image* png = new Fl_PNG_Image(iconPath.c_str());
+            if (png->w() > 0 && png->h() > 0) {
+                icon(png);
+            } else {
+                delete png;
+            }
+        }
+
         resizable(m_sources);
         Layout(kWindowWidth, kWindowHeight);
         RefreshSourceList();
@@ -723,10 +740,45 @@ private:
 };
 } // namespace
 
+namespace {
+    // Used by single-instance reveal-on-demand callback.
+    MainWindow* g_mainWindow = nullptr;
+
+    void OnSingleInstanceCommand(const std::string& cmd) {
+        if (cmd == "show" && g_mainWindow) {
+            // Fl::awake schedules the callback on the main FLTK thread,
+            // which is required because FLTK UI operations are not
+            // thread-safe and this callback runs on the listener thread.
+            Fl::awake(+[](void* data) {
+                static_cast<Fl_Window*>(data)->show();
+            }, g_mainWindow);
+        }
+    }
+} // namespace
+
 int main(int argc, char** argv) {
     std::signal(SIGPIPE, SIG_IGN);
     AppConfig.Load();
+
+    // Single-instance lock: if another instance is running, tell it to
+    // reveal its window and exit.
+    if (!SingleInstance::TryAcquireLock()) {
+        SingleInstance::SendShow();
+        return 0;
+    }
+
     MainWindow window;
+    g_mainWindow = &window;
+
+    // Start IPC listener for "show" commands from second instances.
+    // The listener runs on a background thread; safety for FLTK UI calls
+    // is handled via Fl::awake() inside OnSingleInstanceCommand.
+    SingleInstance::StartListening(OnSingleInstanceCommand);
+
     window.show(argc, argv);
-    return Fl::run();
+    const int result = Fl::run();
+
+    SingleInstance::ReleaseLock();
+    g_mainWindow = nullptr;
+    return result;
 }

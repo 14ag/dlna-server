@@ -297,6 +297,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::cout << kMaxUpnpNotifyWorkers << std::endl;
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-config-path") == 0) {
+            std::wcout << AppConfig.GetConfigPath() << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-media-sources") == 0) {
             auto snap = AppConfig.Snapshot();
             for (const auto& src : snap.mediaSources) {
