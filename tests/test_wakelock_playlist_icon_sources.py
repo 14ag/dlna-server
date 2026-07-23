@@ -73,8 +73,8 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
         cmake = self.read("CMakeLists.txt")
         posix_http = self.read("src/posix_httpserver.cpp")
         self.assertGreaterEqual(cmake.count('DLNA_RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources"'), 2)
-        self.assertIn('std::string(DLNA_RESOURCE_DIR) + "/" + fileName', posix_http)
-        self.assertNotIn('"resources/" + fileName', posix_http)
+        self.assertIn('ResolveBundledResourcePath(fileName)', posix_http)
+        self.assertNotIn('std::string(DLNA_RESOURCE_DIR) + "/" + fileName', posix_http)
 
         resources = self.read("resources/resource.h")
         app_rc = self.read("resources/app.rc")
