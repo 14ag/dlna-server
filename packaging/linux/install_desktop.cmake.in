@@ -16,3 +16,15 @@ Keywords=DLNA;UPnP;media;server;streaming;
 StartupWMClass=dlna-server
 StartupNotify=true
 ")
+
+# Invalidate the hicolor icon cache so the new icons are picked up
+# immediately. Non-fatal -- the cache will eventually be refreshed by
+# the DE even if this command is not available.
+set(hicolor_dir "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_DATADIR@/icons/hicolor")
+if(EXISTS "${hicolor_dir}")
+    find_program(GTK_UPDATE_ICON_CACHE gtk-update-icon-cache)
+    if(GTK_UPDATE_ICON_CACHE)
+        execute_process(COMMAND "${GTK_UPDATE_ICON_CACHE}" -f -t "${hicolor_dir}"
+                        COMMAND_ERROR_IS_FATAL LAST)
+    endif()
+endif()

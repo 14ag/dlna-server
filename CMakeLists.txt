@@ -153,6 +153,7 @@ add_library(dlna_core STATIC
          src/bounded_thread_pool.cpp
          src/playlist_scan_concurrency.cpp
          src/settings_restart.cpp
+         src/posix_single_instance.cpp
      )
     dlna_enable_warnings(dlna_core)
     dlna_link_required_curl(dlna_core)
@@ -250,7 +251,14 @@ add_library(dlna_core STATIC
         if(DLNA_ENABLE_FLTK_GUI)
             configure_file(packaging/linux/install_desktop.cmake.in "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake" @ONLY)
             configure_file(packaging/linux/dlna-server.appdata.xml.in "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" @ONLY)
+            # Install SVG into hicolor scalable tree for desktop-env icon lookup
             install(FILES resources/dlna-server.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+            # Install PNG icons into hicolor fixed-size directories so DEs
+            # find the icon by name (Icon=dlna-server in .desktop files).
+            install(FILES resources/server_icon_48.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps   RENAME dlna-server.png)
+            install(FILES resources/server_icon_120.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps RENAME dlna-server.png)
+            install(FILES resources/server_icon_256.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps RENAME dlna-server.png)
+            # Also keep a copy in the app-specific data dir for runtime loading
             install(FILES
                 resources/server_icon_48.png
                 resources/server_icon_120.png
