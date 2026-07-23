@@ -337,15 +337,25 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
 
     const wchar_t CLASS_NAME[] = L"dlna-server_Main";
 
-    WNDCLASSW wc = {};
+    WNDCLASSEXW wc = {};
+    wc.cbSize = sizeof(WNDCLASSEXW);
     wc.lpfnWndProc = MainWindow::WindowProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
-    wc.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
+    // LoadIconMetric provides DPI-aware icon sizing (Vista+).
+    // Fall back to LoadIcon if the metric API is unavailable.
+    if (FAILED(LoadIconMetric(hInstance, MAKEINTRESOURCE(IDI_APP_ICON),
+                              LIM_LARGE, &wc.hIcon))) {
+        wc.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
+    }
+    if (FAILED(LoadIconMetric(hInstance, MAKEINTRESOURCE(IDI_APP_ICON),
+                              LIM_SMALL, &wc.hIconSm))) {
+        wc.hIconSm = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
+    }
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = m_hBgBrush;
 
-    RegisterClassW(&wc);
+    RegisterClassExW(&wc);
 
     m_hwnd = CreateWindowExW(
         m_startedHeadless ? WS_EX_TOOLWINDOW : 0, CLASS_NAME, L"DLNA Server",
@@ -667,6 +677,11 @@ void MainWindow::AddTrayIcon() {
     wcscpy_s(nid.szTip, L"DLNA Server");
 
     Shell_NotifyIconW(NIM_ADD, &nid);
+
+    // NIM_SETVERSION with NOTIFYICON_VERSION_4 enables modern notification
+    // area behavior (balloon replies, NIN_SELECT, etc.) on Vista+.
+    nid.uVersion = NOTIFYICON_VERSION_4;
+    Shell_NotifyIconW(NIM_SETVERSION, &nid);
 }
 
 void MainWindow::RemoveTrayIcon() {

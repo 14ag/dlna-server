@@ -13,6 +13,7 @@
 #include "server_close_policy.h"
 #include "settings_restart.h"
 #include "startup_mode.h"
+#include "posix_single_instance.h"
 
 #include <atomic>
 #include <chrono>
@@ -260,6 +261,14 @@ int main(int argc, char** argv) {
             std::cout << kMaxUpnpNotifyWorkers << std::endl;
             return 0;
         }
+        else if (arg == "--print-config-path") {
+            std::wcout << AppConfig.GetConfigPath() << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-resolve-bundled-resource" && i + 1 < argc) {
+            std::cout << ResolveBundledResourcePath(argv[++i]) << std::endl;
+            return 0;
+        }
         else if (arg == "--print-media-sources") {
             auto snap = AppConfig.Snapshot();
             for (const auto& src : snap.mediaSources) {
@@ -330,6 +339,17 @@ int main(int argc, char** argv) {
         PrintUsage(argv[0]);
         return 2;
     }
+
+    // Single-instance lock: if another instance is already running,
+    // try to show its window and exit.
+    if (!SingleInstance::TryAcquireLock()) {
+        if (SingleInstance::SendShow()) {
+            return 0;
+        }
+        std::cerr << "Another instance of dlna-server is already running." << std::endl;
+        return 1;
+    }
+
     std::signal(SIGPIPE, SIG_IGN);
     std::signal(SIGINT, HandleSignal);
     std::signal(SIGTERM, HandleSignal);

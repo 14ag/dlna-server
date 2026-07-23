@@ -145,41 +145,11 @@ bool ReadIconFile(const std::string& path, std::string& bytes) {
     return !bytes.empty();
 }
 
-std::string ExecutableDirectory() {
-#ifdef __APPLE__
-    char path[PATH_MAX];
-    uint32_t size = sizeof(path);
-    if (_NSGetExecutablePath(path, &size) == 0) {
-        std::string exe(path);
-        const size_t slash = exe.find_last_of('/');
-        if (slash != std::string::npos) return exe.substr(0, slash);
-    }
-#else
-    char path[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
-    if (len > 0) {
-        path[len] = '\0';
-        std::string exe(path);
-        const size_t slash = exe.find_last_of('/');
-        if (slash != std::string::npos) return exe.substr(0, slash);
-    }
-#endif
-    return ".";
-}
-
 bool LoadServerIconPng(const std::string& fileName, std::string& bytes) {
     if (fileName.empty()) return false;
-    const std::string exeDir = ExecutableDirectory();
-    std::vector<std::string> candidates = {
-        std::string(DLNA_RESOURCE_DIR) + "/" + fileName,
-        exeDir + "/" + fileName,
-        exeDir + "/../share/dlna-server/icons/" + fileName,
-        exeDir + "/../Resources/" + fileName,
-    };
-    for (const auto& candidate : candidates) {
-        if (ReadIconFile(candidate, bytes)) return true;
-    }
-    return false;
+    const std::string resolved = ResolveBundledResourcePath(fileName);
+    if (resolved.empty()) return false;
+    return ReadIconFile(resolved, bytes);
 }
 
 }
