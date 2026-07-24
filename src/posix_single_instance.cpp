@@ -15,6 +15,8 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <poll.h>
+
 #include <unistd.h>
 
 namespace {
@@ -47,8 +49,10 @@ void EnsureDirExists(const std::string& path) {
 //      the listener thread has started, so no concurrent access exists.
 //      g_running is std::atomic<> for the listener thread's spin check.) ----
 
-int         g_lockFd       = -1;
-int         g_listenFd     = -1;
+int         g_lockFd        = -1;
+int         g_listenFd      = -1;
+int         g_wakeupReadFd  = -1;
+int         g_wakeupWriteFd = -1;
 std::thread g_listenerThread;
 std::atomic<bool> g_running(false);
 void (*g_callback)(const std::string&) = nullptr;
@@ -129,9 +133,35 @@ void StartListening(void (*onCommand)(const std::string&)) {
     ::chmod(sockPath.c_str(), 0600);
     ::listen(g_listenFd, 5);
 
+    int wakeupFds[2] = {-1, -1};
+    if (::pipe(wakeupFds) == 0) {
+        g_wakeupReadFd = wakeupFds[0];
+        g_wakeupWriteFd = wakeupFds[1];
+        ::fcntl(g_wakeupReadFd, F_SETFL, ::fcntl(g_wakeupReadFd, F_GETFL) | O_NONBLOCK);
+    }
+
     g_running = true;
     g_listenerThread = std::thread([]() {
         while (g_running.load()) {
+            struct pollfd fds[2];
+            fds[0].fd = g_listenFd;
+            fds[0].events = POLLIN;
+            fds[0].revents = 0;
+            fds[1].fd = g_wakeupReadFd;
+            fds[1].events = POLLIN;
+            fds[1].revents = 0;
+            const nfds_t nfds = g_wakeupReadFd >= 0 ? 2 : 1;
+
+            const int pollResult = ::poll(fds, nfds, -1);
+            if (pollResult < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            if (nfds == 2 && (fds[1].revents & (POLLIN | POLLHUP))) {
+                break;
+            }
+            if (!(fds[0].revents & POLLIN)) continue;
+
             struct sockaddr_un clientAddr;
             socklen_t clientLen = sizeof(clientAddr);
             const int clientFd = ::accept(
@@ -141,7 +171,7 @@ void StartListening(void (*onCommand)(const std::string&)) {
 
             if (clientFd < 0) {
                 if (errno == EINTR) continue;
-                break; // listen socket closed or fatal error
+                break;
             }
 
             char buf[256] = {};
@@ -149,7 +179,6 @@ void StartListening(void (*onCommand)(const std::string&)) {
             if (n > 0) {
                 buf[n] = '\0';
                 std::string cmd(buf);
-                // strip trailing newline / carriage-return
                 while (!cmd.empty() &&
                        (cmd.back() == '\n' || cmd.back() == '\r')) {
                     cmd.pop_back();
@@ -162,8 +191,18 @@ void StartListening(void (*onCommand)(const std::string&)) {
 }
 
 void ReleaseLock() {
-    // 1. Stop listener.
+    // 1. Stop listener. Wake poll() via the self-pipe *before* touching
+    //    g_listenFd -- do not depend on close() alone to unblock a
+    //    concurrently-blocked accept() on the same fd; that race is
+    //    documented (the fd number can be reused by a descriptor opened
+    //    on another thread between close() and the blocked call
+    //    returning). Mirrors posix_httpserver.cpp::HttpServer::Stop().
     g_running = false;
+    if (g_wakeupWriteFd >= 0) {
+        char byte = 0;
+        const ssize_t written = ::write(g_wakeupWriteFd, &byte, 1);
+        (void)written;
+    }
     if (g_listenFd >= 0) {
         ::close(g_listenFd);
         g_listenFd = -1;
@@ -172,6 +211,14 @@ void ReleaseLock() {
         g_listenerThread.join();
     }
     ::unlink(GetSocketPath().c_str());
+    if (g_wakeupReadFd >= 0) {
+        ::close(g_wakeupReadFd);
+        g_wakeupReadFd = -1;
+    }
+    if (g_wakeupWriteFd >= 0) {
+        ::close(g_wakeupWriteFd);
+        g_wakeupWriteFd = -1;
+    }
 
     // 2. Release file lock.
     if (g_lockFd >= 0) {

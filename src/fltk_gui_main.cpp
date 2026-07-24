@@ -6,6 +6,10 @@
 #include "server.h"
 
 #include "settings_restart.h"
+#include "server_close_policy.h"
+#include "input_gate.h"
+#include "cli_flags.h"
+#include "settings_help.h"
 #include "posix_single_instance.h"
 
 #include <FL/Fl.H>
@@ -13,18 +17,22 @@
 #include <FL/Fl_Button.H>
 #include <FL/Fl_Check_Button.H>
 #include <FL/Fl_Choice.H>
+#include <FL/Fl_Return_Button.H>
 #include <FL/Fl_Hold_Browser.H>
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Int_Input.H>
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/Fl_Text_Buffer.H>
 #include <FL/Fl_Text_Display.H>
+#include <FL/Fl_Menu_Bar.H>
 #include <FL/Fl_PNG_Image.H>
 #include <FL/Fl_Window.H>
 #include <FL/fl_ask.H>
 #include <algorithm>
+#include <atomic>
 #include <csignal>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -50,6 +58,12 @@ enum class ServerUiState {
     Running,
     Stopping
 };
+
+std::atomic<bool> g_signalStop(false);
+
+void HandleTerminationSignal(int) {
+    g_signalStop.store(true, std::memory_order_relaxed);
+}
 
 std::string ToUtf8(const std::wstring& value) {
     return WideToUtf8(value);
@@ -132,6 +146,100 @@ void ShowPlaylistEntryDialog() {
     }
 }
 
+std::string PromptForMediaSourceFLTK() {
+    struct State {
+        Fl_Window* window = nullptr;
+        Fl_Input* input = nullptr;
+        Fl_Return_Button* addButton = nullptr;
+        bool accepted = false;
+    } state;
+
+    Fl_Window dialog(560, 196, "Add media source");
+    state.window = &dialog;
+
+    Fl_Box label(16, 14, 528, 20, "Add a folder, playlist file, or network share URL:");
+    label.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+
+    Fl_Input input(16, 42, 528, 28);
+    state.input = &input;
+
+    Fl_Box hint(16, 78, 528, 20, "Example: ftp://user:pass@server:21/media");
+    hint.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
+    hint.labelcolor(fl_rgb_color(150, 150, 150));
+
+    Fl_Button folderButton(16, 114, 96, 28, "Folder...");
+    Fl_Button playlistButton(120, 114, 96, 28, "Playlist...");
+    Fl_Return_Button addButton(406, 150, 68, 28, "Add");
+    state.addButton = &addButton;
+    Fl_Button cancelButton(482, 150, 62, 28, "Cancel");
+
+    addButton.deactivate();
+
+    input.when(FL_WHEN_CHANGED);
+    input.callback([](Fl_Widget* w, void* data) {
+        auto* s = static_cast<State*>(data);
+        const char* text = static_cast<Fl_Input*>(w)->value();
+        const int length = static_cast<int>(std::strlen(text ? text : ""));
+        if (AnyFieldHasContent({ length })) {
+            s->addButton->activate();
+        } else {
+            s->addButton->deactivate();
+        }
+    }, &state);
+
+    folderButton.callback([](Fl_Widget*, void* data) {
+        auto* s = static_cast<State*>(data);
+        Fl_Native_File_Chooser chooser;
+        chooser.title("Choose media folder");
+        chooser.type(Fl_Native_File_Chooser::BROWSE_DIRECTORY);
+        if (chooser.show() == 0 && chooser.filename()) {
+            s->input->value(chooser.filename());
+            s->input->do_callback();
+        }
+        Fl::focus(s->input);
+    }, &state);
+
+    playlistButton.callback([](Fl_Widget*, void* data) {
+        auto* s = static_cast<State*>(data);
+        Fl_Native_File_Chooser chooser;
+        chooser.title("Choose playlist file");
+        chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
+        chooser.filter("Playlists\t*.{m3u,m3u8,pls}\nAll files\t*");
+        if (chooser.show() == 0 && chooser.filename()) {
+            s->input->value(chooser.filename());
+            s->input->do_callback();
+        }
+        Fl::focus(s->input);
+    }, &state);
+
+    addButton.callback([](Fl_Widget*, void* data) {
+        auto* s = static_cast<State*>(data);
+        s->accepted = true;
+        s->window->hide();
+    }, &state);
+
+    cancelButton.callback([](Fl_Widget*, void* data) {
+        auto* s = static_cast<State*>(data);
+        s->window->hide();
+    }, &state);
+
+    dialog.end();
+    dialog.set_modal();
+    dialog.show();
+    Fl::focus(&input);
+    while (dialog.shown()) {
+        Fl::wait();
+    }
+
+    if (!state.accepted) return {};
+    const char* raw = input.value();
+    std::string result = raw ? raw : "";
+    const size_t start = result.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return {};
+    const size_t end = result.find_last_not_of(" \t\r\n");
+    return result.substr(start, end - start + 1);
+}
+
 void CloseWindow(Fl_Widget*, void* data) {
     static_cast<Fl_Window*>(data)->hide();
 }
@@ -140,14 +248,16 @@ class LogDialog : public Fl_Window {
 public:
     LogDialog()
         : Fl_Window(500, 360, "DLNA Server Log"),
-          m_logView(7, 7, 486, 318),
-          m_closeButton(430, 333, 60, 22, "Close") {
+          m_logView(7, 7, 486, 288),
+          m_refreshButton(360, 328, 62, 22, "Refresh"),
+          m_closeButton(430, 328, 60, 22, "Close") {
         m_logView.buffer(&m_buffer);
         m_logView.textfont(FL_COURIER);
         m_logView.textsize(12);
         m_logView.box(FL_DOWN_BOX);
+        m_refreshButton.callback(RefreshClicked, this);
         m_closeButton.callback(CloseWindow, this);
-        Refresh();
+        LoadInitial();
         end();
     }
 
@@ -162,46 +272,106 @@ public:
     }
 
 private:
-    void Refresh() {
-        const std::string logText = ToUtf8(GetSystemLog());
-        m_buffer.text(logText.c_str());
+    void LoadInitial() {
+        LogSnapshot initial = GetSystemLogSince(0);
+        m_buffer.text(ToUtf8(initial.text).c_str());
+        m_lastSeenSequence = initial.latestSequence;
         m_logView.insert_position(m_buffer.length());
         m_logView.show_insert_position();
     }
 
+    void AppendNew() {
+        LogSnapshot delta = GetSystemLogSince(m_lastSeenSequence);
+        m_lastSeenSequence = delta.latestSequence;
+        if (delta.text.empty()) return;
+        m_buffer.append(ToUtf8(delta.text).c_str());
+        m_logView.insert_position(m_buffer.length());
+        m_logView.show_insert_position();
+    }
+
+    static void RefreshClicked(Fl_Widget*, void* data) {
+        static_cast<LogDialog*>(data)->AppendNew();
+    }
+
     Fl_Text_Buffer m_buffer;
     Fl_Text_Display m_logView;
+    Fl_Button m_refreshButton;
+    Fl_Button m_closeButton;
+    unsigned long long m_lastSeenSequence = 0;
+};
+
+class HelpDialog : public Fl_Window {
+public:
+    HelpDialog()
+        : Fl_Window(500, 420, "DLNA Server Help"),
+          m_textView(7, 7, 486, 378),
+          m_closeButton(430, 393, 60, 22, "Close") {
+        m_textView.buffer(&m_buffer);
+        m_textView.textfont(FL_COURIER);
+        m_textView.textsize(12);
+        m_textView.box(FL_DOWN_BOX);
+        m_closeButton.callback(CloseWindow, this);
+        BuildText();
+        end();
+    }
+
+    static void ShowModal() {
+        HelpDialog dialog;
+        dialog.set_modal();
+        dialog.show();
+        Fl::focus(&dialog);
+        while (dialog.shown()) {
+            Fl::wait();
+        }
+    }
+
+private:
+    void BuildText() {
+        std::string text = "Command-Line Flags\n\n";
+        for (const auto& flag : GetCliFlagTable()) {
+            text += ToUtf8(flag.flag) + "\t" + ToUtf8(flag.meaning) + "\n";
+        }
+        text += "\nSettings\n\n";
+        for (const auto& setting : GetSettingsHelpTable()) {
+            text += ToUtf8(setting.label) + "\t" + ToUtf8(setting.meaning) + "\n";
+        }
+        m_buffer.text(text.c_str());
+    }
+
+    Fl_Text_Buffer m_buffer;
+    Fl_Text_Display m_textView;
     Fl_Button m_closeButton;
 };
 
 class SettingsDialog : public Fl_Window {
 public:
     SettingsDialog()
-        : Fl_Window(500, 396, "DLNA Server Settings"),
-m_serverName(120, 14, 190, 24, "Server Name:"),
-          m_httpPort(120, 44, 190, 24, "HTTP Port:"),
-          m_ipWhitelist(120, 74, 350, 24, "IP Whitelist:"),
-          m_debugLog(16, 138, 190, 24, "Debug Log (Write to file)"),
-          m_defaultPlaylist(260, 112, 130, 24, "Default playlist"),
-          m_defaultPlaylistAdd(400, 112, 70, 24, "Add..."),
-          m_artistAlbum(16, 164, 230, 24, "Add Artist/Album folders to audio"),
-          m_hideAllMedia(16, 190, 230, 24, "Do not show 'All Media' folders"),
-          m_flatFolders(16, 216, 190, 24, "Flat folders style"),
-          m_showFileNames(16, 242, 230, 24, "Show file names instead of titles"),
-          m_sortByTitle(16, 268, 230, 24, "Sort by title instead of file name"),
-          m_proxyStreams(16, 294, 190, 24, "Proxy streams"),
-          m_backgroundScan(16, 320, 230, 24, "Background scan (auto-rescan on changes)"),
-          m_viewLogButton(84, 366, 70, 24, "View log"),
-          m_cancelButton(340, 366, 70, 24, "Cancel"),
-          m_okButton(417, 366, 70, 24, "OK"),
+        : Fl_Window(500, 420, "DLNA Server Settings"),
+          m_menuBar(0, 0, 500, 24),
+          m_serverName(120, 38, 190, 24, "Server Name:"),
+          m_httpPort(120, 68, 190, 24, "HTTP Port:"),
+          m_ipWhitelist(120, 98, 350, 24, "IP Whitelist:"),
+          m_debugLog(16, 162, 190, 24, "Debug Log (Write to file)"),
+          m_defaultPlaylist(260, 136, 130, 24, "Default playlist"),
+          m_defaultPlaylistAdd(400, 136, 70, 24, "Add..."),
+          m_artistAlbum(16, 188, 230, 24, "Add Artist/Album folders to audio"),
+          m_hideAllMedia(16, 214, 230, 24, "Do not show 'All Media' folders"),
+          m_flatFolders(16, 240, 190, 24, "Flat folders style"),
+          m_showFileNames(16, 266, 230, 24, "Show file names instead of titles"),
+          m_sortByTitle(16, 292, 230, 24, "Sort by title instead of file name"),
+          m_proxyStreams(16, 318, 190, 24, "Proxy streams"),
+          m_backgroundScan(16, 344, 230, 24, "Background scan (auto-rescan on changes)"),
+          m_cancelButton(340, 390, 70, 24, "Cancel"),
+          m_okButton(417, 390, 70, 24, "OK"),
           m_saved(false),
           m_restartRequested(false) {
         LoadFromConfig();
 
-        m_viewLogButton.tooltip("View log");
+        m_menuBar.add("Logs", 0, ShowLog, this);
+        m_menuBar.add("Help", 0, ShowHelp, this);
+
         m_defaultPlaylistAdd.tooltip("Add default playlist entry");
 
-        m_viewLogButton.callback(ShowLog, this);
         m_defaultPlaylist.callback(DefaultPlaylistToggled, this);
         m_defaultPlaylistAdd.callback(AddDefaultPlaylistEntry, this);
         m_cancelButton.callback(CloseWindow, this);
@@ -304,6 +474,11 @@ bool SaveToConfig() {
         if (data) Fl::focus(static_cast<SettingsDialog*>(data));
     }
 
+    static void ShowHelp(Fl_Widget*, void* data) {
+        HelpDialog::ShowModal();
+        if (data) Fl::focus(static_cast<SettingsDialog*>(data));
+    }
+
     void RefreshDefaultPlaylistControls() {
         if (m_defaultPlaylist.value()) m_defaultPlaylistAdd.activate();
         else m_defaultPlaylistAdd.deactivate();
@@ -321,6 +496,7 @@ bool SaveToConfig() {
         Fl::focus(self);
     }
 
+    Fl_Menu_Bar m_menuBar;
     Fl_Input m_serverName;
     Fl_Int_Input m_httpPort;
     Fl_Input m_ipWhitelist;
@@ -334,7 +510,6 @@ bool SaveToConfig() {
     Fl_Check_Button m_sortByTitle;
     Fl_Check_Button m_proxyStreams;
     Fl_Check_Button m_backgroundScan;
-    Fl_Button m_viewLogButton;
     Fl_Button m_cancelButton;
     Fl_Button m_okButton;
     bool m_saved;
@@ -549,6 +724,23 @@ private:
         });
     }
 
+    void RequestClose() {
+        if (m_closing) return;
+        if (IsBusy()) return;
+        if (ShouldCloseNow(DLNAServer.IsRunning(), false)) {
+            hide();
+            return;
+        }
+        m_closing = true;
+        m_state = ServerUiState::Stopping;
+        RefreshStatus();
+        if (m_worker.joinable()) m_worker.join();
+        m_worker = std::thread([this]() {
+            DLNAServer.Stop();
+            SetPendingResult(ServerUiState::Stopped, true, "");
+        });
+    }
+
     void RestartServer() {
         if (IsBusy()) return;
         const bool wasRunning = m_state == ServerUiState::Running;
@@ -609,37 +801,23 @@ private:
         m_state = state;
         RefreshStatus();
         if (!success && !message.empty()) fl_alert("%s", message.c_str());
+        if (m_closing && state == ServerUiState::Stopped) {
+            hide();
+        }
     }
 
     static void AddSource(Fl_Widget*, void* data) {
         auto* self = static_cast<MainWindow*>(data);
-        int choice = fl_choice("Add media source", "Folder", "Playlist", "Network URL");
-        std::string selected;
-
-        if (choice == 0 || choice == 1) {
-            Fl_Native_File_Chooser chooser;
-            chooser.title(choice == 0 ? "Choose media folder" : "Choose playlist file");
-            chooser.type(choice == 0 ? Fl_Native_File_Chooser::BROWSE_DIRECTORY : Fl_Native_File_Chooser::BROWSE_FILE);
-            if (choice == 1) chooser.filter("Playlists\t*.{m3u,m3u8,pls}\nAll files\t*");
-            if (chooser.show() == 0 && chooser.filename()) {
-                selected = chooser.filename();
-            }
-            self->RestoreMainFocus();
-        } else if (choice == 2) {
-            const char* typed = fl_input("Network share URL", "ftp://user:pass@server:21/media");
-            if (typed) selected = typed;
-            self->RestoreMainFocus();
+        std::string selected = PromptForMediaSourceFLTK();
+        self->RestoreMainFocus();
+        if (selected.empty()) return;
+        for (int i = 1; i <= self->m_sources.size(); ++i) {
+            const char* existing = self->m_sources.text(i);
+            if (existing && selected == existing) return;
         }
-
-        if (!selected.empty()) {
-            for (int i = 1; i <= self->m_sources.size(); ++i) {
-                const char* existing = self->m_sources.text(i);
-                if (existing && selected == existing) return;
-            }
-            self->m_sources.add(selected.c_str());
-            self->SaveSourcesFromList();
-            self->RefreshEmptyState();
-        }
+        self->m_sources.add(selected.c_str());
+        self->SaveSourcesFromList();
+        self->RefreshEmptyState();
     }
 
     static void RemoveSource(Fl_Widget*, void* data) {
@@ -685,11 +863,14 @@ private:
 
     static void CloseRequested(Fl_Widget*, void* data) {
         auto* self = static_cast<MainWindow*>(data);
-        self->hide();
+        self->RequestClose();
     }
 
     static void PollLog(void* data) {
         auto* self = static_cast<MainWindow*>(data);
+        if (g_signalStop.load(std::memory_order_relaxed)) {
+            self->RequestClose();
+        }
         self->ApplyPendingResult();
         self->RefreshStatus();
         Fl::repeat_timeout(0.5, PollLog, data);
@@ -729,6 +910,7 @@ private:
     ServerUiState m_state;
     std::thread m_worker;
     std::mutex m_pendingMutex;
+    bool m_closing = false;
     bool m_hasPendingResult;
     bool m_pendingSuccess;
     ServerUiState m_pendingState;
@@ -754,6 +936,8 @@ namespace {
 
 int main(int argc, char** argv) {
     std::signal(SIGPIPE, SIG_IGN);
+    std::signal(SIGINT, HandleTerminationSignal);
+    std::signal(SIGTERM, HandleTerminationSignal);
     Fl::lock();
     AppConfig.Load();
 
