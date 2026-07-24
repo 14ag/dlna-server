@@ -81,6 +81,32 @@ int main(int argc, char** argv) {
             std::cout << (AppScanCancel.IsCancelled() ? "1" : "0") << std::endl;
             return 0;
         }
+        else if (arg == "--print-single-instance-lifecycle") {
+            const bool acquired = SingleInstance::TryAcquireLock();
+            std::cout << (acquired ? "lock-acquired" : "lock-busy") << std::endl;
+            if (acquired) {
+                SingleInstance::StartListening([](const std::string&) {});
+                const bool sent = SingleInstance::SendShow();
+                std::cout << (sent ? "show-sent" : "show-failed") << std::endl;
+                SingleInstance::ReleaseLock();
+                std::cout << "released" << std::endl;
+            }
+            return 0;
+        }
+        else if (arg == "--print-log-since-lifecycle") {
+            LogPrint(L"line-one");
+            LogPrint(L"line-two");
+            LogSnapshot first = GetSystemLogSince(0);
+            std::wcout << L"first-latest=" << first.latestSequence << std::endl;
+            LogPrint(L"line-three");
+            LogSnapshot second = GetSystemLogSince(first.latestSequence);
+            std::wcout << L"second-latest=" << second.latestSequence << std::endl;
+            std::wcout << (second.text.find(L"line-three") != std::wstring::npos
+                                ? L"has-new-line" : L"missing-new-line") << std::endl;
+            std::wcout << (second.text.find(L"line-one") != std::wstring::npos
+                                ? L"leaked-old-line" : L"no-old-line-leak") << std::endl;
+            return 0;
+        }
         else if (arg == "--print-config-load-lockstate") {
             std::cout << "before load" << std::endl;
             AppConfig.Load();
