@@ -521,12 +521,12 @@ public:
     MainWindow()
         : Fl_Window(kWindowWidth, kWindowHeight, "DLNA Server"),
           m_toolbar(0, 0, kWindowWidth, kToolbarHeight),
-          m_title(15, 10, 240, 30, "DLNA Server"),
+          m_title(15, 10, 240, 30, ""),
           m_addButton(0, 8, kAddButtonWidth, kButtonHeight, "Add"),
           m_removeButton(0, 8, kDeleteButtonWidth, kButtonHeight, "Delete"),
           m_startStopButton(0, 8, kStartStopButtonWidth, kButtonHeight, "Start"),
           m_settingsButton(0, 8, kSettingsButtonWidth, kButtonHeight, "Settings"),
-          m_status(15, kToolbarHeight, kWindowWidth - 30, kStatusHeight, "DLNA Server is stopped"),
+          m_status(15, kToolbarHeight, kWindowWidth - 30, kStatusHeight, ""),
           m_sources(0, kToolbarHeight + kStatusHeight + kListTopGap, kWindowWidth, kWindowHeight - kToolbarHeight - kStatusHeight - kListTopGap),
           m_emptyState(15, kToolbarHeight + kStatusHeight + kListTopGap + 16, kWindowWidth - 30, 24, "Please add shared folders or files with Add."),
           m_state(ServerUiState::Stopped),
@@ -661,15 +661,15 @@ private:
             } else {
                 const std::string endpoint = ToUtf8(DLNAServer.GetEndpoint());
                 label = DLNAServer.IsInitialScanInProgress()
-                    ? ("DLNA Server is running on " + endpoint + " (scanning...)")
-                    : ("DLNA Server is running on " + endpoint);
+                    ? (" scanning...")
+                    : ("Server running");
             }
             m_status.copy_label(label.c_str());
             m_startStopButton.copy_label("Stop");
             m_startStopButton.tooltip("Stop server");
             m_startStopButton.activate();
         } else {
-            m_status.copy_label("DLNA Server is stopped");
+            m_status.copy_label("");
             m_startStopButton.copy_label("Start");
             m_startStopButton.tooltip("Start server");
             m_startStopButton.activate();
@@ -761,7 +761,7 @@ private:
             bool ok = DLNAServer.Start(reason);
             std::string message;
             if (!ok) {
-                message = "Server stopped. Failed to restart on the new port.";
+                message = "Failed to start on the new port.";
                 if (!reason.empty()) {
                     message += " ";
                     message += WideToUtf8(reason);
@@ -916,22 +916,17 @@ private:
     ServerUiState m_pendingState;
     std::string m_pendingMessage;
 };
-} // namespace
 
-namespace {
-    // Used by single-instance reveal-on-demand callback.
-    MainWindow* g_mainWindow = nullptr;
+// Used by single-instance reveal-on-demand callback.
+MainWindow* g_mainWindow = nullptr;
 
-    void OnSingleInstanceCommand(const std::string& cmd) {
-        if (cmd == "show" && g_mainWindow) {
-            // Fl::awake schedules the callback on the main FLTK thread,
-            // which is required because FLTK UI operations are not
-            // thread-safe and this callback runs on the listener thread.
-            Fl::awake(+[](void* data) {
-                static_cast<Fl_Window*>(data)->show();
-            }, g_mainWindow);
-        }
+void OnSingleInstanceCommand(const std::string& cmd) {
+    if (cmd == "show" && g_mainWindow) {
+        Fl::awake([](void* data) {
+            static_cast<Fl_Window*>(data)->show();
+        }, g_mainWindow);
     }
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -956,7 +951,7 @@ int main(int argc, char** argv) {
     // is handled via Fl::awake() inside OnSingleInstanceCommand.
     SingleInstance::StartListening(OnSingleInstanceCommand);
 
-    window.show(argc, argv);
+    window.show();
     const int result = Fl::run();
 
     SingleInstance::ReleaseLock();

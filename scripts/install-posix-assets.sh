@@ -41,6 +41,6 @@ if ! command -v dpkg >/dev/null 2>&1; then
     echo "dpkg not found" >&2
     exit 1
 fi
-
+sudo_run dpkg -P dlna-server
 sudo_run dpkg -i "$package_path"
 echo "Installed: $package_path"
