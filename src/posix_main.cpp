@@ -377,6 +377,10 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    std::signal(SIGPIPE, SIG_IGN);
+    std::signal(SIGINT, HandleSignal);
+    std::signal(SIGTERM, HandleSignal);
+
     // Single-instance lock: if another instance is already running,
     // try to show its window and exit.
     if (!SingleInstance::TryAcquireLock()) {
@@ -386,10 +390,6 @@ int main(int argc, char** argv) {
         std::cerr << "Another instance of dlna-server is already running." << std::endl;
         return 1;
     }
-
-    std::signal(SIGPIPE, SIG_IGN);
-    std::signal(SIGINT, HandleSignal);
-    std::signal(SIGTERM, HandleSignal);
     std::wstring outReason;
     if (!DLNAServer.Start(outReason)) {
         std::wcerr << L"Failed to start server: " << outReason << std::endl;
