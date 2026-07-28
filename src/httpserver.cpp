@@ -12,7 +12,9 @@
 #include "../resources/resource.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mswsock.h>
 #include <shlwapi.h>
+#pragma comment(lib, "mswsock.lib")
 #include <climits>
 #include <sstream>
 
@@ -612,21 +614,12 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                         movePos.QuadPart = startByte;
                         SetFilePointerEx(hFile.get(), movePos, NULL, FILE_BEGIN);
 
-                        long long remaining = contentLength;
-                        char fileBuf[65536];
-                        DWORD bytesToRead = 0;
-                        DWORD bytesReadFile = 0;
-
-                        while (remaining > 0 && m_running.load()) {
-                            bytesToRead = (remaining > static_cast<long long>(sizeof(fileBuf))) ? static_cast<DWORD>(sizeof(fileBuf)) : static_cast<DWORD>(remaining);
-                            if (!ReadFile(hFile.get(), fileBuf, bytesToRead, &bytesReadFile, NULL) || bytesReadFile == 0) {
-                                break;
-                            }
-
-                            if (!TrySendAll(clientSocket, fileBuf, bytesReadFile)) break;
-                            remaining -= bytesReadFile;
+                        if (!TransmitFile(clientSocket, hFile.get(),
+                                          static_cast<DWORD>(contentLength), 0,
+                                          NULL, NULL, 0)) {
+                            return;
                         }
-                        if (remaining > 0 || !keepAlive) return;
+                        if (!keepAlive) return;
                         continue;
                     }
                 }
@@ -699,14 +692,9 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             return;
                         }
 
-                        char subBuf[16384];
-                        DWORD subRead = 0;
-                        while (m_running.load()) {
-                            if (!ReadFile(hFile.get(), subBuf, sizeof(subBuf), &subRead, NULL) ||
-                                subRead == 0)
-                                break;
-                            if (!TrySendAll(clientSocket, subBuf, subRead)) break;
-                        }
+                        TransmitFile(clientSocket, hFile.get(),
+                                     static_cast<DWORD>(totalBytes), 0,
+                                     NULL, NULL, 0);
                         return;
                     }
                 }
@@ -741,12 +729,9 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             return;
                         }
 
-                        char artBuf[16384];
-                        DWORD artRead = 0;
-                        while (m_running.load()) {
-                            if (!ReadFile(hFile.get(), artBuf, sizeof(artBuf), &artRead, NULL) || artRead == 0) break;
-                            if (!TrySendAll(clientSocket, artBuf, artRead)) break;
-                        }
+                        TransmitFile(clientSocket, hFile.get(),
+                                     static_cast<DWORD>(fileSize.QuadPart), 0,
+                                     NULL, NULL, 0);
                         return;
                     }
                 }

@@ -25,6 +25,9 @@
 #include <vector>
 #include <sys/select.h>
 #include <sys/socket.h>
+#ifdef __linux__
+#include <sys/sendfile.h>
+#endif
 #include <sys/stat.h>
 #include <unistd.h>
 #ifdef __APPLE__
@@ -127,6 +130,29 @@ bool TrySendAll(int fd, const char* data, size_t remaining) {
         remaining -= static_cast<size_t>(sent);
     }
     return true;
+}
+
+static bool TrySendFile(int outFd, int inFd, off_t offset, size_t count) {
+#ifdef __linux__
+    off_t off = offset;
+    while (count > 0) {
+        ssize_t sent = sendfile(outFd, inFd, &off, count);
+        if (sent <= 0) return false;
+        count -= static_cast<size_t>(sent);
+    }
+    return true;
+#else
+    if (lseek(inFd, offset, SEEK_SET) < 0) return false;
+    char buf[65536];
+    while (count > 0) {
+        size_t chunk = (std::min)(sizeof(buf), count);
+        ssize_t r = read(inFd, buf, chunk);
+        if (r <= 0) return false;
+        if (!TrySendAll(outFd, buf, static_cast<size_t>(r))) return false;
+        count -= static_cast<size_t>(r);
+    }
+    return true;
+#endif
 }
 
 std::string IconFileNameForPath(const std::string& path) {
@@ -535,18 +561,11 @@ ScopedFd client(clientSocket);
                 SendAll(clientSocket, headers.str());
                 if (method == "GET") {
                     SetSocketStreamTimeouts(clientSocket);
-                    lseek(fd.get(), start, SEEK_SET);
-                    long long remaining = bodyLength;
-                    while (remaining > 0) {
-                        ssize_t chunk = read(fd.get(), buf, (std::min)(sizeof(buf), static_cast<size_t>(remaining)));
-                        if (chunk <= 0) break;
-                        if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
-                        remaining -= chunk;
-                    }
-                    if (remaining > 0 || !keepAlive) return;
+                    if (!TrySendFile(clientSocket, fd.get(), start, static_cast<size_t>(bodyLength))) return;
+                    if (!keepAlive) return;
                     continue;
-    }
-}
+                }
+            }
 }
 
             if (path.rfind("/subtitle/", 0) == 0) {
@@ -599,11 +618,7 @@ ScopedFd client(clientSocket);
                         << "Accept-Ranges: none\r\nConnection: close\r\n\r\n";
                 SendAll(clientSocket, headers.str());
                 if (sendBody) {
-                    while (true) {
-                        ssize_t chunk = read(fd.get(), buf, sizeof(buf));
-                        if (chunk <= 0) break;
-                        if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
-                    }
+                    TrySendFile(clientSocket, fd.get(), 0, static_cast<size_t>(st.st_size));
                 }
                 return;
             }
@@ -632,11 +647,7 @@ ScopedFd client(clientSocket);
                         << "Connection: close\r\n\r\n";
                 SendAll(clientSocket, headers.str());
                 if (sendBody) {
-                    while (true) {
-                        ssize_t chunk = read(fd.get(), buf, sizeof(buf));
-                        if (chunk <= 0) break;
-                        if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
-                    }
+                    TrySendFile(clientSocket, fd.get(), 0, static_cast<size_t>(st.st_size));
                 }
                 return;
             }

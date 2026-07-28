@@ -6,6 +6,8 @@
 #include "dark_frame.h"
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <windowsx.h>
+#include <powrprof.h>
 #include <uxtheme.h>
 #include <shobjidl.h>
 #include <shellapi.h>
@@ -18,12 +20,17 @@
 #include "media_sources.h"
 #include "input_gate.h"
 #include "modal_focus.h"
+#include "function_key_action.h"
+#include "help_dialog.h"
 #include "server.h"
+#include "ssdp.h"
+#include "log.h"
 #include "tray_notify.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "uxtheme.lib")
+#pragma comment(lib, "powrprof.lib")
 
 #define WM_TRAYICON (WM_USER + 1)
 #define WM_SCAN_DONE (WM_USER + 2)
@@ -323,6 +330,10 @@ MainWindow::~MainWindow() {
         m_sourceDropTarget = nullptr;
     }
     OleUninitialize();
+    if (m_hSuspendResumeNotify) {
+        PowerUnregisterSuspendResumeNotification(m_hSuspendResumeNotify);
+        m_hSuspendResumeNotify = NULL;
+    }
     RemoveTrayIcon();
     if (m_hBgBrush) DeleteObject(m_hBgBrush);
     if (m_hDarkBrush) DeleteObject(m_hDarkBrush);
@@ -438,6 +449,8 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
     AddTrayIcon();
     SetTimer(m_hwnd, kInitialScanPollTimerId, 250, NULL);
 
+    PowerRegisterSuspendResumeNotification(DEVICE_NOTIFY_WINDOW_HANDLE, m_hwnd, &m_hSuspendResumeNotify);
+
     if (nCmdShow != SW_HIDE) {
         ShowWindow(m_hwnd, nCmdShow);
     }
@@ -502,6 +515,28 @@ bool MainWindow::TryHandleAccessKeyChar(wchar_t ch) {
     if (upCh == static_cast<wchar_t>(towupper(m_lastMnemonics[3])) && IsWindowEnabled(m_hBtnSettings)) {
         SendMessageW(m_hwnd, WM_COMMAND, IDC_BTN_SETTINGS, 0);
         return true;
+    }
+    return false;
+}
+
+bool MainWindow::TryHandleFunctionKey(WPARAM vkCode) {
+    FunctionKeyAction action = DecideFunctionKeyAction(
+        static_cast<int>(vkCode), IsRunning(), IsBusy(), m_scanInProgress.load());
+    switch (action) {
+    case FunctionKeyAction::ShowHelp:
+        HelpDialog::Show(m_hwnd);
+        return true;
+    case FunctionKeyAction::Rescan:
+        BeginRescan();
+        return true;
+    case FunctionKeyAction::RefreshSourceList:
+        RefreshSourceList();
+        return true;
+    case FunctionKeyAction::ShowSourceListContextMenu:
+        // handled separately by wm contextmenu see task a4
+        return false;
+    case FunctionKeyAction::None:
+        return false;
     }
     return false;
 }
@@ -719,6 +754,34 @@ void MainWindow::ShowTrayMenu() {
         PostMessage(m_hwnd, WM_COMMAND, IDC_BTN_STARTSTOP, 0);
     } else if (cmd == 3) {
         PostQuitMessage(0);
+    }
+}
+
+void MainWindow::ShowSourceListContextMenu(HWND sourceHwnd, int screenX, int screenY) {
+    if (sourceHwnd != m_hListSources) return;
+    if (screenX == -1 && screenY == -1) {
+        RECT itemRect = {};
+        int selected = SelectedSourceIndex();
+        if (selected >= 0) {
+            SendMessage(m_hListSources, LB_GETITEMRECT, selected, reinterpret_cast<LPARAM>(&itemRect));
+        } else {
+            GetClientRect(m_hListSources, &itemRect);
+        }
+        POINT origin = { itemRect.left, itemRect.bottom };
+        ClientToScreen(m_hListSources, &origin);
+        screenX = origin.x;
+        screenY = origin.y;
+    }
+
+    HMENU menu = CreatePopupMenu();
+    const bool canRemove = !m_focusState.IsNoFocus() && !IsBusy() && !m_scanInProgress.load()
+                            && !IsShowingOverrideSources();
+    AppendMenuW(menu, MF_STRING | (canRemove ? 0 : MF_GRAYED), IDC_BTN_DELETE, L"Remove selected source");
+    SetForegroundWindow(m_hwnd);
+    int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, screenX, screenY, 0, m_hwnd, NULL);
+    DestroyMenu(menu);
+    if (cmd == IDC_BTN_DELETE && canRemove) {
+        RemoveSelectedSource();
     }
 }
 
@@ -1240,6 +1303,13 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         }
         return TRUE;
     }
+    case WM_CONTEXTMENU: {
+        HWND sourceHwnd = reinterpret_cast<HWND>(wParam);
+        int screenX = GET_X_LPARAM(lParam);
+        int screenY = GET_Y_LPARAM(lParam);
+        ShowSourceListContextMenu(sourceHwnd, screenX, screenY);
+        return 0;
+    }
     case WM_SHOW_EXISTING_INSTANCE: {
         RestoreAndFocusMainWindow();
         return 0;
@@ -1309,10 +1379,30 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         }
         return 0;
     }
+    case WM_POWERBROADCAST: {
+        if (wParam == PBT_APMRESUMESUSPEND || wParam == PBT_APMRESUMEAUTOMATIC) {
+            if (DLNAServer.IsRunning()) {
+                LogPrint(L"System resumed from suspend; re-registering SSDP");
+                const ConfigSnapshot cfg = AppConfig.Snapshot();
+                DLNAServer.RefreshEndpoints(cfg);
+                SSDP::Get().Stop();
+                SSDP::Get().Start(DLNAServer.GetEndpoints(), cfg.port, cfg.serverName, cfg.deviceUUID);
+            }
+            return TRUE;
+        }
+        if (wParam == PBT_APMSUSPEND) {
+            return TRUE;
+        }
+        return FALSE;
+    }
     case WM_DESTROY: {
         KillTimer(m_hwnd, kInitialScanPollTimerId);
         if (m_worker.joinable()) {
             m_worker.join();
+        }
+        if (m_hSuspendResumeNotify) {
+            PowerUnregisterSuspendResumeNotification(m_hSuspendResumeNotify);
+            m_hSuspendResumeNotify = NULL;
         }
         RemoveTrayIcon();
         DLNAServer.Stop();
