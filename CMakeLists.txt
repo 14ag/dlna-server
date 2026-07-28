@@ -60,8 +60,10 @@ set(SOURCES
          src/ipwhitelist.cpp
           src/firewall_access_win.cpp
           src/source_drop_target.cpp
-          src/log.cpp
-      )
+           src/log.cpp
+           src/netchange_watch_win.cpp
+           src/dirwatch_win.cpp
+       )
 
 set(HEADERS
          src/access_keys.h
@@ -101,11 +103,16 @@ set(HEADERS
           src/firewall_access.h
           src/source_drop_target.h
             src/startup_mode.h
-            src/server_close_policy.h
+             src/server_close_policy.h
+             src/function_key_action.h
             src/ui_font.h
             src/dark_frame.h
-            src/log.h
-          resources/resource.h
+             src/log.h
+             src/network_change_debounce.h
+             src/netchange_watch.h
+             src/fs_change_debounce.h
+             src/dirwatch.h
+           resources/resource.h
      )
 
     list(REMOVE_ITEM SOURCES src/main.cpp)
@@ -157,6 +164,8 @@ add_library(dlna_core STATIC
          src/playlist_scan_concurrency.cpp
          src/settings_restart.cpp
          src/posix_single_instance.cpp
+         src/netchange_watch_posix.cpp
+         src/dirwatch_posix.cpp
      )
     dlna_enable_warnings(dlna_core)
     dlna_link_required_curl(dlna_core)
