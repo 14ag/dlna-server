@@ -124,6 +124,41 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::wcout << (AppScanCancel.IsCancelled() ? L"1" : L"0") << std::endl;
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-single-instance-lifecycle") == 0) {
+            HANDLE hMutex = CreateMutexW(NULL, TRUE, L"dlna-server_SingleInstance_Mutex");
+            if (!hMutex) {
+                LocalFree(argv);
+                return 1;
+            }
+
+            bool acquired = GetLastError() != ERROR_ALREADY_EXISTS;
+            if (!acquired) {
+                DWORD waitResult = WaitForSingleObject(hMutex, 0);
+                acquired = (waitResult == WAIT_OBJECT_0 || waitResult == WAIT_ABANDONED_0);
+            }
+
+            std::wcout << (acquired ? L"lock-acquired" : L"lock-busy") << std::endl;
+            if (acquired) {
+                ReleaseMutex(hMutex);
+                std::wcout << L"released" << std::endl;
+            }
+            CloseHandle(hMutex);
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-log-since-lifecycle") == 0) {
+            LogPrint(L"line-one");
+            LogPrint(L"line-two");
+            LogSnapshot first = GetSystemLogSince(0);
+            std::wcout << L"first-latest=" << first.latestSequence << std::endl;
+            LogPrint(L"line-three");
+            LogSnapshot second = GetSystemLogSince(first.latestSequence);
+            std::wcout << L"second-latest=" << second.latestSequence << std::endl;
+            std::wcout << (second.text.find(L"line-three") != std::wstring::npos
+                                ? L"has-new-line" : L"missing-new-line") << std::endl;
+            std::wcout << (second.text.find(L"line-one") != std::wstring::npos
+                                ? L"leaked-old-line" : L"no-old-line-leak") << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-scan-concurrency") == 0 && i + 1 < argc) {
             size_t n = static_cast<size_t>(_wtoi(argv[++i]));
             std::cout << ComputePlaylistScanConcurrency(n) << std::endl;

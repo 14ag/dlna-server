@@ -590,9 +590,9 @@ ScopedFd client(clientSocket);
                     headers << "Accept-Ranges: none\r\nConnection: close\r\n\r\n";
                     SendAll(clientSocket, headers.str());
                     if (sendBody) {
-                        bool streamed = StreamRemoteContent(item.subtitlePath, false, 0, 0, [&](const char* data, size_t length) {
-                            return TrySendAll(clientSocket, data, length) && m_running.load();
-                        });
+                    bool streamed = StreamRemoteContent(item.subtitlePath, false, 0, 0, [&](const char* buf, size_t subRead) {
+                        return TrySendAll(clientSocket, buf, subRead) && m_running.load();
+                    });
                         if (!streamed) {
                             LogPrint(L"Remote subtitle unavailable: %ls", RedactUrlForLog(item.subtitlePath).c_str());
                         }

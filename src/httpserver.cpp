@@ -658,8 +658,8 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                         return;
                     }
 
-                    bool streamed = StreamRemoteContent(item.subtitlePath, false, 0, 0, [&](const char* data, size_t length) {
-                        return TrySendAll(clientSocket, data, length) && m_running.load();
+                    bool streamed = StreamRemoteContent(item.subtitlePath, false, 0, 0, [&](const char* subBuf, size_t subRead) {
+                        return TrySendAll(clientSocket, subBuf, subRead) && m_running.load();
                     });
                     if (!streamed) {
                         LogPrint(L"Remote subtitle unavailable: %ls", RedactUrlForLog(item.subtitlePath).c_str());
