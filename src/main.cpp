@@ -10,6 +10,8 @@
 #include "mainwindow.h"
 #include "config.h"
 #include "dlna_utils.h"
+#include "http_common.h"
+#include "media_scan_common.h"
 #include "firewall_access.h"
 #include "log.h"
 #include "netutils.h"
@@ -220,6 +222,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::wstring baseUrl = argv[++i];
             std::wstring relativeUrl = argv[++i];
             std::wcout << ResolveRelativeUrl(baseUrl, relativeUrl) << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-media-resource-url-suffix") == 0 && i + 1 < argc) {
+            std::wcout << BuildMediaResourceUrlExtensionSuffix(argv[++i]) << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-strip-resource-id-extension") == 0 && i + 1 < argc) {
+            std::cout << StripResourceIdExtension(WideToUtf8(argv[++i])) << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-media-display-title") == 0 && i + 3 < argc) {
+            bool showFileNames = wcscmp(argv[++i], L"1") == 0;
+            std::wstring titleOverride = argv[++i];
+            std::wstring path = argv[++i];
+            std::wcout << BuildDisplayTitleForMediaFile(showFileNames, titleOverride, path) << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-rewrite-hls-manifest") == 0 && i + 2 < argc) {

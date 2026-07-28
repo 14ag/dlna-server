@@ -23,7 +23,6 @@ $serverPort = 18200
     $serverProc = $null
     $vlcProc = $null
     $hlsHttpProc = $null
-    $hlsHttpServerUrl = ""
     $hlsLocalPath = ""
     $summary = New-Object System.Collections.Generic.List[string]
     $transcriptStarted = $false
@@ -45,14 +44,12 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
     $hlsLocalPath = ""
     if ($HlsSourceUrl -and $HlsSourceUrl -ne "" -and (Test-Path $HlsSourceUrl)) {
         $hlsSourceDir = Split-Path $HlsSourceUrl -Parent
-        $hlsSourceName = Split-Path $HlsSourceUrl -Leaf
         
         # Use the source directory as the test media directory
         $hlsLocalPath = $HlsSourceUrl
         
         # Start HTTP server to serve it for proxy testing
         $hlsHttpPort = 18080
-        $hlsHttpServerUrl = "http://127.0.0.1:$hlsHttpPort/$hlsSourceName"
         $hlsHttpProc = Start-Process -FilePath python -ArgumentList @("-m", "http.server", $hlsHttpPort, "--directory", "`"$hlsSourceDir`"") -PassThru -NoNewWindow
         Start-Sleep -Seconds 2
     }
@@ -378,12 +375,12 @@ $script:kGroundTruthMediaExtensions = @(
 $script:kGroundTruthPlaylistExtensions = @('.m3u', '.m3u8', '.pls')
 
 function Get-PlaylistGroundTruth {
-    param([string]$Url, $Credential, [int]$Depth = 0)
+    param([string]$Url, [Alias('Credential')][pscustomobject]$FtpCredential, [int]$Depth = 0)
     if ($Depth -gt 8) { return [PSCustomObject]@{ Reachable = $true; ContainerCount = 0; MediaItemCount = 0; MaxDepthReached = $Depth } }
     try {
         $curlArgs = @('-sS', '--max-time', '10')
-    if ($Credential.User) { $curlArgs += @('-u', "$($Credential.User):$($Credential.Password)") }
-    $curlArgs += $Credential.Uri.AbsoluteUri
+    if ($FtpCredential.User) { $curlArgs += @('-u', "$($FtpCredential.User):$($FtpCredential.Password)") }
+    $curlArgs += $FtpCredential.Uri.AbsoluteUri
     $text = Invoke-CurlText $curlArgs
     }
     catch { return [PSCustomObject]@{ Reachable = $false; ContainerCount = 0; MediaItemCount = 0; MaxDepthReached = $Depth } }
@@ -398,14 +395,14 @@ function Get-PlaylistGroundTruth {
         if ($script:kGroundTruthPlaylistExtensions -contains $ext) {
             $childUrl = $trimmed
             if ($childUrl -notmatch '^https?://' -and $childUrl -notmatch '^ftp://') {
-                $baseUri = New-Object System.Uri($Credential.Uri, $childUrl)
+                $baseUri = New-Object System.Uri($FtpCredential.Uri, $childUrl)
                 $childUrl = $baseUri.AbsoluteUri
             }
             $childCred = Get-FtpUrlCredential -Url $childUrl
             if (-not $childCred) {
                 $childCred = [PSCustomObject]@{ Uri = [System.Uri]$childUrl; User = ''; Password = '' }
             }
-            $childResult = Get-PlaylistGroundTruth -Url $childUrl -Credential $childCred -Depth ($Depth + 1)
+            $childResult = Get-PlaylistGroundTruth -Url $childUrl -FtpCredential $childCred -Depth ($Depth + 1)
             $containerCount += 1 + $childResult.ContainerCount
             $mediaItemCount += $childResult.MediaItemCount
             continue
@@ -720,13 +717,38 @@ try {
                     $emptyMatch = [regex]::Match($decodedDIDL, '<item id="(\d+)"(?:(?!</item>)[\s\S])*?<dc:title>empty</dc:title>(?:(?!</item>)[\s\S])*?</item>')
                     $emptyId = $emptyMatch.Groups[1].Value
 
-                    # 1. Subtitle URL advertisement check
-                    if ($childBrowseContent -match "CaptionInfoEx" -and $childBrowseContent -match "/subtitle/") {
-                        Add-Result "PASS Browse SOAP advertised subtitle URL via sec:CaptionInfoEx"
-                    }
-                    else {
-                        Add-Result "FAIL Browse SOAP did not advertise subtitle URL"
-                    }
+                     # 1. Media resource URL extension check
+                     if ($movieId -and $decodedDIDL -match "<res[^>]*>http://[^<]*?/media/$movieId\.mp4</res>") {
+                         Add-Result "PASS media resource URL includes file extension (.mp4)"
+                     }
+                     else {
+                         Add-Result "FAIL media resource URL missing file extension for movie.mp4"
+                     }
+
+                     # 2. Subtitle URL advertisement check
+                     if ($childBrowseContent -match "CaptionInfoEx" -and $childBrowseContent -match "/subtitle/") {
+                         Add-Result "PASS Browse SOAP advertised subtitle URL via sec:CaptionInfoEx"
+                     }
+                     else {
+                         Add-Result "FAIL Browse SOAP did not advertise subtitle URL"
+                     }
+
+                     # 3. Verify media URL with extension returns 200
+                     if ($movieId) {
+                         try {
+                             $mediaUrlWithExt = "http://127.0.0.1:$serverPort/media/$movieId.mp4"
+                             $mediaResp = Invoke-WebRequest -Uri $mediaUrlWithExt -Method Head -UseBasicParsing -TimeoutSec 5
+                             if ($mediaResp.StatusCode -eq 200) {
+                                 Add-Result "PASS media URL with extension ($mediaUrlWithExt) returned 200 OK"
+                             }
+                             else {
+                                 Add-Result "FAIL media URL with extension returned status $($mediaResp.StatusCode)"
+                             }
+                         }
+                         catch {
+                             Add-Result "FAIL media URL with extension request threw: $($_.Exception.Message)"
+                         }
+                     }
 
                     # 2. HEAD request check
                     try {

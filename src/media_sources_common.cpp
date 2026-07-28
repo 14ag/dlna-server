@@ -350,13 +350,7 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
         fileInfo.sizeBytes = size;
     }
 
-    if (cfg.showFileNamesInsteadOfTitles) {
-        fileInfo.title = SourceDisplayName(path);
-    } else if (!titleOverride.empty()) {
-        fileInfo.title = titleOverride;
-    } else {
-        fileInfo.title = SourceStemName(path);
-    }
+    fileInfo.title = BuildDisplayTitleForMediaFile(cfg.showFileNamesInsteadOfTitles, titleOverride, path);
 
     if (!subtitleOverride.empty()) {
         fileInfo.subtitlePath = subtitleOverride;
