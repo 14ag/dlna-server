@@ -12,6 +12,14 @@ std::wstring ContainerLookupKey(int parentId, const std::wstring& title, const s
     return std::to_wstring(parentId) + L"\n" + title + L"\n" + keyPath;
 }
 
+std::wstring BuildDisplayTitleForMediaFile(bool showFileNamesInsteadOfTitles,
+                                              const std::wstring& titleOverride,
+                                              const std::wstring& path) {
+    if (showFileNamesInsteadOfTitles) return SourceDisplayName(path);
+    if (!titleOverride.empty()) return titleOverride;
+    return SourceStemName(path) + Utf8ToWide(BuildMediaResourceUrlExtensionSuffix(path));
+}
+
 std::wstring BuildStableContainerKey(int parentId, const std::wstring& title, const std::wstring& keyPath,
                                      std::function<std::wstring(const std::wstring&)> canonicalize) {
     return L"container\n" + ContainerLookupKey(parentId, title, canonicalize(keyPath));

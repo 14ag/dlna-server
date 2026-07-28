@@ -1,5 +1,7 @@
 #include "config.h"
 #include "dlna_utils.h"
+#include "http_common.h"
+#include "media_scan_common.h"
 #include "log.h"
 #include "netutils.h"
 #include "access_keys.h"
@@ -212,6 +214,21 @@ int main(int argc, char** argv) {
             std::wstring baseUrl = Utf8ToWide(argv[++i]);
             std::wstring relativeUrl = Utf8ToWide(argv[++i]);
             std::wcout << ResolveRelativeUrl(baseUrl, relativeUrl) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-media-resource-url-suffix" && i + 1 < argc) {
+            std::cout << BuildMediaResourceUrlExtensionSuffix(Utf8ToWide(argv[++i])) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-strip-resource-id-extension" && i + 1 < argc) {
+            std::cout << StripResourceIdExtension(argv[++i]) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-media-display-title" && i + 3 < argc) {
+            bool showFileNames = std::string(argv[++i]) == "1";
+            std::wstring titleOverride = Utf8ToWide(argv[++i]);
+            std::wstring path = Utf8ToWide(argv[++i]);
+            std::wcout << BuildDisplayTitleForMediaFile(showFileNames, titleOverride, path) << std::endl;
             return 0;
         }
         else if (arg == "--print-rewrite-hls-manifest" && i + 2 < argc) {

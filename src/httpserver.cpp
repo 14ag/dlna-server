@@ -429,7 +429,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
             if (path.rfind("/media/", 0) == 0) {
                 int fileId = -1;
-                if (!TryParseIntStrict(path.substr(7), fileId) || fileId < 0) {
+                if (!TryParseIntStrict(StripResourceIdExtension(path.substr(7)), fileId) || fileId < 0) {
                     SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }

@@ -323,8 +323,8 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
                 if (hasKnownSize) {
                     entry << " size=\"" << it.sizeBytes << "\"";
                 }
-                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !proxyStreams && !ShouldProxyRemoteUrl(it.path);
-                entry << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id))) << "</res>";
+                 const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !proxyStreams && !ShouldProxyRemoteUrl(it.path);
+                 entry << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id) + BuildMediaResourceUrlExtensionSuffix(it.path))) << "</res>";
             }
             if (!it.subtitlePath.empty()) {
                 std::wstring subExtW = SourceExtension(it.subtitlePath);

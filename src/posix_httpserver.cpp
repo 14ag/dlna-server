@@ -364,7 +364,7 @@ ScopedFd client(clientSocket);
             }
             if (path.rfind("/media/", 0) == 0) {
                 int mediaId = -1;
-                if (!TryParseIntStrict(path.substr(7), mediaId) || mediaId < 0) {
+                if (!TryParseIntStrict(StripResourceIdExtension(path.substr(7)), mediaId) || mediaId < 0) {
                     SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }
