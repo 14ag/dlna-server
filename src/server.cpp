@@ -7,6 +7,9 @@
 #include "source_watcher.h"
 #include "ssdp.h"
 #include "httpserver.h"
+#include "netchange_watch.h"
+#include "dirwatch.h"
+#include "network_sources.h"
 #include "ipwhitelist.h"
 #include "firewall_access.h"
 
@@ -102,6 +105,53 @@ void Server::JoinBackgroundScan() {
     }
 }
 
+void Server::TriggerAutoRescanIfEnabled() {
+    ConfigSnapshot cfg = AppConfig.Snapshot();
+    if (ShouldAutoRescan(cfg, true)) {
+        LogPrint(L"Media source change detected; rescanning.");
+        if (!m_stopWatch.load(std::memory_order_acquire)) {
+            StartBackgroundScan();
+        }
+    }
+}
+
+std::vector<std::wstring> Server::LocalWatchFolders() const {
+    ConfigSnapshot cfg = AppConfig.Snapshot();
+    std::vector<std::wstring> folders;
+    for (const auto& source : cfg.effectiveMediaSources) {
+        if (!IsRemoteMediaUrl(source.path)) {
+            folders.push_back(source.path);
+        }
+    }
+    return folders;
+}
+
+void Server::StartNetworkChangeWatcher() {
+    StartNetworkChangeWatch([this]() {
+        if (!m_running.load(std::memory_order_acquire)) return;
+        LogPrint(L"Network topology change detected; refreshing endpoints");
+        const ConfigSnapshot cfg = AppConfig.Snapshot();
+        RefreshEndpoints(cfg);
+        SSDP::Get().Stop();
+        SSDP::Get().Start(GetEndpoints(), cfg.port, cfg.serverName, cfg.deviceUUID);
+    });
+}
+
+void Server::StopNetworkChangeWatcher() {
+    StopNetworkChangeWatch();
+}
+
+void Server::StartDirectoryWatcher() {
+    StartDirectoryWatch(LocalWatchFolders(), [this]() {
+        if (!m_running.load(std::memory_order_acquire)) return;
+        TriggerAutoRescanIfEnabled();
+    });
+}
+
+void Server::StopDirectoryWatcher() {
+    StopDirectoryWatch();
+}
+
 void Server::StartWatchMode() {
     StopWatchMode();
     m_stopWatch.store(false);
@@ -129,7 +179,7 @@ void Server::WatchLoop() {
     std::string signature = ComputeMediaSourceSignature(cfg);
     while (!m_stopWatch.load()) {
         std::unique_lock<std::mutex> lock(m_watchMutex);
-        if (m_watchCv.wait_for(lock, std::chrono::seconds(5), [&]() { return m_stopWatch.load(); })) {
+        if (m_watchCv.wait_for(lock, std::chrono::seconds(60), [&]() { return m_stopWatch.load(); })) {
             break;
         }
         lock.unlock();
@@ -269,6 +319,8 @@ bool Server::Start(std::wstring& outReason) {
         m_initialScanInProgress.store(false, std::memory_order_release);
         StartWatchMode();
     });
+    StartNetworkChangeWatcher();
+    StartDirectoryWatcher();
     return true;
 }
 
@@ -291,6 +343,8 @@ bool Server::Rescan() {
     } else {
         AppMedia.Scan();
     }
+    StopDirectoryWatcher();
+    StartDirectoryWatcher();
     return true;
 }
 
@@ -312,6 +366,8 @@ void Server::Stop() {
     }
 
     StopWatchMode();
+    StopNetworkChangeWatcher();
+    StopDirectoryWatcher();
     SSDP::Get().Stop();
     HttpServer::Get().Stop();
     JoinBackgroundScan();

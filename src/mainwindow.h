@@ -43,6 +43,7 @@ public:
     static constexpr ULONG_PTR kCopyDataSourceReplace = 1;
 
     bool TryHandleAccessKeyChar(wchar_t ch);
+    bool TryHandleFunctionKey(WPARAM vkCode);
     void RefreshToolbarMnemonics();
 
 private:
@@ -54,6 +55,7 @@ private:
     void AddTrayIcon();
     void RemoveTrayIcon();
     void ShowTrayMenu();
+    void ShowSourceListContextMenu(HWND sourceHwnd, int screenX, int screenY);
     void RestoreAndFocusMainWindow();
     // adds one path as a media source if it is not already present
     // returns true if it was actually added false if it was a duplicate
@@ -124,6 +126,7 @@ private:
     RECT m_listRingRect = {0, 0, 0, 0};
     std::unordered_map<HWND, bool> m_mouseTracking;
     SourceListDropTarget* m_sourceDropTarget = nullptr;
+    HPOWERNOTIFY m_hSuspendResumeNotify = NULL;
 };
 
 #endif // MAINWINDOW_H

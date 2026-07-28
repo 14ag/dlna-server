@@ -29,6 +29,7 @@
 #include "cli_flags.h"
 #include "upnp_eventing.h"
 #include "server_close_policy.h"
+#include "function_key_action.h"
 #include "tray_notify.h"
 #include "../resources/resource.h"
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
@@ -225,7 +226,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-media-resource-url-suffix") == 0 && i + 1 < argc) {
-            std::wcout << BuildMediaResourceUrlExtensionSuffix(argv[++i]) << std::endl;
+            std::cout << BuildMediaResourceUrlExtensionSuffix(argv[++i]) << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-strip-resource-id-extension") == 0 && i + 1 < argc) {
@@ -258,6 +259,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             bool isRunning = wcscmp(argv[++i], L"1") == 0;
             bool isBusy = wcscmp(argv[++i], L"1") == 0;
             std::wcout << (ShouldCloseNow(isRunning, isBusy) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-function-key-action") == 0 && i + 4 < argc) {
+            int vkCode = _wtoi(argv[++i]);
+            bool isRunning = wcscmp(argv[++i], L"1") == 0;
+            bool isBusy = wcscmp(argv[++i], L"1") == 0;
+            bool isScanning = wcscmp(argv[++i], L"1") == 0;
+            switch (DecideFunctionKeyAction(vkCode, isRunning, isBusy, isScanning)) {
+            case FunctionKeyAction::ShowHelp: std::wcout << L"show-help" << std::endl; break;
+            case FunctionKeyAction::Rescan: std::wcout << L"rescan" << std::endl; break;
+            case FunctionKeyAction::RefreshSourceList: std::wcout << L"refresh-source-list" << std::endl; break;
+            case FunctionKeyAction::ShowSourceListContextMenu: std::wcout << L"show-context-menu" << std::endl; break;
+            case FunctionKeyAction::None: std::wcout << L"none" << std::endl; break;
+            }
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-debug-log-requires-restart") == 0 && i + 2 < argc) {
@@ -512,6 +527,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         if (msg.message == WM_CHAR && !(GetKeyState(VK_MENU) < 0)) {
             if (app.TryHandleAccessKeyChar(static_cast<wchar_t>(msg.wParam))) {
                 continue; // consumed as an access key trigger, do not also dispatch it
+            }
+        }
+        if (msg.message == WM_KEYDOWN) {
+            if (app.TryHandleFunctionKey(msg.wParam)) {
+                continue;
             }
         }
         if (!IsDialogMessageW(hwndMainForNav, &msg)) {
