@@ -177,7 +177,7 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         ApplyDarkFrame(hwnd);
 
         HFONT font = SourcePromptFont(hwnd);
-        HWND label = CreateWindowW(L"STATIC", L"Add a folder, playlist file, or network share URL:",
+        HWND label = CreateWindowW(L"STATIC", L"Add a folder, playlist file, or Network share URL:",
             WS_VISIBLE | WS_CHILD, kGutter, kGutter, kSourcePromptContentWidth, kSourcePromptLabelHeight, hwnd, NULL, NULL, NULL);
         state->edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
             WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_GROUP | ES_AUTOHSCROLL,

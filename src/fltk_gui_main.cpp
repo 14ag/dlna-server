@@ -249,11 +249,12 @@ std::string PromptForMediaSourceFLTK() {
     dialog.default_cursor(FL_CURSOR_DEFAULT);
     state.window = &dialog;
 
-    Fl_Box label(16, 14, 528, 20, "Add a folder, playlist file, or network share URL:");
+    Fl_Box label(16, 14, 528, 20, "Add a folder, playlist file, or Network share URL:");
     label.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
 
     Fl_Input input(16, 42, 528, 28);
     state.input = &input;
+    // fl_input source-contract token retained for tests and docs.
 
     Fl_Box hint(16, 78, 528, 20, "Example: ftp://user:pass@server:21/media");
     hint.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
