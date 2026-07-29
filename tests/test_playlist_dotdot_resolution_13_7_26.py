@@ -3,9 +3,13 @@ import socket
 import subprocess
 import threading
 import time
+import os
+import tempfile
 from pathlib import Path
 
 import pytest
+
+from tests.conftest import server_config_ini_path
 
 
 def _free_port():
@@ -17,8 +21,6 @@ def _free_port():
 class TestPlaylistDotDotEntryResolvesCorrectly:
     def test_dotdot_entry_resolves_without_literal_dotdot_segment(
             self, dlna_binary, tmp_path):
-        import os
-
         origin_root = tmp_path / "origin"
         (origin_root / "nested").mkdir(parents=True)
         (origin_root / "sibling.mp3").write_bytes(b"\x00" * 32)
@@ -41,10 +43,11 @@ class TestPlaylistDotDotEntryResolvesCorrectly:
         playlist_url = (
             f"http://127.0.0.1:{origin_port}/nested/playlist.m3u8")
         dlna_port = _free_port()
-        binary_dir = Path(dlna_binary).parent
-        config_ini = binary_dir / "config.ini"
+        config_root = tmp_path / "config"
+        config_ini = server_config_ini_path(dlna_binary, config_root)
         old = config_ini.read_text(encoding="utf-8-sig") \
             if config_ini.exists() else None
+        config_ini.parent.mkdir(parents=True, exist_ok=True)
         config_ini.write_text(
             "[Settings]\n"
             f"Port={dlna_port}\n"
@@ -53,10 +56,13 @@ class TestPlaylistDotDotEntryResolvesCorrectly:
         )
         env = os.environ.copy()
         env["DLNA_SERVER_SKIP_FIREWALL"] = "1"
+        env["XDG_CONFIG_HOME"] = str(config_root)
+        env["HOME"] = str(config_root)
+        env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="dlna-runtime-")
         proc = subprocess.Popen(
             [str(dlna_binary), "--headless"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env=env, cwd=str(binary_dir))
+            env=env, cwd=str(Path(dlna_binary).parent))
         try:
             deadline = time.time() + 15
             connected = False
