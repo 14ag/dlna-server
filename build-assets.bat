@@ -42,13 +42,12 @@ echo Usage:
 echo   build-assets.bat
 echo   build-assets.bat -Version 1.3.0
 echo   build-assets.bat -Version 1.3.0 -WslDistro Ubuntu
-echo   build-assets.bat --platform winx64,linux --no-clean
-echo   build-assets.bat --platform winx64 --no-clean
+echo   build-assets.bat --platform winx64,linux 
+echo   build-assets.bat --platform winx64
 echo.
 echo Assets:
 echo   output\winx64, output\winx86, output\linux by default (macOS requires explicit --platform)
 echo.
 echo Options:
 echo   --platform comma-separated platforms: winx64, winx86, linux, macos-x64, macos-arm64
-echo   --no-clean keeps existing output platform folders before building
 exit /b 0

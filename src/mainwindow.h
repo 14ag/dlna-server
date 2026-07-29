@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <windows.h>
+#include "close_pending_state.h"
 #include "access_keys.h"
 #include "source_drop_target.h"
 #include "source_list_focus.h"
@@ -114,6 +115,7 @@ private:
     KeyboardCueState m_cueState;
     ServerUiState m_state;
     std::wstring m_statusEndpoint;
+    ClosePendingState m_closePending;
     std::thread m_worker;
 
     bool m_startedHeadless;

@@ -6,6 +6,7 @@
 #include "server.h"
 
 #include "settings_restart.h"
+#include "close_pending_state.h"
 #include "server_close_policy.h"
 #include "input_gate.h"
 #include "cli_flags.h"
@@ -886,13 +887,18 @@ private:
     }
 
     void RequestClose() {
-        if (m_closing) return;
-        if (IsBusy()) return;
+        if (m_closePending.IsPending()) return;
+        if (IsBusy()) {
+            if (m_state == ServerUiState::Stopping) {
+                m_closePending.RequestCloseOnceStopped();
+            }
+            return;
+        }
         if (ShouldCloseNow(DLNAServer.IsRunning(), false)) {
             hide();
             return;
         }
-        m_closing = true;
+        m_closePending.RequestCloseOnceStopped();
         m_state = ServerUiState::Stopping;
         RefreshStatus();
         if (m_worker.joinable()) m_worker.join();
@@ -932,8 +938,12 @@ private:
         m_state = state;
         RefreshStatus();
         if (!success && !message.empty()) fl_alert("%s", message.c_str());
-        if (m_closing && state == ServerUiState::Stopped) {
+        if (m_closePending.ShouldCloseNowAfterOperation(state == ServerUiState::Stopped)) {
             hide();
+            return;
+        }
+        if (m_closePending.ShouldStopAgainAfterOperation(state == ServerUiState::Running)) {
+            StopServer();
         }
     }
 
@@ -1041,7 +1051,7 @@ private:
     ServerUiState m_state;
     std::thread m_worker;
     std::mutex m_pendingMutex;
-    bool m_closing = false;
+    ClosePendingState m_closePending;
     bool m_hasPendingResult;
     bool m_pendingSuccess;
     ServerUiState m_pendingState;

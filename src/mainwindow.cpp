@@ -696,6 +696,13 @@ void MainWindow::CompleteServerOperation(ServerUiState finalState, const std::ws
     if (!success && !message.empty()) {
         MessageBoxW(m_hwnd, message.c_str(), L"DLNA Server", MB_ICONWARNING | MB_OK);
     }
+    if (m_closePending.ShouldCloseNowAfterOperation(finalState == ServerUiState::Stopped)) {
+        DestroyWindow(m_hwnd);
+        return;
+    }
+    if (m_closePending.ShouldStopAgainAfterOperation(finalState == ServerUiState::Running)) {
+        BeginStopServer();
+    }
 }
 
 HFONT MainWindow::CreateUiFont(int pixelSize, int weight, const wchar_t* faceName) {
@@ -1364,6 +1371,9 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         if (ShouldCloseNow(DLNAServer.IsRunning(), IsBusy())) {
             DestroyWindow(hwnd);
         } else {
+            if (m_state == ServerUiState::Stopping) {
+                m_closePending.RequestCloseOnceStopped();
+            }
             ShowWindow(hwnd, SW_HIDE);
         }
         return 0;

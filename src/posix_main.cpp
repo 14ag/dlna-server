@@ -12,6 +12,7 @@
 #include "scan_cancellation.h"
 #include "server.h"
 #include "upnp_eventing.h"
+#include "close_pending_state.h"
 #include "server_close_policy.h"
 #include "tray_notify.h"
 #include "settings_restart.h"
@@ -313,6 +314,48 @@ int main(int argc, char** argv) {
             case TrayNotifyAction::ShowMenu: std::cout << "showmenu" << std::endl; break;
             case TrayNotifyAction::None: std::cout << "none" << std::endl; break;
             }
+            return 0;
+        }
+        else if (arg == "--print-debug-log-session-truncation" && i + 1 < argc) {
+            std::string path = argv[++i];
+            {
+                std::ofstream leftover(path, std::ios::binary | std::ios::trunc);
+                leftover << "leftover line from a previous session\n";
+            }
+            FILE* first = OpenOrReuseDebugLogFile(path);
+            if (first) {
+                std::fprintf(first, "session line one\n");
+                std::fflush(first);
+            }
+            FILE* second = OpenOrReuseDebugLogFile(path);
+            if (second) {
+                std::fprintf(second, "session line two\n");
+                std::fflush(second);
+            }
+            std::cout << (first == second ? "same-handle-reused=1" : "same-handle-reused=0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-close-pending-lifecycle") {
+            ClosePendingState state;
+            std::wcout << L"initial-pending=" << (state.IsPending() ? 1 : 0) << std::endl;
+
+            state.RequestCloseOnceStopped();
+            std::wcout << L"after-request-pending=" << (state.IsPending() ? 1 : 0) << std::endl;
+
+            bool closeNow = state.ShouldCloseNowAfterOperation(true);
+            std::wcout << L"stop-completes-close-now=" << (closeNow ? 1 : 0) << std::endl;
+            std::wcout << L"after-close-pending=" << (state.IsPending() ? 1 : 0) << std::endl;
+
+            ClosePendingState restartCase;
+            restartCase.RequestCloseOnceStopped();
+            bool stopAgain = restartCase.ShouldStopAgainAfterOperation(true);
+            std::wcout << L"restart-reaches-running-stop-again=" << (stopAgain ? 1 : 0) << std::endl;
+            std::wcout << L"restart-still-pending=" << (restartCase.IsPending() ? 1 : 0) << std::endl;
+            bool closeNowAfterSecondStop = restartCase.ShouldCloseNowAfterOperation(true);
+            std::wcout << L"second-stop-completes-close-now=" << (closeNowAfterSecondStop ? 1 : 0) << std::endl;
+
+            ClosePendingState neverRequested;
+            std::wcout << L"never-requested-pending=" << (neverRequested.IsPending() ? 1 : 0) << std::endl;
             return 0;
         }
         else if (arg == "--print-config-path") {

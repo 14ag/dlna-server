@@ -14,7 +14,17 @@ function(dlna_enable_warnings target_name)
     endif()
 endfunction()
 
-find_package(ZLIB REQUIRED)
+find_package(ZLIB)
+if(NOT ZLIB_FOUND)
+    message(FATAL_ERROR "Could NOT find ZLIB (missing: ZLIB_LIBRARY ZLIB_INCLUDE_DIR)\n\n"
+        "Common fixes:\n"
+        "  - If you use vcpkg (recommended), install zlib for your triplet and re-run CMake:\n"
+        "      from vcpkg root: .\\vcpkg install zlib:x64-windows\n"
+        "      then configure CMake with the vcpkg toolchain file:\n"
+        "      cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/Users/philip/vcpkg/scripts/buildsystems/vcpkg.cmake\n\n"
+        "  - Or point CMake directly to an installed zlib:\n"
+        "      -DZLIB_INCLUDE_DIR=\"C:/path/to/zlib/include\" -DZLIB_LIBRARY=\"C:/path/to/zlib/lib/zlib.lib\"\n")
+endif()
 if(TARGET ZLIB::ZLIBSTATIC AND NOT TARGET ZLIB::ZLIB)
     add_library(ZLIB::ZLIB ALIAS ZLIB::ZLIBSTATIC)
 endif()
@@ -104,6 +114,7 @@ set(HEADERS
           src/source_drop_target.h
             src/startup_mode.h
              src/server_close_policy.h
+             src/close_pending_state.h
              src/function_key_action.h
             src/ui_font.h
             src/dark_frame.h
