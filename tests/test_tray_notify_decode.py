@@ -11,6 +11,9 @@ def _find_cli_binary():
     env_path = os.environ.get("DLNA_CLI_BINARY")
     if env_path and Path(env_path).is_file():
         return Path(env_path)
+    server_path = os.environ.get("DLNA_SERVER")
+    if server_path and Path(server_path).is_file():
+        return Path(server_path)
     for candidate in (
         REPO_ROOT / "build" / "dlna-server",
         REPO_ROOT / "build-linux" / "dlna-server",

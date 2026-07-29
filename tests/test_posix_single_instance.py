@@ -12,14 +12,16 @@ They skip entirely on Windows where these APIs do not exist.
 
 import os
 import socket
-import struct
+import subprocess
 import tempfile
 import threading
+import sys
+import time
 from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX-only test")
+pytestmark = pytest.mark.posix_only
 
 
 # ---- Helpers matching the C++ implementation ----
@@ -37,48 +39,59 @@ def _socket_path(rundir: str) -> str:
 class TestFileLockProtocol:
     """flock-based mutual exclusion (matches TryAcquireLock)."""
 
+    def _spawn_lock_holder(self, lock_path: str):
+        script = (
+            "import fcntl, sys, time\n"
+            "path = sys.argv[1]\n"
+            "with open(path, 'a+') as f:\n"
+            "    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+            "    print('locked', flush=True)\n"
+            "    time.sleep(60)\n"
+        )
+        proc = subprocess.Popen(
+            [sys.executable, "-c", script, lock_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert proc.stdout is not None
+        assert proc.stdout.readline().strip() == "locked"
+        return proc
+
     def test_first_instance_acquires_lock(self, rundir: str):
         import fcntl
-        import struct
         lock_path = _lock_file_path(rundir)
         fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
-            # Should succeed — no one else holds it.
-            assert fcntl(fd, fcntl.F_SETLK, struct.pack("hhll", fcntl.F_WRLCK, 0, 0, 0)) is None
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
             os.close(fd)
 
     def test_second_instance_fails_lock(self, rundir: str):
         import fcntl
-        import struct
         lock_path = _lock_file_path(rundir)
-        fd1 = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-        fd2 = os.open(lock_path, os.O_RDWR, 0o600)
+        proc = self._spawn_lock_holder(lock_path)
+        fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
         try:
-            # First acquires write lock.
-            fcntl(fd1, fcntl.F_SETLK, struct.pack("hhll", fcntl.F_WRLCK, 0, 0, 0))
-            # Second should fail (non-blocking).
             with pytest.raises(BlockingIOError):
-                fcntl(fd2, fcntl.F_SETLK, struct.pack("hhll", fcntl.F_WRLCK, 0, 0, 0))
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
-            os.close(fd1)
-            os.close(fd2)
+            os.close(fd)
+            proc.terminate()
+            proc.wait(timeout=5)
 
     def test_lock_released_on_close(self, rundir: str):
         import fcntl
-        import struct
         """After fd close, another process can acquire the lock."""
         lock_path = _lock_file_path(rundir)
+        proc = self._spawn_lock_holder(lock_path)
+        proc.terminate()
+        proc.wait(timeout=5)
         fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-        fcntl(fd, fcntl.F_SETLK, struct.pack("hhll", fcntl.F_WRLCK, 0, 0, 0))
-        os.close(fd)  # kernel auto-releases
-
-        # Second open + lock should now succeed.
-        fd2 = os.open(lock_path, os.O_RDWR, 0o600)
         try:
-            assert fcntl(fd2, fcntl.F_SETLK, struct.pack("hhll", fcntl.F_WRLCK, 0, 0, 0)) is None
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         finally:
-            os.close(fd2)
+            os.close(fd)
 
 
 class TestUnixSocketProtocol:
@@ -111,7 +124,14 @@ class TestUnixSocketProtocol:
                 pytest.fail("Server socket not created in time")
 
         cli = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        cli.connect(sock_path)
+        while True:
+            try:
+                cli.connect(sock_path)
+                break
+            except ConnectionRefusedError:
+                if time.time() > deadline:
+                    raise
+                time.sleep(0.01)
         cli.sendall(b"show\n")
         cli.close()
         t.join(timeout=3)

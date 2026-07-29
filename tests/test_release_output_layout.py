@@ -88,14 +88,17 @@ class ReleaseOutputLayoutTests(unittest.TestCase):
         self.assertNotIn("output/SHA256SUMS.txt", workflow)
 
     def test_smoke_scripts_prefer_winx64_output(self):
-        smoke = self.read("tests/verify-smoke.ps1")
-        androidPath = ROOT / "tests/verify-android-smoke.ps1"
-        if androidPath.exists():
-            android = self.read("tests/verify-android-smoke.ps1")
-            self.assertIn('Join-Path $repo "output\\winx64"', android)
-        smokePath = ROOT / "tests/verify-smoke.ps1"
-        if smokePath.exists():
-            self.assertIn('Join-Path $repo "output\\winx64"', smoke)
+        conftest = self.read("tests/conftest.py")
+        self.assertIn('repo_root / "output" / "winx64" / "DLNA Server.exe"', conftest)
+
+    def test_pytest_entrypoints_set_platform_binaries(self):
+        conftest = self.read("tests/conftest.py")
+
+        self.assertIn('os.environ.setdefault("DLNA_SERVER", server_path)', conftest)
+        self.assertIn('os.environ.setdefault("DLNA_CLI_BINARY", server_path)', conftest)
+        self.assertIn('os.environ.setdefault("DLNA_GUI_BINARY", server_path)', conftest)
+        self.assertIn('build-release-linux-stage" / "install" / "bin" / "dlna-server"', conftest)
+        self.assertIn('build-release-linux-stage" / "install" / "bin" / "dlna-server-gui-bin"', conftest)
 
 if __name__ == "__main__":
     unittest.main()
