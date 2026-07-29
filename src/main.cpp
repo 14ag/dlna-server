@@ -29,6 +29,7 @@
 #include "cli_flags.h"
 #include "upnp_eventing.h"
 #include "server_close_policy.h"
+#include "close_pending_state.h"
 #include "function_key_action.h"
 #include "tray_notify.h"
 #include "../resources/resource.h"
@@ -424,6 +425,52 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             case TrayNotifyAction::ShowMenu: std::cout << "showmenu" << std::endl; break;
             case TrayNotifyAction::None: std::cout << "none" << std::endl; break;
             }
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-debug-log-session-truncation") == 0 && i + 1 < argc) {
+            std::wstring path = argv[++i];
+            {
+                FILE* leftover = nullptr;
+                _wfopen_s(&leftover, path.c_str(), L"w,ccs=UTF-8");
+                if (leftover) {
+                    fwprintf(leftover, L"leftover line from a previous session\r\n");
+                    fclose(leftover);
+                }
+            }
+            FILE* first = OpenOrReuseDebugLogFile(path);
+            if (first) {
+                fwprintf(first, L"session line one\r\n");
+                fflush(first);
+            }
+            FILE* second = OpenOrReuseDebugLogFile(path);
+            if (second) {
+                fwprintf(second, L"session line two\r\n");
+                fflush(second);
+            }
+            std::wcout << (first == second ? L"same-handle-reused=1" : L"same-handle-reused=0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-close-pending-lifecycle") == 0) {
+            ClosePendingState state;
+            std::wcout << L"initial-pending=" << (state.IsPending() ? 1 : 0) << std::endl;
+
+            state.RequestCloseOnceStopped();
+            std::wcout << L"after-request-pending=" << (state.IsPending() ? 1 : 0) << std::endl;
+
+            bool closeNow = state.ShouldCloseNowAfterOperation(true);
+            std::wcout << L"stop-completes-close-now=" << (closeNow ? 1 : 0) << std::endl;
+            std::wcout << L"after-close-pending=" << (state.IsPending() ? 1 : 0) << std::endl;
+
+            ClosePendingState restartCase;
+            restartCase.RequestCloseOnceStopped();
+            bool stopAgain = restartCase.ShouldStopAgainAfterOperation(true);
+            std::wcout << L"restart-reaches-running-stop-again=" << (stopAgain ? 1 : 0) << std::endl;
+            std::wcout << L"restart-still-pending=" << (restartCase.IsPending() ? 1 : 0) << std::endl;
+            bool closeNowAfterSecondStop = restartCase.ShouldCloseNowAfterOperation(true);
+            std::wcout << L"second-stop-completes-close-now=" << (closeNowAfterSecondStop ? 1 : 0) << std::endl;
+
+            ClosePendingState neverRequested;
+            std::wcout << L"never-requested-pending=" << (neverRequested.IsPending() ? 1 : 0) << std::endl;
             LocalFree(argv);
             return 0;
         } else {
