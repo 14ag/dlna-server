@@ -9,6 +9,7 @@
 #include <thread>
 #include "mainwindow.h"
 #include "config.h"
+#include "network_interface_policy.h"
 #include "dlna_utils.h"
 #include "http_common.h"
 #include "media_scan_common.h"
@@ -360,6 +361,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::string second = GetRoutableHostUrl(portTwo, L"");
             std::cout << first << std::endl;
             std::cout << second << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-should-use-unlisted-interface") == 0 && i + 2 < argc) {
+            bool isVirtual = wcscmp(argv[++i], L"1") == 0;
+            bool hasGateway = wcscmp(argv[++i], L"1") == 0;
+            std::wcout << (ShouldUseUnlistedInterface(isVirtual, hasGateway) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-network-endpoint-count") == 0 && i + 1 < argc) {
+            int testPort = 0;
+            if (!TryParsePortStrict(WideToUtf8(argv[++i]), testPort)) testPort = 8200;
+            std::vector<NetworkEndpoint> endpoints;
+            EnumerateNetworkEndpoints(testPort, L"", endpoints);
+            std::cout << endpoints.size() << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-notify-pool-worker-count") == 0) {

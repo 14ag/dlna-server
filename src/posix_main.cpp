@@ -1,5 +1,6 @@
 #include "config.h"
 #include "dlna_utils.h"
+#include "network_interface_policy.h"
 #include "http_common.h"
 #include "media_scan_common.h"
 #include "log.h"
@@ -304,6 +305,20 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--print-notify-pool-worker-count") {
             std::cout << kMaxUpnpNotifyWorkers << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-should-use-unlisted-interface" && i + 2 < argc) {
+            bool isVirtual = std::string(argv[++i]) == "1";
+            bool hasGateway = std::string(argv[++i]) == "1";
+            std::wcout << (ShouldUseUnlistedInterface(isVirtual, hasGateway) ? L"1" : L"0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-network-endpoint-count" && i + 1 < argc) {
+            int testPort = 0;
+            if (!TryParsePortStrict(argv[++i], testPort)) testPort = 8200;
+            std::vector<NetworkEndpoint> endpoints;
+            EnumerateNetworkEndpoints(testPort, L"", endpoints);
+            std::cout << endpoints.size() << std::endl;
             return 0;
         }
         else if (arg == "--print-tray-notify-decode" && i + 2 < argc) {

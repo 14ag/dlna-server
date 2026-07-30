@@ -1,5 +1,6 @@
 #include "netutils.h"
 #include "netutils_internal.h"
+#include "network_interface_policy.h"
 #include "dlna_utils.h"
 #include <windows.h>
 #include <iphlpapi.h>
@@ -116,9 +117,9 @@ bool IsLikelyVirtualAdapter(const std::wstring& friendlyName) {
     return false;
 }
 
-bool InterfaceAllowListPermits(const std::wstring& allowList, const std::wstring& friendlyName) {
+bool InterfaceAllowListPermits(const std::wstring& allowList, const std::wstring& friendlyName, bool hasDefaultGateway) {
     if (allowList.empty()) {
-        return !IsLikelyVirtualAdapter(friendlyName);
+        return ShouldUseUnlistedInterface(IsLikelyVirtualAdapter(friendlyName), hasDefaultGateway);
     }
     size_t start = 0;
     while (start <= allowList.size()) {
@@ -268,7 +269,8 @@ std::string BuildHttpDateHeaderValue() {
 bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList, std::vector<NetworkEndpoint>& endpoints) {
     endpoints.clear();
 
-    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER |
+                  GAA_FLAG_INCLUDE_GATEWAYS;
     ULONG bufferSize = 16 * 1024;
     std::vector<unsigned char> buffer(bufferSize);
     IP_ADAPTER_ADDRESSES* addresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
@@ -291,7 +293,11 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
         if (adapter->Flags & IP_ADAPTER_NO_MULTICAST) {
             continue;
         }
-        if (!InterfaceAllowListPermits(interfaceAllowList, adapter->FriendlyName ? std::wstring(adapter->FriendlyName) : std::wstring())) {
+        // GAA_FLAG_INCLUDE_GATEWAYS (Step 2.2) populates this list per
+        // adapter; NULL means this specific adapter has no configured
+        // default gateway. See Task 2 citations C1-C3.
+        const bool adapterHasDefaultGateway = adapter->FirstGatewayAddress != NULL;
+        if (!InterfaceAllowListPermits(interfaceAllowList, adapter->FriendlyName ? std::wstring(adapter->FriendlyName) : std::wstring(), adapterHasDefaultGateway)) {
             continue;
         }
 
