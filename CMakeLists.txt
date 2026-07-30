@@ -87,6 +87,7 @@ set(HEADERS
          src/server.h
          src/netutils.h
          src/netutils_internal.h
+         src/network_interface_policy.h
          src/httpserver.h
          src/http_common.h
          src/contentdirectory.h
