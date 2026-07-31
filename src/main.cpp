@@ -27,6 +27,7 @@
 #include "input_gate.h"
 #include "playlist_scan_concurrency.h"
 #include "scan_cancellation.h"
+#include "transmitfile_chunking.h"
 #include "cli_flags.h"
 #include "upnp_eventing.h"
 #include "server_close_policy.h"
@@ -298,6 +299,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::wcout << (ShouldCloseNow(isRunning, isBusy) ? L"1" : L"0") << std::endl;
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-should-drop-link-local-endpoint") == 0 && i + 2 < argc) {
+            bool candidateIsLinkLocal = wcscmp(argv[++i], L"1") == 0;
+            bool anyNonLinkLocalExists = wcscmp(argv[++i], L"1") == 0;
+            std::wcout << (ShouldDropLinkLocalEndpoint(candidateIsLinkLocal, anyNonLinkLocalExists) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-transmitfile-chunk-plan") == 0 && i + 1 < argc) {
+            long long totalBytes = _wtoi64(argv[++i]);
+            for (long long chunkSize : ComputeTransmitFileChunkSizes(totalBytes)) {
+                std::wcout << chunkSize << std::endl;
+            }
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-function-key-action") == 0 && i + 4 < argc) {
             int vkCode = _wtoi(argv[++i]);
             bool isRunning = wcscmp(argv[++i], L"1") == 0;
@@ -361,6 +375,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::string second = GetRoutableHostUrl(portTwo, L"");
             std::cout << first << std::endl;
             std::cout << second << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-routable-host-cache-invalidation") == 0) {
+            long before = GetRoutableHostUrlRecomputeCountForTest();
+            GetRoutableHostUrl(9200, L"");
+            long afterFirst = GetRoutableHostUrlRecomputeCountForTest();
+            GetRoutableHostUrl(9200, L"");
+            long afterSecondSamePort = GetRoutableHostUrlRecomputeCountForTest();
+            InvalidateRoutableHostUrlCache();
+            GetRoutableHostUrl(9200, L"");
+            long afterInvalidate = GetRoutableHostUrlRecomputeCountForTest();
+            std::wcout << L"before=" << before << std::endl;
+            std::wcout << L"after-first-call=" << afterFirst << std::endl;
+            std::wcout << L"after-second-call-same-port=" << afterSecondSamePort << std::endl;
+            std::wcout << L"after-invalidate-then-call=" << afterInvalidate << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-should-use-unlisted-interface") == 0 && i + 2 < argc) {

@@ -38,6 +38,28 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
 
 bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList, std::vector<NetworkEndpoint>& endpoints);
 const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& endpoints, const SOCKADDR* remoteAddr);
+// pure predicate see the workflow document for the RFC 4007 citation
+// a link-local ipv6 address never carries a usable zone id once it
+// leaves this node per RFC 4007 section 6 the zone index is strictly
+// local to the node that generated it so it cannot be forwarded to
+// another node and this codebase already strips it before advertising
+// any url see BuildEndpointHost in this file a bare link-local address
+// left over after that stripping is commonly unusable by any client
+// with more than one active network interface for example any phone
+// with both wifi and cellular active drop a link-local candidate
+// whenever at least one non link-local endpoint exists anywhere in
+// the same enumeration pass otherwise keep it since it is all this
+// machine has to offer
+inline bool ShouldDropLinkLocalEndpoint(bool candidateIsLinkLocal, bool anyNonLinkLocalExistsInFullList) {
+    return candidateIsLinkLocal && anyNonLinkLocalExistsInFullList;
+}
 std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList);
+// clears the cached routable host so the next call recomputes it call
+// this whenever network topology changes are detected see
+// Server StartNetworkChangeWatcher for the call site
+void InvalidateRoutableHostUrlCache();
+// test only returns how many times the cache actually recomputed
+// instead of returning a cached value since process start
+long GetRoutableHostUrlRecomputeCountForTest();
 
 #endif // NETUTILS_H

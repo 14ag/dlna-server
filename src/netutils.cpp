@@ -329,6 +329,25 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
         }
     }
 
+    // drop link local endpoints whenever something better exists see
+    // ShouldDropLinkLocalEndpoint in netutils h for the full rationale
+    // this also means an adapter with only a link local ipv6 address
+    // stops being joined for ipv6 ssdp multicast once its endpoint is
+    // filtered out here since Server and SSDP both walk this same
+    // returned list to decide which interfaces to join that is
+    // intentional not an oversight a control point reaching this
+    // server over ipv6 on that adapter will simply get no ipv6 ssdp
+    // response at all and fall back to whatever ipv4 response also
+    // reached it exactly the working path your pc already uses
+    const bool anyNonLinkLocalExists = std::any_of(endpoints.begin(), endpoints.end(),
+        [](const NetworkEndpoint& ep) { return !ep.isLinkLocal; });
+    endpoints.erase(
+        std::remove_if(endpoints.begin(), endpoints.end(),
+            [anyNonLinkLocalExists](const NetworkEndpoint& ep) {
+                return ShouldDropLinkLocalEndpoint(ep.isLinkLocal, anyNonLinkLocalExists);
+            }),
+        endpoints.end());
+
     return !endpoints.empty();
 }
 
@@ -397,29 +416,44 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
     return false;
 }
 
-std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
-    // guarded because HandleClient calls this from many concurrent
-    // client threads on both platforms see the workflow document task 2
-    static std::mutex cacheMutex;
-    static std::string cachedHost;
-    static int cachedPort = 0;
-    static bool cachedValid = false;
+namespace {
+// guarded because HandleClient calls GetRoutableHostUrl from many
+// concurrent client threads on both platforms see the workflow
+// document for the full rationale
+std::mutex g_routableHostCacheMutex;
+std::string g_routableHostCached;
+int g_routableHostCachedPort = 0;
+bool g_routableHostCacheValid = false;
+long g_routableHostRecomputeCount = 0;
+}
 
-    std::lock_guard<std::mutex> lock(cacheMutex);
-    if (!cachedValid || cachedPort != port) {
-        cachedHost.clear();
+void InvalidateRoutableHostUrlCache() {
+    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+    g_routableHostCacheValid = false;
+}
+
+long GetRoutableHostUrlRecomputeCountForTest() {
+    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+    return g_routableHostRecomputeCount;
+}
+
+std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
+    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+    if (!g_routableHostCacheValid || g_routableHostCachedPort != port) {
+        ++g_routableHostRecomputeCount;
+        g_routableHostCached.clear();
         std::vector<NetworkEndpoint> endpoints;
         if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
             for (const auto& ep : endpoints) {
                 // first non link local endpoint is the best routable address
                 if (!ep.isLinkLocal) {
-                    cachedHost = ep.address + ":" + std::to_string(port);
+                    g_routableHostCached = ep.address + ":" + std::to_string(port);
                     break;
                 }
             }
         }
-        cachedPort = port;
-        cachedValid = true;
+        g_routableHostCachedPort = port;
+        g_routableHostCacheValid = true;
     }
-    return cachedHost;
+    return g_routableHostCached;
 }

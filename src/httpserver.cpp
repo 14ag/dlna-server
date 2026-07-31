@@ -9,6 +9,7 @@
 #include "netutils.h"
 #include "network_sources.h"
 #include "upnp_eventing.h"
+#include "transmitfile_chunking.h"
 #include "../resources/resource.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -19,6 +20,10 @@
 #include <sstream>
 
 namespace {
+
+// mirrors kMaxClientThreads in posix_httpserver cpp keep both values
+// equal if one changes update the other and this comment
+constexpr size_t kMaxClientThreads = 64;
 
 void SendAll(SOCKET s, const char* data, int len) {
     while (len > 0) {
@@ -56,6 +61,18 @@ struct ScopedHandle {
 
     HANDLE handle;
 };
+
+bool TransmitFileChunked(SOCKET s, HANDLE hFile, long long startOffset, long long totalBytes) {
+    long long offset = startOffset;
+    for (long long chunkSize : ComputeTransmitFileChunkSizes(totalBytes)) {
+        LARGE_INTEGER movePos = {};
+        movePos.QuadPart = offset;
+        if (!SetFilePointerEx(hFile, movePos, NULL, FILE_BEGIN)) return false;
+        if (!TransmitFile(s, hFile, static_cast<DWORD>(chunkSize), 0, NULL, NULL, 0)) return false;
+        offset += chunkSize;
+    }
+    return true;
+}
 
 void SetSocketTimeouts(SOCKET s) {
     constexpr DWORD kDefaultTimeoutMs = 10000;
@@ -303,9 +320,18 @@ DWORD WINAPI HttpServer::AcceptThreadWorker(LPVOID lpParam) {
                 continue;
             }
 
+            if (pThis->m_activeClientCount.load(std::memory_order_relaxed) >= kMaxClientThreads) {
+                static const char* busy = "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+                send(clientSocket, busy, static_cast<int>(strlen(busy)), 0);
+                closesocket(clientSocket);
+                continue;
+            }
+            pThis->m_activeClientCount.fetch_add(1, std::memory_order_relaxed);
+
             WorkData* wd = new WorkData{ pThis, clientSocket, clientIP };
             PTP_WORK work = CreateThreadpoolWork(WorkerCallback, wd, &pThis->m_cbe);
             if (!work) {
+                pThis->m_activeClientCount.fetch_sub(1, std::memory_order_relaxed);
                 closesocket(clientSocket);
                 delete wd;
                 continue;
@@ -320,9 +346,11 @@ DWORD WINAPI HttpServer::AcceptThreadWorker(LPVOID lpParam) {
 
 void CALLBACK HttpServer::WorkerCallback(PTP_CALLBACK_INSTANCE, PVOID Context, PTP_WORK Work) {
     WorkData* wd = reinterpret_cast<WorkData*>(Context);
-    wd->pServer->HandleClient(wd->s, wd->ip);
+    HttpServer* server = wd->pServer;
+    server->HandleClient(wd->s, wd->ip);
     closesocket(wd->s);
     delete wd;
+    server->m_activeClientCount.fetch_sub(1, std::memory_order_relaxed);
     CloseThreadpoolWork(Work);
 }
 
@@ -610,13 +638,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                         }
 
                         SetSocketStreamTimeouts(clientSocket);
-                        LARGE_INTEGER movePos = {};
-                        movePos.QuadPart = startByte;
-                        SetFilePointerEx(hFile.get(), movePos, NULL, FILE_BEGIN);
-
-                        if (!TransmitFile(clientSocket, hFile.get(),
-                                          static_cast<DWORD>(contentLength), 0,
-                                          NULL, NULL, 0)) {
+                        if (!TransmitFileChunked(clientSocket, hFile.get(), startByte, contentLength)) {
                             return;
                         }
                         if (!keepAlive) return;

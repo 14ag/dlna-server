@@ -130,6 +130,7 @@ void Server::StartNetworkChangeWatcher() {
     StartNetworkChangeWatch([this]() {
         if (!m_running.load(std::memory_order_acquire)) return;
         LogPrint(L"Network topology change detected; refreshing endpoints");
+        InvalidateRoutableHostUrlCache();
         const ConfigSnapshot cfg = AppConfig.Snapshot();
         RefreshEndpoints(cfg);
         SSDP::Get().Stop();
