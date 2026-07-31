@@ -254,6 +254,12 @@ int main(int argc, char** argv) {
             std::wcout << (ShouldCloseNow(isRunning, isBusy) ? L"1" : L"0") << std::endl;
             return 0;
         }
+        else if (arg == "--print-should-drop-link-local-endpoint" && i + 2 < argc) {
+            bool candidateIsLinkLocal = std::string(argv[++i]) == "1";
+            bool anyNonLinkLocalExists = std::string(argv[++i]) == "1";
+            std::cout << (ShouldDropLinkLocalEndpoint(candidateIsLinkLocal, anyNonLinkLocalExists) ? "1" : "0") << std::endl;
+            return 0;
+        }
         else if (arg == "--print-debug-log-requires-restart" && i + 2 < argc) {
             ConfigSnapshot before{};
             ConfigSnapshot after{};
@@ -301,6 +307,21 @@ int main(int argc, char** argv) {
             std::string second = GetRoutableHostUrl(portTwo, L"");
             std::cout << first << std::endl;
             std::cout << second << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-routable-host-cache-invalidation") {
+            long before = GetRoutableHostUrlRecomputeCountForTest();
+            GetRoutableHostUrl(9200, L"");
+            long afterFirst = GetRoutableHostUrlRecomputeCountForTest();
+            GetRoutableHostUrl(9200, L"");
+            long afterSecondSamePort = GetRoutableHostUrlRecomputeCountForTest();
+            InvalidateRoutableHostUrlCache();
+            GetRoutableHostUrl(9200, L"");
+            long afterInvalidate = GetRoutableHostUrlRecomputeCountForTest();
+            std::cout << "before=" << before << std::endl;
+            std::cout << "after-first-call=" << afterFirst << std::endl;
+            std::cout << "after-second-call-same-port=" << afterSecondSamePort << std::endl;
+            std::cout << "after-invalidate-then-call=" << afterInvalidate << std::endl;
             return 0;
         }
         else if (arg == "--print-notify-pool-worker-count") {

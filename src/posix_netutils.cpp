@@ -1,6 +1,7 @@
 #include "netutils.h"
 #include "network_interface_policy.h"
 
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cstring>
 #include <cstdio>
@@ -279,6 +280,20 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
         endpoints.push_back(endpoint);
     }
     freeifaddrs(list);
+
+    // drop link local endpoints whenever something better exists see
+    // ShouldDropLinkLocalEndpoint in netutils h for the full rationale
+    // and the same interaction note about ssdp multicast membership
+    // that the windows side of this fix documents
+    const bool anyNonLinkLocalExists = std::any_of(endpoints.begin(), endpoints.end(),
+        [](const NetworkEndpoint& ep) { return !ep.isLinkLocal; });
+    endpoints.erase(
+        std::remove_if(endpoints.begin(), endpoints.end(),
+            [anyNonLinkLocalExists](const NetworkEndpoint& ep) {
+                return ShouldDropLinkLocalEndpoint(ep.isLinkLocal, anyNonLinkLocalExists);
+            }),
+        endpoints.end());
+
     return !endpoints.empty();
 }
 
@@ -324,28 +339,43 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
     return false;
 }
 
-std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
-    // guarded because HandleClient calls this from many concurrent
-    // client threads on both platforms see the workflow document task 2
-    static std::mutex cacheMutex;
-    static std::string cachedHost;
-    static int cachedPort = 0;
-    static bool cachedValid = false;
+namespace {
+// guarded because HandleClient calls GetRoutableHostUrl from many
+// concurrent client threads on both platforms see the workflow
+// document for the full rationale
+std::mutex g_routableHostCacheMutex;
+std::string g_routableHostCached;
+int g_routableHostCachedPort = 0;
+bool g_routableHostCacheValid = false;
+long g_routableHostRecomputeCount = 0;
+}
 
-    std::lock_guard<std::mutex> lock(cacheMutex);
-    if (!cachedValid || cachedPort != port) {
-        cachedHost.clear();
+void InvalidateRoutableHostUrlCache() {
+    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+    g_routableHostCacheValid = false;
+}
+
+long GetRoutableHostUrlRecomputeCountForTest() {
+    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+    return g_routableHostRecomputeCount;
+}
+
+std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
+    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+    if (!g_routableHostCacheValid || g_routableHostCachedPort != port) {
+        ++g_routableHostRecomputeCount;
+        g_routableHostCached.clear();
         std::vector<NetworkEndpoint> endpoints;
         if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
             for (const auto& ep : endpoints) {
                 if (!ep.isLinkLocal) {
-                    cachedHost = ep.address + ":" + std::to_string(port);
+                    g_routableHostCached = ep.address + ":" + std::to_string(port);
                     break;
                 }
             }
         }
-        cachedPort = port;
-        cachedValid = true;
+        g_routableHostCachedPort = port;
+        g_routableHostCacheValid = true;
     }
-    return cachedHost;
+    return g_routableHostCached;
 }
