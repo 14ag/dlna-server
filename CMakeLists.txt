@@ -15,15 +15,41 @@ function(dlna_enable_warnings target_name)
 endfunction()
 
 find_package(ZLIB)
-if(NOT ZLIB_FOUND)
-    message(FATAL_ERROR "Could NOT find ZLIB (missing: ZLIB_LIBRARY ZLIB_INCLUDE_DIR)\n\n"
-        "Common fixes:\n"
-        "  - If you use vcpkg (recommended), install zlib for your triplet and re-run CMake:\n"
-        "      from vcpkg root: .\\vcpkg install zlib:x64-windows\n"
-        "      then configure CMake with the vcpkg toolchain file:\n"
-        "      cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/Users/philip/vcpkg/scripts/buildsystems/vcpkg.cmake\n\n"
-        "  - Or point CMake directly to an installed zlib:\n"
-        "      -DZLIB_INCLUDE_DIR=\"C:/path/to/zlib/include\" -DZLIB_LIBRARY=\"C:/path/to/zlib/lib/zlib.lib\"\n")
+
+# Some CMake configurations provide ZLIB via imported targets instead of
+# setting ZLIB_FOUND. Treat either as success.
+if(NOT (ZLIB_FOUND OR TARGET ZLIB::ZLIB))
+    # Try to locate zlib in common vcpkg locations (helpful on Windows)
+    if(DEFINED ENV{VCPKG_ROOT})
+        set(_vcpkg_root $ENV{VCPKG_ROOT})
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/../vcpkg")
+        set(_vcpkg_root "${CMAKE_SOURCE_DIR}/../vcpkg")
+    elseif(EXISTS "C:/vcpkg")
+        set(_vcpkg_root "C:/vcpkg")
+    endif()
+
+    if(DEFINED _vcpkg_root)
+        file(GLOB _zlibs "${_vcpkg_root}/installed/*/lib/zlib.lib" "${_vcpkg_root}/installed/*/lib/zlibstatic.lib")
+        if(_zlibs)
+            list(GET _zlibs 0 _zlib_lib)
+            get_filename_component(_triplet_dir "${_zlib_lib}" DIRECTORY)
+            get_filename_component(_triplet_name "${_triplet_dir}" NAME)
+            set(ZLIB_LIBRARY "${_zlib_lib}")
+            set(ZLIB_INCLUDE_DIR "${_vcpkg_root}/installed/${_triplet_name}/include")
+            find_package(ZLIB REQUIRED)
+        endif()
+    endif()
+
+    if(NOT ZLIB_FOUND)
+        message(FATAL_ERROR "Could NOT find ZLIB (missing: ZLIB_LIBRARY ZLIB_INCLUDE_DIR)\n\n"
+            "Common fixes:\n"
+            "  - If you use vcpkg (recommended), install zlib for your triplet and re-run CMake:\n"
+            "      from vcpkg root: .\\vcpkg install zlib:x64-windows\n"
+            "      then configure CMake with the vcpkg toolchain file:\n"
+            "      cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake\n\n"
+            "  - Or point CMake directly to an installed zlib:\n"
+            "      -DZLIB_INCLUDE_DIR=\"C:/path/to/zlib/include\" -DZLIB_LIBRARY=\"C:/path/to/zlib/lib/zlib.lib\"\n")
+    endif()
 endif()
 if(TARGET ZLIB::ZLIBSTATIC AND NOT TARGET ZLIB::ZLIB)
     add_library(ZLIB::ZLIB ALIAS ZLIB::ZLIBSTATIC)
@@ -89,6 +115,7 @@ set(HEADERS
          src/netutils_internal.h
          src/network_interface_policy.h
          src/httpserver.h
+         src/transmitfile_chunking.h
          src/http_common.h
          src/contentdirectory.h
          src/upnp_eventing.h
