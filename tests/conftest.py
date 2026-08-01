@@ -60,9 +60,9 @@ def _configure_binary_envs():
     if server is None:
         server = gui
     if gui:
-        os.environ.setdefault("DLNA_SERVER", gui)
         os.environ.setdefault("DLNA_GUI_BINARY", gui)
     if server:
+        os.environ.setdefault("DLNA_SERVER", server)
         os.environ.setdefault("DLNA_CLI_BINARY", server)
 
 
@@ -185,6 +185,20 @@ def _launch_server(binary_path, port, media_source_dir, config_dir=None):
         env["XDG_CONFIG_HOME"] = str(config_dir)
         env["HOME"] = str(config_dir)
         env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="dlna-runtime-")
+        # Clean up any instance left over from a previous launch that shared
+        # this runtime dir before starting a fresh one. Best-effort: exits
+        # non-zero when no instance is listening (fresh dir), which is fine.
+        try:
+            subprocess.run(
+                [str(binary_path), "--kill-server"],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
 
     proc = subprocess.Popen(
         [str(binary_path), "--headless"],

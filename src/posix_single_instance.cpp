@@ -107,6 +107,29 @@ bool SendShow() {
     return true;
 }
 
+bool SendKill() {
+    const std::string sockPath = GetSocketPath();
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+
+    struct sockaddr_un addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, sockPath.c_str(), sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    if (::connect(fd, reinterpret_cast<const struct sockaddr*>(&addr),
+                  sizeof(addr)) < 0) {
+        ::close(fd);
+        return false;
+    }
+
+    static const char kKill[] = "kill\n";
+    ::write(fd, kKill, sizeof(kKill) - 1);
+    ::close(fd);
+    return true;
+}
+
 void StartListening(void (*onCommand)(const std::string&)) {
     if (g_running.load()) return;
     g_callback = onCommand;
