@@ -11,6 +11,7 @@
 #include "network_sources.h"
 #include "playlist_scan_concurrency.h"
 #include "media_sources.h"
+#include "media_source_file_types.h"
 #include "thread_guard.h"
 #include "scan_cancellation.h"
 #include "server.h"
@@ -403,6 +404,12 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--print-resolve-bundled-resource" && i + 1 < argc) {
             std::cout << ResolveBundledResourcePath(argv[++i]) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-media-source-file-extensions") {
+            for (const auto& ext : GetMediaSourceFileExtensions()) {
+                std::wcout << ext << std::endl;
+            }
             return 0;
         }
         else if (arg == "--print-media-sources") {

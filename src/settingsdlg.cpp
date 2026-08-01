@@ -3,6 +3,7 @@
 #include "server.h"
 #include "logdlg.h"
 #include "dlna_utils.h"
+#include "network_sources.h"   // ADD THIS LINE — needed for SourceStemName
 #include "modal_focus.h"
 #include "netutils.h"
 #include "access_keys.h"
@@ -82,30 +83,22 @@ std::wstring GetDlgText(HWND hwnd, int id) {
 }
 
 std::wstring MovieTitleFromPath(const std::wstring& moviePath) {
-    // Previously copied moviePath into a fixed wchar_t[MAX_PATH] buffer
-    // via wcscpy_s(fileName, ...) before extracting the file name and
-    // stripping the extension with PathFindFileNameW/
-    // PathRemoveExtensionW. moviePath comes straight from the "Movie
-    // path:" edit control (typed, pasted, or filled by the file-browse
-    // button) with no length check anywhere upstream; wcscpy_s's
-    // two-argument overload aborts the process via the CRT invalid-
-    // parameter handler if the source string does not fit the
-    // destination array, so any path of MAX_PATH (260) characters or
-    // more crashed this dialog. See F-BUF-01. Every other filename/stem
-    // helper in this codebase (SourceStemName, SourceDisplayName in
-    // network_sources.cpp) already operates on std::wstring with no
-    // fixed-size buffer; this rewrite matches that pattern.
-    std::wstring clean = moviePath;
-    while (!clean.empty() && (clean.back() == L'\\' || clean.back() == L'/')) {
-        clean.pop_back();
-    }
-    const size_t slash = clean.find_last_of(L"\\/");
-    std::wstring fileName = slash == std::wstring::npos ? clean : clean.substr(slash + 1);
-    const size_t dot = fileName.find_last_of(L'.');
-    if (dot != std::wstring::npos && dot > 0) {
-        fileName = fileName.substr(0, dot);
-    }
-    return fileName.empty() ? L"Media item" : fileName;
+    // F-01: the previous implementation copied PathFindFileNameW's
+    // result into a fixed wchar_t[MAX_PATH] buffer with wcscpy_s.
+    // wcscpy_s's array-reference overload is bound to MAX_PATH (260) at
+    // compile time; a path of 260+ wide characters -- reachable via
+    // IFileOpenDialog on any long-path-aware Windows 10 1607+ system, or
+    // via any UNC path regardless of that setting -- makes wcscpy_s
+    // invoke the CRT invalid-parameter handler, which by default
+    // terminates the process. SourceStemName operates on std::wstring
+    // with no fixed-size intermediate buffer, so it has no length at
+    // which it can fail this way. It is the same helper
+    // fltk_gui_main.cpp::TitleFromPath already uses for the identical
+    // POSIX-side "Default playlist entry" title derivation -- this
+    // change makes the Win32 side use the same safe, already-audited
+    // logic instead of a separate hand-rolled Win32-only version.
+    std::wstring stem = SourceStemName(moviePath);
+    return stem.empty() ? L"Media item" : stem;
 }
 
 std::wstring BrowseFile(HWND owner, const wchar_t* title, const COMDLG_FILTERSPEC* filters, UINT filterCount) {

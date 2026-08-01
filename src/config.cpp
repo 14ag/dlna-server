@@ -227,12 +227,22 @@ std::wstring Config::GenerateUUID() {
 }
 
 std::wstring Config::GetDefaultPlaylistPath() {
+    // F-02: previously copied GetConfigPath()'s result into a fixed
+    // wchar_t[MAX_PATH] buffer via wcscpy_s before stripping the
+    // filename and appending "default.m3u" with PathRemoveFileSpecW /
+    // PathAppendW. Not reachable today because GetConfigPath() is
+    // itself bounded to MAX_PATH, but the pattern is fragile: it would
+    // silently become an F-01-class crash risk if GetConfigPath() ever
+    // starts returning a longer path. This is the same
+    // strip-filename-then-append-sibling-filename idiom already used
+    // (correctly, with no fixed buffer) by
+    // MediaDatabase::DefaultDatabasePath() in media_database.cpp and by
+    // the POSIX build's own Config::GetDefaultPlaylistPath() in
+    // posix_config.cpp -- reused here rather than reinvented.
     std::wstring path = GetConfigPath();
-    wchar_t buffer[MAX_PATH] = {};
-    wcscpy_s(buffer, path.c_str());
-    PathRemoveFileSpecW(buffer);
-    PathAppendW(buffer, L"default.m3u");
-    return buffer;
+    size_t slash = path.find_last_of(L"\\/");
+    std::wstring dir = slash == std::wstring::npos ? L"" : path.substr(0, slash + 1);
+    return dir + L"default.m3u";
 }
 
 void Config::SetRunOnBoot(bool enable) {

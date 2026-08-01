@@ -32,6 +32,7 @@
 #include "scan_cancellation.h"
 #include "transmitfile_chunking.h"
 #include "cli_flags.h"
+#include "media_source_file_types.h"
 #include "upnp_eventing.h"
 #include "server_close_policy.h"
 #include "close_pending_state.h"
@@ -270,6 +271,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::cout << BuildMediaResourceUrlExtensionSuffix(argv[++i]) << std::endl;
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-movie-title-from-path") == 0 && i + 1 < argc) {
+            // Mirrors settingsdlg.cpp's (private) MovieTitleFromPath
+            // exactly: SourceStemName(path) with a "Media item" fallback
+            // for an empty stem. See F-01. This flag exists purely so a
+            // pytest test can exercise the long-path case without
+            // driving the native modal dialog message loop.
+            std::wstring path = argv[++i];
+            std::wstring stem = SourceStemName(path);
+            std::wcout << (stem.empty() ? L"Media item" : stem) << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-strip-resource-id-extension") == 0 && i + 1 < argc) {
             std::cout << StripResourceIdExtension(WideToUtf8(argv[++i])) << std::endl;
             LocalFree(argv);
@@ -421,6 +433,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             return 0;
         } else if (wcscmp(argv[i], L"--print-config-path") == 0) {
             std::wcout << AppConfig.GetConfigPath() << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-default-playlist-path") == 0) {
+            // F-02 regression hook: confirms GetDefaultPlaylistPath()
+            // still equals "<directory of GetConfigPath()>\default.m3u"
+            // after removing the fixed wchar_t[MAX_PATH] buffer.
+            std::wcout << AppConfig.GetDefaultPlaylistPath() << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-media-source-file-extensions") == 0) {
+            for (const auto& ext : GetMediaSourceFileExtensions()) {
+                std::wcout << ext << std::endl;
+            }
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-media-sources") == 0) {

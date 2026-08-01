@@ -2,6 +2,7 @@
 #include "dlna_utils.h"
 #include "log.h"
 #include "media_sources.h"
+#include "media_source_file_types.h"
 #include "thread_guard.h"
 #include "netutils.h"
 #include "server.h"
@@ -170,6 +171,21 @@ std::string TitleFromPath(const std::string& moviePath) {
     return name.empty() ? "Media item" : name;
 }
 
+std::string BuildMediaSourceFilterSpec() {
+    // FEAT-01: built from the single shared extension list in
+    // media_source_file_types.h (media + playlist extensions combined),
+    // mirrored 1:1 with mainwindow.cpp's BuildMediaSourceFilterPattern
+    // on the Win32 side.
+    std::string spec = "Media & playlist files\t*.{";
+    const auto extensions = GetMediaSourceFileExtensions();
+    for (size_t i = 0; i < extensions.size(); ++i) {
+        if (i > 0) spec += ",";
+        spec += WideToUtf8(extensions[i]);
+    }
+    spec += "}\nAll files\t*";
+    return spec;
+}
+
 bool AppendDefaultPlaylistEntry(const std::string& moviePath, const std::string& subtitlePath) {
     if (moviePath.empty()) return false;
     if (AppConfig.defaultPlaylistPath.empty()) AppConfig.defaultPlaylistPath = AppConfig.GetDefaultPlaylistPath();
@@ -263,8 +279,12 @@ std::string PromptForMediaSourceFLTK() {
     hint.labelcolor(fl_rgb_color(150, 150, 150));
 
     Fl_Button folderButton(16, 114, 96, 28, "Folder...");
-    Fl_Button playlistButton(120, 114, 96, 28, "Playlist...");
-    Fl_Button fileButton(224, 114, 96, 28, "File...");
+    // FEAT-01: File... now covers both media and playlist extensions
+    // (see BuildMediaSourceFilterSpec above). Widened from 96 to 200 to
+    // occupy the space the removed Playlist... button used to take;
+    // right edge stays at x=320 (120 + 200), same as before this change,
+    // so nothing else in the dialog needs to move.
+    Fl_Button fileButton(120, 114, 200, 28, "File...");
     Fl_Return_Button addButton(406, 150, 68, 28, "Add");
     state.addButton = &addButton;
     Fl_Button cancelButton(482, 150, 62, 28, "Cancel");
@@ -295,25 +315,13 @@ std::string PromptForMediaSourceFLTK() {
         Fl::focus(s->input);
     }, &state);
 
-    playlistButton.callback([](Fl_Widget*, void* data) {
-        auto* s = static_cast<State*>(data);
-        Fl_Native_File_Chooser chooser;
-        chooser.title("Choose playlist file");
-        chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
-        chooser.filter("Playlists\t*.{m3u,m3u8,pls}\nAll files\t*");
-        if (chooser.show() == 0 && chooser.filename()) {
-            s->input->value(chooser.filename());
-            s->input->do_callback();
-        }
-        Fl::focus(s->input);
-    }, &state);
-
     fileButton.callback([](Fl_Widget*, void* data) {
         auto* s = static_cast<State*>(data);
         Fl_Native_File_Chooser chooser;
-        chooser.title("Choose media file");
+        chooser.title("Choose media or playlist file");
         chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
-        chooser.filter("Media files\t*.{mp4,m4v,mkv,webm,avi,divx,mov,mpg,mpeg,mpe,vob,ts,m2ts,mts,wmv,flv,3gp,3g2,mp3,flac,m4a,aac,wav,wma,ogg,oga,opus,aiff,aif,ac3,dts}\nAll files\t*");
+        const std::string filterSpec = BuildMediaSourceFilterSpec();
+        chooser.filter(filterSpec.c_str());
         if (chooser.show() == 0 && chooser.filename()) {
             s->input->value(chooser.filename());
             s->input->do_callback();
