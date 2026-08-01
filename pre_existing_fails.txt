@@ -1,2 +1,7 @@
-tests/test_incremental_scan.py::TestSsdpAliveFiresBeforeScanCompletes::test_ssdp_alive_fires_before_scan_completes
-tests/test_release_output_layout.py::ReleaseOutputLayoutTests::test_windows_release_script_uses_platform_dirs_and_flags
+Pre-existing test failures (before any workflow changes applied):
+
+1. tests/test_media_sources_concurrency.py::TestConcurrentBrowseDuringScan::test_concurrent_browse_during_scan_no_hang_or_error
+   - FAILED
+
+2. tests/test_release_output_layout.py::ReleaseOutputLayoutTests::test_windows_release_script_uses_platform_dirs_and_flags
+   - FAILED

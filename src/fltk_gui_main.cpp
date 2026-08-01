@@ -2,6 +2,7 @@
 #include "dlna_utils.h"
 #include "log.h"
 #include "media_sources.h"
+#include "thread_guard.h"
 #include "netutils.h"
 #include "server.h"
 
@@ -250,7 +251,7 @@ std::string PromptForMediaSourceFLTK() {
     dialog.default_cursor(FL_CURSOR_DEFAULT);
     state.window = &dialog;
 
-    Fl_Box label(16, 14, 528, 20, "Add a folder, playlist file, or Network share URL:");
+    Fl_Box label(16, 14, 528, 20, "Add a local source or a Network share URL:");
     label.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
 
     Fl_Input input(16, 42, 528, 28);
@@ -263,6 +264,7 @@ std::string PromptForMediaSourceFLTK() {
 
     Fl_Button folderButton(16, 114, 96, 28, "Folder...");
     Fl_Button playlistButton(120, 114, 96, 28, "Playlist...");
+    Fl_Button fileButton(224, 114, 96, 28, "File...");
     Fl_Return_Button addButton(406, 150, 68, 28, "Add");
     state.addButton = &addButton;
     Fl_Button cancelButton(482, 150, 62, 28, "Cancel");
@@ -299,6 +301,19 @@ std::string PromptForMediaSourceFLTK() {
         chooser.title("Choose playlist file");
         chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
         chooser.filter("Playlists\t*.{m3u,m3u8,pls}\nAll files\t*");
+        if (chooser.show() == 0 && chooser.filename()) {
+            s->input->value(chooser.filename());
+            s->input->do_callback();
+        }
+        Fl::focus(s->input);
+    }, &state);
+
+    fileButton.callback([](Fl_Widget*, void* data) {
+        auto* s = static_cast<State*>(data);
+        Fl_Native_File_Chooser chooser;
+        chooser.title("Choose media file");
+        chooser.type(Fl_Native_File_Chooser::BROWSE_FILE);
+        chooser.filter("Media files\t*.{mp4,m4v,mkv,webm,avi,divx,mov,mpg,mpeg,mpe,vob,ts,m2ts,mts,wmv,flv,3gp,3g2,mp3,flac,m4a,aac,wav,wma,ogg,oga,opus,aiff,aif,ac3,dts}\nAll files\t*");
         if (chooser.show() == 0 && chooser.filename()) {
             s->input->value(chooser.filename());
             s->input->do_callback();
@@ -771,9 +786,11 @@ private:
         RefreshStatus();
         MainWindow* self = this;
         std::thread([self]() {
-            DLNAServer.Rescan();
-            self->m_scanInProgress.store(false);
-            Fl::awake();
+            RunGuarded(L"fltk-rescan", [self]() {
+                DLNAServer.Rescan();
+                self->m_scanInProgress.store(false);
+                Fl::awake();
+            });
         }).detach();
     }
 
@@ -843,16 +860,18 @@ private:
         m_state = ServerUiState::Starting;
         RefreshStatus();
         m_worker = std::thread([this]() {
-            std::wstring reason;
-            bool ok = DLNAServer.Start(reason);
-            std::string message;
-            if (!ok) {
-                message = "server could not start\n";
-                if (!reason.empty()) {
-                    message += WideToUtf8(reason);
+            RunGuarded(L"fltk-start-worker", [this]() {
+                std::wstring reason;
+                bool ok = DLNAServer.Start(reason);
+                std::string message;
+                if (!ok) {
+                    message = "server could not start\n";
+                    if (!reason.empty()) {
+                        message += WideToUtf8(reason);
+                    }
                 }
-            }
-            SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, message);
+                SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, message);
+            });
         });
     }
 
@@ -862,8 +881,10 @@ private:
         m_state = ServerUiState::Stopping;
         RefreshStatus();
         m_worker = std::thread([this]() {
-            DLNAServer.Stop();
-            SetPendingResult(ServerUiState::Stopped, true, "");
+            RunGuarded(L"fltk-stop-worker", [this]() {
+                DLNAServer.Stop();
+                SetPendingResult(ServerUiState::Stopped, true, "");
+            });
         });
     }
 
@@ -874,15 +895,17 @@ private:
         m_state = ServerUiState::Stopping;
         RefreshStatus();
         m_worker = std::thread([this]() {
-            DLNAServer.Stop();
-            std::wstring reason;
-            bool ok = DLNAServer.Start(reason);
-            std::string message;
-            if (!ok) {
-                message = "server could not start\n";
-                if (!reason.empty()) message += ToUtf8(reason);
-            }
-            SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, message);
+            RunGuarded(L"fltk-restart-worker", [this]() {
+                DLNAServer.Stop();
+                std::wstring reason;
+                bool ok = DLNAServer.Start(reason);
+                std::string message;
+                if (!ok) {
+                    message = "server could not start\n";
+                    if (!reason.empty()) message += ToUtf8(reason);
+                }
+                SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, message);
+            });
         });
     }
 
@@ -903,8 +926,10 @@ private:
         RefreshStatus();
         if (m_worker.joinable()) m_worker.join();
         m_worker = std::thread([this]() {
-            DLNAServer.Stop();
-            SetPendingResult(ServerUiState::Stopped, true, "");
+            RunGuarded(L"fltk-close-worker", [this]() {
+                DLNAServer.Stop();
+                SetPendingResult(ServerUiState::Stopped, true, "");
+            });
         });
     }
 

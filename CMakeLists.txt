@@ -133,9 +133,10 @@ set(HEADERS
          src/settings_restart.h
          src/source_list_focus.h
          src/hover_focus_state.h
-         src/scan_cancellation.h
-         src/input_gate.h
-         src/modal_focus.h
+          src/scan_cancellation.h
+          src/input_gate.h
+          src/modal_focus.h
+          src/thread_guard.h
          src/config.h
          src/ipwhitelist.h
           src/firewall_access.h

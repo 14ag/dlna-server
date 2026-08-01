@@ -10,6 +10,8 @@
 #include "input_gate.h"
 #include "network_sources.h"
 #include "playlist_scan_concurrency.h"
+#include "media_sources.h"
+#include "thread_guard.h"
 #include "scan_cancellation.h"
 #include "server.h"
 #include "upnp_eventing.h"
@@ -27,6 +29,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 
 namespace {
@@ -451,6 +454,60 @@ int main(int argc, char** argv) {
             DLNAServer.Stop();
             std::wcout << L"--after-stop--" << std::endl;
             for (auto& s : AppConfig.Snapshot().effectiveMediaSources) std::wcout << s.path << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-concurrent-start-rescan-safety") {
+            std::thread rescanThread([]() { DLNAServer.Rescan(); });
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            rescanThread.join();
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+            int leafMediaItems = 0;
+            for (const auto& item : AppMedia.GetDescendants(0)) {
+                if (!item.isFolder) ++leafMediaItems;
+            }
+            std::wcout << L"leaf-media-items=" << leafMediaItems << std::endl;
+            DLNAServer.Stop();
+            std::wcout << L"done" << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-single-file-source-scan") {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            if (!startOk) {
+                std::wcerr << L"start failed: " << reason << std::endl;
+                return 1;
+            }
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            int leafMediaItems = 0;
+            std::wstring firstPath, firstMime, firstClass;
+            for (const auto& item : AppMedia.GetDescendants(0)) {
+                if (!item.isFolder) {
+                    ++leafMediaItems;
+                    if (leafMediaItems == 1) {
+                        firstPath = item.path;
+                        firstMime = item.mimeType;
+                        firstClass = item.upnpClass;
+                    }
+                }
+            }
+            std::wcout << L"leaf-media-items=" << leafMediaItems << std::endl;
+            std::wcout << L"first-path=" << firstPath << std::endl;
+            std::wcout << L"first-mime=" << firstMime << std::endl;
+            std::wcout << L"first-class=" << firstClass << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
+        else if (arg == "--print-thread-guard-behavior") {
+            RunGuarded(L"test-thread", []() {
+                throw std::runtime_error("synthetic-test-exception");
+            });
+            std::cout << "guard-caught-exception=1" << std::endl;
             return 0;
         }
         else if (arg == "--debug") AppConfig.debugLog = true;

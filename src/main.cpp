@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include "mainwindow.h"
 #include "config.h"
@@ -18,6 +19,8 @@
 #include "netutils.h"
 #include "network_sources.h"
 #include "server.h"
+#include "media_sources.h"
+#include "thread_guard.h"
 #include "settings_restart.h"
 #include "source_drop_target.h"
 #include "startup_mode.h"
@@ -459,6 +462,85 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             DLNAServer.Stop();
             std::wcout << L"--after-stop--" << std::endl;
             for (auto& s : AppConfig.Snapshot().effectiveMediaSources) std::wcout << s.path << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-concurrent-start-rescan-safety") == 0) {
+            // Regression test for F-CRASH-01. Simulates
+            // MainWindow::AddMediaSourceIfNew's detached Rescan() firing
+            // at (as close as this process can arrange) the same moment
+            // Server::Start() runs. Before the Task 1.2 fix this could
+            // corrupt or duplicate the catalog depending on scheduling;
+            // after the fix the two are fully serialized via
+            // m_rescanMutex and the outcome is deterministic regardless
+            // of scheduling. Run with --source pointing at a folder
+            // containing a known number of media files.
+            auto _dbg = [](const char* tag) {
+                std::cerr << "[DBGCONC] " << tag << std::endl;
+            };
+            _dbg("A-rescan-thread-launched");
+            std::thread rescanThread([]() {
+                DLNAServer.Rescan();
+            });
+            _dbg("B-before-start");
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            _dbg("C-after-start");
+            rescanThread.join();
+            _dbg("D-after-rescan-join");
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            _dbg("E-after-scan-wait");
+            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+            int leafMediaItems = 0;
+            for (const auto& item : AppMedia.GetDescendants(0)) {
+                if (!item.isFolder) ++leafMediaItems;
+            }
+            std::wcout << L"leaf-media-items=" << leafMediaItems << std::endl;
+            DLNAServer.Stop();
+            std::wcout << L"done" << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-single-file-source-scan") == 0) {
+            // Regression test for F-FEAT-01. Run with --source pointing
+            // at a single supported media file.
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            if (!startOk) {
+                std::wcerr << L"start failed: " << reason << std::endl;
+                LocalFree(argv);
+                return 1;
+            }
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            int leafMediaItems = 0;
+            std::wstring firstPath, firstMime, firstClass;
+            for (const auto& item : AppMedia.GetDescendants(0)) {
+                if (!item.isFolder) {
+                    ++leafMediaItems;
+                    if (leafMediaItems == 1) {
+                        firstPath = item.path;
+                        firstMime = item.mimeType;
+                        firstClass = item.upnpClass;
+                    }
+                }
+            }
+            std::wcout << L"leaf-media-items=" << leafMediaItems << std::endl;
+            std::wcout << L"first-path=" << firstPath << std::endl;
+            std::wcout << L"first-mime=" << firstMime << std::endl;
+            std::wcout << L"first-class=" << firstClass << std::endl;
+            DLNAServer.Stop();
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-thread-guard-behavior") == 0) {
+            // Regression test for Task 1.1's RunGuarded helper itself:
+            // proves an exception thrown inside it does not propagate
+            // and does not terminate the process.
+            RunGuarded(L"test-thread", []() {
+                throw std::runtime_error("synthetic-test-exception");
+            });
+            std::cout << "guard-caught-exception=1" << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-tray-notify-decode") == 0 && i + 2 < argc) {
