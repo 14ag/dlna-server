@@ -409,6 +409,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::cout << endpoints.size() << std::endl;
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-sockaddr-length-safety") == 0 && i + 2 < argc) {
+            int reportedLength = _wtoi(argv[++i]);
+            int destinationCapacity = _wtoi(argv[++i]);
+            std::wcout << (IsSockaddrLengthSafeToCopy(reportedLength, static_cast<size_t>(destinationCapacity)) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-notify-pool-worker-count") == 0) {
             std::cout << kMaxUpnpNotifyWorkers << std::endl;
             LocalFree(argv);
@@ -465,39 +471,73 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-concurrent-start-rescan-safety") == 0) {
-            // Regression test for F-CRASH-01. Simulates
-            // MainWindow::AddMediaSourceIfNew's detached Rescan() firing
-            // at (as close as this process can arrange) the same moment
-            // Server::Start() runs. Before the Task 1.2 fix this could
-            // corrupt or duplicate the catalog depending on scheduling;
-            // after the fix the two are fully serialized via
-            // m_rescanMutex and the outcome is deterministic regardless
-            // of scheduling. Run with --source pointing at a folder
-            // containing a known number of media files.
+            // Regression test for F-CRASH-01. Exercises both legal orderings
+            // deterministically via two explicit sub-tests.
+            //
+            // Sub-test A: Start completes first, then Rescan runs.
+            // Sub-test B: Rescan races Start (original racy design, kept to
+            //             cover the blocking-on-m_rescanMutex path).
+            //
+            // Run with --source pointing at a folder containing a known number
+            // of media files.
+
             auto _dbg = [](const char* tag) {
                 std::cerr << "[DBGCONC] " << tag << std::endl;
             };
-            _dbg("A-rescan-thread-launched");
-            std::thread rescanThread([]() {
-                DLNAServer.Rescan();
-            });
-            _dbg("B-before-start");
-            std::wstring reason;
-            bool startOk = DLNAServer.Start(reason);
-            _dbg("C-after-start");
-            rescanThread.join();
-            _dbg("D-after-rescan-join");
-            while (DLNAServer.IsInitialScanInProgress()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            auto waitLeafCount = [&]() -> int {
+                while (DLNAServer.IsInitialScanInProgress()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+                int n = 0;
+                for (const auto& item : AppMedia.GetDescendants(0)) {
+                    if (!item.isFolder) ++n;
+                }
+                return n;
+            };
+
+            // Sub-test A: Start first, Rescan only after IsRunning==true.
+            _dbg("A-start");
+            {
+                std::wstring reason;
+                bool startOk = DLNAServer.Start(reason);
+                _dbg("A-start-done");
+                // Wait until running so Rescan deterministically races the
+                // already-started server, not the starting server.
+                auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+                while (!DLNAServer.IsRunning() &&
+                       std::chrono::steady_clock::now() < deadline) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                std::thread rescanThreadA([]() { DLNAServer.Rescan(); });
+                _dbg("A-rescan-launched");
+                rescanThreadA.join();
+                _dbg("A-rescan-joined");
+                int leafA = waitLeafCount();
+                DLNAServer.Stop();
+                _dbg("A-stop-done");
+                std::wcout << L"subtest-a-start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+                std::wcout << L"subtest-a-leaf-media-items=" << leafA << std::endl;
             }
-            _dbg("E-after-scan-wait");
-            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
-            int leafMediaItems = 0;
-            for (const auto& item : AppMedia.GetDescendants(0)) {
-                if (!item.isFolder) ++leafMediaItems;
+
+            // Sub-test B: original racy design — Rescan thread launched before
+            // Start() returns. Pass criterion: IsRunning==true and leaf count
+            // is stable (not a specific interleaving).
+            _dbg("B-start");
+            {
+                std::thread rescanThreadB([]() { DLNAServer.Rescan(); });
+                _dbg("B-rescan-launched");
+                std::wstring reason;
+                bool startOk = DLNAServer.Start(reason);
+                _dbg("B-start-done");
+                rescanThreadB.join();
+                _dbg("B-rescan-joined");
+                int leafB = waitLeafCount();
+                DLNAServer.Stop();
+                _dbg("B-stop-done");
+                std::wcout << L"subtest-b-start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+                std::wcout << L"subtest-b-leaf-media-items=" << leafB << std::endl;
             }
-            std::wcout << L"leaf-media-items=" << leafMediaItems << std::endl;
-            DLNAServer.Stop();
+
             std::wcout << L"done" << std::endl;
             LocalFree(argv);
             return 0;
