@@ -16,6 +16,11 @@ bool TryAcquireLock();
 // Returns true if the message was delivered.
 bool SendShow();
 
+// Connect to the running instance's domain socket and send "kill" command
+// (the receiving instance stops its server and exits). Returns true if the
+// message was delivered.
+bool SendKill();
+
 // Start a background thread listening on the domain socket for IPC commands
 // (e.g. "show"). The callback is invoked from the listener thread with the
 // received command text (trailing newline stripped). Must be thread-safe;

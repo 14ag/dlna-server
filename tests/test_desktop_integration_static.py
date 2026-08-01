@@ -51,8 +51,13 @@ def _ensure_desktop_file_validate():
         return None
     if shutil.which("apt-get") is None or shutil.which("sudo") is None:
         return None
-    _sudo_run("apt-get", "update", "-qq")
-    _sudo_run("apt-get", "install", "-y", "-qq", "desktop-file-utils")
+    try:
+        _sudo_run("apt-get", "update", "-qq")
+        _sudo_run("apt-get", "install", "-y", "-qq", "desktop-file-utils")
+    except (OSError, subprocess.CalledProcessError):
+        # Non-interactive sudo unavailable (e.g. passwordless apt on CI
+        # hosts only): leave the validator uninstalled and skip the test.
+        return None
     return shutil.which("desktop-file-validate")
 
 

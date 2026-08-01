@@ -6,6 +6,7 @@
 #include "log.h"
 #include "netutils.h"
 #include "access_keys.h"
+#include "function_key_action.h"
 #include "hover_focus_state.h"
 #include "input_gate.h"
 #include "network_sources.h"
@@ -38,6 +39,12 @@ std::atomic<bool> g_stop(false);
 
 void HandleSignal(int) {
     g_stop = true;
+}
+
+void OnSingleInstanceCommand(const std::string& cmd) {
+    if (cmd == "kill") {
+        g_stop = true;
+    }
 }
 
 void PrintUsage(const char* exe) {
@@ -77,8 +84,17 @@ int main(int argc, char** argv) {
             AppConfig.SetRuntimeSourceOverride(immediateOverride);
         }
         else if (arg == "--kill-server" || arg == "-k") {
-            std::cerr << "kill-server is not supported on this platform" << std::endl;
-            return 1;
+            if (!SingleInstance::SendKill()) {
+                std::cerr << "No running dlna-server instance found." << std::endl;
+                return 1;
+            }
+            return 0;
+        }
+        else if (arg == "--headless" || arg == "-h") {
+            // No-op: the POSIX build has no GUI/console distinction, the
+            // server always runs without a window. Accepted for symmetry
+            // with the Win32 binary (main.cpp) so tests and wrappers that
+            // pass --headless do not have it mis-parsed as a media source.
         }
         else if (arg == "--print-scan-cancellation-lifecycle") {
             AppScanCancel.BeginScan();
@@ -189,6 +205,20 @@ int main(int argc, char** argv) {
                 start = comma + 1;
             }
             std::cout << (AnyFieldHasContent(lens) ? "1" : "0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-function-key-action" && i + 4 < argc) {
+            int vkCode = std::atoi(argv[++i]);
+            bool isRunning = std::string(argv[++i]) == "1";
+            bool isBusy = std::string(argv[++i]) == "1";
+            bool isScanning = std::string(argv[++i]) == "1";
+            switch (DecideFunctionKeyAction(vkCode, isRunning, isBusy, isScanning)) {
+            case FunctionKeyAction::ShowHelp: std::cout << "show-help" << std::endl; break;
+            case FunctionKeyAction::Rescan: std::cout << "rescan" << std::endl; break;
+            case FunctionKeyAction::RefreshSourceList: std::cout << "refresh-source-list" << std::endl; break;
+            case FunctionKeyAction::ShowSourceListContextMenu: std::cout << "show-context-menu" << std::endl; break;
+            case FunctionKeyAction::None: std::cout << "none" << std::endl; break;
+            }
             return 0;
         }
         else if (arg == "--print-is-recognized-playlist" && i + 2 < argc) {
@@ -550,6 +580,10 @@ int main(int argc, char** argv) {
         std::cerr << "Another instance of dlna-server is already running." << std::endl;
         return 1;
     }
+    // Listen for IPC commands from short-lived --kill-server/--print-*
+    // second instances (a second instance requests a graceful stop via
+    // the "kill" command; see OnSingleInstanceCommand).
+    SingleInstance::StartListening(OnSingleInstanceCommand);
     std::wstring outReason;
     if (!DLNAServer.Start(outReason)) {
         std::wcerr << L"Failed to start server: " << outReason << std::endl;
@@ -557,5 +591,6 @@ int main(int argc, char** argv) {
     }
     while (!g_stop) std::this_thread::sleep_for(std::chrono::milliseconds(200));
     DLNAServer.Stop();
+    SingleInstance::ReleaseLock();
     return 0;
 }
