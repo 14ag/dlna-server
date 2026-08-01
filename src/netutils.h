@@ -53,6 +53,14 @@ const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& en
 inline bool ShouldDropLinkLocalEndpoint(bool candidateIsLinkLocal, bool anyNonLinkLocalExistsInFullList) {
     return candidateIsLinkLocal && anyNonLinkLocalExistsInFullList;
 }
+// pure predicate returns true when an os-reported sockaddr length fits
+// inside the fixed destination capacity and is positive the caller must
+// skip the candidate address when this returns false rather than perform
+// a copy that would overflow the destination see AddEndpointForUnicast
+// in netutils.cpp for the CERT MEM35-C citation trail behind this check
+inline bool IsSockaddrLengthSafeToCopy(int reportedLength, size_t destinationCapacity) {
+    return reportedLength > 0 && static_cast<size_t>(reportedLength) <= destinationCapacity;
+}
 std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList);
 // clears the cached routable host so the next call recomputes it call
 // this whenever network topology changes are detected see

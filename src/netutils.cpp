@@ -2,6 +2,7 @@
 #include "netutils_internal.h"
 #include "network_interface_policy.h"
 #include "dlna_utils.h"
+#include "log.h"
 #include <windows.h>
 #include <iphlpapi.h>
 #include <ws2tcpip.h>
@@ -80,7 +81,12 @@ void AddEndpointForUnicast(std::vector<NetworkEndpoint>& endpoints,
     endpoint.interfaceIndex = (endpoint.family == AF_INET6) ? adapter->Ipv6IfIndex : adapter->IfIndex;
     endpoint.prefixLength = unicast->OnLinkPrefixLength;
     endpoint.sockaddrLen = unicast->Address.iSockaddrLength;
-    memcpy(&endpoint.sockaddr, unicast->Address.lpSockaddr, endpoint.sockaddrLen);
+    if (!IsSockaddrLengthSafeToCopy(endpoint.sockaddrLen, sizeof(endpoint.sockaddr))) {
+        LogPrint(L"Adapter unicast address rejected: sockaddr length %d exceeds destination capacity %zu",
+                 endpoint.sockaddrLen, sizeof(endpoint.sockaddr));
+        return;
+    }
+    memcpy(&endpoint.sockaddr, unicast->Address.lpSockaddr, static_cast<size_t>(endpoint.sockaddrLen));
 
     if (endpoint.family == AF_INET6) {
         SOCKADDR_IN6* addr6 = reinterpret_cast<SOCKADDR_IN6*>(&endpoint.sockaddr);

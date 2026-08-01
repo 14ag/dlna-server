@@ -62,6 +62,10 @@ bool StartDirectoryWatch(const std::vector<std::wstring>& localFolders, std::fun
     }
     if (!anyOk) return false;
 
+    if (g_thread.joinable()) {
+        g_running.store(false);
+        g_thread.join();
+    }
     g_running.store(true);
     for (auto& folder : g_folders) {
         ReadDirectoryChangesW(folder.dirHandle, folder.buffer.data(),
