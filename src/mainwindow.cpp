@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "../resources/resource.h"
 #include "settingsdlg.h"
+#include "media_source_file_types.h"
 #include "server_close_policy.h"
 #include "ui_font.h"
 #include "dark_frame.h"
@@ -66,7 +67,6 @@ const int kDialogChromeAllowance = 40;
 const int kSourcePromptHeight = kSourcePromptButtonTop + kButtonHeight + kSourcePromptBottomMargin + kDialogChromeAllowance;
 const int IDC_SOURCE_EDIT = 4101;
 const int IDC_SOURCE_BROWSE_FOLDER = 4102;
-const int IDC_SOURCE_BROWSE_PLAYLIST = 4103;
 const int IDC_SOURCE_BROWSE_FILE = 4106;
 const int IDC_SOURCE_ADD = 4104;
 const int IDC_SOURCE_CANCEL = 4105;
@@ -119,50 +119,32 @@ std::wstring BrowseFolder(HWND owner) {
     return result;
 }
 
-std::wstring BrowsePlaylist(HWND owner) {
-    IFileOpenDialog* pFileOpen = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
-    std::wstring result;
-    if (SUCCEEDED(hr)) {
-        COMDLG_FILTERSPEC filters[] = {
-            { L"Playlist files", L"*.m3u;*.m3u8;*.pls" },
-            { L"All files", L"*.*" },
-        };
-        pFileOpen->SetFileTypes(2, filters);
-        pFileOpen->SetTitle(L"Choose playlist file");
-        if (SUCCEEDED(pFileOpen->Show(owner))) {
-            IShellItem* pItem = nullptr;
-            if (SUCCEEDED(pFileOpen->GetResult(&pItem))) {
-                PWSTR pszFilePath = nullptr;
-                if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath))) {
-                    result = pszFilePath;
-                    CoTaskMemFree(pszFilePath);
-                }
-                pItem->Release();
-            }
-        }
-        pFileOpen->Release();
+std::wstring BuildMediaSourceFilterPattern() {
+    // FEAT-01: built from the single shared extension list in
+    // media_source_file_types.h (media + playlist extensions combined)
+    // instead of a separately hand-typed string literal, so this can
+    // never drift out of sync with the POSIX build's equivalent filter
+    // in fltk_gui_main.cpp again.
+    std::wstring pattern;
+    for (const auto& ext : GetMediaSourceFileExtensions()) {
+        if (!pattern.empty()) pattern += L";";
+        pattern += L"*." + ext;
     }
-    return result;
+    return pattern;
 }
 
 std::wstring BrowseMediaFile(HWND owner) {
-    // Extension list mirrored from dlna_utils.cpp's kFormats table
-    // (video + audio only, matching the feature request). kFormats is
-    // file-local to dlna_utils.cpp and not exported, so this list is
-    // hand-maintained here -- the same pattern settingsdlg.cpp's
-    // BrowsePlaylistEntryPath already uses for its own movie/subtitle
-    // filters. If a new extension is added to kFormats, add it here too.
     IFileOpenDialog* pFileOpen = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
     std::wstring result;
     if (SUCCEEDED(hr)) {
+        const std::wstring pattern = BuildMediaSourceFilterPattern();
         COMDLG_FILTERSPEC filters[] = {
-            { L"Media files", L"*.mp4;*.m4v;*.mkv;*.webm;*.avi;*.divx;*.mov;*.mpg;*.mpeg;*.mpe;*.vob;*.ts;*.m2ts;*.mts;*.wmv;*.flv;*.3gp;*.3g2;*.mp3;*.flac;*.m4a;*.aac;*.wav;*.wma;*.ogg;*.oga;*.opus;*.aiff;*.aif;*.ac3;*.dts" },
+            { L"Media & playlist files", pattern.c_str() },
             { L"All files", L"*.*" },
         };
         pFileOpen->SetFileTypes(2, filters);
-        pFileOpen->SetTitle(L"Choose media file");
+        pFileOpen->SetTitle(L"Choose media or playlist file");
         if (SUCCEEDED(pFileOpen->Show(owner))) {
             IShellItem* pItem = nullptr;
             if (SUCCEEDED(pFileOpen->GetResult(&pItem))) {
@@ -219,20 +201,25 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         kGutter, kSourcePromptEditTop, kSourcePromptContentWidth, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_EDIT)), NULL, NULL);
     HWND hint = CreateWindowW(L"STATIC", L"Example: ftp://user:pass@server:21/media",
         WS_VISIBLE | WS_CHILD, kGutter, kSourcePromptHintTop, kSourcePromptContentWidth, kSourcePromptLabelHeight, hwnd, NULL, NULL, NULL);
-    // assign mnemonics for all five buttons in one call so duplicate letters resolve correctly
-    std::vector<std::wstring> srcLabels = { L"Folder...", L"Playlist...", L"File...", L"Add", L"Cancel" };
+    // assign mnemonics for all four buttons in one call so duplicate letters resolve correctly
+    std::vector<std::wstring> srcLabels = { L"Folder...", L"File...", L"Add", L"Cancel" };
     std::vector<wchar_t> srcMnemonics = AssignMnemonics(srcLabels);
     HWND folder = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[0], srcMnemonics[0]).c_str(),
         WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_FOLDER)), NULL, NULL);
-    HWND playlist = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[1], srcMnemonics[1]).c_str(),
-        WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter + 96 + kButtonGap, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_PLAYLIST)), NULL, NULL);
-    HWND file = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[2], srcMnemonics[2]).c_str(),
-        WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter + 96 + kButtonGap + 96 + kButtonGap, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_FILE)), NULL, NULL);
-    HWND add = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[3], srcMnemonics[3]).c_str(),
+    // FEAT-01: File... now covers both media and playlist extensions
+    // (see BuildMediaSourceFilterPattern above), so it is widened to
+    // occupy the horizontal space the removed Playlist... button and
+    // its gap used to take: 96 (old Playlist width) + kButtonGap +
+    // 96 (old File width) = 96 + 8 + 96 = 200. Using 200 here (not 204)
+    // keeps the button's right edge exactly where the old File...
+    // button's right edge was, so nothing to its right needs to move.
+    HWND file = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[1], srcMnemonics[1]).c_str(),
+        WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter + 96 + kButtonGap, kSourcePromptButtonTop, 200, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_FILE)), NULL, NULL);
+    HWND add = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[2], srcMnemonics[2]).c_str(),
         WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, kSourcePromptWidth - kGutter - 78 - kButtonGap - 78, kSourcePromptButtonTop, 78, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_ADD)), NULL, NULL);
-    HWND cancel = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[4], srcMnemonics[4]).c_str(),
+    HWND cancel = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[3], srcMnemonics[3]).c_str(),
         WS_VISIBLE | WS_CHILD | WS_TABSTOP, kSourcePromptWidth - kGutter - 78, kSourcePromptButtonTop, 78, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_CANCEL)), NULL, NULL);
-    HWND controls[] = { label, state->edit, hint, folder, playlist, file, add, cancel };
+    HWND controls[] = { label, state->edit, hint, folder, file, add, cancel };
         for (HWND control : controls) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         EnableWindow(GetDlgItem(hwnd, IDC_SOURCE_ADD), FALSE);
         SetFocus(state->edit);
@@ -247,12 +234,6 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         }
         if (id == IDC_SOURCE_BROWSE_FOLDER) {
             std::wstring selected = BrowseFolder(hwnd);
-            if (!selected.empty()) SetWindowTextW(state->edit, selected.c_str());
-            RestoreModalFocus(state->focusSnapshot, state->edit);
-            return 0;
-        }
-        if (id == IDC_SOURCE_BROWSE_PLAYLIST) {
-            std::wstring selected = BrowsePlaylist(hwnd);
             if (!selected.empty()) SetWindowTextW(state->edit, selected.c_str());
             RestoreModalFocus(state->focusSnapshot, state->edit);
             return 0;
