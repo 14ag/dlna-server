@@ -2,6 +2,7 @@ import http.client
 import os
 import re
 import shutil
+import socket
 import subprocess
 import time
 import xml.etree.ElementTree as ET
@@ -385,3 +386,100 @@ def test_no_response_to_satip_search(dlna_server_process):
         "server responded to a SAT>IP probe; this device is not a SAT>IP server "
         "and must not be added via VLC's parseSatipServer code path"
     )
+
+
+@pytest.fixture
+def ssdp_multicast_addr():
+    """(host, port) tuple for the SSDP multicast group, reused by the
+    flood test. Constants come from the project's existing ssdp_listener."""
+    from tests.fixtures.ssdp_listener import SSDP_ADDR, SSDP_PORT
+    return (SSDP_ADDR, SSDP_PORT)
+
+
+@pytest.mark.windows_only
+def test_ssdp_search_flood_does_not_degrade_or_hang(
+    dlna_server_process, ssdp_multicast_addr
+):
+    """F-PERF-01: send more than kMaxDelayedResponses (256) M-SEARCH requests
+    in a short window and confirm the sender is not blocked and the server
+    keeps answering afterward.
+
+    On Windows a localhost socket cannot receive its own multicast (see the
+    module docstring above), so server liveness after the flood is proven by
+    reading the server's debug.log instead of recvfrom(). IP_MULTICAST_IF is
+    set to the interface the server bound (parsed from its startup log line)
+    so the M-SEARCH datagrams actually reach it.
+    """
+    binary_dir = Path(dlna_server_process)
+    pre_log = _read_ssdp_log(binary_dir)
+    pre_len = len(pre_log)
+
+    m = re.search(r"Starting server on ([\d.]+):(\d+)", pre_log)
+    if not m:
+        pytest.skip("could not parse server bind address from debug.log")
+    server_ip = m.group(1)
+
+    msearch = (
+        "M-SEARCH * HTTP/1.1\r\n"
+        f"HOST: {ssdp_multicast_addr[0]}:{ssdp_multicast_addr[1]}\r\n"
+        'MAN: "ssdp:discover"\r\n'
+        "MX: 3\r\n"
+        "ST: ssdp:all\r\n\r\n"
+    ).encode()
+
+    request_count = 400
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # Without this the OS picks a default/route that does not deliver loopback
+    # multicast to the LAN-bound listener the server joined.
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
+                    socket.inet_aton(server_ip))
+
+    start = time.monotonic()
+    for _ in range(request_count):
+        sock.sendto(msearch, ssdp_multicast_addr)
+    elapsed_send = time.monotonic() - start
+    # Sending 400 short UDP datagrams must not block the sender (this asserts
+    # the SENDER isn't starved, not the server's queue -- see note above).
+    assert elapsed_send < 5.0, f"flood send took too long: {elapsed_send:.2f}s"
+
+    # The flood must actually reach the server (else the liveness check below
+    # would be vacuous). Count newly-logged searches for ssdp:all, polling for
+    # the server to drain its receive queue after the burst.
+    deadline = time.monotonic() + 5.0
+    flood_received = 0
+    while time.monotonic() < deadline:
+        new_text = _read_ssdp_log(binary_dir)[pre_len:]
+        flood_received = len(re.findall(r"SSDP search in: .* st=ssdp:all ", new_text))
+        if flood_received >= 100:
+            break
+        time.sleep(0.2)
+    assert flood_received >= 100, (
+        f"server did not receive the flood (logged {flood_received}/{request_count} "
+        "ssdp:all searches); multicast delivery failed"
+    )
+
+    # The server must still be alive and answering SSDP after absorbing the
+    # flood. The follow-up uses a distinct ST (upnp:rootdevice) so it cannot
+    # coalesce with the ssdp:all flood and proves the server keeps processing.
+    followup = (
+        "M-SEARCH * HTTP/1.1\r\n"
+        f"HOST: {ssdp_multicast_addr[0]}:{ssdp_multicast_addr[1]}\r\n"
+        'MAN: "ssdp:discover"\r\n'
+        "MX: 1\r\n"
+        "ST: upnp:rootdevice\r\n\r\n"
+    ).encode()
+    follow_pre_len = len(_read_ssdp_log(binary_dir))
+    sock.sendto(followup, ssdp_multicast_addr)
+    sock.close()
+
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        log = _read_ssdp_log(binary_dir)[follow_pre_len:]
+        if _log_has_search_in_for_st(log, "upnp:rootdevice"):
+            break
+        time.sleep(0.2)
+    else:
+        pytest.fail(
+            "server did not process follow-up M-SEARCH after flood; "
+            "SSDP handling degraded or hung"
+        )
