@@ -242,7 +242,7 @@ void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
             return;
         }
         if (m_delayedResponses.size() >= kMaxDelayedResponses) {
-            m_delayedResponses.erase(m_delayedResponses.begin());
+            m_delayedResponses.pop_front();
         }
         m_delayedResponses.push_back(std::move(response));
     }

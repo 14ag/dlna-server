@@ -721,11 +721,24 @@ public:
         // Load window icon from bundled resources
         const std::string iconPath = ResolveBundledResourcePath("server_icon_48.png");
         if (!iconPath.empty()) {
-            Fl_PNG_Image* png = new Fl_PNG_Image(iconPath.c_str());
-            if (png->w() > 0 && png->h() > 0) {
-                icon(png);
+            // Fl_Window::icon() does not take ownership of the
+            // Fl_RGB_Image passed to it -- the caller remains
+            // responsible for its lifetime. This previously `new`'d the
+            // image, handed it to icon(), and never freed it on the
+            // success path (only the failure branch below did). Store
+            // it as a MainWindow member (m_windowIcon) and free it in
+            // the destructor instead, so its lifetime matches the
+            // window's exactly. See F-MEM-02. This runs once per
+            // process (MainWindow is constructed exactly once, in
+            // main()), so this was a small, bounded, one-time leak per
+            // run rather than a growing one -- but unnecessary either
+            // way.
+            m_windowIcon = new Fl_PNG_Image(iconPath.c_str());
+            if (m_windowIcon->w() > 0 && m_windowIcon->h() > 0) {
+                icon(m_windowIcon);
             } else {
-                delete png;
+                delete m_windowIcon;
+                m_windowIcon = nullptr;
             }
         }
 
@@ -740,6 +753,7 @@ public:
         Fl::remove_timeout(PollLog, this);
         if (m_worker.joinable()) m_worker.join();
         DLNAServer.Stop();
+        delete m_windowIcon;
     }
 
     void resize(int x, int y, int width, int height) override {
@@ -1082,6 +1096,7 @@ private:
     ServerUiState m_pendingState;
     std::string m_pendingMessage;
     std::atomic<bool> m_scanInProgress{false};
+    Fl_PNG_Image* m_windowIcon = nullptr;
 };
 
 // Used by single-instance reveal-on-demand callback.

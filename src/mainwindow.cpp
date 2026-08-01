@@ -1394,6 +1394,20 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         }
         return 0;
     }
+    case WM_KILL_SERVER: {
+        // --kill-server path.  Always performs a full graceful
+        // teardown: stop the server synchronously (firing the
+        // ssdp:byebye NOTIFY on this thread while the message loop is
+        // still running), then destroy the window.  Unconditional –
+        // no ShouldCloseNow / IsBusy gate – because this message is
+        // only sent by a distinct process that already verified a stop
+        // is safe (main.cpp killServer path).
+        if (DLNAServer.IsRunning()) {
+            DLNAServer.Stop();
+        }
+        DestroyWindow(hwnd);
+        return 0;
+    }
     case WM_COPYDATA: {
         const COPYDATASTRUCT* cds = reinterpret_cast<const COPYDATASTRUCT*>(lParam);
         if (cds && cds->dwData == kCopyDataSourceReplace && cds->lpData) {

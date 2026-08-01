@@ -39,6 +39,11 @@ public:
     // asks this instance to stop the server and close entirely
     // sent by a separate short lived process launched with kill server or k
     static constexpr UINT WM_REQUEST_SHUTDOWN = WM_APP + 21;
+    // sent by --kill-server: stops the server synchronously, then
+    // destroys the window. unlike WM_REQUEST_SHUTDOWN this always
+    // performs a full graceful teardown that emits ssdp:byebye
+    // regardless of current server state.
+    static constexpr UINT WM_KILL_SERVER = WM_APP + 22;
     // dwData discriminator used on the wm copydata messages this app sends
     // to itself from a second process see main cpp for the sender side
     static constexpr ULONG_PTR kCopyDataSourceReplace = 1;

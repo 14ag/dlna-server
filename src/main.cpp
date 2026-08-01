@@ -648,7 +648,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         LocalFree(argv);
         HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
         if (hwndExisting) {
-            PostMessageW(hwndExisting, MainWindow::WM_REQUEST_SHUTDOWN, 0, 0);
+            PostMessageW(hwndExisting, MainWindow::WM_KILL_SERVER, 0, 0);
         }
         return 0;
     }

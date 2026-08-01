@@ -140,7 +140,7 @@ void MediaDatabase::Load(const std::wstring& path) {
 }
 
 bool MediaDatabase::Save(const std::wstring& path) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::unique_lock<std::mutex> lock(m_mutex);
     std::ostringstream out;
     out << "# dlna-server media-cache.tsv v1\n";
     for (const auto& entry : m_records) {
@@ -149,8 +149,17 @@ bool MediaDatabase::Save(const std::wstring& path) const {
             << EscapeField(record.key) << '\t'
             << EscapeField(record.scanError) << '\n';
     }
+    const std::string content = out.str();
+    // Up to kPlaylistScanPoolSize (20) concurrent scan workers call
+    // GetOrCreateStableId()/RecordScanError()/MarkScanSuccess() on this
+    // same instance, all serialized through m_mutex. Save() runs once at
+    // the end of a scan pass; m_records is not read again after this
+    // point, so release the lock before the write-then-rename disk I/O
+    // below instead of holding it across both file operations. See
+    // F-LOCK-01.
+    lock.unlock();
     const std::wstring tempPath = path + L".tmp";
-    if (!WriteWholeFile(tempPath, out.str())) return false;
+    if (!WriteWholeFile(tempPath, content)) return false;
     if (ReplaceFileAtomic(tempPath, path)) return true;
 #ifdef _WIN32
     DeleteFileW(tempPath.c_str());
