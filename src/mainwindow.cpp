@@ -18,6 +18,7 @@
 #include "config.h"
 #include "dlna_utils.h"
 #include "media_sources.h"
+#include "thread_guard.h"
 #include "input_gate.h"
 #include "modal_focus.h"
 #include "function_key_action.h"
@@ -66,6 +67,7 @@ const int kSourcePromptHeight = kSourcePromptButtonTop + kButtonHeight + kSource
 const int IDC_SOURCE_EDIT = 4101;
 const int IDC_SOURCE_BROWSE_FOLDER = 4102;
 const int IDC_SOURCE_BROWSE_PLAYLIST = 4103;
+const int IDC_SOURCE_BROWSE_FILE = 4106;
 const int IDC_SOURCE_ADD = 4104;
 const int IDC_SOURCE_CANCEL = 4105;
 
@@ -144,6 +146,39 @@ std::wstring BrowsePlaylist(HWND owner) {
     return result;
 }
 
+std::wstring BrowseMediaFile(HWND owner) {
+    // Extension list mirrored from dlna_utils.cpp's kFormats table
+    // (video + audio only, matching the feature request). kFormats is
+    // file-local to dlna_utils.cpp and not exported, so this list is
+    // hand-maintained here -- the same pattern settingsdlg.cpp's
+    // BrowsePlaylistEntryPath already uses for its own movie/subtitle
+    // filters. If a new extension is added to kFormats, add it here too.
+    IFileOpenDialog* pFileOpen = nullptr;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileOpenDialog, reinterpret_cast<void**>(&pFileOpen));
+    std::wstring result;
+    if (SUCCEEDED(hr)) {
+        COMDLG_FILTERSPEC filters[] = {
+            { L"Media files", L"*.mp4;*.m4v;*.mkv;*.webm;*.avi;*.divx;*.mov;*.mpg;*.mpeg;*.mpe;*.vob;*.ts;*.m2ts;*.mts;*.wmv;*.flv;*.3gp;*.3g2;*.mp3;*.flac;*.m4a;*.aac;*.wav;*.wma;*.ogg;*.oga;*.opus;*.aiff;*.aif;*.ac3;*.dts" },
+            { L"All files", L"*.*" },
+        };
+        pFileOpen->SetFileTypes(2, filters);
+        pFileOpen->SetTitle(L"Choose media file");
+        if (SUCCEEDED(pFileOpen->Show(owner))) {
+            IShellItem* pItem = nullptr;
+            if (SUCCEEDED(pFileOpen->GetResult(&pItem))) {
+                PWSTR pszFilePath = nullptr;
+                if (SUCCEEDED(pItem->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath))) {
+                    result = pszFilePath;
+                    CoTaskMemFree(pszFilePath);
+                }
+                pItem->Release();
+            }
+        }
+        pFileOpen->Release();
+    }
+    return result;
+}
+
 struct SourcePromptState {
     HWND owner = NULL;
     HWND edit = NULL;
@@ -176,26 +211,28 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
         ApplyDarkFrame(hwnd);
 
-        HFONT font = SourcePromptFont(hwnd);
-        HWND label = CreateWindowW(L"STATIC", L"Add a folder, playlist file, or Network share URL:",
-            WS_VISIBLE | WS_CHILD, kGutter, kGutter, kSourcePromptContentWidth, kSourcePromptLabelHeight, hwnd, NULL, NULL, NULL);
-        state->edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
-            WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_GROUP | ES_AUTOHSCROLL,
-            kGutter, kSourcePromptEditTop, kSourcePromptContentWidth, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_EDIT)), NULL, NULL);
-        HWND hint = CreateWindowW(L"STATIC", L"Example: ftp://user:pass@server:21/media",
-            WS_VISIBLE | WS_CHILD, kGutter, kSourcePromptHintTop, kSourcePromptContentWidth, kSourcePromptLabelHeight, hwnd, NULL, NULL, NULL);
-        // assign mnemonics for all four buttons in one call so duplicate letters resolve correctly
-        std::vector<std::wstring> srcLabels = { L"Folder...", L"Playlist...", L"Add", L"Cancel" };
-        std::vector<wchar_t> srcMnemonics = AssignMnemonics(srcLabels);
-        HWND folder = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[0], srcMnemonics[0]).c_str(),
-            WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_FOLDER)), NULL, NULL);
-        HWND playlist = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[1], srcMnemonics[1]).c_str(),
-            WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter + 96 + kButtonGap, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_PLAYLIST)), NULL, NULL);
-        HWND add = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[2], srcMnemonics[2]).c_str(),
-            WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, kSourcePromptWidth - kGutter - 78 - kButtonGap - 78, kSourcePromptButtonTop, 78, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_ADD)), NULL, NULL);
-        HWND cancel = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[3], srcMnemonics[3]).c_str(),
-            WS_VISIBLE | WS_CHILD | WS_TABSTOP, kSourcePromptWidth - kGutter - 78, kSourcePromptButtonTop, 78, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_CANCEL)), NULL, NULL);
-        HWND controls[] = { label, state->edit, hint, folder, playlist, add, cancel };
+    HFONT font = SourcePromptFont(hwnd);
+    HWND label = CreateWindowW(L"STATIC", L"Add a local source or a Network share URL:",
+        WS_VISIBLE | WS_CHILD, kGutter, kGutter, kSourcePromptContentWidth, kSourcePromptLabelHeight, hwnd, NULL, NULL, NULL);
+    state->edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+        WS_VISIBLE | WS_CHILD | WS_TABSTOP | WS_GROUP | ES_AUTOHSCROLL,
+        kGutter, kSourcePromptEditTop, kSourcePromptContentWidth, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_EDIT)), NULL, NULL);
+    HWND hint = CreateWindowW(L"STATIC", L"Example: ftp://user:pass@server:21/media",
+        WS_VISIBLE | WS_CHILD, kGutter, kSourcePromptHintTop, kSourcePromptContentWidth, kSourcePromptLabelHeight, hwnd, NULL, NULL, NULL);
+    // assign mnemonics for all five buttons in one call so duplicate letters resolve correctly
+    std::vector<std::wstring> srcLabels = { L"Folder...", L"Playlist...", L"File...", L"Add", L"Cancel" };
+    std::vector<wchar_t> srcMnemonics = AssignMnemonics(srcLabels);
+    HWND folder = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[0], srcMnemonics[0]).c_str(),
+        WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_FOLDER)), NULL, NULL);
+    HWND playlist = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[1], srcMnemonics[1]).c_str(),
+        WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter + 96 + kButtonGap, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_PLAYLIST)), NULL, NULL);
+    HWND file = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[2], srcMnemonics[2]).c_str(),
+        WS_VISIBLE | WS_CHILD | WS_TABSTOP, kGutter + 96 + kButtonGap + 96 + kButtonGap, kSourcePromptButtonTop, 96, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_BROWSE_FILE)), NULL, NULL);
+    HWND add = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[3], srcMnemonics[3]).c_str(),
+        WS_VISIBLE | WS_CHILD | WS_TABSTOP | BS_DEFPUSHBUTTON, kSourcePromptWidth - kGutter - 78 - kButtonGap - 78, kSourcePromptButtonTop, 78, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_ADD)), NULL, NULL);
+    HWND cancel = CreateWindowW(L"BUTTON", InsertMnemonicMarker(srcLabels[4], srcMnemonics[4]).c_str(),
+        WS_VISIBLE | WS_CHILD | WS_TABSTOP, kSourcePromptWidth - kGutter - 78, kSourcePromptButtonTop, 78, kButtonHeight, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SOURCE_CANCEL)), NULL, NULL);
+    HWND controls[] = { label, state->edit, hint, folder, playlist, file, add, cancel };
         for (HWND control : controls) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         EnableWindow(GetDlgItem(hwnd, IDC_SOURCE_ADD), FALSE);
         SetFocus(state->edit);
@@ -216,6 +253,12 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         }
         if (id == IDC_SOURCE_BROWSE_PLAYLIST) {
             std::wstring selected = BrowsePlaylist(hwnd);
+            if (!selected.empty()) SetWindowTextW(state->edit, selected.c_str());
+            RestoreModalFocus(state->focusSnapshot, state->edit);
+            return 0;
+        }
+        if (id == IDC_SOURCE_BROWSE_FILE) {
+            std::wstring selected = BrowseMediaFile(hwnd);
             if (!selected.empty()) SetWindowTextW(state->edit, selected.c_str());
             RestoreModalFocus(state->focusSnapshot, state->edit);
             return 0;
@@ -599,20 +642,22 @@ void MainWindow::BeginStartServer() {
     SetStatus(ServerUiState::Starting);
     HWND target = m_hwnd;
     m_worker = std::thread([target]() {
-        std::wstring reason;
-        bool ok = DLNAServer.Start(reason);
-        std::wstring message;
-        if (!ok) {
-            message = L"server could not start\n";
-            if (!reason.empty()) message += reason;
-        }
-        ServerOperationResult* result = new ServerOperationResult{
-            ok ? ServerUiState::Running : ServerUiState::Stopped,
-            ok,
-            ok ? DLNAServer.GetEndpoint() : L"",
-            ok ? L"" : message.c_str()
-        };
-        PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+        RunGuarded(L"start-server-worker", [target]() {
+            std::wstring reason;
+            bool ok = DLNAServer.Start(reason);
+            std::wstring message;
+            if (!ok) {
+                message = L"server could not start\n";
+                if (!reason.empty()) message += reason;
+            }
+            ServerOperationResult* result = new ServerOperationResult{
+                ok ? ServerUiState::Running : ServerUiState::Stopped,
+                ok,
+                ok ? DLNAServer.GetEndpoint() : L"",
+                ok ? L"" : message.c_str()
+            };
+            PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+        });
     });
 }
 
@@ -622,9 +667,11 @@ void MainWindow::BeginStopServer() {
     SetStatus(ServerUiState::Stopping, m_statusEndpoint);
     HWND target = m_hwnd;
     m_worker = std::thread([target]() {
-        DLNAServer.Stop();
-        ServerOperationResult* result = new ServerOperationResult{ ServerUiState::Stopped, true, L"", L"" };
-        PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+        RunGuarded(L"stop-server-worker", [target]() {
+            DLNAServer.Stop();
+            ServerOperationResult* result = new ServerOperationResult{ ServerUiState::Stopped, true, L"", L"" };
+            PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+        });
     });
 }
 
@@ -634,22 +681,24 @@ void MainWindow::BeginRestartServer() {
     SetStatus(ServerUiState::Stopping, m_statusEndpoint);
     HWND target = m_hwnd;
     m_worker = std::thread([target]() {
-        DLNAServer.Stop();
-        PostMessageW(target, WM_SERVER_OPERATION_PROGRESS, static_cast<WPARAM>(ServerUiState::Starting), 0);
-        std::wstring reason;
-        bool ok = DLNAServer.Start(reason);
-        std::wstring message;
-        if (!ok) {
-            message = L"server could not start\n";
-            if (!reason.empty()) message += reason;
-        }
-        ServerOperationResult* result = new ServerOperationResult{
-            ok ? ServerUiState::Running : ServerUiState::Stopped,
-            ok,
-            ok ? DLNAServer.GetEndpoint() : L"",
-            ok ? L"" : message.c_str()
-        };
-        PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+        RunGuarded(L"restart-server-worker", [target]() {
+            DLNAServer.Stop();
+            PostMessageW(target, WM_SERVER_OPERATION_PROGRESS, static_cast<WPARAM>(ServerUiState::Starting), 0);
+            std::wstring reason;
+            bool ok = DLNAServer.Start(reason);
+            std::wstring message;
+            if (!ok) {
+                message = L"server could not start\n";
+                if (!reason.empty()) message += reason;
+            }
+            ServerOperationResult* result = new ServerOperationResult{
+                ok ? ServerUiState::Running : ServerUiState::Stopped,
+                ok,
+                ok ? DLNAServer.GetEndpoint() : L"",
+                ok ? L"" : message.c_str()
+            };
+            PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+        });
     });
 }
 
@@ -659,26 +708,28 @@ void MainWindow::BeginSourceOverrideRestart(std::vector<MediaSource> overrideSou
     SetStatus(ServerUiState::Stopping, m_statusEndpoint);
     HWND target = m_hwnd;
     m_worker = std::thread([target, overrideSources = std::move(overrideSources)]() {
-        DLNAServer.Stop();
-        // Set the NEW override only after Stop() has fully run, since
-        // Stop() unconditionally clears whatever override was active
-        // (Phase 2). Setting it before Stop() would have it wiped.
-        AppConfig.SetRuntimeSourceOverride(overrideSources);
-        PostMessageW(target, WM_SERVER_OPERATION_PROGRESS, static_cast<WPARAM>(ServerUiState::Starting), 0);
-        std::wstring reason;
-        bool ok = DLNAServer.Start(reason);
-        std::wstring message;
-        if (!ok) {
-            message = L"server could not start\n";
-            if (!reason.empty()) message += reason;
-        }
-        ServerOperationResult* result = new ServerOperationResult{
-            ok ? ServerUiState::Running : ServerUiState::Stopped,
-            ok,
-            ok ? DLNAServer.GetEndpoint() : L"",
-            ok ? L"" : message
-        };
-        PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+        RunGuarded(L"source-override-restart-worker", [target, overrideSources = std::move(overrideSources)]() mutable {
+            DLNAServer.Stop();
+            // Set the NEW override only after Stop() has fully run, since
+            // Stop() unconditionally clears whatever override was active
+            // (Phase 2). Setting it before Stop() would have it wiped.
+            AppConfig.SetRuntimeSourceOverride(overrideSources);
+            PostMessageW(target, WM_SERVER_OPERATION_PROGRESS, static_cast<WPARAM>(ServerUiState::Starting), 0);
+            std::wstring reason;
+            bool ok = DLNAServer.Start(reason);
+            std::wstring message;
+            if (!ok) {
+                message = L"server could not start\n";
+                if (!reason.empty()) message += reason;
+            }
+            ServerOperationResult* result = new ServerOperationResult{
+                ok ? ServerUiState::Running : ServerUiState::Stopped,
+                ok,
+                ok ? DLNAServer.GetEndpoint() : L"",
+                ok ? L"" : message
+            };
+            PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
+        });
     });
 }
 
@@ -985,7 +1036,7 @@ bool MainWindow::AddMediaSourceIfNew(const std::wstring& path) {
     }
     AppConfig.Save();
     RefreshSourceList();
-    std::thread([]() { DLNAServer.Rescan(); }).detach();
+    std::thread([]() { RunGuarded(L"add-source-rescan", []() { DLNAServer.Rescan(); }); }).detach();
     return true;
 }
 
@@ -1322,7 +1373,25 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         return 0;
     }
     case WM_REQUEST_SHUTDOWN: {
-        DestroyWindow(hwnd);
+        // Mirrors WM_CLOSE exactly (see that case above). Previously this
+        // called DestroyWindow() unconditionally, with no check against a
+        // start/stop/restart worker being mid-flight. If one was, the
+        // worker's later PostMessageW(WM_SERVER_OPERATION_DONE, ...)
+        // targets a window that no longer exists by the time the message
+        // loop would dispatch it, so its heap-allocated
+        // ServerOperationResult is never delete'd. Routing through the
+        // same ShouldCloseNow/ClosePendingState gate WM_CLOSE already
+        // uses defers the actual destroy until CompleteServerOperation()
+        // has processed that message and freed the result -- see
+        // F-CRASH-03.
+        if (ShouldCloseNow(DLNAServer.IsRunning(), IsBusy())) {
+            DestroyWindow(hwnd);
+        } else {
+            if (m_state == ServerUiState::Stopping) {
+                m_closePending.RequestCloseOnceStopped();
+            }
+            ShowWindow(hwnd, SW_HIDE);
+        }
         return 0;
     }
     case WM_COPYDATA: {

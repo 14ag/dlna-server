@@ -10,6 +10,7 @@
 #include "task_group.h"
 #include "upnp_eventing.h"
 #include "scan_cancellation.h"
+#include "thread_guard.h"
 #include <shared_mutex>
 #include <thread>
 #include <algorithm>
@@ -274,15 +275,31 @@ void MediaSources::Scan() {
     sourceThreads.reserve(jobs.size());
     for (auto& job : jobs) {
         sourceThreads.emplace_back([this, &job]() {
-            LogPrint(L"Scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
-            if (IsPlaylistSourcePath(job.source.path)) {
-                ScanPlaylistTree(job.ctx, job.source.path, job.containerId);
-            } else if (IsNetworkShareUrl(job.source.path)) {
-                ScanNetworkFolder(job.ctx, job.source.path, job.containerId, 0);
-            } else {
-                ScanFolder(job.ctx, job.source.path, job.containerId, 0);
-            }
-            LogPrint(L"Finished scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
+            RunGuarded(L"source-scan", [this, &job]() {
+                LogPrint(L"Scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
+                if (IsPlaylistSourcePath(job.source.path)) {
+                    ScanPlaylistTree(job.ctx, job.source.path, job.containerId);
+                } else if (IsNetworkShareUrl(job.source.path)) {
+                    ScanNetworkFolder(job.ctx, job.source.path, job.containerId, 0);
+                } else if (!IsRemoteMediaUrl(job.source.path) && FsIsRegularFile(job.source.path)) {
+                    // A configured source that is a single local file (not
+                    // a directory) used to fall into the ScanFolder()
+                    // branch below, which calls FsListDirectory(rootPath,
+                    // ...) -- that fails outright on a file path (Win32:
+                    // FindFirstFileW on "<file>\*" returns
+                    // INVALID_HANDLE_VALUE; POSIX: directory_iterator on a
+                    // non-directory returns an error code), so ScanFolder()
+                    // logged "Skipping unreadable folder" and returned
+                    // without ever publishing the file. See F-FEAT-01.
+                    // Route straight to AddMediaFile(), the same function
+                    // ScanFolder() itself calls for every media file it
+                    // finds inside a directory.
+                    AddMediaFile(job.ctx->state, job.ctx->cfg, job.source.path, job.containerId);
+                } else {
+                    ScanFolder(job.ctx, job.source.path, job.containerId, 0);
+                }
+                LogPrint(L"Finished scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
+            });
         });
     }
     for (auto& sourceThread : sourceThreads) {
