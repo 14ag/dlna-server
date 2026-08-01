@@ -402,8 +402,12 @@ void Config::Save() {
     out << "MediaSources=" << WideToUtf8(sourcesStr) << "\n";
     out << "NetworkInterfaceAllowList=" << WideToUtf8(networkInterfaceAllowList) << "\n";
 
-    const bool writeOk = WriteFileAtomicUtf8(configPath, out.str());
+    // Capture the built string before releasing the lock, then write to
+    // disk without holding m_mutex -- see F-LOCK-01 (same rationale as
+    // the Win32 Config::Save() fix in config.cpp).
+    const std::string fileContent = out.str();
     lock.unlock();
+    const bool writeOk = WriteFileAtomicUtf8(configPath, fileContent);
     if (!writeOk) {
         LogPrint(L"Config save failed: %ls", configPath.c_str());
     }

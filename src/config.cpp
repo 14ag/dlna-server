@@ -350,9 +350,20 @@ void Config::Save() {
     ss << "NetworkInterfaceAllowList=" << WideToUtf8(networkInterfaceAllowList) << "\n";
 
     static const std::string bom = "\xEF\xBB\xBF";
-    const bool writeOk = WriteFileAtomicUtf8(path, bom + ss.str());
+    const std::string fileContent = bom + ss.str();
     const bool runOnBootLocal = runOnBoot;
+    // Every field this function needs has already been copied into
+    // path/fileContent/runOnBootLocal above, all while m_mutex was held,
+    // so this is a consistent snapshot. Release the lock BEFORE touching
+    // disk: WriteFileAtomicUtf8() below is a synchronous write + rename
+    // that can take milliseconds under normal conditions and far longer
+    // under disk contention, and holding m_mutex (a shared_mutex)
+    // exclusively across it blocks every concurrent reader -- including
+    // AppConfig.GetPort()/IsDebugLogEnabled(), called on every HTTP
+    // request by httpserver.cpp/posix_httpserver.cpp's HandleClient().
+    // See F-LOCK-01.
     lock.unlock();
+    const bool writeOk = WriteFileAtomicUtf8(path, fileContent);
     if (!writeOk) {
         LogPrint(L"Config save failed: %ls", path.c_str());
     }

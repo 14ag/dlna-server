@@ -724,6 +724,15 @@ int MediaSources::GetSystemUpdateID() {
 void MediaSources::ResetForRescan() {
     {
         std::unique_lock<std::shared_mutex> lock(m_mutex);
+        // Capture the catalog size THIS pass is about to discard, before
+        // clearing it. Without this, every ResetForRescan() call
+        // reserve()s the same fixed kInitialCatalogReserve regardless of
+        // how large the catalog actually is, forcing the same sequence
+        // of doubling reallocations to repeat on every rescan for the
+        // life of the process. See F-MEM-01. size() is 0 before anything
+        // has ever been scanned, so first-run behavior is unchanged
+        // (falls through to the kInitialCatalogReserve floor below).
+        const size_t previousSize = m_items.size();
         m_items.clear();
         m_idToIndex.clear();
         m_childrenByParent.clear();
@@ -735,7 +744,23 @@ void MediaSources::ResetForRescan() {
         // m_items to a container that never invalidates existing element
         // storage on growth, e.g. std::deque) is a larger change that also
         // touches m_idToIndex's index scheme and is out of scope here.
-        m_items.reserve(kInitialCatalogReserve);
+        //
+        // Size the reserve off the previous pass's final size (with
+        // 12.5% slack for growth since the last scan) instead of the
+        // fixed constant, once a real size has been observed. This adds
+        // no new lock or I/O -- it is a pure allocation-policy change
+        // using data already available under the lock this function
+        // already holds. m_idToIndex gets the same hint so its bucket
+        // array does not repeatedly rehash (and scatter entries into new
+        // buckets, costing cache misses on every subsequent lookup)
+        // while it grows back to the same size it was before this
+        // reset. m_childrenByParent is deliberately NOT given this same
+        // hint: its key count is the number of distinct parent
+        // containers, not the item count, and previousSize would be a
+        // poor (large) overestimate for it.
+        const size_t reserveHint = (std::max)(kInitialCatalogReserve, previousSize + previousSize / 8);
+        m_items.reserve(reserveHint);
+        m_idToIndex.reserve(reserveHint);
 
         MediaItem root{};
         root.id = 0;

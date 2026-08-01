@@ -82,10 +82,30 @@ std::wstring GetDlgText(HWND hwnd, int id) {
 }
 
 std::wstring MovieTitleFromPath(const std::wstring& moviePath) {
-    wchar_t fileName[MAX_PATH] = {};
-    wcscpy_s(fileName, PathFindFileNameW(moviePath.c_str()));
-    PathRemoveExtensionW(fileName);
-    return fileName[0] ? fileName : L"Media item";
+    // Previously copied moviePath into a fixed wchar_t[MAX_PATH] buffer
+    // via wcscpy_s(fileName, ...) before extracting the file name and
+    // stripping the extension with PathFindFileNameW/
+    // PathRemoveExtensionW. moviePath comes straight from the "Movie
+    // path:" edit control (typed, pasted, or filled by the file-browse
+    // button) with no length check anywhere upstream; wcscpy_s's
+    // two-argument overload aborts the process via the CRT invalid-
+    // parameter handler if the source string does not fit the
+    // destination array, so any path of MAX_PATH (260) characters or
+    // more crashed this dialog. See F-BUF-01. Every other filename/stem
+    // helper in this codebase (SourceStemName, SourceDisplayName in
+    // network_sources.cpp) already operates on std::wstring with no
+    // fixed-size buffer; this rewrite matches that pattern.
+    std::wstring clean = moviePath;
+    while (!clean.empty() && (clean.back() == L'\\' || clean.back() == L'/')) {
+        clean.pop_back();
+    }
+    const size_t slash = clean.find_last_of(L"\\/");
+    std::wstring fileName = slash == std::wstring::npos ? clean : clean.substr(slash + 1);
+    const size_t dot = fileName.find_last_of(L'.');
+    if (dot != std::wstring::npos && dot > 0) {
+        fileName = fileName.substr(0, dot);
+    }
+    return fileName.empty() ? L"Media item" : fileName;
 }
 
 std::wstring BrowseFile(HWND owner, const wchar_t* title, const COMDLG_FILTERSPEC* filters, UINT filterCount) {
