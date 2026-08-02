@@ -1376,13 +1376,28 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         return 0;
     }
     case WM_KILL_SERVER: {
-        // --kill-server path.  Always performs a full graceful
-        // teardown: stop the server synchronously (firing the
-        // ssdp:byebye NOTIFY on this thread while the message loop is
-        // still running), then destroy the window.  Unconditional –
-        // no ShouldCloseNow / IsBusy gate – because this message is
-        // only sent by a distinct process that already verified a stop
-        // is safe (main.cpp killServer path).
+        // --kill-server path.  Always performs a full graceful teardown.
+        // Must not call DLNAServer.Stop() while a BeginStartServer/
+        // BeginStopServer/BeginRestartServer worker is still mid-flight on
+        // m_worker: Server::Start()'s reentrancy guard is a plain atomic
+        // load (not compare-and-swap), so a concurrent Stop() here can
+        // silently no-op while Start() is still running and later leaves
+        // the server running despite this kill request -- see F-CMR-03.
+        // Joining m_worker first is safe and cannot deadlock: this handler
+        // runs on the UI thread, and every m_worker body only ever
+        // PostMessageW's back to the UI thread (never SendMessageW's, and
+        // never blocks waiting on the UI thread), so nothing here can be
+        // waiting on this thread while this thread waits on it.
+        //
+        // Joining first also fixes the matching F-CRASH-03-class leaked-
+        // ServerOperationResult defect: the window is no longer destroyed
+        // while a worker's PostMessageW(WM_SERVER_OPERATION_DONE, ...) can
+        // still be in flight against it, because that worker has already
+        // finished (and already posted, if it was going to) by the time
+        // this join returns.
+        if (m_worker.joinable()) {
+            m_worker.join();
+        }
         if (DLNAServer.IsRunning()) {
             DLNAServer.Stop();
         }
@@ -1391,8 +1406,21 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
     }
     case WM_COPYDATA: {
         const COPYDATASTRUCT* cds = reinterpret_cast<const COPYDATASTRUCT*>(lParam);
-        if (cds && cds->dwData == kCopyDataSourceReplace && cds->lpData) {
-            std::wstring payload(reinterpret_cast<const wchar_t*>(cds->lpData));
+        if (cds && cds->dwData == kCopyDataSourceReplace && cds->lpData &&
+            IsPlausibleWideStringCopyDataSize(cds->cbData)) {
+            // Construct with an EXPLICIT length derived from cbData -- the
+            // one value Windows itself guarantees describes lpData's real
+            // size (see COPYDATASTRUCT docs) -- instead of scanning lpData
+            // for a null terminator with no upper bound. See F-CMR-01.
+            const size_t charCount = cds->cbData / sizeof(wchar_t);
+            std::wstring payload(reinterpret_cast<const wchar_t*>(cds->lpData), charCount);
+            // This project's own sender (main.cpp) includes the trailing
+            // L'\0' in its cbData computation; strip any trailing NULs so
+            // downstream parsing sees exactly the intended string content
+            // regardless of whether a given sender included one.
+            while (!payload.empty() && payload.back() == L'\0') {
+                payload.pop_back();
+            }
             std::vector<std::wstring> paths = ParseQuotedCommaList(payload);
             std::vector<MediaSource> overrideSources;
             for (const auto& path : paths) {

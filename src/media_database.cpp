@@ -2,9 +2,11 @@
 
 #include "config.h"
 #include "dlna_utils.h"
+#include "log.h"
 #include "netutils.h"
 
 #include <cstdio>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -179,6 +181,7 @@ size_t MediaDatabase::PruneUntouched() {
     size_t erased = 0;
     for (auto it = m_records.begin(); it != m_records.end();) {
         if (m_touchedThisPass.find(it->first) == m_touchedThisPass.end()) {
+            m_freedIds.push_back(it->second.id);
             it = m_records.erase(it);
             ++erased;
         } else {
@@ -195,10 +198,33 @@ int MediaDatabase::GetOrCreateStableIdLocked(const std::wstring& canonicalKey) {
         return found->second.id;
     }
 
+    int id;
+    if (!m_freedIds.empty()) {
+        id = m_freedIds.back();
+        m_freedIds.pop_back();
+    } else if (m_nextId == (std::numeric_limits<int>::max)()) {
+        // Signed-overflow guard: m_nextId++ here would be undefined
+        // behavior (SEI CERT INT30-C / INT32-C; cppreference
+        // "Arithmetic operators"). INT_MAX itself is still a valid,
+        // legitimate final allocation, so issue it and reset the
+        // counter to the base ID for every subsequent request, rather
+        // than wrapping into negative territory or reading garbage.
+        // The free-list above should already be satisfying most
+        // requests for any server whose catalog churns, since every
+        // PruneUntouched() call returns IDs to circulation -- this
+        // path is a last-resort guard, not the expected steady state.
+        // See F-CMR-04.
+        LogPrint(L"MediaDatabase ID space exhausted; reusing base ID. "
+                  L"Restart the server to fully reset the ID space.");
+        id = m_nextId;
+        m_nextId = kPersistentMediaIdBase;
+    } else {
+        id = m_nextId++;
+    }
+
     Record record;
-    record.id = m_nextId++;
+    record.id = id;
     record.key = canonicalKey;
-    int id = record.id;
     m_records[canonicalKey] = record;
     return id;
 }

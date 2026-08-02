@@ -3,6 +3,7 @@
 
 #include <windows.h>
 #include "close_pending_state.h"
+#include "copydata_validation.h"
 #include "access_keys.h"
 #include "source_drop_target.h"
 #include "source_list_focus.h"
