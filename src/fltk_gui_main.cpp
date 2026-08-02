@@ -760,6 +760,10 @@ public:
     ~MainWindow() override {
         Fl::remove_timeout(PollLog, this);
         if (m_worker.joinable()) m_worker.join();
+        // F-CMR-02: must join before DLNAServer.Stop() below and before
+        // this object's own members finish being torn down, for the same
+        // reason m_worker is already joined here.
+        if (m_rescanWorker.joinable()) m_rescanWorker.join();
         DLNAServer.Stop();
         delete m_windowIcon;
     }
@@ -806,14 +810,29 @@ private:
     void BeginRescan() {
         if (m_scanInProgress.exchange(true)) return;
         RefreshStatus();
-        MainWindow* self = this;
-        std::thread([self]() {
-            RunGuarded(L"fltk-rescan", [self]() {
+        // Join any previous rescan's thread before starting a new one --
+        // mirrors the `if (m_worker.joinable()) m_worker.join();` guard
+        // StartServer()/StopServer()/RestartServer() already use for
+        // m_worker. m_scanInProgress.exchange(true) above already prevents
+        // two rescans from being in flight at once, so this join is
+        // expected to return immediately in the common case; it only
+        // matters for the narrow window between the previous thread's
+        // store(false) and its OS-level thread function actually
+        // returning.
+        if (m_rescanWorker.joinable()) m_rescanWorker.join();
+        m_rescanWorker = std::thread([this]() {
+            RunGuarded(L"fltk-rescan", [this]() {
                 DLNAServer.Rescan();
-                self->m_scanInProgress.store(false);
+                // Safe to touch `this` here specifically because this
+                // thread is now a JOINABLE member (m_rescanWorker), and
+                // ~MainWindow() joins it before any teardown proceeds --
+                // see the destructor change below. This was the exact
+                // difference between this method and StartServer/
+                // StopServer/RestartServer before this fix. See F-CMR-02.
+                m_scanInProgress.store(false);
                 Fl::awake();
             });
-        }).detach();
+        });
     }
 
     void RefreshEmptyState() {
@@ -1097,6 +1116,15 @@ private:
     Fl_Box m_emptyState;
     ServerUiState m_state;
     std::thread m_worker;
+    // F-CMR-02: rescan's own joinable worker thread, separate from
+    // m_worker (Start/Stop/Restart), since a rescan triggered by
+    // SaveSourcesFromList() can legitimately run concurrently with the
+    // server already being started/stopped by a DIFFERENT user action --
+    // reusing m_worker here would make StartServer()'s existing
+    // `if (m_worker.joinable()) m_worker.join();` block the FLTK main
+    // thread until an unrelated rescan finishes, which is a new UI freeze
+    // this task must not introduce.
+    std::thread m_rescanWorker;
     std::mutex m_pendingMutex;
     ClosePendingState m_closePending;
     bool m_hasPendingResult;

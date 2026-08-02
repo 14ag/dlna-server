@@ -20,6 +20,8 @@
 #include "network_sources.h"
 #include "server.h"
 #include "media_sources.h"
+#include "media_database.h"
+#include "browse_page_cap.h"
 #include "thread_guard.h"
 #include "settings_restart.h"
 #include "source_drop_target.h"
@@ -312,6 +314,51 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             bool isRunning = wcscmp(argv[++i], L"1") == 0;
             bool isBusy = wcscmp(argv[++i], L"1") == 0;
             std::wcout << (ShouldCloseNow(isRunning, isBusy) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-is-plausible-copydata-size") == 0 && i + 1 < argc) {
+            unsigned long cbData = wcstoul(argv[++i], nullptr, 10);
+            std::wcout << (IsPlausibleWideStringCopyDataSize(cbData) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-media-database-id-reuse-lifecycle") == 0) {
+            MediaDatabase db;
+            std::wstring dbPath = L"test-media-cache-reuse.tsv"; // pytest passes a per-test tmp_path-scoped CWD
+            db.Load(dbPath); // fresh/empty file is fine, Load() tolerates a missing file
+            db.BeginScanPass();
+            int idA = db.GetOrCreateStableId(L"key-a");
+            int idB = db.GetOrCreateStableId(L"key-b");
+            int idC = db.GetOrCreateStableId(L"key-c");
+            std::wcout << L"initial=" << idA << L"," << idB << L"," << idC << std::endl;
+            // Simulate a second pass where key-b is no longer present.
+            db.BeginScanPass();
+            db.GetOrCreateStableId(L"key-a");
+            db.GetOrCreateStableId(L"key-c");
+            size_t pruned = db.PruneUntouched();
+            std::wcout << L"pruned=" << pruned << std::endl;
+            // A brand-new key in the THIRD pass should reuse key-b's freed ID
+            // rather than allocating a fresh one.
+            db.BeginScanPass();
+            db.GetOrCreateStableId(L"key-a");
+            db.GetOrCreateStableId(L"key-c");
+            int idD = db.GetOrCreateStableId(L"key-d");
+            std::wcout << L"reused=" << idD << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-media-database-id-overflow-guard") == 0 && i + 1 < argc) {
+            MediaDatabase db;
+            db.Load(argv[++i]);
+            db.BeginScanPass();
+            int idA = db.GetOrCreateStableId(L"new-key-a");
+            int idB = db.GetOrCreateStableId(L"new-key-b");
+            std::wcout << idA << std::endl;
+            std::wcout << idB << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-clamp-browse-requested-count") == 0 && i + 2 < argc) {
+            int requestedCount = _wtoi(argv[++i]);
+            int available = _wtoi(argv[++i]);
+            std::cout << ClampBrowseRequestedCount(requestedCount, available) << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-should-drop-link-local-endpoint") == 0 && i + 2 < argc) {
