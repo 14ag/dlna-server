@@ -14,6 +14,8 @@
 #include "cli_flags.h"
 #include "settings_help.h"
 #include "posix_single_instance.h"
+#include "ui_tokens.h"
+#include "server_ui_state.h"
 
 #include <FL/Fl.H>
 #include <FL/Fl_Box.H>
@@ -44,37 +46,23 @@
 #include <thread>
 
 namespace {
-constexpr int kWindowWidth = 440;
-constexpr int kWindowHeight = 600;
-constexpr int kToolbarHeight = 56;
-constexpr int kStatusHeight = 40;
-constexpr int kListTopGap = 8;
-constexpr int kButtonHeight = 32;
-constexpr int kAddButtonWidth = 56;
-constexpr int kDeleteButtonWidth = 72;
-constexpr int kStartStopButtonWidth = 72;
-constexpr int kSettingsButtonWidth = 82;
-constexpr int kButtonGap = 8;
-constexpr int kRightGutter = 16;
-
 class HoverButton : public Fl_Button {
 public:
     HoverButton(int x, int y, int w, int h, const char* label)
-        : Fl_Button(x, y, w, h, label), m_baseColor(0) {}
+        : Fl_Button(x, y, w, h, label), m_hovered(false) {}
 
     int handle(int event) override {
         switch (event) {
         case FL_ENTER:
-            if (m_baseColor == 0) m_baseColor = color();
+            m_hovered = true;
             if (active_r()) {
                 if (window()) window()->cursor(FL_CURSOR_HAND);
-                color(fl_lighter(m_baseColor));
                 redraw();
             }
             return 1;
         case FL_LEAVE:
+            m_hovered = false;
             if (window()) window()->cursor(FL_CURSOR_DEFAULT);
-            if (m_baseColor != 0) color(m_baseColor);
             redraw();
             return 1;
         default:
@@ -82,8 +70,40 @@ public:
         }
     }
 
+    void draw() override {
+        const Fl_Color baseColor = fl_rgb_color(UiTokens::kControlColor.r, UiTokens::kControlColor.g, UiTokens::kControlColor.b);
+        const Fl_Color hoverColor = fl_rgb_color(UiTokens::kControlHoverColor.r, UiTokens::kControlHoverColor.g, UiTokens::kControlHoverColor.b);
+        const Fl_Color pressedColor = fl_rgb_color(UiTokens::kControlPressedColor.r, UiTokens::kControlPressedColor.g, UiTokens::kControlPressedColor.b);
+        const Fl_Color borderColor = fl_rgb_color(UiTokens::kBorderColor.r, UiTokens::kBorderColor.g, UiTokens::kBorderColor.b);
+        const Fl_Color focusColor = fl_rgb_color(UiTokens::kFocusColor.r, UiTokens::kFocusColor.g, UiTokens::kFocusColor.b);
+        const int cornerRadius = 8;
+
+        Fl_Color fillColor = baseColor;
+        if (value() && active_r()) {
+            fillColor = pressedColor;
+        } else if (m_hovered && active_r()) {
+            fillColor = hoverColor;
+        }
+
+        fl_color(fillColor);
+        fl_rounded_rectf(x(), y(), w(), h(), cornerRadius);
+
+        fl_color(borderColor);
+        fl_rounded_rect(x(), y(), w(), h(), cornerRadius);
+
+        Fl_Color labelColor = active_r() ? fl_rgb_color(UiTokens::kTextColor.r, UiTokens::kTextColor.g, UiTokens::kTextColor.b) : fl_rgb_color(UiTokens::kDisabledTextColor.r, UiTokens::kDisabledTextColor.g, UiTokens::kDisabledTextColor.b);
+        fl_color(labelColor);
+        fl_font(labelfont(), labelsize());
+        fl_draw(label(), x(), y(), w(), h(), align());
+
+        if (Fl::focus() == this) {
+            fl_color(focusColor);
+            fl_rect(x() + 4, y() + 4, w() - 8, h() - 8);
+        }
+    }
+
 private:
-    Fl_Color m_baseColor;
+    bool m_hovered;
 };
 
 #if defined(FLTK_USE_X11)
@@ -141,13 +161,6 @@ namespace {
 void ApplyPosixDialogWindowPolicy(Fl_Window*) {}
 }
 #endif
-
-enum class ServerUiState {
-    Stopped,
-    Starting,
-    Running,
-    Stopping
-};
 
 std::atomic<bool> g_signalStop(false);
 
@@ -505,16 +518,16 @@ public:
 
         m_serverGroup.box(FL_ENGRAVED_FRAME);
         m_serverGroup.align(FL_ALIGN_TOP_LEFT | FL_ALIGN_INSIDE);
-        m_serverGroup.labelcolor(fl_rgb_color(200, 200, 200));
+        m_serverGroup.labelcolor(fl_rgb_color(UiTokens::kSecondaryTextColor.r, UiTokens::kSecondaryTextColor.g, UiTokens::kSecondaryTextColor.b));
         m_generalGroup.box(FL_ENGRAVED_FRAME);
         m_generalGroup.align(FL_ALIGN_TOP_LEFT | FL_ALIGN_INSIDE);
-        m_generalGroup.labelcolor(fl_rgb_color(200, 200, 200));
+        m_generalGroup.labelcolor(fl_rgb_color(UiTokens::kSecondaryTextColor.r, UiTokens::kSecondaryTextColor.g, UiTokens::kSecondaryTextColor.b));
         m_playlistGroup.box(FL_ENGRAVED_FRAME);
         m_playlistGroup.align(FL_ALIGN_TOP_LEFT | FL_ALIGN_INSIDE);
-        m_playlistGroup.labelcolor(fl_rgb_color(200, 200, 200));
+        m_playlistGroup.labelcolor(fl_rgb_color(UiTokens::kSecondaryTextColor.r, UiTokens::kSecondaryTextColor.g, UiTokens::kSecondaryTextColor.b));
         m_mediaGroup.box(FL_ENGRAVED_FRAME);
         m_mediaGroup.align(FL_ALIGN_TOP_LEFT | FL_ALIGN_INSIDE);
-        m_mediaGroup.labelcolor(fl_rgb_color(200, 200, 200));
+        m_mediaGroup.labelcolor(fl_rgb_color(UiTokens::kSecondaryTextColor.r, UiTokens::kSecondaryTextColor.g, UiTokens::kSecondaryTextColor.b));
 
         m_defaultPlaylistAdd.tooltip("Add default playlist entry");
 
@@ -673,31 +686,31 @@ bool SaveToConfig() {
 class MainWindow : public Fl_Window {
 public:
     MainWindow()
-        : Fl_Window(kWindowWidth, kWindowHeight, "DLNA Server"),
-          m_toolbar(0, 0, kWindowWidth, kToolbarHeight),
+        : Fl_Window(UiTokens::kWindowWidth, UiTokens::kWindowHeight, "DLNA Server"),
+          m_toolbar(0, 0, UiTokens::kWindowWidth, UiTokens::kToolbarHeight),
           m_title(15, 10, 240, 30, ""),
-          m_addButton(0, 8, kAddButtonWidth, kButtonHeight, "Add"),
-          m_removeButton(0, 8, kDeleteButtonWidth, kButtonHeight, "Delete"),
-          m_startStopButton(0, 8, kStartStopButtonWidth, kButtonHeight, "Start"),
-          m_settingsButton(0, 8, kSettingsButtonWidth, kButtonHeight, "Settings"),
-          m_status(15, kToolbarHeight, kWindowWidth - 30, kStatusHeight, ""),
-          m_sources(0, kToolbarHeight + kStatusHeight + kListTopGap, kWindowWidth, kWindowHeight - kToolbarHeight - kStatusHeight - kListTopGap),
-          m_emptyState(15, kToolbarHeight + kStatusHeight + kListTopGap + 16, kWindowWidth - 30, 24, "Please add shared folders or files with Add."),
+          m_addButton(0, 8, UiTokens::kAddButtonWidth, UiTokens::kButtonHeight, "Add"),
+          m_removeButton(0, 8, UiTokens::kDeleteButtonWidth, UiTokens::kButtonHeight, "Delete"),
+          m_startStopButton(0, 8, UiTokens::kStartStopButtonWidth, UiTokens::kButtonHeight, "Start"),
+          m_settingsButton(0, 8, UiTokens::kSettingsButtonWidth, UiTokens::kButtonHeight, "Settings"),
+          m_status(15, UiTokens::kToolbarHeight, UiTokens::kWindowWidth - 30, UiTokens::kStatusHeight, ""),
+          m_sources(0, UiTokens::kToolbarHeight + UiTokens::kStatusHeight + UiTokens::kListTopGap, UiTokens::kWindowWidth, UiTokens::kWindowHeight - UiTokens::kToolbarHeight - UiTokens::kStatusHeight - UiTokens::kListTopGap),
+          m_emptyState(15, UiTokens::kToolbarHeight + UiTokens::kStatusHeight + UiTokens::kListTopGap + 16, UiTokens::kWindowWidth - 30, 24, "Please add shared folders or files with Add."),
           m_state(ServerUiState::Stopped),
           m_hasPendingResult(false),
           m_pendingSuccess(false),
           m_pendingState(ServerUiState::Stopped) {
-        color(fl_rgb_color(30, 30, 30));
+        color(fl_rgb_color(UiTokens::kPageColor.r, UiTokens::kPageColor.g, UiTokens::kPageColor.b));
         default_cursor(FL_CURSOR_DEFAULT);
         size_range(440, 460);
         callback(CloseRequested, this);
 
         m_toolbar.box(FL_FLAT_BOX);
-        m_toolbar.color(fl_rgb_color(45, 45, 48));
+        m_toolbar.color(fl_rgb_color(UiTokens::kToolbarColor.r, UiTokens::kToolbarColor.g, UiTokens::kToolbarColor.b));
 
         m_title.labelfont(FL_BOLD);
-        m_title.labelsize(24);
-        m_title.labelcolor(fl_rgb_color(220, 220, 220));
+        m_title.labelsize(20);
+        m_title.labelcolor(fl_rgb_color(UiTokens::kTextColor.r, UiTokens::kTextColor.g, UiTokens::kTextColor.b));
         m_title.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
 
         m_addButton.tooltip("Add media source");
@@ -705,15 +718,15 @@ public:
         m_startStopButton.tooltip("Start server");
         m_settingsButton.tooltip("Settings");
 
-        m_status.labelcolor(fl_rgb_color(220, 220, 220));
+        m_status.labelcolor(fl_rgb_color(UiTokens::kTextColor.r, UiTokens::kTextColor.g, UiTokens::kTextColor.b));
         m_status.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE | FL_ALIGN_CLIP);
 
         m_sources.box(FL_DOWN_BOX);
-        m_sources.color(fl_rgb_color(30, 30, 30));
-        m_sources.textcolor(fl_rgb_color(220, 220, 220));
+        m_sources.color(fl_rgb_color(UiTokens::kPageColor.r, UiTokens::kPageColor.g, UiTokens::kPageColor.b));
+        m_sources.textcolor(fl_rgb_color(UiTokens::kTextColor.r, UiTokens::kTextColor.g, UiTokens::kTextColor.b));
         m_sources.selection_color(fl_rgb_color(70, 90, 120));
 
-        m_emptyState.labelcolor(fl_rgb_color(150, 150, 150));
+        m_emptyState.labelcolor(fl_rgb_color(UiTokens::kSecondaryTextColor.r, UiTokens::kSecondaryTextColor.g, UiTokens::kSecondaryTextColor.b));
         m_emptyState.align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
 
         m_addButton.callback(AddSource, this);
@@ -751,7 +764,7 @@ public:
         }
 
         resizable(m_sources);
-        Layout(kWindowWidth, kWindowHeight);
+        Layout(UiTokens::kWindowWidth, UiTokens::kWindowHeight);
         RefreshSourceList();
         RefreshStatus();
         Fl::add_timeout(0.5, PollLog, this);
@@ -1084,19 +1097,19 @@ private:
     }
 
     void Layout(int width, int height) {
-        m_toolbar.resize(0, 0, width, kToolbarHeight);
-        const int buttonTop = (kToolbarHeight - kButtonHeight) / 2;
-        const int settingsLeft = width - kRightGutter - kSettingsButtonWidth;
-        const int startLeft = settingsLeft - kButtonGap - kStartStopButtonWidth;
-        const int deleteLeft = startLeft - kButtonGap - kDeleteButtonWidth;
-        const int addLeft = deleteLeft - kButtonGap - kAddButtonWidth;
+        m_toolbar.resize(0, 0, width, UiTokens::kToolbarHeight);
+        const int buttonTop = (UiTokens::kToolbarHeight - UiTokens::kButtonHeight) / 2;
+        const int settingsLeft = width - UiTokens::kGutter - UiTokens::kSettingsButtonWidth;
+        const int startLeft = settingsLeft - UiTokens::kButtonGap - UiTokens::kStartStopButtonWidth;
+        const int deleteLeft = startLeft - UiTokens::kButtonGap - UiTokens::kDeleteButtonWidth;
+        const int addLeft = deleteLeft - UiTokens::kButtonGap - UiTokens::kAddButtonWidth;
         m_title.resize(15, 10, addLeft - 30, 30);
-        m_addButton.resize(addLeft, buttonTop, kAddButtonWidth, kButtonHeight);
-        m_removeButton.resize(deleteLeft, buttonTop, kDeleteButtonWidth, kButtonHeight);
-        m_startStopButton.resize(startLeft, buttonTop, kStartStopButtonWidth, kButtonHeight);
-        m_settingsButton.resize(settingsLeft, buttonTop, kSettingsButtonWidth, kButtonHeight);
-        const int listTop = kToolbarHeight + kStatusHeight + kListTopGap;
-        m_status.resize(15, kToolbarHeight, width - 30, kStatusHeight);
+        m_addButton.resize(addLeft, buttonTop, UiTokens::kAddButtonWidth, UiTokens::kButtonHeight);
+        m_removeButton.resize(deleteLeft, buttonTop, UiTokens::kDeleteButtonWidth, UiTokens::kButtonHeight);
+        m_startStopButton.resize(startLeft, buttonTop, UiTokens::kStartStopButtonWidth, UiTokens::kButtonHeight);
+        m_settingsButton.resize(settingsLeft, buttonTop, UiTokens::kSettingsButtonWidth, UiTokens::kButtonHeight);
+        const int listTop = UiTokens::kToolbarHeight + UiTokens::kStatusHeight + UiTokens::kListTopGap;
+        m_status.resize(15, UiTokens::kToolbarHeight, width - 30, UiTokens::kStatusHeight);
         m_sources.resize(0, listTop, width, height - listTop);
         m_emptyState.resize(15, listTop + 16, width - 30, 24);
     }

@@ -4,6 +4,7 @@
 #include "settings_help.h"
 #include "ui_font.h"
 #include "dark_frame.h"
+#include "win_geometry_dump.h"
 #include <dwmapi.h>
 #include <string>
 #include <Richedit.h>
@@ -120,6 +121,7 @@ LRESULT CALLBACK HelpWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             }
         }
 
+        DumpDialogGeometry(hwnd, L"help-geometry");
         return 0;
     }
     case WM_CLOSE:

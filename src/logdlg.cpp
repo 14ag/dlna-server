@@ -3,6 +3,7 @@
 #include "modal_focus.h"
 #include "ui_font.h"
 #include "dark_frame.h"
+#include "win_geometry_dump.h"
 #include "../resources/resource.h"
 #include <dwmapi.h>
 
@@ -81,6 +82,7 @@ case WM_INITDIALOG: {
         ApplyDarkFrame(hwndDlg);
         ApplyDialogFont(hwndDlg);
         LoadInitialLogText(hwndDlg);
+        DumpDialogGeometry(hwndDlg, L"log-geometry");
         return (INT_PTR)TRUE;
     }
     case WM_COMMAND:

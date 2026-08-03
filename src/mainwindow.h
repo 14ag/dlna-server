@@ -9,17 +9,11 @@
 #include "source_list_focus.h"
 #include "hover_focus_state.h"
 #include "config.h"
+#include "server_ui_state.h"
 #include <string>
 #include <thread>
 #include <atomic>
 #include <unordered_map>
-
-enum class ServerUiState {
-    Stopped,
-    Starting,
-    Running,
-    Stopping
-};
 
 class MainWindow {
 public:

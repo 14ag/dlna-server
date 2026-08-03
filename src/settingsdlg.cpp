@@ -11,6 +11,7 @@
 #include "help_dialog.h"
 #include "ui_font.h"
 #include "dark_frame.h"
+#include "win_geometry_dump.h"
 #include "config.h"
 #include "log.h"
 #include "../resources/resource.h"
@@ -246,6 +247,7 @@ LRESULT CALLBACK PlaylistEntryProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         for (HWND control : controls) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         EnableWindow(GetDlgItem(hwnd, IDC_PLAYLIST_ADD), FALSE);
         SetFocus(state->movieEdit);
+        DumpDialogGeometry(hwnd, L"playlist-entry-geometry");
         return 0;
     }
     case WM_COMMAND:
