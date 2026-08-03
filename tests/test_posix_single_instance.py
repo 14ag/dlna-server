@@ -97,8 +97,60 @@ class TestFileLockProtocol:
 class TestUnixSocketProtocol:
     """AF_UNIX stream socket IPC (matches StartListening / SendShow)."""
 
+    def test_empty_message(self, rundir: str):
+        """Server handles empty send gracefully."""
+        sock_path = _socket_path(rundir)
+        received = []
+
+        def server():
+            srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            srv.bind(sock_path)
+            srv.listen(1)
+            conn, _ = srv.accept()
+            data = conn.recv(256)
+            received.append(data)
+            # Echo a byte back so the client knows the payload was fully
+            # consumed before it closes. Otherwise the client's close can
+            # race the server's recv(): if the client wins, recv returns
+            # b"" (EOF) instead of the newline and the assertion below
+            # spuriously fails.
+            conn.sendall(b"ack")
+            conn.close()
+            srv.close()
+
+        t = threading.Thread(target=server, daemon=True)
+        t.start()
+
+        import time
+        deadline = time.time() + 5
+        while not os.path.exists(sock_path):
+            time.sleep(0.01)
+            if time.time() > deadline:
+                pytest.fail("Server socket not created in time")
+
+        cli = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        while True:
+            try:
+                cli.connect(sock_path)
+                break
+            except ConnectionRefusedError:
+                # Socket file exists but the server thread may not have
+                # entered listen() yet; connect() refuses until it has.
+                if time.time() > deadline:
+                    raise
+                time.sleep(0.01)
+        cli.sendall(b"\n")
+        # Block until the server echoes, confirming it already read our data;
+        # only then close, so there is no recv/close ordering race.
+        cli.recv(3)
+        cli.close()
+        t.join(timeout=3)
+
+        # Should not crash; empty string after strip.
+        assert received == [b"\n"]
+
     def test_show_command_received(self, rundir: str):
-        """Server receives \"show\" when client sends \"show\\n\"."""
+        """Server receives "show" when client sends "show\n"."""
         sock_path = _socket_path(rundir)
         received = []
 
@@ -158,48 +210,25 @@ class TestUnixSocketProtocol:
         t.start()
 
         import time
+        deadline = time.time() + 5
         while not os.path.exists(sock_path):
             time.sleep(0.01)
 
         for msg in (b"show\n", b"sources:/media/video\n"):
             cli = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            cli.connect(sock_path)
+            while True:
+                try:
+                    cli.connect(sock_path)
+                    break
+                except ConnectionRefusedError:
+                    if time.time() > deadline:
+                        raise
+                    time.sleep(0.01)
             cli.sendall(msg)
             cli.close()
         t.join(timeout=3)
 
         assert received == ["show", "sources:/media/video"]
-
-    def test_empty_message(self, rundir: str):
-        """Server handles empty send gracefully."""
-        sock_path = _socket_path(rundir)
-        received = []
-
-        def server():
-            srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            srv.bind(sock_path)
-            srv.listen(1)
-            conn, _ = srv.accept()
-            data = conn.recv(256)
-            received.append(data)
-            conn.close()
-            srv.close()
-
-        t = threading.Thread(target=server, daemon=True)
-        t.start()
-
-        import time
-        while not os.path.exists(sock_path):
-            time.sleep(0.01)
-
-        cli = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        cli.connect(sock_path)
-        cli.sendall(b"\n")
-        cli.close()
-        t.join(timeout=3)
-
-        # Should not crash; empty string after strip.
-        assert received == [b"\n"]
 
     def test_stale_socket_replaced(self, rundir: str):
         """If a stale socket file exists, a new server should be able to
