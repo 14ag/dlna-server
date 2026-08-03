@@ -60,6 +60,22 @@ def test_movie_title_from_path_short_path_regression():
     assert result.stdout.strip() == "Song"
 
 
+@pytest.mark.posix_only
+def test_movie_title_from_path_handles_max_path_plus_input_posix():
+    long_path = "C:\\" + ("a" * 40 + "\\") * 8 + "Movie Title.mkv"  # > 260 chars
+    assert len(long_path) >= 260
+    result = _run(POSIX_EXE, "--print-movie-title-from-path", long_path)
+    assert result.returncode == 0
+    assert result.stdout.strip() == "Movie Title"
+
+
+@pytest.mark.posix_only
+def test_movie_title_from_path_short_path_regression_posix():
+    result = _run(POSIX_EXE, "--print-movie-title-from-path", "C:\\Media\\Song.mp3")
+    assert result.returncode == 0
+    assert result.stdout.strip() == "Song"
+
+
 @pytest.mark.windows_only
 def test_default_playlist_path_matches_config_dir():
     """F-02 equivalence check: refactor must not change the derived
@@ -74,6 +90,33 @@ def test_default_playlist_path_matches_config_dir():
     default_playlist_path = _run(exe, "--print-default-playlist-path").stdout.strip()
     config_dir = config_path.rsplit("\\", 1)[0]
     assert default_playlist_path == config_dir + "\\default.m3u"
+
+
+@pytest.mark.posix_only
+def test_default_playlist_path_matches_config_dir_posix():
+    """F-02 POSIX mirror: the printed path must end in default.m3u and
+    sit in the same directory as GetConfigPath(). POSIX config paths use
+    forward slashes, so the expected path is derived inside the test
+    from the actual --print-config-path output."""
+    exe = POSIX_EXE
+    config_path = _run(exe, "--print-config-path").stdout.strip()
+    default_playlist_path = _run(exe, "--print-default-playlist-path").stdout.strip()
+    config_dir = config_path.rsplit("/", 1)[0]
+    assert default_playlist_path == config_dir + "/default.m3u"
+
+
+@pytest.mark.posix_only
+def test_should_allow_source_drop_true_input_posix():
+    result = _run(POSIX_EXE, "--print-should-allow-source-drop", "0")
+    assert result.returncode == 0
+    assert result.stdout.strip() == "1"
+
+
+@pytest.mark.posix_only
+def test_should_allow_source_drop_false_input_posix():
+    result = _run(POSIX_EXE, "--print-should-allow-source-drop", "1")
+    assert result.returncode == 0
+    assert result.stdout.strip() == "0"
 
 
 def test_media_source_file_extensions_symmetric_across_platforms():

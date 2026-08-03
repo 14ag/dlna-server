@@ -8,6 +8,8 @@
 #include <arpa/inet.h>
 #include <cctype>
 #include <chrono>
+#include <cstdarg>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <netinet/in.h>
@@ -28,6 +30,18 @@ constexpr const char* kSsdpMulticastIPv4 = "239.255.255.250";
 constexpr const char* kSsdpMulticastIPv6 = "ff02::c";
 
 constexpr size_t kMaxDelayedResponses = 256;
+
+void DiscoveryLog(const wchar_t* fmt, ...) {
+    if (!AppConfig.Snapshot().debugLog) {
+        return;
+    }
+    wchar_t buffer[2048];
+    va_list args;
+    va_start(args, fmt);
+    vswprintf(buffer, sizeof(buffer) / sizeof(buffer[0]), fmt, args);
+    va_end(args);
+    LogPrint(L"%ls", buffer);
+}
 
 int CreateIPv4Socket(const std::vector<NetworkEndpoint>& endpoints) {
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -222,6 +236,8 @@ void SSDP::SendNotifyRound(const char* nts) {
             ssize_t sent = sendto(socketFd, msg.data(), msg.size(), 0, reinterpret_cast<sockaddr*>(&dest), destLen);
             if (sent < 0) {
                 LogPrint(L"SSDP send failed while sending notify.");
+            } else {
+                DiscoveryLog(L"SSDP notify sent: nts=%hs target=%hs location=%hs if=%lu", nts, target.st.c_str(), endpoint.locationUrl.c_str(), endpoint.interfaceIndex);
             }
         }
     }
@@ -253,15 +269,21 @@ void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
     if (!m_running.load()) return;
     std::lock_guard<std::mutex> socketLock(m_socketMutex);
     if (!SetOutboundInterface(response.socket, response.endpoint)) return;
-    for (const std::string& message : response.messages) {
+    for (size_t i = 0; i < response.messages.size(); ++i) {
+        const std::string& message = response.messages[i];
         ssize_t sent = sendto(response.socket,
                               message.data(),
                               message.size(),
                               0,
                               reinterpret_cast<const sockaddr*>(&response.remoteAddr),
                               static_cast<socklen_t>(response.remoteLen));
+        const std::string st = i < response.logSt.size() ? response.logSt[i] : std::string();
+        const std::string usn = i < response.logUsn.size() ? response.logUsn[i] : std::string();
+        std::string destination = SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&response.remoteAddr));
         if (sent < 0) {
             LogPrint(L"SSDP send failed while sending search response.");
+        } else {
+            DiscoveryLog(L"SSDP response sent: dst=%hs st=%hs usn=%hs location=%hs", destination.c_str(), st.c_str(), usn.c_str(), response.endpoint.locationUrl.c_str());
         }
     }
 }
@@ -297,17 +319,36 @@ void SSDP::ResponseWorker() {
 
 void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen_t remoteLen, const std::string& request) {
     const size_t firstLineEnd = request.find("\r\n");
-    if (firstLineEnd == std::string::npos || ToLowerAscii(request.substr(0, firstLineEnd)) != "m-search * http/1.1") return;
-    const std::string man = ToLowerAscii(TrimAscii(FindHeaderValueCaseInsensitive(request, "MAN")));
+    if (firstLineEnd == std::string::npos) {
+        DiscoveryLog(L"SSDP request ignored: malformed start line");
+        return;
+    }
+    std::string firstLine = request.substr(0, firstLineEnd);
+    if (ToLowerAscii(firstLine) != "m-search * http/1.1") {
+        DiscoveryLog(L"SSDP request ignored: start line=%hs", firstLine.c_str());
+        return;
+    }
+    const std::string manRaw = FindHeaderValueCaseInsensitive(request, "MAN");
     const std::string st = FindHeaderValueCaseInsensitive(request, "ST");
     const std::string mxText = FindHeaderValueCaseInsensitive(request, "MX");
     int mx = 1;
     if (!mxText.empty() && !TryParseIntStrict(TrimAscii(mxText), mx)) {
         mx = 1;
     }
-    if (man != "\"ssdp:discover\"" && man != "ssdp:discover") return;
+    std::string source = SockaddrToLiteral(remoteAddr);
+
+    DiscoveryLog(L"SSDP search in: src=%hs st=%hs mx=%d man=%hs", source.c_str(), st.c_str(), mx, manRaw.c_str());
+
+    const std::string man = ToLowerAscii(TrimAscii(manRaw));
+    if (man != "\"ssdp:discover\"" && man != "ssdp:discover") {
+        DiscoveryLog(L"SSDP search ignored: invalid MAN from %hs", source.c_str());
+        return;
+    }
     const NetworkEndpoint* endpoint = SelectBestEndpoint(m_endpoints, remoteAddr);
-    if (!endpoint || endpoint->family != remoteAddr->sa_family) return;
+    if (!endpoint || endpoint->family != remoteAddr->sa_family) {
+        DiscoveryLog(L"SSDP search ignored: no endpoint match for %hs", source.c_str());
+        return;
+    }
 
     const std::vector<SSDPTarget>& targets = m_targets;
     std::vector<SSDPTarget> responses;
@@ -318,8 +359,12 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
             if (ToLowerAscii(target.st) == ToLowerAscii(st)) responses.push_back(target);
         }
     }
-    if (responses.empty()) return;
+    if (responses.empty()) {
+        DiscoveryLog(L"SSDP search ignored: unsupported ST=%hs", st.c_str());
+        return;
+    }
     unsigned int delayMs = ComputeDelayMilliseconds(mx);
+    DiscoveryLog(L"SSDP search match: src=%hs delayMs=%lu location=%hs", source.c_str(), static_cast<unsigned long>(delayMs), endpoint->locationUrl.c_str());
     const std::string serverHeader = GetDlnaServerHeader();
     DelayedSearchResponse delayed{};
     delayed.socket = socketFd;
@@ -342,6 +387,7 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
         delayed.messages.push_back(ss.str());
         delayed.logSt.push_back(target.st);
         delayed.logUsn.push_back(target.usn);
+        DiscoveryLog(L"SSDP response queued: dst=%hs st=%hs usn=%hs location=%hs", source.c_str(), target.st.c_str(), target.usn.c_str(), endpoint->locationUrl.c_str());
     }
     if (delayMs == 0) {
         SendDelayedSearchResponse(delayed);

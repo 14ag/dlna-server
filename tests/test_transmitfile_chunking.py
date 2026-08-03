@@ -41,3 +41,27 @@ def test_large_multi_gigabyte_file_splits_correctly(dlna_binary):
 @pytest.mark.windows_only
 def test_zero_byte_file_produces_no_chunks(dlna_binary):
     assert _chunk_plan(dlna_binary, 0) == []
+
+
+def test_small_file_is_a_single_chunk_posix(dlna_binary):
+    assert _chunk_plan(dlna_binary, 1000) == [1000]
+
+
+def test_exact_boundary_is_a_single_chunk_posix(dlna_binary):
+    assert _chunk_plan(dlna_binary, 2147483646) == [2147483646]
+
+
+def test_one_byte_over_boundary_splits_into_two_chunks_posix(dlna_binary):
+    assert _chunk_plan(dlna_binary, 2147483647) == [2147483646, 1]
+
+
+def test_large_multi_gigabyte_file_splits_correctly_posix(dlna_binary):
+    total = 2147483646 * 2 + 500
+    chunks = _chunk_plan(dlna_binary, total)
+    assert chunks == [2147483646, 2147483646, 500]
+    assert sum(chunks) == total
+    assert all(chunk <= 2147483646 for chunk in chunks)
+
+
+def test_zero_byte_file_produces_no_chunks_posix(dlna_binary):
+    assert _chunk_plan(dlna_binary, 0) == []
