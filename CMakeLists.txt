@@ -141,6 +141,7 @@ set(HEADERS
          src/ipwhitelist.h
           src/firewall_access.h
           src/source_drop_target.h
+          src/source_drop_policy.h
           src/media_source_file_types.h
             src/startup_mode.h
              src/server_close_policy.h

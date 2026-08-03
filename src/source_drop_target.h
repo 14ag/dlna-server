@@ -6,11 +6,7 @@
 #include <string>
 #include <vector>
 #include <functional>
-
-// true means a drop is currently allowed false means show the no drop cursor
-// extracted as a pure function so it has a dedicated print flag test
-// separate from the com plumbing around it
-bool ShouldAllowSourceDrop(bool serverBusyOrRunning);
+#include "source_drop_policy.h"
 
 // minimal ole drop target for the media source listbox
 // accepts an hdrop only rejects everything else and rejects all drops

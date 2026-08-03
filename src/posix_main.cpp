@@ -8,6 +8,7 @@
 #include "access_keys.h"
 #include "function_key_action.h"
 #include "hover_focus_state.h"
+#include "source_drop_policy.h"
 #include "input_gate.h"
 #include "network_sources.h"
 #include "playlist_scan_concurrency.h"
@@ -17,6 +18,7 @@
 #include "scan_cancellation.h"
 #include "server.h"
 #include "upnp_eventing.h"
+#include "transmitfile_chunking.h"
 #include "close_pending_state.h"
 #include "server_close_policy.h"
 #include "tray_notify.h"
@@ -263,6 +265,14 @@ int main(int argc, char** argv) {
             std::cout << StripResourceIdExtension(argv[++i]) << std::endl;
             return 0;
         }
+        else if (arg == "--print-movie-title-from-path" && i + 1 < argc) {
+            // mirrors settingsdlg cpp MovieTitleFromPath on windows
+            // uses SourceStemName with a Media item fallback for an empty stem
+            std::wstring path = Utf8ToWide(argv[++i]);
+            std::wstring stem = SourceStemName(path);
+            std::wcout << (stem.empty() ? L"Media item" : stem) << std::endl;
+            return 0;
+        }
         else if (arg == "--print-media-display-title" && i + 3 < argc) {
             bool showFileNames = std::string(argv[++i]) == "1";
             std::wstring titleOverride = Utf8ToWide(argv[++i]);
@@ -410,10 +420,29 @@ int main(int argc, char** argv) {
             std::cout << kMaxUpnpNotifyWorkers << std::endl;
             return 0;
         }
+        else if (arg == "--print-should-allow-source-drop" && i + 1 < argc) {
+            // ShouldAllowSourceDrop now lives in source drop policy h
+            // no ole drop target exists on posix today
+            // this only regression tests the pure boolean rule itself
+            bool busyOrRunning = std::string(argv[++i]) == "1";
+            std::cout << (ShouldAllowSourceDrop(busyOrRunning) ? "1" : "0") << std::endl;
+            return 0;
+        }
         else if (arg == "--print-should-use-unlisted-interface" && i + 2 < argc) {
             bool isVirtual = std::string(argv[++i]) == "1";
             bool hasGateway = std::string(argv[++i]) == "1";
             std::wcout << (ShouldUseUnlistedInterface(isVirtual, hasGateway) ? L"1" : L"0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-transmitfile-chunk-plan" && i + 1 < argc) {
+            // ComputeTransmitFileChunkSizes has no windows types
+            // exercised here on posix purely for cross platform coverage
+            // posix httpserver cpp itself calls sendfile not TransmitFile
+            // see TrySendFile in posix httpserver cpp for the actual posix transfer path
+            long long totalBytes = std::atoll(argv[++i]);
+            for (long long chunkSize : ComputeTransmitFileChunkSizes(totalBytes)) {
+                std::cout << chunkSize << std::endl;
+            }
             return 0;
         }
         else if (arg == "--print-network-endpoint-count" && i + 1 < argc) {
@@ -422,6 +451,14 @@ int main(int argc, char** argv) {
             std::vector<NetworkEndpoint> endpoints;
             EnumerateNetworkEndpoints(testPort, L"", endpoints);
             std::cout << endpoints.size() << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-sockaddr-length-safety" && i + 2 < argc) {
+            // IsSockaddrLengthSafeToCopy has no windows types
+            // lives in netutils h shared by both platforms already
+            int reportedLength = std::atoi(argv[++i]);
+            int destinationCapacity = std::atoi(argv[++i]);
+            std::cout << (IsSockaddrLengthSafeToCopy(reportedLength, static_cast<size_t>(destinationCapacity)) ? "1" : "0") << std::endl;
             return 0;
         }
         else if (arg == "--print-tray-notify-decode" && i + 2 < argc) {
@@ -478,6 +515,12 @@ int main(int argc, char** argv) {
         }
         else if (arg == "--print-config-path") {
             std::wcout << AppConfig.GetConfigPath() << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-default-playlist-path") {
+            // mirrors the windows F-02 regression hook in main cpp
+            // confirms GetDefaultPlaylistPath still resolves next to the config file
+            std::wcout << AppConfig.GetDefaultPlaylistPath() << std::endl;
             return 0;
         }
         else if (arg == "--print-resolve-bundled-resource" && i + 1 < argc) {
