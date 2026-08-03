@@ -177,7 +177,9 @@ target_link_libraries(dlna_core PUBLIC
 else()
     include(GNUInstallDirs)
     include(FetchContent)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" ON)
+    option(DLNA_ENABLE_GTK4_GUI "Build the native GTK4 Linux GUI" OFF)
     set(DLNA_FLTK_VERSION "release-1.4.5" CACHE STRING "FLTK git tag used when system FLTK is unavailable")
 
 add_library(dlna_core STATIC
@@ -263,6 +265,28 @@ add_library(dlna_core STATIC
         target_link_libraries(dlna-server-gui-native PRIVATE dlna_core ${DLNA_FLTK_TARGET} Threads::Threads)
         install(TARGETS dlna-server-gui-native RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
+
+    if(DLNA_ENABLE_GTK4_GUI)
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
+
+        add_custom_command(
+            OUTPUT "${CMAKE_SOURCE_DIR}/resources/gtk/style.css"
+            COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_gtk_style.py"
+            DEPENDS "${CMAKE_SOURCE_DIR}/src/ui_tokens.h" "${CMAKE_SOURCE_DIR}/tools/gen_gtk_style.py"
+            COMMENT "Generating GTK4 stylesheet from ui_tokens.h"
+        )
+        add_custom_target(dlna_gtk_style ALL DEPENDS "${CMAKE_SOURCE_DIR}/resources/gtk/style.css")
+
+        add_executable(dlna-server-gui-gtk4 src/gtk4_gui_main.cpp src/posix_tray.cpp)
+        add_dependencies(dlna-server-gui-gtk4 dlna_gtk_style)
+        set_target_properties(dlna-server-gui-gtk4 PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
+        dlna_enable_warnings(dlna-server-gui-gtk4)
+        target_compile_definitions(dlna-server-gui-gtk4 PRIVATE DLNA_POSIX_GUI=1)
+        target_link_libraries(dlna-server-gui-gtk4 PRIVATE dlna_core PkgConfig::GTK4 Threads::Threads)
+        install(TARGETS dlna-server-gui-gtk4 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/style.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
     endif()
 
     if(APPLE)
