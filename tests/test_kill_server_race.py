@@ -1,12 +1,18 @@
 import subprocess
 import time
-import sys
 import pytest
-import requests
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="WM_KILL_SERVER is Win32-only")
+# Win32-only: WM_KILL_SERVER is a Win32 message. Marked at module level so
+# pytest_collection_modifyitems in conftest DESELECTS (not skips) this file
+# on POSIX -- it never runs, never reports as skipped. Module-level imports
+# are kept minimal (no `requests` here) so collection succeeds on POSIX even
+# before deselection runs.
+pytestmark = pytest.mark.windows_only
+
+
 def test_kill_server_during_start_does_not_hang_or_leave_orphan(dlna_binary, tmp_path):
+    import requests  # deferred until the test actually runs (Win32 host)
     source_dir = tmp_path / "media"
     source_dir.mkdir()
     (source_dir / "a.mp3").write_bytes(b"\x00" * 1024)

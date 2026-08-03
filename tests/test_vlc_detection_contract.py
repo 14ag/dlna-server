@@ -18,12 +18,41 @@ VLC_MEDIASERVER_ST = "urn:schemas-upnp-org:device:MediaServer:1"
 VLC_SATIP_ST = "urn:ses-com:device:SatIPServer:1"
 
 
-def _ssdp_log_path(binary_dir):
-    return Path(binary_dir) / "debug.log"
+class ServerSession:
+    """Bundles the running-server directories this module's helpers need.
+
+    On Windows the binary, config.ini and debug.log all live in one directory,
+    so `binary_dir == config_dir` and `log_dir == config_dir/debug.log`. On a
+    POSIX server the debug.log is written next to the *config* file (XDG
+    config dir), NOT next to the binary, so a test that reads
+    `binary_dir/debug.log` would see nothing and spuriously skip even on a
+    healthy Linux host. Carrying both dirs explicitly removes that ambiguity.
+    """
+
+    def __init__(self, binary_dir, config_dir):
+        self.binary_dir = Path(binary_dir)
+        self.config_dir = Path(config_dir)
+
+    @property
+    def log_dir(self):
+        if os.name == "nt":
+            return self.config_dir
+        return self.config_dir / "dlna-server"
+
+    @property
+    def binary(self):
+        name = "DLNA Server.exe" if os.name == "nt" else "dlna-server"
+        return self.binary_dir / name
 
 
-def _read_ssdp_log(binary_dir):
-    p = _ssdp_log_path(binary_dir)
+def _ssdp_log_path(session):
+    if isinstance(session, ServerSession):
+        return session.log_dir / "debug.log"
+    return Path(session) / "debug.log"
+
+
+def _read_ssdp_log(session):
+    p = _ssdp_log_path(session)
     if p.exists():
         return p.read_text(encoding="utf-8", errors="replace")
     return ""
@@ -122,30 +151,32 @@ def _trigger_vlc_msearch_alt(timeout_s: float = 8.0):
 def dlna_server_process(dlna_binary, media_source_dir):
     binary_path = Path(dlna_binary)
     port = _free_port()
+    config_dir = media_source_dir.parent
     proc, connected, old_config, config_ini = _launch_server(
-        binary_path, port, media_source_dir)
+        binary_path, port, media_source_dir, config_dir=config_dir)
 
     if not connected:
         _teardown_server(proc, old_config, config_ini)
         pytest.fail(f"Server did not listen on port {port} within 15s")
 
-    yield binary_path.parent
+    yield ServerSession(binary_path.parent, config_dir)
 
     _teardown_server(proc, old_config, config_ini)
 
 
 class StoppableProcess:
-    def __init__(self, proc, binary_dir):
+    def __init__(self, proc, binary_dir, config_dir):
         self.proc = proc
         self.binary_dir = Path(binary_dir)
+        self.config_dir = Path(config_dir)
+        self._session = ServerSession(binary_dir, config_dir)
 
     def stop(self):
         # Graceful shutdown via --kill-server: a second short-lived instance
         # posts WM_REQUEST_SHUTDOWN to the running window (visible or hidden).
         # This makes the headless server run Server::Stop(), which emits the
         # ssdp:byebye notify burst before exiting.
-        binary = self.binary_dir / ("DLNA Server.exe" if os.name == "nt"
-                                   else "dlna-server")
+        binary = self._session.binary
         try:
             subprocess.run(
                 [str(binary), "--kill-server"],
@@ -170,14 +201,15 @@ class StoppableProcess:
 def dlna_server_process_stoppable(dlna_binary, media_source_dir):
     binary_path = Path(dlna_binary)
     port = _free_port()
+    config_dir = media_source_dir.parent
     proc, connected, old_config, config_ini = _launch_server(
-        binary_path, port, media_source_dir)
+        binary_path, port, media_source_dir, config_dir=config_dir)
 
     if not connected:
         _teardown_server(proc, old_config, config_ini)
         pytest.fail(f"Server did not listen on port {port} within 15s")
 
-    yield StoppableProcess(proc, binary_path.parent)
+    yield StoppableProcess(proc, binary_path.parent, config_dir)
 
     _teardown_server(proc, old_config, config_ini)
 
@@ -212,12 +244,12 @@ def find_content_directory_control_url(root: ET.Element, ns_uri: str) -> str | N
     return None
 
 
-def _new_log_text(binary_dir, prev_len):
-    full = _read_ssdp_log(binary_dir)
+def _new_log_text(session, prev_len):
+    full = _read_ssdp_log(session)
     return full[prev_len:] if len(full) > prev_len else ""
 
 
-def _ensure_vlc_msearch_evidence(binary_dir, st, max_attempts=2):
+def _ensure_vlc_msearch_evidence(session, st, max_attempts=2):
     """Trigger VLC M-SEARCH and confirm server log shows evidence of response.
 
     Only considers log entries written AFTER this function starts, so prior
@@ -226,13 +258,13 @@ def _ensure_vlc_msearch_evidence(binary_dir, st, max_attempts=2):
     Returns location_url from log if response sent. Raises AssertionError if
     no log evidence can be found after max_attempts VLC invocations.
     """
-    prev_len = len(_read_ssdp_log(binary_dir))
+    prev_len = len(_read_ssdp_log(session))
 
     for attempt in range(max_attempts):
         trigger_fn = _trigger_vlc_msearch if attempt == 0 \
             else _trigger_vlc_msearch_alt
         trigger_fn()
-        new_text = _new_log_text(binary_dir, prev_len)
+        new_text = _new_log_text(session, prev_len)
         if _log_has_response_for_st(new_text, st):
             return _log_get_location_for_st(new_text, st)
         if _log_has_search_in_for_st(new_text, st):
@@ -252,8 +284,8 @@ def _ensure_vlc_msearch_evidence(binary_dir, st, max_attempts=2):
 
 
 def test_description_xml_has_vlc_required_elements(dlna_server_process):
-    binary_dir = dlna_server_process
-    location = _ensure_vlc_msearch_evidence(binary_dir, VLC_MEDIASERVER_ST)
+    session = dlna_server_process
+    location = _ensure_vlc_msearch_evidence(session, VLC_MEDIASERVER_ST)
     assert location, "no LOCATION URL found in SSDP log"
     root, ns_uri = fetch_description(location)
 
@@ -276,8 +308,8 @@ def test_description_xml_has_vlc_required_elements(dlna_server_process):
 
 
 def test_urlbase_matches_location_host(dlna_server_process):
-    binary_dir = dlna_server_process
-    location = _ensure_vlc_msearch_evidence(binary_dir, VLC_MEDIASERVER_ST)
+    session = dlna_server_process
+    location = _ensure_vlc_msearch_evidence(session, VLC_MEDIASERVER_ST)
     assert location
     root, ns_uri = fetch_description(location)
     url_base = find_text(root, "URLBase", ns_uri)
@@ -293,8 +325,8 @@ def test_urlbase_matches_location_host(dlna_server_process):
 
 
 def test_description_xml_without_host_header_still_resolves_locally(dlna_server_process):
-    binary_dir = dlna_server_process
-    location = _ensure_vlc_msearch_evidence(binary_dir, VLC_MEDIASERVER_ST)
+    session = dlna_server_process
+    location = _ensure_vlc_msearch_evidence(session, VLC_MEDIASERVER_ST)
     assert location
     root, ns_uri = fetch_description(location, send_host_header=False)
     url_base = find_text(root, "URLBase", ns_uri)
@@ -306,8 +338,8 @@ def test_description_xml_without_host_header_still_resolves_locally(dlna_server_
 
 
 def test_description_xml_without_host_header_raw_socket(dlna_server_process):
-    binary_dir = dlna_server_process
-    location = _ensure_vlc_msearch_evidence(binary_dir, VLC_MEDIASERVER_ST)
+    session = dlna_server_process
+    location = _ensure_vlc_msearch_evidence(session, VLC_MEDIASERVER_ST)
     assert location
     parsed = urlparse(location)
     import socket
@@ -334,17 +366,17 @@ def test_description_xml_without_host_header_raw_socket(dlna_server_process):
 
 def test_byebye_usn_matches_udn(dlna_server_process_stoppable):
     sp = dlna_server_process_stoppable
-    location = _ensure_vlc_msearch_evidence(sp.binary_dir, VLC_MEDIASERVER_ST)
+    location = _ensure_vlc_msearch_evidence(sp._session, VLC_MEDIASERVER_ST)
     assert location
     root, ns_uri = fetch_description(location)
     udn = find_text(root, "UDN", ns_uri)
     assert udn
 
-    prev_len = len(_read_ssdp_log(sp.binary_dir))
+    prev_len = len(_read_ssdp_log(sp._session))
     sp.stop()
 
     time.sleep(1.0)
-    new_text = _new_log_text(sp.binary_dir, prev_len)
+    new_text = _new_log_text(sp._session, prev_len)
     assert _log_has_byebye(new_text), (
         "no ssdp:byebye NOTIFY log entry; VLC will leave a stale entry in its "
         "playlist after this server stops"
@@ -361,10 +393,10 @@ def test_byebye_usn_matches_udn(dlna_server_process_stoppable):
 
 
 def test_msearch_response_within_vlc_mx_window(dlna_server_process):
-    binary_dir = dlna_server_process
-    prev_len = len(_read_ssdp_log(binary_dir))
-    _ensure_vlc_msearch_evidence(binary_dir, VLC_MEDIASERVER_ST)
-    new_text = _new_log_text(binary_dir, prev_len)
+    session = dlna_server_process
+    prev_len = len(_read_ssdp_log(session))
+    _ensure_vlc_msearch_evidence(session, VLC_MEDIASERVER_ST)
+    new_text = _new_log_text(session, prev_len)
     delays = [int(m.group(1)) for m in re.finditer(
         r"SSDP search match: .*delayMs=(\d+)", new_text)]
     assert delays, "no delayMs entries in log; cannot verify MX window compliance"
@@ -373,15 +405,15 @@ def test_msearch_response_within_vlc_mx_window(dlna_server_process):
 
 
 def test_no_response_to_satip_search(dlna_server_process):
-    binary_dir = dlna_server_process
+    session = dlna_server_process
     # Trigger VLC M-SEARCH to confirm server SSDP is active and capable of
     # responses. This proves any absence of SAT>IP response is intentional
     # rather than a broken server.
-    _ensure_vlc_msearch_evidence(binary_dir, VLC_MEDIASERVER_ST)
+    _ensure_vlc_msearch_evidence(session, VLC_MEDIASERVER_ST)
     # Confirm no SAT>IP response was logged. VLC does not emit a SAT>IP
     # probe by default, so absence of "SSDP response sent: ...SatIPServer..."
     # in the log confirms the server does not masquerade as SAT>IP.
-    log_text = _read_ssdp_log(binary_dir)
+    log_text = _read_ssdp_log(session)
     assert not _log_has_response_for_st(log_text, VLC_SATIP_ST), (
         "server responded to a SAT>IP probe; this device is not a SAT>IP server "
         "and must not be added via VLC's parseSatipServer code path"
@@ -410,8 +442,8 @@ def test_ssdp_search_flood_does_not_degrade_or_hang(
     set to the interface the server bound (parsed from its startup log line)
     so the M-SEARCH datagrams actually reach it.
     """
-    binary_dir = Path(dlna_server_process)
-    pre_log = _read_ssdp_log(binary_dir)
+    session = dlna_server_process
+    pre_log = _read_ssdp_log(session)
     pre_len = len(pre_log)
 
     m = re.search(r"Starting server on ([\d.]+):(\d+)", pre_log)
@@ -448,7 +480,7 @@ def test_ssdp_search_flood_does_not_degrade_or_hang(
     deadline = time.monotonic() + 5.0
     flood_received = 0
     while time.monotonic() < deadline:
-        new_text = _read_ssdp_log(binary_dir)[pre_len:]
+        new_text = _read_ssdp_log(session)[pre_len:]
         flood_received = len(re.findall(r"SSDP search in: .* st=ssdp:all ", new_text))
         if flood_received >= 100:
             break
@@ -468,13 +500,13 @@ def test_ssdp_search_flood_does_not_degrade_or_hang(
         "MX: 1\r\n"
         "ST: upnp:rootdevice\r\n\r\n"
     ).encode()
-    follow_pre_len = len(_read_ssdp_log(binary_dir))
+    follow_pre_len = len(_read_ssdp_log(session))
     sock.sendto(followup, ssdp_multicast_addr)
     sock.close()
 
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
-        log = _read_ssdp_log(binary_dir)[follow_pre_len:]
+        log = _read_ssdp_log(session)[follow_pre_len:]
         if _log_has_search_in_for_st(log, "upnp:rootdevice"):
             break
         time.sleep(0.2)

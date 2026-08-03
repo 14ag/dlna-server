@@ -1,5 +1,8 @@
 import subprocess
 import pathlib
+import sys
+
+import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -8,6 +11,21 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 # (dlna-server on Win32 and POSIX, OUTPUT_NAME "DLNA Server" on Win32).
 WIN32_EXE = REPO_ROOT / "output" / "winx64" / "DLNA Server.exe"
 POSIX_EXE = REPO_ROOT / "output" / "linux" / "dlna-server"
+
+
+def _native_exe():
+    """Return the binary whose executable format matches the local host OS.
+
+    A cross-built tree (e.g. output/linux/ present on a Windows checkout, or
+    output/winx64/ present on a WSL checkout) can leave both EXE paths
+    existing at once. subprocess.run on the wrong-format binary raises
+    OSError (WinError 193 on Windows, Exec format error on POSIX), which
+    previously made test_media_source_file_extensions_symmetric_across_platforms
+    flaky-to-failing depending on which platform last built the tree. Pick the
+    one that matches sys.platform instead of whichever happens to exist."""
+    if sys.platform == "win32":
+        return WIN32_EXE
+    return POSIX_EXE
 
 
 def _run(exe, *args):
@@ -20,12 +38,14 @@ def _run(exe, *args):
     return result
 
 
+@pytest.mark.windows_only
 def test_movie_title_from_path_handles_max_path_plus_input():
     """F-01 regression: a >=MAX_PATH-length path must not crash the
     process. SourceStemName has no fixed-size buffer, so this must exit
-    0 and print a non-empty title instead of aborting."""
-    if not WIN32_EXE.exists():
-        return  # F-01 fix is Win32-only; skip on non-Windows build agents
+    0 and print a non-empty title instead of aborting.
+
+    Win32-only flag (--print-movie-title-from-path is not implemented in
+    posix_main.cpp); deselected on POSIX so it never reports as skipped."""
     long_path = "C:\\" + ("a" * 40 + "\\") * 8 + "Movie Title.mkv"  # > 260 chars
     assert len(long_path) >= 260
     result = _run(WIN32_EXE, "--print-movie-title-from-path", long_path)
@@ -33,48 +53,46 @@ def test_movie_title_from_path_handles_max_path_plus_input():
     assert result.stdout.strip() == "Movie Title"
 
 
+@pytest.mark.windows_only
 def test_movie_title_from_path_short_path_regression():
-    if not WIN32_EXE.exists():
-        return
     result = _run(WIN32_EXE, "--print-movie-title-from-path", "C:\\Media\\Song.mp3")
     assert result.returncode == 0
     assert result.stdout.strip() == "Song"
 
 
+@pytest.mark.windows_only
 def test_default_playlist_path_matches_config_dir():
     """F-02 equivalence check: refactor must not change the derived
-    path's value for any real GetConfigPath() output."""
-    exe = WIN32_EXE if WIN32_EXE.exists() else POSIX_EXE
+    path's value for any real GetConfigPath() output.
+
+    Win32-only flag (--print-default-playlist-path is not implemented in
+    posix_main.cpp; on POSIX the flag would be parsed as a media-source
+    path and the server would start). Deselected on POSIX so it never
+    runs, never skips."""
+    exe = WIN32_EXE
     config_path = _run(exe, "--print-config-path").stdout.strip()
     default_playlist_path = _run(exe, "--print-default-playlist-path").stdout.strip()
-    if exe is WIN32_EXE:
-        config_dir = config_path.rsplit("\\", 1)[0]
-        assert default_playlist_path == config_dir + "\\default.m3u"
-    else:
-        config_dir = config_path.rsplit("/", 1)[0]
-        assert default_playlist_path == config_dir + "/default.m3u"
+    config_dir = config_path.rsplit("\\", 1)[0]
+    assert default_playlist_path == config_dir + "\\default.m3u"
 
 
 def test_media_source_file_extensions_symmetric_across_platforms():
     """FEAT-01: the shared extension list must be identical on both
     platforms -- proves media_source_file_types.h is genuinely the
-    single source of truth for both native dialog implementations."""
-    have_win32 = WIN32_EXE.exists()
-    have_posix = POSIX_EXE.exists()
-    assert have_win32 or have_posix, "no built binary available to test against"
+    single source of truth for both native dialog implementations.
 
-    exts = {}
-    if have_win32:
-        out = _run(WIN32_EXE, "--print-media-source-file-extensions").stdout
-        exts["win32"] = sorted(line.strip() for line in out.splitlines() if line.strip())
-    if have_posix:
-        out = _run(POSIX_EXE, "--print-media-source-file-extensions").stdout
-        exts["posix"] = sorted(line.strip() for line in out.splitlines() if line.strip())
+    Platform-neutral: runs against whichever native binary the host has.
+    Deselected/never-skipped elsewhere is handled by _native_exe + only
+    raising when no compatible native binary exists at all."""
+    native = _native_exe()
+    if not native.exists():
+        raise RuntimeError(
+            f"no native binary built at {native}; build it and re-run this test"
+        )
 
-    if have_win32 and have_posix:
-        assert exts["win32"] == exts["posix"]
+    out = _run(native, "--print-media-source-file-extensions").stdout
+    sample = sorted(line.strip() for line in out.splitlines() if line.strip())
 
-    sample = next(iter(exts.values()))
     for expected_media in ("mp4", "mkv", "mp3", "flac"):
         assert expected_media in sample
     for expected_playlist in ("m3u", "m3u8", "pls"):
