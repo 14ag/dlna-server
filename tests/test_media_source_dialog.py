@@ -155,5 +155,5 @@ def test_playlist_button_identifier_removed_win32():
 
 
 def test_playlist_button_identifier_removed_posix():
-    src = (REPO_ROOT / "src" / "fltk_gui_main.cpp").read_text(encoding="utf-8")
+    src = (REPO_ROOT / "src" / "gtk4_gui_main.cpp").read_text(encoding="utf-8")
     assert "playlistButton" not in src

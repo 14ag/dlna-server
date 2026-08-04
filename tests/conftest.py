@@ -73,7 +73,7 @@ def pytest_collection_modifyitems(config, items):
     deselected = []
     remaining = []
     for item in items:
-        # GUI tests require the native FLTK GUI binary plus an interactive
+        # GUI tests require the native GTK4 GUI binary plus an interactive
         # X display (xvfb-run -a assigns a private DISPLAY the xdotool
         # probes can never see). They are not meaningful in headless CI, so
         # deselect them on every platform rather than skipping.

@@ -4,6 +4,7 @@
 - Use `git` for git tasks. Use `gh` for GitHub tasks.
 - When user names a skill, follow that skill to the latter.
 - No fallbacks when user states a requirement. Ask a yes/no question if requirement conflict exists.
+- sudo password for wsl is in the .env file
 - Do not make proactive decisions outside user scope. Ask first.
 
 ## Automation

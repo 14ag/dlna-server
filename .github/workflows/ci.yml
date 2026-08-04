@@ -14,7 +14,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            cmake_args: -DDLNA_ENABLE_FLTK_GUI=OFF
+            cmake_args: -DDLNA_ENABLE_GTK4_GUI=OFF
           - os: windows-latest
             cmake_args: ""
     runs-on: ${{ matrix.os }}

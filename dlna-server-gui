@@ -9,12 +9,12 @@ export DLNA_SERVER_BIN="$server_bin"
 
 if [ ! -x "$native_gui" ]; then
     echo "DLNA Server native GUI is missing or not executable: $native_gui" >&2
-    echo "Rebuild with -DDLNA_ENABLE_FLTK_GUI=ON." >&2
+    echo "Rebuild with -DDLNA_ENABLE_GTK4_GUI=ON." >&2
     exit 1
 fi
 
-if [ -z "${FLTK_BACKEND:-}" ] && [ -n "${DISPLAY:-}" ] && [ -r /proc/version ] && grep -qi microsoft /proc/version; then
-    export FLTK_BACKEND=x11
+if [ -z "${GDK_BACKEND:-}" ] && [ -n "${DISPLAY:-}" ] && [ -r /proc/version ] && grep -qi microsoft /proc/version; then
+    export GDK_BACKEND=x11
 fi
 
 exec "$native_gui" "$@"

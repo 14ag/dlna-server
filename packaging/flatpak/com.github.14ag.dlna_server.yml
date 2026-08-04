@@ -14,7 +14,7 @@ modules:
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
       - -DCMAKE_INSTALL_PREFIX=/app
-      - -DDLNA_ENABLE_FLTK_GUI=ON
+      - -DDLNA_ENABLE_GTK4_GUI=ON
     sources:
       - type: dir
         path: ../..

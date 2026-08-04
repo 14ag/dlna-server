@@ -6,7 +6,7 @@
 - C++17 (`CMAKE_CXX_STANDARD 17`, `CMAKE_CXX_STANDARD_REQUIRED ON`)
 - libcurl — `find_package(CURL REQUIRED)` at the top level; every target links `CURL::libcurl` and defines `DLNA_HAS_LIBCURL=1`
 - On Windows: a vcpkg installation with the `curl` port, since `find_package(CURL)` resolves through vcpkg's toolchain file
-- On POSIX, optionally: FLTK 1.4.x — if `find_package(FLTK)` doesn't find a system install, CMake fetches `release-1.4.5` from the FLTK git repository via `FetchContent` and builds it as part of the tree
+- On POSIX, optionally: GTK4 development files (`libgtk-4-dev` on Debian/Ubuntu, `gtk4-devel` on Fedora) — CMake finds GTK4 via `pkg-config`
 
 ## Windows
 
@@ -64,22 +64,22 @@ Notes:
 
 ### Native GUI (optional)
 
-Controlled by `DLNA_ENABLE_FLTK_GUI` (default `ON`):
+Controlled by `DLNA_ENABLE_GTK4_GUI` (default `ON`):
 
 ```
-cmake -B build -S . -DDLNA_ENABLE_FLTK_GUI=OFF
+cmake -B build -S . -DDLNA_ENABLE_GTK4_GUI=OFF
 ```
 
-When enabled, this also builds `dlna-server-gui-native`, a second executable compiling the same POSIX source files a second time (it does not link `dlna_core`) plus `src/fltk_gui_main.cpp`. Any change to a POSIX source file needs to build cleanly against both target's include paths and compile definitions — check `target_compile_definitions` for both `dlna_core` and `dlna-server-gui-native` if you add a new `#ifdef`.
+When enabled, this builds `dlna-server-gui-gtk4`, a second executable that compiles `src/gtk4_gui_main.cpp` and `src/posix_tray.cpp` against GTK4, plus the shared `dlna_core` library.
 
 ### macOS app bundle
 
-If `DLNA_ENABLE_FLTK_GUI=ON` and the platform is Apple, an `DLNAServerApp` custom target assembles `DLNA Server.app`:
+If `DLNA_ENABLE_GTK4_GUI=ON` and the platform is Apple, an `DLNAServerApp` custom target assembles `DLNA Server.app`:
 
 ```
 Contents/MacOS/dlna-server            <- from dlna-server target
 Contents/MacOS/dlna-server-gui        <- packaging/macos/dlna-server-gui launcher script
-Contents/MacOS/dlna-server-gui-bin    <- from dlna-server-gui-native target
+Contents/MacOS/dlna-server-gui-bin    <- from dlna-server-gui-gtk4 target
 Contents/Resources/*.png, app.ico
 Contents/Info.plist                   <- from packaging/macos/Info.plist.in
 ```
@@ -88,7 +88,7 @@ Contents/Info.plist                   <- from packaging/macos/Info.plist.in
 
 ### Linux packaging
 
-Non-Apple Unix builds with `DLNA_ENABLE_FLTK_GUI=ON` install:
+Non-Apple Unix builds with `DLNA_ENABLE_GTK4_GUI=ON` install:
 
 - a launcher script generated from `packaging/linux/dlna-server-gui`
 - an SVG icon into the hicolor theme

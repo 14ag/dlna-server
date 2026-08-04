@@ -178,9 +178,7 @@ else()
     include(GNUInstallDirs)
     include(FetchContent)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" ON)
-    option(DLNA_ENABLE_GTK4_GUI "Build the native GTK4 Linux GUI" OFF)
-    set(DLNA_FLTK_VERSION "release-1.4.5" CACHE STRING "FLTK git tag used when system FLTK is unavailable")
+    option(DLNA_ENABLE_GTK4_GUI "Build the native GTK4 Linux GUI" ON)
 
 add_library(dlna_core STATIC
          src/access_keys.cpp
@@ -228,46 +226,8 @@ add_library(dlna_core STATIC
 
     install(TARGETS dlna-server RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-    if(DLNA_ENABLE_FLTK_GUI)
-        configure_file(packaging/linux/dlna-server-gui "${CMAKE_BINARY_DIR}/dlna-server-gui" @ONLY NEWLINE_STYLE UNIX)
-        find_package(FLTK QUIET)
-        if(NOT FLTK_FOUND)
-            FetchContent_Declare(
-                fltk
-                GIT_REPOSITORY https://github.com/fltk/fltk.git
-                GIT_TAG ${DLNA_FLTK_VERSION}
-                GIT_SHALLOW TRUE
-            )
-            set(FLTK_BUILD_TEST OFF CACHE BOOL "" FORCE)
-            set(FLTK_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-            set(FLTK_BUILD_FLUID OFF CACHE BOOL "" FORCE)
-            set(FLTK_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-            FetchContent_GetProperties(fltk)
-            if(NOT fltk_POPULATED)
-                FetchContent_Populate(fltk)
-                add_subdirectory(${fltk_SOURCE_DIR} ${fltk_BINARY_DIR} EXCLUDE_FROM_ALL)
-            endif()
-            set(DLNA_FLTK_TARGET fltk fltk_images)
-        else()
-            set(DLNA_FLTK_TARGET ${FLTK_LIBRARIES})
-        endif()
-        # Fl_PNG_Image requires fltk_images; ensure it is linked for
-        # both system-FLTK and FetchContent builds.
-        if(NOT DLNA_FLTK_TARGET MATCHES "fltk_images")
-            list(APPEND DLNA_FLTK_TARGET fltk_images)
-        endif()
-        add_executable(dlna-server-gui-native src/fltk_gui_main.cpp)
-        set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
-        dlna_enable_warnings(dlna-server-gui-native)
-        if(FLTK_FOUND)
-            target_include_directories(dlna-server-gui-native PRIVATE ${FLTK_INCLUDE_DIR})
-        endif()
-        target_link_libraries(dlna-server-gui-native PRIVATE dlna_core ${DLNA_FLTK_TARGET} Threads::Threads)
-        install(TARGETS dlna-server-gui-native RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-        install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
-    endif()
-
     if(DLNA_ENABLE_GTK4_GUI)
+        configure_file(packaging/linux/dlna-server-gui "${CMAKE_BINARY_DIR}/dlna-server-gui" @ONLY NEWLINE_STYLE UNIX)
         find_package(PkgConfig REQUIRED)
         pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
 
@@ -286,11 +246,12 @@ add_library(dlna_core STATIC
         target_compile_definitions(dlna-server-gui-gtk4 PRIVATE DLNA_POSIX_GUI=1)
         target_link_libraries(dlna-server-gui-gtk4 PRIVATE dlna_core PkgConfig::GTK4 Threads::Threads)
         install(TARGETS dlna-server-gui-gtk4 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/style.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
     endif()
 
     if(APPLE)
-        if(DLNA_ENABLE_FLTK_GUI)
+        if(DLNA_ENABLE_GTK4_GUI)
             set(DLNA_APP_BUNDLE "${CMAKE_BINARY_DIR}/DLNA Server.app")
             configure_file(packaging/macos/Info.plist.in "${CMAKE_BINARY_DIR}/Info.plist" @ONLY)
             add_custom_target(DLNAServerApp ALL
@@ -304,7 +265,7 @@ add_library(dlna_core STATIC
                         "${CMAKE_SOURCE_DIR}/packaging/macos/dlna-server-gui"
                         "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "$<TARGET_FILE:dlna-server-gui-native>"
+                        "$<TARGET_FILE:dlna-server-gui-gtk4>"
                         "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui-bin"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         "${CMAKE_SOURCE_DIR}/resources/app.ico"
@@ -325,13 +286,13 @@ add_library(dlna_core STATIC
                         "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server"
                         "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui"
                         "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui-bin"
-                DEPENDS dlna-server dlna-server-gui-native
+                DEPENDS dlna-server dlna-server-gui-gtk4
                 COMMENT "Assembling DLNA Server.app"
             )
             install(DIRECTORY "${DLNA_APP_BUNDLE}" DESTINATION . USE_SOURCE_PERMISSIONS)
         endif()
     else()
-        if(DLNA_ENABLE_FLTK_GUI)
+        if(DLNA_ENABLE_GTK4_GUI)
             configure_file(packaging/linux/install_desktop.cmake.in "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake" @ONLY)
             configure_file(packaging/linux/dlna-server.appdata.xml.in "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" @ONLY)
             # Install SVG into hicolor scalable tree for desktop-env icon lookup

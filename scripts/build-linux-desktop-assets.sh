@@ -89,10 +89,10 @@ mkdir -p "$output_dir" "$tools_dir" "$release_stage_dir"
 # Install build prerequisites if missing
 _pkgs=(
     build-essential cmake pkg-config git
-    libcurl4-openssl-dev libx11-dev libxft-dev libxext-dev
-    libxinerama-dev libxcursor-dev libxrender-dev libxfixes-dev
+    libcurl4-openssl-dev
+    libgtk-4-dev
+    libx11-dev libxext-dev
     libpng-dev libjpeg-dev zlib1g-dev
-    libgl1-mesa-dev libglu1-mesa-dev
 )
 _need=false
 for _p in "${_pkgs[@]}"; do
@@ -113,15 +113,9 @@ cmake_args=(
 )
 
 if [ "${DLNA_LINUX_GUI_BUILD:-1}" = "1" ]; then
-    cmake_args+=("-DDLNA_ENABLE_FLTK_GUI=ON")
+    cmake_args+=("-DDLNA_ENABLE_GTK4_GUI=ON")
 else
-    cmake_args+=("-DDLNA_ENABLE_FLTK_GUI=OFF")
-fi
-
-if [ -n "${DLNA_FLTK_SOURCE_DIR:-}" ] && [ -d "$DLNA_FLTK_SOURCE_DIR" ]; then
-    cmake_args+=("-DFETCHCONTENT_SOURCE_DIR_FLTK=$DLNA_FLTK_SOURCE_DIR")
-elif [ -d "$repo_root/build-wsl-native/_deps/fltk-src" ]; then
-    cmake_args+=("-DFETCHCONTENT_SOURCE_DIR_FLTK=$repo_root/build-wsl-native/_deps/fltk-src")
+    cmake_args+=("-DDLNA_ENABLE_GTK4_GUI=OFF")
 fi
 
 cmake "${cmake_args[@]}"

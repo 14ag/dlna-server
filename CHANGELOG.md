@@ -14,6 +14,7 @@
 - Existing media organization settings now apply more consistently across local folders, playlists, and SMB/FTP sources.
 - Playlist order is preserved unless title sorting is enabled or requested by the DLNA client.
 - `FileServerPort` remains accepted in `config.ini`; media file serving uses `Port`.
+- The native POSIX GUI has switched from FLTK to GTK4. `DLNA_ENABLE_FLTK_GUI` is removed; `DLNA_ENABLE_GTK4_GUI` (default `ON`) replaces it. `src/fltk_gui_main.cpp` is deleted; `src/gtk4_gui_main.cpp` is the GTK4 front end.
 
 ### Fixed
 - FTP-hosted playlists now recurse into nested `.m3u8` manifests, log rejected entries, and redact credentials in remote URL logs.
@@ -35,7 +36,7 @@
 - Windows keeps the PC awake while the DLNA server is starting, running, or stopping.
 - Settings now include default playlist entry creation with browse buttons for movie and subtitle paths.
 - DLNA device descriptions now advertise bundled 48, 120, and 256 px PNG icons.
-- Windows and FLTK source lists now support a text-labeled **Delete** button and keyboard `Delete`.
+- Windows and GTK4 source lists now support a text-labeled **Delete** button and keyboard `Delete`.
 - DLNA service handling now includes ConnectionManager SOAP responses, ContentDirectory Search, and companion album-art serving.
 - Advertised UPnP event URLs now accept GENA subscribe and unsubscribe requests.
 - POSIX SSDP now supports IPv6 sockets, M-SEARCH responses, and periodic `ssdp:alive` refreshes.
@@ -49,7 +50,7 @@
 - Media protocol metadata is now generated from a shared DLNA format table for Browse, HTTP streaming, and ConnectionManager responses.
 - Release scripts now verify downloaded packaging inputs, avoid stale AppImage reuse, and publish Windows assets from GitHub Actions.
 - Added a PDF-derived DLNA framework upgrade blueprint for future protocol hardening work.
-- POSIX desktop builds now use the native FLTK GUI only. `DLNA_ENABLE_FLTK_GUI=OFF` builds the headless server and skips the GUI launcher.
+- POSIX desktop builds now use the native GTK4 GUI only. `DLNA_ENABLE_GTK4_GUI=OFF` builds the headless server and skips the GUI launcher.
 - Remote SMB and FTP fetching now launches `curl` without a shell.
 - Config, CLI, and desktop settings now reject invalid ports before the server binds or advertises them.
 

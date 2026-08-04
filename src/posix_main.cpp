@@ -420,6 +420,10 @@ int main(int argc, char** argv) {
             std::cout << kMaxUpnpNotifyWorkers << std::endl;
             return 0;
         }
+        else if (arg == "--print-dlna-server-header") {
+            std::cout << GetDlnaServerHeader() << std::endl;
+            return 0;
+        }
         else if (arg == "--print-should-allow-source-drop" && i + 1 < argc) {
             // ShouldAllowSourceDrop now lives in source drop policy h
             // no ole drop target exists on posix today

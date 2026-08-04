@@ -8,7 +8,7 @@ native_gui="$app_dir/Contents/MacOS/dlna-server-gui-bin"
 export DLNA_SERVER_BIN="$server_bin"
 if [ ! -x "$native_gui" ]; then
     echo "DLNA Server native GUI is missing or not executable: $native_gui" >&2
-    echo "Rebuild with -DDLNA_ENABLE_FLTK_GUI=ON." >&2
+    echo "Rebuild with -DDLNA_ENABLE_GTK4_GUI=ON." >&2
     exit 1
 fi
 
