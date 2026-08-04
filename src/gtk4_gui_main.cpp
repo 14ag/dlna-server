@@ -162,6 +162,13 @@ GtkWidget* g_logDialog = nullptr;
 GtkTextBuffer* g_logBuffer = nullptr;
 unsigned long long g_logLastSequence = 0;
 
+// hidden debug hook: --dump-widget-geometry builds every Part-1 dialog
+// headless, prints [gtk4-<tag>-geometry] rects, and exits before the modal
+// loops so no user input is needed. see DumpAllWindowsAndExit.
+bool g_dumpGeometry = false;
+void DumpWindowGeometry(const char* tag, GtkWidget* toplevel);
+void DumpAllWindowsAndExit(GtkApplication* app);
+
 void RefreshStatus();
 void ApplyPendingResult();
 void BeginRescan();
@@ -335,6 +342,11 @@ void ShowPlaylistEntryDialog() {
         g_playlistDialog = nullptr;
     }), nullptr);
 
+    if (g_dumpGeometry) {
+        gtk_window_present(GTK_WINDOW(g_playlistDialog));
+        DumpWindowGeometry("playlist-entry", g_playlistDialog);
+        return;
+    }
     gtk_widget_show(g_playlistDialog);
 
     while (!g_playlistDone) {
@@ -466,6 +478,11 @@ void PromptForMediaSource() {
         g_sourceDialog = nullptr;
     }), nullptr);
 
+    if (g_dumpGeometry) {
+        gtk_window_present(GTK_WINDOW(g_sourceDialog));
+        DumpWindowGeometry("source-prompt", g_sourceDialog);
+        return;
+    }
     gtk_widget_show(g_sourceDialog);
 
     while (!g_sourceDone) {
@@ -579,6 +596,11 @@ void ShowLogDialog() {
     }), nullptr);
 
     RefreshLogDialog();
+    if (g_dumpGeometry) {
+        gtk_window_present(GTK_WINDOW(g_logDialog));
+        DumpWindowGeometry("log", g_logDialog);
+        return;
+    }
     gtk_widget_show(g_logDialog);
 }
 
@@ -654,6 +676,11 @@ void ShowHelpDialog() {
     insertHeader(L"Settings");
     for (const auto& setting : GetSettingsHelpTable()) insertRow(setting.label, setting.meaning);
 
+    if (g_dumpGeometry) {
+        gtk_window_present(GTK_WINDOW(dialog));
+        DumpWindowGeometry("help", dialog);
+        return;
+    }
     gtk_widget_show(dialog);
 }
 
@@ -894,6 +921,11 @@ void ShowSettingsDialog() {
     }), nullptr);
 
     LoadSettingsFromConfig();
+    if (g_dumpGeometry) {
+        gtk_window_present(GTK_WINDOW(g_settingsDialog));
+        DumpWindowGeometry("settings", g_settingsDialog);
+        return;
+    }
     gtk_widget_show(g_settingsDialog);
 
     while (gtk_widget_is_visible(g_settingsDialog)) {
@@ -1367,10 +1399,87 @@ void BuildMainWindow(GtkApplication* app) {
     if (dbg2) { fprintf(dbg2, "BuildMainWindow exit present done\n"); fflush(dbg2); }
 }
 
+// Walks every visible widget and emits one line per widget:
+//   [gtk4-<tag>-geometry] class=... id=... x=... y=... w=... h=...
+// coordinates are relative to the dialog toplevel so they can be diffed
+// verbatim against src/ui_tokens.h (and the win32 log).
+//
+// gtk_widget_compute_bounds(widget, toplevel) can assert-fail or return false
+// for widgets nested inside not-yet-realized container chains, silently
+// dropping them. Walking the parent chain with parent-relative bounds is
+// always valid (parents are always realized widgets) and yields identical
+// absolute coordinates, so nothing is lost.
+static bool ComputeBoundsTo(GtkWidget* widget, GtkWidget* origin,
+                            graphene_rect_t* out) {
+    if (widget == origin) {
+        return gtk_widget_compute_bounds(widget, origin, out);
+    }
+    GtkWidget* parent = gtk_widget_get_parent(widget);
+    if (!parent) return false;
+    graphene_rect_t local;
+    if (!gtk_widget_compute_bounds(widget, parent, &local)) return false;
+    graphene_rect_t parentAbs;
+    if (!ComputeBoundsTo(parent, origin, &parentAbs)) return false;
+    out->origin.x = parentAbs.origin.x + local.origin.x;
+    out->origin.y = parentAbs.origin.y + local.origin.y;
+    out->size.width = local.size.width;
+    out->size.height = local.size.height;
+    return true;
+}
+
+void DumpWidgetTree(const char* tag, GtkWidget* widget, GtkWidget* origin) {
+    if (!gtk_widget_is_visible(widget)) return;
+    graphene_rect_t bounds;
+    if (ComputeBoundsTo(widget, origin, &bounds)) {
+        const char* className = G_OBJECT_TYPE_NAME(widget);
+        const char* name = gtk_widget_get_name(widget);
+        std::printf("[gtk4-%s-geometry] class=%s id=%s x=%d y=%d w=%d h=%d\n",
+                    tag, className ? className : "?",
+                    name ? name : "0",
+                    static_cast<int>(bounds.origin.x),
+                    static_cast<int>(bounds.origin.y),
+                    static_cast<int>(bounds.size.width),
+                    static_cast<int>(bounds.size.height));
+    }
+    GtkWidget* child = gtk_widget_get_first_child(widget);
+    while (child != nullptr) {
+        DumpWidgetTree(tag, child, origin);
+        child = gtk_widget_get_next_sibling(child);
+    }
+}
+
+void DumpWindowGeometry(const char* tag, GtkWidget* toplevel) {
+    if (!toplevel) return;
+    gtk_window_present(GTK_WINDOW(toplevel));
+    // gtk_window_present is async (allocates on the next frame) so drive the
+    // default GMainContext under xvfb until the toplevel is allocated.
+    for (int i = 0; i < 200 && gtk_widget_get_width(toplevel) <= 0; ++i)
+        g_main_context_iteration(nullptr, TRUE);
+    DumpWidgetTree(tag, toplevel, toplevel);
+}
+
+// builds/shows every Part-1 dialog headless, dumps its geometry, and exits
+// before any modal loop so no user input is required.
+void DumpAllWindowsAndExit(GtkApplication* app) {
+    (void)app;
+    gtk_window_present(GTK_WINDOW(g_mainWindow));
+    DumpWindowGeometry("main-window", g_mainWindow);
+    ShowPlaylistEntryDialog();
+    PromptForMediaSource();
+    ShowLogDialog();
+    ShowHelpDialog();
+    ShowSettingsDialog();
+    std::exit(0);
+}
+
 void OnAppActivate(GtkApplication* app, gpointer) {
     FILE* dbg = fopen("/tmp/opencode/gtk4_dbg.txt", "a");
     if (dbg) { fprintf(dbg, "OnAppActivate enter\n"); fflush(dbg); }
     BuildMainWindow(app);
+    if (g_dumpGeometry) {
+        DumpAllWindowsAndExit(app);
+        return;
+    }
 }
 
 void OnAppStartup(GtkApplication* app, gpointer) {
@@ -1394,8 +1503,8 @@ void OnAppStartup(GtkApplication* app, gpointer) {
         "window { background-color: rgb(31,31,31); color: rgb(255,255,255); }\n"
         "label { color: rgb(255,255,255); }\n"
         "frame { color: rgb(200,200,200); }\n"
-        "entry { background-color: rgb(31,31,31); color: rgb(255,255,255); "
-        "border: 1px solid rgb(88,88,88); border-radius: 8px; }\n"
+         "entry { background-color: rgb(31,31,31); color: rgb(255,255,255); "
+         "border: none; box-shadow: inset 0 0 0 1px rgb(88,88,88); border-radius: 8px; }\n"
         "checkbutton { color: rgb(255,255,255); }\n"
         "textview { background-color: rgb(31,31,31); color: rgb(255,255,255); }\n"
         "textview text { background-color: rgb(31,31,31); color: rgb(255,255,255); }\n"
@@ -1409,8 +1518,10 @@ void OnAppStartup(GtkApplication* app, gpointer) {
         "color: rgb(255,255,255); }\n"
         ".toolbar-button { background-image: none; "
         "background-color: rgb(51,51,51); "
-        "border: 1px solid rgb(88,88,88); "
-        "border-radius: 8px; color: rgb(255,255,255); }\n"
+        "border: none; "
+        "box-shadow: inset 0 0 0 1px rgb(88,88,88); "
+        "border-radius: 8px; color: rgb(255,255,255); "
+        "min-height: 32px; }\n"
         ".toolbar-button:hover { background-image: none; "
         "background-color: rgb(62,62,62); }\n"
         ".toolbar-button:active { background-image: none; "
@@ -1478,6 +1589,18 @@ int main(int argc, char** argv) {
     g_action_map_add_action_entries(G_ACTION_MAP(app), entries, G_N_ELEMENTS(entries), app);
 
     SingleInstance::StartListening(OnSingleInstanceCommand);
+
+    // parse the hidden --dump-widget-geometry flag in-place and strip it from
+    // argv so g_application_run's option parser does not reject it.
+    int argcKept = 0;
+    for (int i = 0; i < argc; ++i) {
+        if (std::string(argv[i]) == "--dump-widget-geometry") {
+            g_dumpGeometry = true;
+            continue;
+        }
+        argv[argcKept++] = argv[i];
+    }
+    argc = argcKept;
 
     const int result = g_application_run(G_APPLICATION(app), argc, argv);
 
