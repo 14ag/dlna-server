@@ -165,7 +165,7 @@ constexpr int kLogCloseH = 40;
 
 // help dialog dimensions from the help geometry dump capture
 constexpr int kHelpWindowWidth = 544;
-constexpr int kHelpWindowHeight = 381;
+constexpr int kHelpWindowHeight = 400;
 constexpr int kHelpTextX = 10;
 constexpr int kHelpTextY = 10;
 constexpr int kHelpTextW = 530;
@@ -188,7 +188,7 @@ constexpr int kPlaylistMovieBrowseW = 92;
 constexpr int kPlaylistMovieBrowseH = 32;
 constexpr int kPlaylistSubtitleLabelX = 16;
 constexpr int kPlaylistSubtitleLabelY = 68;
-constexpr int kPlaylistSubtitleLabelW = 84;
+constexpr int kPlaylistSubtitleLabelW = 87;
 constexpr int kPlaylistSubtitleLabelH = 18;
 constexpr int kPlaylistSubtitleEditX = 112;
 constexpr int kPlaylistSubtitleEditY = 60;
