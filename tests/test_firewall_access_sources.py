@@ -57,7 +57,7 @@ class FirewallAccessSourceTests(unittest.TestCase):
     def test_posix_build_has_no_firewall_helper(self):
         cmake = self.read("CMakeLists.txt")
         cli = self.read("src/posix_main.cpp")
-        gui = self.read("src/fltk_gui_main.cpp")
+        gui = self.read("src/gtk4_gui_main.cpp")
 
         self.assertFalse((ROOT / "src/firewall_access_posix.cpp").exists())
         self.assertNotIn("firewall_access_posix.cpp", cmake)

@@ -35,7 +35,7 @@ mkdir -p "$platform_dir"
 cmake -S "$repo_root" -B "$build_dir" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$install_dir" \
-    -DDLNA_ENABLE_FLTK_GUI=ON
+    -DDLNA_ENABLE_GTK4_GUI=ON
 cmake --build "$build_dir" --parallel "${DLNA_BUILD_JOBS:-2}"
 cmake --install "$build_dir"
 

@@ -62,7 +62,7 @@ Settings persist to `config.ini` under a `[Settings]` section - server name, por
 - CMake 3.20 or newer
 - A C++17 compiler - MSVC on Windows, GCC or Clang on Linux/macOS
 - libcurl - via vcpkg on Windows, via your system package manager or dev package on POSIX
-- FLTK, only if you're building the native Linux/macOS GUI. If it's not already installed, CMake fetches and builds it for you.
+- GTK4 development files, only if you're building the native Linux/macOS GUI (`libgtk-4-dev` on Debian/Ubuntu, `gtk4-devel` on Fedora). CMake finds it via `pkg-config`.
 
 **Windows** (requires a vcpkg install with the CURL port available):
 
@@ -80,7 +80,7 @@ cmake --build build
 sudo cmake --install build
 ```
 
-The native FLTK GUI (`dlna-server-gui-native`) builds by default on POSIX. Turn it off with `-DDLNA_ENABLE_FLTK_GUI=OFF` if you only want the headless binary.
+The native GTK4 GUI (`dlna-server-gui-gtk4`) builds by default on POSIX. Turn it off with `-DDLNA_ENABLE_GTK4_GUI=OFF` if you only want the headless binary.
 
 On Linux, `cmake --install` also registers desktop and AppStream metadata; `CPack` produces a `.deb` package (`libcurl4` is listed as a runtime dependency). For the repo launcher, prefer `./build-assets.sh --install` so install lands in `dpkg` in one step.
 

@@ -33,7 +33,7 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
         self.assertNotIn("m_isRunning", header + source)
 
     def test_settings_generate_m3u_and_playlist_browse_controls(self):
-        for path in ("src/settingsdlg.cpp", "src/fltk_gui_main.cpp"):
+        for path in ("src/settingsdlg.cpp", "src/gtk4_gui_main.cpp"):
             source = self.read(path)
             for token in (
                 "#EXTM3U",
@@ -50,8 +50,8 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
         self.assertIn("IDC_PLAYLIST_SUBTITLE_BROWSE", windows_settings)
         self.assertIn("IFileOpenDialog", windows_settings)
 
-        fltk_settings = self.read("src/fltk_gui_main.cpp")
-        self.assertIn("Fl_Native_File_Chooser", fltk_settings)
+        gtk4_settings = self.read("src/gtk4_gui_main.cpp")
+        self.assertIn("GtkFileChooserNative", gtk4_settings)
 
     def test_device_description_and_http_servers_expose_icon(self):
         content = self.read("src/contentdirectory.cpp")

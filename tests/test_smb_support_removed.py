@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 UI_AND_DOC_FILES_MUST_NOT_MENTION_SMB = (
     "src/mainwindow.cpp",
-    "src/fltk_gui_main.cpp",
+    "src/gtk4_gui_main.cpp",
     "src/settingsdlg.cpp",
     "README.md",
 )

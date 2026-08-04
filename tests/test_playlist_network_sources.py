@@ -37,15 +37,15 @@ class PlaylistNetworkSourceTests(unittest.TestCase):
 
     def test_gui_paths_accept_playlists_and_network_urls(self):
         windows_gui = self.read("src/mainwindow.cpp")
-        fltk_gui = self.read("src/fltk_gui_main.cpp")
+        gtk4_gui = self.read("src/gtk4_gui_main.cpp")
 
         for token in ("Playlist", "Network", "ftp://user:pass@server"):
-            self.assertIn(token, windows_gui + fltk_gui)
-        self.assertNotIn("smb://", windows_gui + fltk_gui)
+            self.assertIn(token, windows_gui + gtk4_gui)
+        self.assertNotIn("smb://", windows_gui + gtk4_gui)
 
         self.assertNotIn("BrowsePlaylist", windows_gui)
-        self.assertIn("Fl_Native_File_Chooser", fltk_gui)
-        self.assertIn("fl_input", fltk_gui)
+        self.assertIn("GtkFileChooserNative", gtk4_gui)
+        self.assertIn("gtk_entry_new", gtk4_gui)
 
 
 if __name__ == "__main__":

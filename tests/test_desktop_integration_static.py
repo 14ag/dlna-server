@@ -80,12 +80,12 @@ def test_desktop_file_icon_matches_installed_icon_name():
     DESKTOP_TEMPLATE is None,
     reason="no *.desktop(.in) file found under packaging/linux verify task four checklist manually",
 )
-def test_desktop_file_startup_wm_class_matches_fltk_xclass():
+def test_desktop_file_startup_wm_class_matches_gtk4_app_id():
     text = DESKTOP_TEMPLATE.read_text()
-    fltk_main = (REPO_ROOT / "src" / "fltk_gui_main.cpp").read_text()
-    assert 'xclass("dlna-server")' in fltk_main, (
-        "fltk_gui_main.cpp xclass value changed update this test and the "
-        "desktop file StartupWMClass together"
+    gtk4_main = (REPO_ROOT / "src" / "gtk4_gui_main.cpp").read_text()
+    assert 'gtk_application_new("dlna-server"' in gtk4_main, (
+        "gtk4_gui_main.cpp app ID should be dlna-server so the GTK4 WM_CLASS"
+        " matches the .desktop StartupWMClass"
     )
     assert "StartupWMClass=dlna-server" in text
 

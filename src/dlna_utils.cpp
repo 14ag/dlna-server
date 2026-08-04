@@ -366,11 +366,11 @@ std::string BuildSourceProtocolInfoList() {
 
 std::string GetDlnaServerHeader() {
 #ifdef _WIN32
-    return "Windows/10.0 UPnP/1.1 dlna-server/" DLNA_SERVER_VERSION_STRING;
+    return "Windows/10.0 DLNADOC/1.50 UPnP/1.0 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #elif defined(DLNA_PLATFORM_NAME)
-    return std::string(DLNA_PLATFORM_NAME) + " UPnP/1.1 dlna-server/" DLNA_SERVER_VERSION_STRING;
+    return std::string(DLNA_PLATFORM_NAME) + " DLNADOC/1.50 UPnP/1.0 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #else
-    return "POSIX UPnP/1.1 dlna-server/" DLNA_SERVER_VERSION_STRING;
+    return "POSIX DLNADOC/1.50 UPnP/1.0 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #endif
 }
 

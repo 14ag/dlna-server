@@ -2,7 +2,7 @@
 Contract tests for Linux icon resolution and desktop integration.
 
 Validates that the C++ source and build rules implement the bundled
-resource search, FLTK window icon, hicolor icon tree install, and
+resource search, GTK4 window identity, hicolor icon tree install, and
 .desktop file alignment changes.
 """
 
@@ -43,25 +43,20 @@ class TestConfigHeader:
         assert "#ifdef DLNA_POSIX" in src
 
 
-# ---- fltk_gui_main.cpp ----
+# ---- gtk4_gui_main.cpp ----
 
-class TestFltkIconIntegration:
-    def test_wm_class_set(self):
-        """The FLTK MainWindow must call xclass('dlna-server')."""
-        src = _source("fltk_gui_main.cpp")
-        assert 'xclass("dlna-server")' in src
+class TestGtk4WindowIdentity:
+    def test_app_id_set(self):
+        """The GTK4 application must use app ID 'dlna-server' so WM_CLASS matches StartupWMClass."""
+        src = _source("gtk4_gui_main.cpp")
+        assert 'gtk_application_new("dlna-server"' in src
 
-    def test_window_icon_loaded(self):
-        """The FLTK MainWindow must load icon via ResolveBundledResourcePath."""
-        src = _source("fltk_gui_main.cpp")
+    def test_css_loaded_via_resolver(self):
+        """The GTK4 startup must load style.css via ResolveBundledResourcePath."""
+        src = _source("gtk4_gui_main.cpp")
         assert "ResolveBundledResourcePath" in src
-        assert "Fl_PNG_Image" in src
-        assert 'server_icon_48.png' in src
-
-    def test_png_image_header_included(self):
-        """fltk_gui_main.cpp must include Fl_PNG_Image.H."""
-        src = _source("fltk_gui_main.cpp")
-        assert "#include <FL/Fl_PNG_Image.H>" in src
+        assert "gtk/style.css" in src
+        assert "#include <gtk/gtk.h>" in src
 
 
 # ---- posix_httpserver.cpp ----
