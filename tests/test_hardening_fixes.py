@@ -9,6 +9,26 @@ class HardeningFixSourceTests(unittest.TestCase):
     def read(self, path: str) -> str:
         return (ROOT / path).read_text(encoding="utf-8")
 
+    def test_no_opencode_debug_instrumentation_remains(self):
+        # Task 1 regression sentinel
+        # the leftover opencode debug blocks must stay removed from the
+        # GTK4 GUI entry point since they are a dev agent artifact with
+        # zero production value
+        gtk4 = self.read("src/gtk4_gui_main.cpp")
+        self.assertNotIn("opencode", gtk4)
+
+    def test_remove_selected_source_rescan_is_thread_guarded(self):
+        # Task 4 regression sentinel: MainWindow::RemoveSelectedSource must
+        # run its detached rescan through RunGuarded like every other
+        # detached-thread call site in mainwindow.cpp so an escaping
+        # exception is logged instead of calling std::terminate
+        source = self.read("src/mainwindow.cpp")
+        start = source.index("void MainWindow::RemoveSelectedSource()")
+        end = source.index("void MainWindow::DrawToolbarButton")
+        body = source[start:end]
+        self.assertIn("RunGuarded", body)
+        self.assertIn('L"remove-source-rescan"', body)
+
     def test_whitelist_and_http_shutdown_are_synchronized(self):
         whitelist_h = self.read("src/ipwhitelist.h")
         whitelist_cpp = self.read("src/ipwhitelist.cpp")

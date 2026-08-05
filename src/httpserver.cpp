@@ -21,10 +21,6 @@
 
 namespace {
 
-// mirrors kMaxClientThreads in posix_httpserver cpp keep both values
-// equal if one changes update the other and this comment
-constexpr size_t kMaxClientThreads = 64;
-
 void SendAll(SOCKET s, const char* data, int len) {
     while (len > 0) {
         int sent = send(s, data, len, 0);

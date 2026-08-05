@@ -17,4 +17,20 @@ if [ -z "${GDK_BACKEND:-}" ] && [ -n "${DISPLAY:-}" ] && [ -r /proc/version ] &&
     export GDK_BACKEND=x11
 fi
 
+# WSLg shortcuts run in a non login shell so the distro profile may not
+# inject these variables yet fall back to the documented WSLg default paths
+if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -S "/mnt/wslg/runtime-dir/wayland-0" ]; then
+    export WAYLAND_DISPLAY=wayland-0
+    export XDG_RUNTIME_DIR="/mnt/wslg/runtime-dir"
+fi
+if [ -z "${DISPLAY:-}" ]; then
+    export DISPLAY=:0
+fi
+
+# wait for the compositor socket before starting the GTK process
+for i in $(seq 1 20); do
+    [ -S "${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}/${WAYLAND_DISPLAY:-wayland-0}" ] && break
+    sleep 0.25
+done
+
 exec "$native_gui" "$@"

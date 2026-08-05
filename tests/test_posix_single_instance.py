@@ -261,5 +261,82 @@ def rundir(tmp_path: Path) -> str:
     return str(tmp_path)
 
 
+class TestSecondLaunchDeliversShow:
+    """Task 5: a second launch must deliver the show command to the running
+    instance and exit quickly instead of silently doing nothing."""
+
+    def test_second_launch_delivers_show(self, dlna_binary, tmp_path):
+        import subprocess
+        runtime_dir = tmp_path / "runtime"
+        config_dir = tmp_path / "config"
+        media_dir = tmp_path / "media"
+        runtime_dir.mkdir()
+        config_dir.mkdir()
+        media_dir.mkdir()
+
+        env = os.environ.copy()
+        env["XDG_RUNTIME_DIR"] = str(runtime_dir)
+        env["XDG_CONFIG_HOME"] = str(config_dir)
+        env["HOME"] = str(config_dir)
+        env["DLNA_SERVER_SKIP_FIREWALL"] = "1"
+
+        proc_a = subprocess.Popen(
+            [dlna_binary, "--source", str(media_dir), "--debug"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        try:
+            # Wait for A to hold the lock (lock file exists) before
+            # launching B, so B reliably detects an existing instance.
+            lock_path = runtime_dir / "dlna-server.lock"
+            deadline = time.time() + 10
+            while not lock_path.exists():
+                if proc_a.poll() is not None:
+                    pytest.fail("Instance A exited before taking the lock")
+                if time.time() > deadline:
+                    pytest.fail("Instance A never created its lock file")
+                time.sleep(0.05)
+
+            # Launch B immediately: A may not have bound its domain socket
+            # yet, which exercises SendShowWithRetry's startup-race path.
+            start = time.time()
+            result_b = subprocess.run(
+                [dlna_binary, "--source", str(media_dir)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=env,
+            )
+            elapsed = time.time() - start
+            assert elapsed < 2.0, (
+                f"Second instance took {elapsed:.2f}s to exit: "
+                f"{result_b.stdout} {result_b.stderr}"
+            )
+            assert result_b.returncode == 0, result_b.stderr
+
+            # A's debug.log must contain the show-request line.
+            log_path = config_dir / "dlna-server" / "debug.log"
+            deadline = time.time() + 5
+            content = ""
+            while time.time() < deadline:
+                if log_path.exists():
+                    content = log_path.read_text(
+                        encoding="utf-8", errors="replace")
+                    if "Received single-instance show request" in content:
+                        break
+                time.sleep(0.1)
+            assert "Received single-instance show request" in content, (
+                f"debug.log missing show line; content={content!r}"
+            )
+        finally:
+            proc_a.terminate()
+            try:
+                proc_a.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc_a.kill()
+                proc_a.wait(timeout=3)
+
+
 # fcntl is imported inside test functions that use it because it is
 # POSIX-only and would cause ImportError during module collection on Windows.

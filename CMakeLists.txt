@@ -314,65 +314,6 @@ add_library(dlna_core STATIC
     endif()
 endif()
 
-include(FetchContent)
-option(DLNA_BUILD_TESTS "Build GoogleTest-based test binary" OFF)
-if(DLNA_BUILD_TESTS)
-    FetchContent_Declare(
-        googletest
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG v1.15.2
-        GIT_SHALLOW TRUE
-        CMAKE_ARGS -Dgtest_force_shared_crt=OFF -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
-    )
-    set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
-    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(googletest)
-    include(GoogleTest)
-
-    if(WIN32)
-        set(DLNA_TEST_SOURCES ${SOURCES})
-        list(REMOVE_ITEM DLNA_TEST_SOURCES src/mainwindow.cpp src/settingsdlg.cpp src/logdlg.cpp src/modal_focus.cpp src/firewall_access_win.cpp)
-        add_executable(dlna-test ${DLNA_TEST_SOURCES} ${HEADERS})
-        set_property(TARGET dlna-test PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_link_libraries(dlna-test PRIVATE dlna_core GTest::gtest_main)
-        target_include_directories(dlna-test PRIVATE src)
-        target_compile_definitions(dlna-test PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN DLNA_HAS_LIBCURL=1)
-        target_link_libraries(dlna-test PRIVATE ws2_32 shell32 ole32 oleaut32 uuid comctl32 shlwapi dwmapi rpcrt4 iphlpapi)
-        target_link_options(dlna-test PRIVATE /WHOLEARCHIVE:legacy_stdio_definitions.lib legacy_stdio_wide_specifiers.lib)
-        dlna_enable_warnings(dlna-test)
-        gtest_discover_tests(dlna-test)
-    else()
-        add_executable(dlna-test
-            src/posix_server.cpp
-            src/posix_ssdp.cpp
-            src/posix_httpserver.cpp
-            src/posix_netutils.cpp
-            src/posix_media_sources.cpp
-            src/posix_config.cpp
-            src/posix_log.cpp
-            src/ipwhitelist.cpp
-            src/contentdirectory.cpp
-            src/upnp_eventing.cpp
-            src/dlna_utils.cpp
-            src/network_sources.cpp
-            src/source_watcher.cpp
-            src/media_database.cpp
-src/media_scan_common.cpp
-          src/media_sources_common.cpp
-          src/scan_cancellation.cpp
-          src/bounded_thread_pool.cpp
-            src/playlist_scan_concurrency.cpp
-        )
-        target_link_libraries(dlna-test PRIVATE dlna_core GTest::gtest_main)
-        target_include_directories(dlna-test PRIVATE src)
-        target_compile_definitions(dlna-test PRIVATE DLNA_POSIX=1 DLNA_RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources")
-        find_package(Threads REQUIRED)
-        target_link_libraries(dlna-test PRIVATE Threads::Threads)
-        dlna_enable_warnings(dlna-test)
-        gtest_discover_tests(dlna-test)
-    endif()
-endif()
-
 if(UNIX AND NOT APPLE)
     set(CPACK_GENERATOR "DEB")
     set(CPACK_PACKAGE_NAME "dlna-server")

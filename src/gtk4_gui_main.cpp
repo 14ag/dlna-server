@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -162,12 +163,51 @@ GtkWidget* g_logDialog = nullptr;
 GtkTextBuffer* g_logBuffer = nullptr;
 unsigned long long g_logLastSequence = 0;
 
+// Returns whichever secondary dialog is currently visible, so an
+// asynchronously-triggered message box (e.g. a background server
+// start/stop/restart completing while Settings or Log is open) becomes
+// a CHILD of that dialog instead of a SIBLING of it (both transient-for
+// the main window), which is what leaves stacking order ambiguous on
+// X11/Wayland window managers that only weakly enforce transient-for
+// ordering between siblings. Falls back to g_mainWindow when nothing
+// else is open.
+GtkWindow* ActiveTopLevelWindow() {
+    GtkWidget* candidates[] = { g_settingsDialog, g_logDialog, g_playlistDialog, g_sourceDialog };
+    for (GtkWidget* candidate : candidates) {
+        if (candidate != nullptr && gtk_widget_get_visible(candidate)) {
+            return GTK_WINDOW(candidate);
+        }
+    }
+    return GTK_WINDOW(g_mainWindow);
+}
+
 // hidden debug hook: --dump-widget-geometry builds every Part-1 dialog
 // headless, prints [gtk4-<tag>-geometry] rects, and exits before the modal
 // loops so no user input is needed. see DumpAllWindowsAndExit.
 bool g_dumpGeometry = false;
+// hidden debug hook: --dump-log-dialog-reopen exercises the ShowLogDialog
+// Close-button-hide then reopen path headless. see DumpLogDialogReopenAndExit.
+bool g_dumpLogDialogReopen = false;
+// hidden debug hook: --dump-msgbox-parent verifies Task 16's
+// ActiveTopLevelWindow parenting of asynchronous failure message boxes.
+// see DumpMessageBoxParentAndExit.
+bool g_dumpMsgBoxParent = false;
+
+// Number of attempts and delay between attempts when the initial
+// display/session-bus connection is not yet ready. Covers WSLg's
+// documented cold-start race where the per-distro Wayland/X compositor
+// is still starting when a GUI process is launched directly against a
+// stopped distro (microsoft/WSL#11958). Total worst-case wait is
+// maxAttempts * delayMs; keep this well under what a user will
+// perceive as "the shortcut did nothing" (a few seconds), and well
+// above WSLg's typical compositor cold-start time (observed on the
+// order of 1-3 seconds in the linked upstream reports).
+constexpr int kGuiStartupMaxAttempts = 15;
+constexpr int kGuiStartupRetryDelayMs = 300;
 void DumpWindowGeometry(const char* tag, GtkWidget* toplevel);
 void DumpAllWindowsAndExit(GtkApplication* app);
+void DumpLogDialogReopenAndExit(GtkApplication* app);
+void DumpMessageBoxParentAndExit(GtkApplication* app);
 
 void RefreshStatus();
 void ApplyPendingResult();
@@ -188,6 +228,18 @@ void MessageBoxShow(GtkWindow* parent, const std::string& text) {
     GtkWidget* dialog = gtk_message_dialog_new(parent, GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR,
                                                GTK_BUTTONS_OK, "%s", text.c_str());
     gtk_window_set_title(GTK_WINDOW(dialog), "DLNA Server");
+    if (g_dumpMsgBoxParent) {
+        GtkWindow* transientParent = gtk_window_get_transient_for(GTK_WINDOW(dialog));
+        const char* parentTag = "none";
+        if (transientParent == GTK_WINDOW(g_settingsDialog)) parentTag = "settings";
+        else if (transientParent == GTK_WINDOW(g_logDialog)) parentTag = "log";
+        else if (transientParent == GTK_WINDOW(g_playlistDialog)) parentTag = "playlist";
+        else if (transientParent == GTK_WINDOW(g_sourceDialog)) parentTag = "source";
+        else if (transientParent == GTK_WINDOW(g_mainWindow)) parentTag = "main";
+        std::printf("[gtk4-msgbox-parent] parent=%s\n", parentTag);
+        gtk_window_destroy(GTK_WINDOW(dialog));
+        return;
+    }
     gboolean done = FALSE;
     g_signal_connect(dialog, "response", G_CALLBACK(+[](GtkDialog*, int, gpointer userData) {
         gboolean* isDone = static_cast<gboolean*>(userData);
@@ -546,7 +598,10 @@ void RefreshLogDialog() {
 }
 
 void ShowLogDialog() {
-    if (g_logDialog != nullptr) return;
+    if (g_logDialog != nullptr) {
+        gtk_window_present(GTK_WINDOW(g_logDialog));
+        return;
+    }
 
     g_logDialog = gtk_window_new();
     gtk_window_set_title(GTK_WINDOW(g_logDialog), "DLNA Server Log");
@@ -920,10 +975,27 @@ void ShowSettingsDialog() {
         g_settingsDialog = nullptr;
     }), nullptr);
 
+    // client-side decoration so only a close button is exposed
+    // independent of window manager policy
+    GtkWidget* settingsHeaderBar = gtk_header_bar_new();
+    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(settingsHeaderBar), FALSE);
+    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(settingsHeaderBar),
+                                    gtk_label_new("DLNA Server Settings"));
+    GtkWidget* settingsCloseControls = gtk_window_controls_new(GTK_PACK_END);
+    gtk_window_controls_set_decoration_layout(GTK_WINDOW_CONTROLS(settingsCloseControls), "close");
+    gtk_header_bar_pack_end(GTK_HEADER_BAR(settingsHeaderBar), settingsCloseControls);
+    gtk_window_set_titlebar(GTK_WINDOW(g_settingsDialog), settingsHeaderBar);
+
     LoadSettingsFromConfig();
     if (g_dumpGeometry) {
         gtk_window_present(GTK_WINDOW(g_settingsDialog));
         DumpWindowGeometry("settings", g_settingsDialog);
+        return;
+    }
+    if (g_dumpMsgBoxParent) {
+        // keep Settings visible and skip the modal loop so the Task 16
+        // message-box parenting hook can inspect it headless
+        gtk_window_present(GTK_WINDOW(g_settingsDialog));
         return;
     }
     gtk_widget_show(g_settingsDialog);
@@ -1186,7 +1258,7 @@ void ApplyPendingResult() {
     }
     g_state = state;
     RefreshStatus();
-    if (!success && !message.empty()) MessageBoxShow(GTK_WINDOW(g_mainWindow), message);
+    if (!success && !message.empty()) MessageBoxShow(ActiveTopLevelWindow(), message);
     if (g_closePending.ShouldCloseNowAfterOperation(state == ServerUiState::Stopped)) {
         gtk_widget_hide(g_mainWindow);
         return;
@@ -1395,8 +1467,6 @@ void BuildMainWindow(GtkApplication* app) {
     g_timeout_add(250, OnPollTick, nullptr);
 
     gtk_window_present(GTK_WINDOW(window));
-    FILE* dbg2 = fopen("/tmp/opencode/gtk4_dbg.txt", "a");
-    if (dbg2) { fprintf(dbg2, "BuildMainWindow exit present done\n"); fflush(dbg2); }
 }
 
 // Walks every visible widget and emits one line per widget:
@@ -1429,6 +1499,10 @@ static bool ComputeBoundsTo(GtkWidget* widget, GtkWidget* origin,
 
 void DumpWidgetTree(const char* tag, GtkWidget* widget, GtkWidget* origin) {
     if (!gtk_widget_is_visible(widget)) return;
+    if (GTK_IS_WINDOW(widget)) {
+        std::printf("[gtk4-%s-geometry] titlebar=%s\n",
+                    tag, gtk_window_get_titlebar(GTK_WINDOW(widget)) != nullptr ? "csd" : "none");
+    }
     graphene_rect_t bounds;
     if (ComputeBoundsTo(widget, origin, &bounds)) {
         const char* className = G_OBJECT_TYPE_NAME(widget);
@@ -1469,22 +1543,86 @@ void DumpAllWindowsAndExit(GtkApplication* app) {
     ShowLogDialog();
     ShowHelpDialog();
     ShowSettingsDialog();
-    std::exit(0);
+    // std::_Exit skips static destruction so the joinable single-instance
+    // listener thread is not torn down during exit (that path aborts with
+    // terminate called without an active exception and truncates the dump)
+    std::fflush(stdout);
+    std::_Exit(0);
+}
+
+// exercises the Task 6 fix: open the log dialog, hide it the way its Close
+// button does (gtk_widget_hide), then open it again. before the fix the
+// second ShowLogDialog() hit the stale non-null guard and returned without
+// showing, so gtk_widget_get_visible() is FALSE and we exit non-zero.
+// std::_Exit is used instead of std::exit so the joinable single-instance
+// listener thread is not destroyed during static teardown (that path aborts
+// with terminate called without an active exception); the kernel releases
+// the flock when the process exits.
+void DumpLogDialogReopenAndExit(GtkApplication* app) {
+    (void)app;
+    gtk_window_present(GTK_WINDOW(g_mainWindow));
+    ShowLogDialog();
+    if (g_logDialog == nullptr) std::_Exit(1);
+    gtk_widget_hide(g_logDialog);
+    g_main_context_iteration(nullptr, TRUE);
+    ShowLogDialog();
+    const bool reopened = (g_logDialog != nullptr) &&
+                          gtk_widget_get_visible(GTK_WIDGET(g_logDialog));
+    std::_Exit(reopened ? 0 : 2);
+}
+
+// exercises the Task 16 fix: an asynchronously-triggered failure message box
+// (here forced through SetPendingResult + ApplyPendingResult) must parent to
+// whichever secondary dialog is visible, falling back to the main window.
+// prints [gtk4-msgbox-parent] parent=<tag> for the no-dialog case and for
+// the Settings-open case, then exits. std::_Exit skips static teardown
+// (the joinable single-instance listener thread aborts on std::exit).
+void DumpMessageBoxParentAndExit(GtkApplication* app) {
+    (void)app;
+    gtk_window_present(GTK_WINDOW(g_mainWindow));
+    // case 1: nothing open, the box must fall back to the main window
+    SetPendingResult(ServerUiState::Stopped, false, "forced failure");
+    ApplyPendingResult();
+    // case 2: Settings visible, the box must parent to the settings dialog
+    ShowSettingsDialog();
+    for (int i = 0; i < 200 && !gtk_widget_get_visible(g_settingsDialog); ++i)
+        g_main_context_iteration(nullptr, TRUE);
+    SetPendingResult(ServerUiState::Stopped, false, "forced failure");
+    ApplyPendingResult();
+    std::fflush(stdout);
+    std::_Exit(0);
 }
 
 void OnAppActivate(GtkApplication* app, gpointer) {
-    FILE* dbg = fopen("/tmp/opencode/gtk4_dbg.txt", "a");
-    if (dbg) { fprintf(dbg, "OnAppActivate enter\n"); fflush(dbg); }
     BuildMainWindow(app);
+    // Give the tray registration's async D-Bus round trip a moment to
+    // resolve, then surface a one-time hint if no tray host is present, so
+    // the user understands why there is no icon to click back to (see
+    // Task 14 of dlna-server-qa-audit-and-posix-gui-lifecycle-workflow-05-08-26.md).
+    // This does not block startup and does not affect window recovery,
+    // which never depends on the tray (see OnSingleInstanceCommand).
+    g_timeout_add_seconds(2, +[](gpointer) -> gboolean {
+        if (PosixTray::IsRegistrationConfirmed() && !PosixTray::IsTrayAvailable()) {
+            LogPrint(L"No system tray host detected; closing this window will "
+                     L"still be reachable by re-running dlna-server-gui.");
+        }
+        return G_SOURCE_REMOVE;
+    }, nullptr);
     if (g_dumpGeometry) {
         DumpAllWindowsAndExit(app);
+        return;
+    }
+    if (g_dumpLogDialogReopen) {
+        DumpLogDialogReopenAndExit(app);
+        return;
+    }
+    if (g_dumpMsgBoxParent) {
+        DumpMessageBoxParentAndExit(app);
         return;
     }
 }
 
 void OnAppStartup(GtkApplication* app, gpointer) {
-    FILE* dbg = fopen("/tmp/opencode/gtk4_dbg.txt", "a");
-    if (dbg) { fprintf(dbg, "OnAppStartup enter\n"); fflush(dbg); }
     const std::string cssPath = ResolveBundledResourcePath("gtk/style.css");
     if (!cssPath.empty()) {
         GtkCssProvider* provider = gtk_css_provider_new();
@@ -1554,22 +1692,47 @@ void OnAppStartup(GtkApplication* app, gpointer) {
 } // namespace
 
 int main(int argc, char** argv) {
-    FILE* dbg = fopen("/tmp/opencode/gtk4_dbg.txt", "a");
-    if (dbg) { fprintf(dbg, "main enter\n"); fflush(dbg); }
     std::signal(SIGPIPE, SIG_IGN);
     std::signal(SIGINT, HandleTerminationSignal);
     std::signal(SIGTERM, HandleTerminationSignal);
     AppConfig.Load();
 
     if (!SingleInstance::TryAcquireLock()) {
-        SingleInstance::SendShow();
+        if (!SingleInstance::SendShowWithRetry()) {
+            LogPrint(L"Another instance appears to be starting or is unreachable; exiting without action.");
+            std::cerr << "dlna-server-gui: another instance appears to be "
+                         "starting or is unreachable; exiting without action." << std::endl;
+        }
         return 0;
     }
 
-    GtkApplication* app = gtk_application_new("com.github.dlna-server-14ag",
-                                              G_APPLICATION_FLAGS_NONE);
-    g_signal_connect(app, "startup", G_CALLBACK(OnAppStartup), nullptr);
-    g_signal_connect(app, "activate", G_CALLBACK(OnAppActivate), nullptr);
+    GtkApplication* app = nullptr;
+    int result = 1;
+    for (int attempt = 0; attempt < kGuiStartupMaxAttempts; ++attempt) {
+        app = gtk_application_new("com.github.dlna-server-14ag", G_APPLICATION_FLAGS_NONE);
+        // connect before register so the startup signal emitted during
+        // registration reaches OnAppStartup instead of firing into the void
+        g_signal_connect(app, "startup", G_CALLBACK(OnAppStartup), nullptr);
+        g_signal_connect(app, "activate", G_CALLBACK(OnAppActivate), nullptr);
+        GError* registerError = nullptr;
+        if (g_application_register(G_APPLICATION(app), nullptr, &registerError)) {
+            g_clear_error(&registerError);
+            break;
+        }
+        LogPrint(L"GTK application registration failed (attempt %d/%d): %hs",
+                 attempt + 1, kGuiStartupMaxAttempts,
+                 registerError ? registerError->message : "unknown error");
+        g_clear_error(&registerError);
+        g_object_unref(app);
+        app = nullptr;
+        g_usleep(static_cast<gulong>(kGuiStartupRetryDelayMs) * 1000);
+    }
+    if (!app) {
+        LogPrint(L"Could not connect to a display/session bus after repeated attempts.");
+        std::cerr << "dlna-server-gui: could not connect to a display/session "
+                     "bus after repeated attempts; exiting." << std::endl;
+        return 1;
+    }
 
     // tray menu actions
     GActionEntry entries[] = {
@@ -1590,19 +1753,28 @@ int main(int argc, char** argv) {
 
     SingleInstance::StartListening(OnSingleInstanceCommand);
 
-    // parse the hidden --dump-widget-geometry flag in-place and strip it from
-    // argv so g_application_run's option parser does not reject it.
+    // parse the hidden --dump-widget-geometry / --dump-log-dialog-reopen
+    // / --dump-msgbox-parent flags in-place and strip them from argv so
+    // g_application_run's option parser does not reject them.
     int argcKept = 0;
     for (int i = 0; i < argc; ++i) {
         if (std::string(argv[i]) == "--dump-widget-geometry") {
             g_dumpGeometry = true;
             continue;
         }
+        if (std::string(argv[i]) == "--dump-log-dialog-reopen") {
+            g_dumpLogDialogReopen = true;
+            continue;
+        }
+        if (std::string(argv[i]) == "--dump-msgbox-parent") {
+            g_dumpMsgBoxParent = true;
+            continue;
+        }
         argv[argcKept++] = argv[i];
     }
     argc = argcKept;
 
-    const int result = g_application_run(G_APPLICATION(app), argc, argv);
+    result = g_application_run(G_APPLICATION(app), argc, argv);
 
     PosixTray::Shutdown();
     if (g_worker.joinable()) g_worker.join();

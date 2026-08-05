@@ -16,6 +16,16 @@ bool TryAcquireLock();
 // Returns true if the message was delivered.
 bool SendShow();
 
+// Retries SendShow() with a short delay between attempts. Covers the
+// startup race where TryAcquireLock() succeeded for the FIRST instance
+// (flock is held) but that instance has not yet reached
+// StartListening()'s bind()/listen() call, so an immediate connect()
+// fails with ECONNREFUSED even though the peer is seconds away from
+// being ready. Returns true the first time SendShow() succeeds, false
+// if every attempt failed. See Task 5 of
+// dlna-server-qa-audit-and-posix-gui-lifecycle-workflow-05-08-26.md.
+bool SendShowWithRetry(int maxAttempts = 5, int delayMs = 200);
+
 // Connect to the running instance's domain socket and send "kill" command
 // (the receiving instance stops its server and exits). Returns true if the
 // message was delivered.

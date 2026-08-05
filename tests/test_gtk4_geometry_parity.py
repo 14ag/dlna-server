@@ -25,9 +25,11 @@ LINE_RE = re.compile(
 )
 
 # Top-level window outer (w,h) from the kXxxWindow[W|H] constants.
+# settings grows by the Task 15 CSD headerbar under xvfb (no WM provides
+# server-side decorations): the window becomes 710x801 with a -5 border.
 WINDOW_SIZES = {
     "main-window": (440, 600),
-    "settings": (700, 745),
+    "settings": (710, 801),
     "log": (770, 680),
     "help": (544, 400),
     "playlist-entry": (536, 157),
@@ -43,33 +45,36 @@ EXPECTED = {
     ("main-window", "GtkButton", 262, 12): (72, 32),   # Start/Stop
     ("main-window", "GtkButton", 342, 12): (82, 32),   # Settings
     # ---- settings dialog ----
-    ("settings", "GtkFrame", 18, 21): (665, 223),      # Server group
-    ("settings", "GtkFrame", 18, 270): (324, 140),     # General group
-    ("settings", "GtkFrame", 359, 270): (324, 140),    # Playlist group
-    ("settings", "GtkFrame", 18, 436): (665, 230),     # Media group
-    ("settings", "GtkEntry", 193, 55): (333, 40),      # ServerName edit
-    ("settings", "GtkEntry", 193, 115): (333, 40),     # HttpPort edit
-    ("settings", "GtkEntry", 193, 174): (455, 40),     # IpWhitelist edit
-    ("settings", "GtkCheckButton", 380, 317): (193, 26),   # DefaultPlaylist
-    ("settings", "GtkCheckButton", 39, 359): (277, 26),    # DebugLog
+    # values below are the x11 xvfb dump for the Task 15 CSD headerbar
+    # (window border offsets sub-elements by -5 on x and the headerbar
+    # shifts them on y; other dialogs have no CSD and match ui_tokens)
+    ("settings", "GtkFrame", 13, 62): (665, 223),      # Server group
+    ("settings", "GtkFrame", 13, 311): (324, 140),     # General group
+    ("settings", "GtkFrame", 354, 311): (324, 140),    # Playlist group
+    ("settings", "GtkFrame", 13, 477): (665, 230),     # Media group
+    ("settings", "GtkEntry", 188, 96): (333, 40),      # ServerName edit
+    ("settings", "GtkEntry", 188, 156): (333, 40),     # HttpPort edit
+    ("settings", "GtkEntry", 188, 215): (455, 40),     # IpWhitelist edit
     # NOTE: kSettingsRunOnStartupX/Y/W/H (39,317) exists in ui_tokens.h but the
     # GTK4 settings dialog does not yet create a Run-on-startup checkbox, so
     # there is no sub-element to assert here. Adding that control is a
     # separate feature task, not a geometry-parity concern.
-    ("settings", "GtkCheckButton", 380, 317): (193, 26),   # DefaultPlaylist
-    ("settings", "GtkCheckButton", 39, 482): (298, 26),   # ArtistAlbums
-    ("settings", "GtkCheckButton", 368, 482): (228, 26),  # FlatFolders
-    ("settings", "GtkCheckButton", 39, 525): (298, 26),   # HideAllMedia
-    ("settings", "GtkCheckButton", 368, 525): (287, 26),  # ShowFileNames
-    ("settings", "GtkCheckButton", 39, 567): (312, 26),   # SortByTitle
-    ("settings", "GtkCheckButton", 368, 567): (228, 26),  # ProxyStreams
-    ("settings", "GtkCheckButton", 39, 614): (403, 26),   # BackgroundScan
-    ("settings", "GtkButton", 462, 691): (102, 40),      # Cancel
-    ("settings", "GtkButton", 553, 353): (102, 40),      # PlaylistAdd
-    ("settings", "GtkButton", 578, 691): (105, 40),      # Ok
-    ("settings", "GtkLabel", 39, 64): (140, 21),        # ServerName label
-    ("settings", "GtkLabel", 39, 123): (140, 21),       # HttpPort label
-    ("settings", "GtkLabel", 39, 183): (140, 21),       # IpWhitelist label
+    ("settings", "GtkCheckButton", 375, 358): (193, 26),   # DefaultPlaylist
+    ("settings", "GtkCheckButton", 34, 400): (277, 26),    # DebugLog
+    ("settings", "GtkCheckButton", 375, 358): (193, 26),   # DefaultPlaylist
+    ("settings", "GtkCheckButton", 34, 523): (298, 26),   # ArtistAlbums
+    ("settings", "GtkCheckButton", 363, 523): (228, 26),  # FlatFolders
+    ("settings", "GtkCheckButton", 34, 566): (298, 26),   # HideAllMedia
+    ("settings", "GtkCheckButton", 363, 566): (287, 26),  # ShowFileNames
+    ("settings", "GtkCheckButton", 34, 608): (312, 26),   # SortByTitle
+    ("settings", "GtkCheckButton", 363, 608): (228, 26),  # ProxyStreams
+    ("settings", "GtkCheckButton", 34, 655): (403, 26),   # BackgroundScan
+    ("settings", "GtkButton", 457, 732): (102, 40),      # Cancel
+    ("settings", "GtkButton", 548, 394): (102, 40),      # PlaylistAdd
+    ("settings", "GtkButton", 573, 732): (105, 40),      # Ok
+    ("settings", "GtkLabel", 34, 105): (140, 21),        # ServerName label
+    ("settings", "GtkLabel", 34, 164): (140, 21),       # HttpPort label
+    ("settings", "GtkLabel", 34, 224): (140, 21),       # IpWhitelist label
     # ---- log dialog ----
     ("log", "GtkScrolledWindow", 18, 21): (735, 591),   # text host
     ("log", "GtkButton", 525, 629): (109, 40),          # Refresh
@@ -166,6 +171,21 @@ def test_gtk4_has_no_extra_tracked_widgets_in_main_window():
         if t == "main-window" and c == "GtkButton"
     ]
     assert len(btns) == 4, f"expected 4 main-window buttons, got {len(btns)}: {btns}"
+
+
+TITLEBAR_RE = re.compile(r"\[gtk4-(?P<tag>[a-z-]+)-geometry\] titlebar=(?P<value>csd|none)")
+
+
+def test_gtk4_settings_uses_client_side_titlebar():
+    """Settings must take the Task 15 CSD path (custom headerbar) so only a
+    close button is exposed regardless of window-manager policy."""
+    text = _run_gtk4_dump()
+    values = {
+        m["tag"]: m["value"] for m in TITLEBAR_RE.finditer(text)
+    }
+    assert values.get("settings") == "csd", (
+        f"settings titlebar reported {values.get('settings')!r}, expected csd"
+    )
 
 
 @pytest.mark.skipif(

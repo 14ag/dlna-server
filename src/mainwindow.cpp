@@ -929,7 +929,7 @@ void MainWindow::RemoveSelectedSource() {
     UpdateDeleteButton();
     InvalidateRect(m_hwnd, NULL, TRUE);
 
-    std::thread([]() { DLNAServer.Rescan(); }).detach();
+    std::thread([]() { RunGuarded(L"remove-source-rescan", []() { DLNAServer.Rescan(); }); }).detach();
 }
 
 void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
