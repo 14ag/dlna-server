@@ -22,6 +22,17 @@ void SetStatus(const char* iconName, const char* title);
 
 void Shutdown();
 
+// True once RegisterStatusNotifierItem has completed, successfully or
+// not. False before Initialize() is called or while the async D-Bus
+// call is still in flight.
+bool IsRegistrationConfirmed();
+// True only if the async RegisterStatusNotifierItem call completed
+// successfully. Always false on a desktop/compositor with no
+// StatusNotifierWatcher, which includes WSLg as of this writing --
+// see Task 14 of
+// dlna-server-qa-audit-and-posix-gui-lifecycle-workflow-05-08-26.md.
+bool IsTrayAvailable();
+
 } // namespace PosixTray
 
 #endif // DLNA_POSIX_GUI

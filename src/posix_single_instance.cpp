@@ -3,6 +3,7 @@
 #include "posix_single_instance.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -105,6 +106,16 @@ bool SendShow() {
     ::write(fd, kShow, sizeof(kShow) - 1);
     ::close(fd);
     return true;
+}
+
+bool SendShowWithRetry(int maxAttempts, int delayMs) {
+    for (int attempt = 0; attempt < maxAttempts; ++attempt) {
+        if (SendShow()) return true;
+        if (attempt + 1 < maxAttempts) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+        }
+    }
+    return false;
 }
 
 bool SendKill() {

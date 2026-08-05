@@ -70,6 +70,10 @@ std::vector<PlaylistEntry> ParseFetchedPlaylistText(const std::wstring& playlist
 std::vector<PlaylistEntry> LoadPlaylistEntries(const std::wstring& playlistPath, bool* fetchFailed = nullptr);
 std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& directoryUrl);
 long long ProbeRemoteContentLength(const std::wstring& url);
+// Test-only: returns how many times ProbeRemoteContentLength actually
+// issued a network probe, instead of returning a cached value. Mirrors
+// GetRoutableHostUrlRecomputeCountForTest() in netutils.h.
+long GetRemoteProbeRecomputeCountForTest();
 
 bool StreamRemoteContent(const std::wstring& url,
                          bool useRange,

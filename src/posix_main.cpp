@@ -49,6 +49,8 @@ void HandleSignal(int) {
 void OnSingleInstanceCommand(const std::string& cmd) {
     if (cmd == "kill") {
         g_stop = true;
+    } else if (cmd == "show") {
+        LogPrint(L"Received single-instance show request");
     }
 }
 
@@ -120,6 +122,19 @@ int main(int argc, char** argv) {
                 SingleInstance::ReleaseLock();
                 std::cout << "released" << std::endl;
             }
+            return 0;
+        }
+        else if (arg == "--print-single-instance-retry-timing") {
+            // Runs against a not-yet-listening socket (fresh XDG_RUNTIME_DIR
+            // with no server holding the lock or bound to the domain socket),
+            // so every SendShow attempt fails with ECONNREFUSED. The elapsed
+            // time proves the retry loop actually slept between attempts and
+            // the false result proves it gives up instead of hanging.
+            const auto start = std::chrono::steady_clock::now();
+            const bool delivered = SingleInstance::SendShowWithRetry(3, 50);
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count();
+            std::cout << "delivered=" << (delivered ? 1 : 0) << " elapsed-ms=" << elapsed << std::endl;
             return 0;
         }
         else if (arg == "--print-log-since-lifecycle") {
@@ -416,8 +431,24 @@ int main(int argc, char** argv) {
             std::cout << "after-invalidate-then-call=" << afterInvalidate << std::endl;
             return 0;
         }
+        else if (arg == "--print-remote-probe-cache-lifecycle" && i + 1 < argc) {
+            std::wstring probeUrl = Utf8ToWide(argv[++i]);
+            long before = GetRemoteProbeRecomputeCountForTest();
+            ProbeRemoteContentLength(probeUrl);
+            long afterFirst = GetRemoteProbeRecomputeCountForTest();
+            ProbeRemoteContentLength(probeUrl);
+            long afterSecond = GetRemoteProbeRecomputeCountForTest();
+            std::cout << "before=" << before << std::endl;
+            std::cout << "after-first-probe=" << afterFirst << std::endl;
+            std::cout << "after-second-probe=" << afterSecond << std::endl;
+            return 0;
+        }
         else if (arg == "--print-notify-pool-worker-count") {
             std::cout << kMaxUpnpNotifyWorkers << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-max-client-threads") {
+            std::cout << kMaxClientThreads << std::endl;
             return 0;
         }
         else if (arg == "--print-dlna-server-header") {
@@ -669,10 +700,11 @@ int main(int argc, char** argv) {
     // Single-instance lock: if another instance is already running,
     // try to show its window and exit.
     if (!SingleInstance::TryAcquireLock()) {
-        if (SingleInstance::SendShow()) {
+        if (SingleInstance::SendShowWithRetry()) {
             return 0;
         }
-        std::cerr << "Another instance of dlna-server is already running." << std::endl;
+        std::cerr << "Another instance of dlna-server is already running "
+                     "but could not be reached to show its window." << std::endl;
         return 1;
     }
     // Listen for IPC commands from short-lived --kill-server/--print-*

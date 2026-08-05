@@ -68,6 +68,106 @@ def _window_exists(env):
 
 @pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
 @pytest.mark.skipif(XVFB_RUN is None, reason="xvfb-run not installed")
+def test_log_dialog_reopens_after_close(tmp_path):
+    """Task 6: after the Log dialog's Close button hides it, opening it again
+    must re-show the existing window instead of hitting the stale non-null
+    guard and doing nothing. The hook exits 0 only when the second
+    ShowLogDialog() leaves g_logDialog visible."""
+    env = _isolated_env(tmp_path)
+    env["GDK_BACKEND"] = "x11"
+    result = subprocess.run(
+        [XVFB_RUN, "-a", str(GUI_BINARY), "--dump-log-dialog-reopen"],
+        env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, (
+        f"--dump-log-dialog-reopen failed with code {result.returncode}: "
+        f"{result.stderr}"
+    )
+
+
+@pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
+@pytest.mark.skipif(XVFB_RUN is None, reason="xvfb-run not installed")
+@pytest.mark.skipif(shutil.which("dbus-run-session") is None,
+                    reason="dbus-run-session not installed")
+def test_tray_registration_result_is_logged(tmp_path):
+    """Task 7: the tray icon registration result must always be resolved and
+    logged (registered or unavailable), never left silently unknown. Run
+    under a session D-Bus with no StatusNotifierWatcher so the registration
+    call deterministically fails and the unavailable path is exercised."""
+    env = _isolated_env(tmp_path)
+    config_dir = Path(env["XDG_CONFIG_HOME"]) / "dlna-server"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.ini").write_text(
+        "[Settings]\nDebugLog=1\n", encoding="utf-8")
+
+    proc = subprocess.Popen(
+        ["dbus-run-session", "--", XVFB_RUN, "-a", str(GUI_BINARY)],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.time() + 15
+        content = ""
+        while time.time() < deadline:
+            log = config_dir / "debug.log"
+            if log.exists():
+                content = log.read_text(encoding="utf-8", errors="replace")
+                if ("Tray icon registered" in content or
+                        "Tray icon unavailable" in content):
+                    break
+            time.sleep(0.25)
+        assert ("Tray icon registered" in content or
+                "Tray icon unavailable" in content), (
+            f"debug.log never resolved tray registration; content={content!r}"
+        )
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
+
+
+@pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
+@pytest.mark.skipif(XVFB_RUN is None, reason="xvfb-run not installed")
+@pytest.mark.skipif(shutil.which("dbus-run-session") is None,
+                    reason="dbus-run-session not installed")
+def test_no_tray_hint_is_logged_but_recovery_needs_no_tray(tmp_path):
+    """Task 14: with no tray host present (StatusNotifierWatcher absent) the
+    app logs a one-time, non-blocking hint that the window stays reachable by
+    re-running the shortcut. This does not block startup and window recovery
+    never waits on the tray (see OnSingleInstanceCommand)."""
+    env = _isolated_env(tmp_path)
+    config_dir = Path(env["XDG_CONFIG_HOME"]) / "dlna-server"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "config.ini").write_text(
+        "[Settings]\nDebugLog=1\n", encoding="utf-8")
+
+    proc = subprocess.Popen(
+        ["dbus-run-session", "--", XVFB_RUN, "-a", str(GUI_BINARY)],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.time() + 15
+        content = ""
+        while time.time() < deadline:
+            log = config_dir / "debug.log"
+            if log.exists():
+                content = log.read_text(encoding="utf-8", errors="replace")
+                if "No system tray host detected" in content:
+                    break
+            time.sleep(0.25)
+        assert "No system tray host detected" in content, (
+            f"debug.log never logged the no-tray recovery hint; content={content!r}"
+        )
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
+
+
+@pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
+@pytest.mark.skipif(XVFB_RUN is None, reason="xvfb-run not installed")
 @pytest.mark.skipif(XDOTOOL is None, reason="xdotool not installed")
 def test_closing_window_before_start_does_not_abort(tmp_path):
     env = _isolated_env(tmp_path)
@@ -155,3 +255,28 @@ def test_second_launch_restores_minimized_window(tmp_path):
             first.wait(timeout=10)
         except subprocess.TimeoutExpired:
             first.kill()
+
+
+@pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
+@pytest.mark.skipif(XVFB_RUN is None, reason="xvfb-run not installed")
+def test_message_box_parents_to_active_dialog(tmp_path):
+    """Task 16: an asynchronously-triggered failure message box must parent
+    to whichever secondary dialog is currently visible (Settings here) instead
+    of always to the main window. The hook prints the transient parent tag for
+    both the nothing-open case (expect main) and the Settings-open case
+    (expect settings), then exits 0."""
+    env = _isolated_env(tmp_path)
+    env["GDK_BACKEND"] = "x11"
+    result = subprocess.run(
+        [XVFB_RUN, "-a", str(GUI_BINARY), "--dump-msgbox-parent"],
+        env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, (
+        f"--dump-msgbox-parent failed with code {result.returncode}: "
+        f"{result.stderr}"
+    )
+    lines = [ln for ln in result.stdout.splitlines() if "msgbox-parent" in ln]
+    parents = {ln.split("parent=", 1)[1] for ln in lines}
+    assert parents == {"main", "settings"}, (
+        f"expected transient parents {{main, settings}} got {parents!r}; "
+        f"stdout={result.stdout!r}"
+    )

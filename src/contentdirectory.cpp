@@ -8,6 +8,7 @@
 #include "server.h"
 #include "browse_page_cap.h"
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <sstream>
 #include <vector>
@@ -16,6 +17,8 @@
 namespace fs = std::filesystem;
 
 namespace {
+std::atomic<long> g_searchRecomputeCount{0};
+
 size_t FindXmlTagEnd(const std::string& xml, size_t openAt) {
     char quote = '\0';
     for (size_t i = openAt + 1; i < xml.size(); ++i) {
@@ -568,6 +571,10 @@ std::string ContentDirectory::HandleConnectionManagerControl(const std::string& 
     return SoapFault(401, "Invalid Action");
 }
 
+long ContentDirectory::GetSearchRecomputeCountForTest() {
+    return g_searchRecomputeCount.load(std::memory_order_relaxed);
+}
+
 std::string ContentDirectory::HandleContentDirectoryControl(const std::string& req, const std::string& hostUrl) {
     bool malformed = false;
     const std::string action = ExtractSoapActionName(req, malformed);
@@ -624,6 +631,21 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         }
         if (AppMedia.GetItem(containerId).id == -1) return SoapFault(701, "No such object");
 
+        std::string sortCriteria;
+        ExtractTagValue(req, "SortCriteria", sortCriteria);
+
+        const int currentUpdateId = AppMedia.GetSystemUpdateID();
+        const std::wstring cacheKey = Utf8ToWide(searchCriteria) + L"\x1f" + Utf8ToWide(sortCriteria);
+        {
+            std::lock_guard<std::mutex> lock(m_searchCacheMutex);
+            auto found = m_searchCacheByContainer.find(containerId);
+            if (found != m_searchCacheByContainer.end() &&
+                found->second.systemUpdateId == currentUpdateId &&
+                found->second.key == cacheKey) {
+                return BrowseSearchResponse("Search", found->second.results, startingIndex, requestedCount, hostUrl, filter, static_cast<int>(found->second.results.size()));
+            }
+        }
+
         std::vector<MediaItem> descendants = AppMedia.GetDescendants(containerId);
         std::vector<MediaItem> results;
         for (const auto& item : descendants) {
@@ -631,9 +653,13 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
                 results.push_back(item);
             }
         }
-        std::string sortCriteria;
-        ExtractTagValue(req, "SortCriteria", sortCriteria);
         SortItems(results, sortCriteria);
+        {
+            std::lock_guard<std::mutex> lock(m_searchCacheMutex);
+            m_searchCacheByContainer[containerId] = SearchCacheEntry{ currentUpdateId, cacheKey, results };
+            ++g_searchRecomputeCount;
+            LogPrint(L"[search-cache] recompute count now %ld", g_searchRecomputeCount.load());
+        }
         return BrowseSearchResponse("Search", results, startingIndex, requestedCount, hostUrl, filter, static_cast<int>(results.size()));
     }
 

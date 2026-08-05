@@ -6,10 +6,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cwctype>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 #include <vector>
 
 std::string UrlWithoutQueryOrFragment(const std::string& value);
@@ -39,6 +41,17 @@ constexpr int kMaxPlsIndex = 10000;
 constexpr long kCurlCaptureTimeoutSeconds = 30L;
 constexpr long kCurlLowSpeedLimitBytes = 1L;
 constexpr long kCurlLowSpeedTimeSeconds = 30L;
+
+constexpr auto kRemoteProbeCacheTtl = std::chrono::minutes(5);
+
+struct ProbeCacheEntry {
+    long long length;
+    std::chrono::steady_clock::time_point expiresAt;
+};
+
+std::mutex g_probeCacheMutex;
+std::unordered_map<std::wstring, ProbeCacheEntry> g_probeCache;
+long g_probeRecomputeCount = 0;
 
 bool HasScheme(const std::string& value, const char* scheme) {
     std::string prefix = std::string(scheme) + "://";
@@ -880,12 +893,28 @@ std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& direct
 
 long long ProbeRemoteContentLength(const std::wstring& url) {
     if (!IsRemoteMediaUrl(url)) return 0;
-    
+
+    const auto now = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(g_probeCacheMutex);
+        auto found = g_probeCache.find(url);
+        if (found != g_probeCache.end() && found->second.expiresAt > now) {
+            return found->second.length;
+        }
+    }
+
     auto& limiter = GetRemoteProbeLimiter();
     limiter.Acquire();
-    
+
     auto cleanup = ScopeGuard([&]() { limiter.Release(); });
-    return CurlCapture(url, true, false).contentLength;
+    const long long length = CurlCapture(url, true, false).contentLength;
+
+    {
+        std::lock_guard<std::mutex> lock(g_probeCacheMutex);
+        g_probeCache[url] = ProbeCacheEntry{ length, now + kRemoteProbeCacheTtl };
+        ++g_probeRecomputeCount;
+    }
+    return length;
 }
 
 namespace {
@@ -894,6 +923,11 @@ namespace {
 
 AdaptiveConcurrencyLimiter& GetRemoteProbeLimiter() {
     return g_remoteProbeLimiter;
+}
+
+long GetRemoteProbeRecomputeCountForTest() {
+    std::lock_guard<std::mutex> lock(g_probeCacheMutex);
+    return g_probeRecomputeCount;
 }
 
 bool StreamRemoteContent(const std::wstring& url,

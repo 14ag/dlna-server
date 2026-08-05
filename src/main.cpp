@@ -478,6 +478,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::cout << kMaxUpnpNotifyWorkers << std::endl;
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-max-client-threads") == 0) {
+            std::wcout << kMaxClientThreads << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-dlna-server-header") == 0) {
             std::cout << GetDlnaServerHeader() << std::endl;
             LocalFree(argv);
@@ -789,9 +793,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // and skipping that code path is what left the window with a
             // permanently "lite" frame (no icon, no min/max buttons, tiny
             // close button) in the original bug.
-            HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
+            HWND hwndExisting = NULL;
+            for (int attempt = 0; attempt < 25 && !hwndExisting; ++attempt) {
+                hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
+                if (!hwndExisting) Sleep(200);
+            }
             if (hwndExisting) {
                 PostMessageW(hwndExisting, MainWindow::WM_SHOW_EXISTING_INSTANCE, 0, 0);
+            } else {
+                // The mutex is held (another process is starting or running) but
+                // its window never appeared within 5 seconds -- it may have
+                // crashed between CreateMutexW and MainWindow::Create, or is
+                // hung. Do not exit silently; this mirrors the POSIX side's
+                // stderr message for the equivalent unreachable-peer case.
+                std::wcerr << L"DLNA Server: an existing instance is starting or "
+                              L"running but its window could not be found; exiting without action." << std::endl;
             }
             return 0;
         }

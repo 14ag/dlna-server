@@ -40,7 +40,6 @@
 #endif
 
 namespace {
-constexpr size_t kMaxClientThreads = 64;
 
 class ScopedFd {
 public:
@@ -199,6 +198,7 @@ bool HttpServer::Start(int port) {
     m_listenSocketV4 = CreateListenSocket(AF_INET, port);
     m_listenSocketV6 = CreateListenSocket(AF_INET6, port);
     if (m_listenSocketV4 < 0 && m_listenSocketV6 < 0) return false;
+    m_clientPool = std::make_unique<BoundedThreadPool>(kMaxClientThreads, kMaxClientThreads);
     m_running = true;
     if (m_listenSocketV4 >= 0) m_threads.emplace_back(&HttpServer::AcceptLoop, this, m_listenSocketV4);
     if (m_listenSocketV6 >= 0) m_threads.emplace_back(&HttpServer::AcceptLoop, this, m_listenSocketV6);
@@ -216,32 +216,14 @@ void HttpServer::Stop() {
     if (m_listenSocketV6 >= 0) { shutdown(m_listenSocketV6, SHUT_RDWR); close(m_listenSocketV6); m_listenSocketV6 = -1; }
     for (auto& thread : m_threads) if (thread.joinable()) thread.join();
     m_threads.clear();
-    std::vector<ClientThread> clients;
-    {
-        std::lock_guard<std::mutex> lock(m_clientMutex);
-        clients.swap(m_clientThreads);
-    }
-    for (auto& client : clients) if (client.thread.joinable()) client.thread.join();
+    // BoundedThreadPool's destructor signals stop and joins every worker.
+    m_clientPool.reset();
     if (m_wakeupReadFd >= 0) { close(m_wakeupReadFd); m_wakeupReadFd = -1; }
     if (m_wakeupWriteFd >= 0) { close(m_wakeupWriteFd); m_wakeupWriteFd = -1; }
 }
 
-void HttpServer::ReapFinishedClientThreads() {
-    std::lock_guard<std::mutex> lock(m_clientMutex);
-    auto it = m_clientThreads.begin();
-    while (it != m_clientThreads.end()) {
-        if (it->done && it->done->load()) {
-            if (it->thread.joinable()) it->thread.join();
-            it = m_clientThreads.erase(it);
-        } else {
-            ++it;
-        }
-    }
-}
-
 void HttpServer::AcceptLoop(int listenSocket) {
     while (m_running) {
-        ReapFinishedClientThreads();
         struct pollfd fds[2];
         fds[0].fd = listenSocket;
         fds[0].events = POLLIN;
@@ -275,23 +257,9 @@ void HttpServer::AcceptLoop(int listenSocket) {
             close(client);
             continue;
         }
-        {
-            std::lock_guard<std::mutex> lock(m_clientMutex);
-            if (m_clientThreads.size() >= kMaxClientThreads) {
-                static const char* busy = "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-                send(client, busy, strlen(busy), MSG_NOSIGNAL);
-                close(client);
-                continue;
-            }
-            auto done = std::make_shared<std::atomic<bool>>(false);
-            m_clientThreads.push_back({
-                std::thread([this, client, clientIp, done]() {
-                    HandleClient(client, clientIp);
-                    done->store(true);
-                }),
-                done
-            });
-        }
+        m_clientPool->Submit([this, client, clientIp]() {
+            HandleClient(client, clientIp);
+        });
     }
 }
 

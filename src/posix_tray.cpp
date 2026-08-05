@@ -6,6 +6,8 @@
 #include <mutex>
 #include <string>
 
+#include "log.h"
+
 namespace PosixTray {
 
 namespace {
@@ -23,6 +25,8 @@ struct TrayState {
     GDBusConnection* connection = nullptr;
     guint registeredObjectId = 0;
     guint exportedMenuId = 0;
+    bool registrationConfirmed = false;
+    bool trayAvailable = false;
 };
 
 std::mutex g_mutex;
@@ -216,9 +220,20 @@ const gchar kInterfaceXml[] =
 void OnWatcherCallFinished(GObject* source, GAsyncResult* result, gpointer) {
     g_autoptr(GError) error = nullptr;
     g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
-    // A missing watcher is normal on desktops without a status tray
-    // so a failed registration is intentionally silent
-    (void)error;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_state.registrationConfirmed = true;
+    g_state.trayAvailable = (error == nullptr);
+    // A missing StatusNotifierWatcher is a normal, unremarkable
+    // desktop/compositor configuration (WSLg does not provide one as
+    // of this writing) -- do not surface this to the user as an
+    // error. It is still logged so a maintainer reading debug.log can
+    // tell tray-based window recovery is unavailable on this session
+    // and confirm the fallback path (Task 14) is what is in effect.
+    if (error != nullptr) {
+        LogPrint(L"Tray icon unavailable: no StatusNotifierWatcher registered (%hs)", error->message);
+    } else {
+        LogPrint(L"Tray icon registered with StatusNotifierWatcher.");
+    }
 }
 
 } // namespace
@@ -296,6 +311,16 @@ void Shutdown() {
     g_state.connection = nullptr;
     g_state.registeredObjectId = 0;
     g_state.exportedMenuId = 0;
+}
+
+bool IsRegistrationConfirmed() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    return g_state.registrationConfirmed;
+}
+
+bool IsTrayAvailable() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    return g_state.trayAvailable;
 }
 
 } // namespace PosixTray
