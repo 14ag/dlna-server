@@ -511,6 +511,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-network-interface-allow-list-accessor") == 0) {
+            // regression hook for the config accessor change
+            // writes a value through Mutate then reads it back through
+            // the new shared lock protected accessor
+            AppConfig.Mutate([](Config& cfg) {
+                cfg.networkInterfaceAllowList = L"eth0,wlan0";
+            });
+            std::wcout << AppConfig.GetNetworkInterfaceAllowList() << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-media-format-lookup") == 0 && i + 1 < argc) {
             // regression hook for the extension hash lookup change
             // prints the resolved media format fields on three lines or

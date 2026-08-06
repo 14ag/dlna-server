@@ -407,7 +407,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                 lower.rfind("127.0.0.1", 0) == 0 ||
                 lower.rfind("[::1]", 0) == 0 ||
                 lower.rfind("[0:0:0:0:0:0:0:1]", 0) == 0) {
-                hostUrl = GetRoutableHostUrl(listenPort, AppConfig.networkInterfaceAllowList);
+                hostUrl = GetRoutableHostUrl(listenPort, AppConfig.GetNetworkInterfaceAllowList());
             }
         }
         if (hostUrl.empty()) {

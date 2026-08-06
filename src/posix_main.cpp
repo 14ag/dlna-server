@@ -576,6 +576,16 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
+        else if (arg == "--print-network-interface-allow-list-accessor") {
+            // regression hook for the config accessor change
+            // writes a value through Mutate then reads it back through
+            // the new shared lock protected accessor
+            AppConfig.Mutate([](Config& cfg) {
+                cfg.networkInterfaceAllowList = L"eth0,wlan0";
+            });
+            std::wcout << AppConfig.GetNetworkInterfaceAllowList() << std::endl;
+            return 0;
+        }
         else if (arg == "--print-media-format-lookup" && i + 1 < argc) {
             // regression hook for the extension hash lookup change
             // prints the resolved media format fields on three lines or
