@@ -575,6 +575,16 @@ long ContentDirectory::GetSearchRecomputeCountForTest() {
     return g_searchRecomputeCount.load(std::memory_order_relaxed);
 }
 
+void ContentDirectory::ClearSearchCache() {
+    std::lock_guard<std::mutex> lock(m_searchCacheMutex);
+    m_searchCacheByContainer.clear();
+}
+
+long ContentDirectory::GetSearchCacheSizeForTest() {
+    std::lock_guard<std::mutex> lock(m_searchCacheMutex);
+    return static_cast<long>(m_searchCacheByContainer.size());
+}
+
 std::string ContentDirectory::HandleContentDirectoryControl(const std::string& req, const std::string& hostUrl) {
     bool malformed = false;
     const std::string action = ExtractSoapActionName(req, malformed);
@@ -656,6 +666,19 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         SortItems(results, sortCriteria);
         {
             std::lock_guard<std::mutex> lock(m_searchCacheMutex);
+            if (m_searchCacheByContainer.find(containerId) == m_searchCacheByContainer.end() &&
+                m_searchCacheByContainer.size() >= kMaxSearchCacheContainers) {
+                // evict the entry with the oldest systemUpdateId so
+                // this cache never grows past
+                // kMaxSearchCacheContainers no matter how many
+                // distinct containers get Searched over this
+                // process lifetime
+                auto oldest = std::min_element(m_searchCacheByContainer.begin(), m_searchCacheByContainer.end(),
+                    [](const auto& a, const auto& b) { return a.second.systemUpdateId < b.second.systemUpdateId; });
+                if (oldest != m_searchCacheByContainer.end()) {
+                    m_searchCacheByContainer.erase(oldest);
+                }
+            }
             m_searchCacheByContainer[containerId] = SearchCacheEntry{ currentUpdateId, cacheKey, results };
             ++g_searchRecomputeCount;
             LogPrint(L"[search-cache] recompute count now %ld", g_searchRecomputeCount.load());

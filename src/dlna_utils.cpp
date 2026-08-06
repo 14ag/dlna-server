@@ -9,6 +9,7 @@
 #include <cwctype>
 #include <limits>
 #include <random>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -287,14 +288,26 @@ HttpByteRange ParseHttpRangeHeader(const std::string& rangeHeader, long long fil
 }
 
 bool GetMediaFormatForExtension(const std::wstring& ext, MediaFormatInfo& info) {
-    std::wstring lower = ToLowerWide(ext);
-    for (const auto& format : kFormats) {
-        if (lower == format.ext) {
-            info = FormatInfoFromExtensionFormat(format);
-            return true;
+    // built once on first call from kFormats then reused for every
+    // lookup after that
+    // turns a linear scan of up to thirty five entries per call into
+    // a single average case constant time hash lookup
+    // kFormats has file scope const storage duration so pointers
+    // into it stay valid for the life of the process
+    static const std::unordered_map<std::wstring, const ExtensionFormat*> kFormatByExtension = []() {
+        std::unordered_map<std::wstring, const ExtensionFormat*> map;
+        map.reserve(sizeof(kFormats) / sizeof(kFormats[0]));
+        for (const auto& format : kFormats) {
+            map[format.ext] = &format;
         }
-    }
-    return false;
+        return map;
+    }();
+
+    std::wstring lower = ToLowerWide(ext);
+    auto found = kFormatByExtension.find(lower);
+    if (found == kFormatByExtension.end()) return false;
+    info = FormatInfoFromExtensionFormat(*found->second);
+    return true;
 }
 
 std::string BuildProtocolInfo(const MediaFormatInfo& info, bool hasKnownSize) {

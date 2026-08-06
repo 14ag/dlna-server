@@ -244,6 +244,7 @@ bool Server::Start(std::wstring& outReason) {
     // catalog out from under it. See F-CRASH-01.
     std::lock_guard<std::mutex> startScanLock(m_rescanMutex);
     AppMedia.ResetForRescan();
+    AppContent.ClearSearchCache();
     m_initialScanComplete.store(true, std::memory_order_release);
     m_initialScanInProgress.store(true, std::memory_order_release);
 
@@ -288,6 +289,7 @@ bool Server::Rescan() {
     std::lock_guard<std::mutex> rescanLock(m_rescanMutex);
     AppScanCancel.BeginScan();
     AppMedia.ResetForRescan();
+    AppContent.ClearSearchCache();
     if (m_running.load(std::memory_order_acquire)) {
         StartBackgroundScan();
         JoinBackgroundScan();

@@ -1,6 +1,7 @@
 #include "server.h"
 #include "config.h"
 #include "scan_cancellation.h"
+#include "contentdirectory.h"
 #include "dlna_utils.h"
 #include "log.h"
 #include "media_sources.h"
@@ -300,6 +301,7 @@ bool Server::Start(std::wstring& outReason) {
     // catalog out from under it. See F-CRASH-01.
     std::lock_guard<std::mutex> startScanLock(m_rescanMutex);
     AppMedia.ResetForRescan();
+    AppContent.ClearSearchCache();
     m_initialScanComplete.store(true, std::memory_order_release);
     m_initialScanInProgress.store(true, std::memory_order_release);
 
@@ -347,6 +349,7 @@ bool Server::Rescan() {
     std::lock_guard<std::mutex> rescanLock(m_rescanMutex);
     AppScanCancel.BeginScan();
     AppMedia.ResetForRescan();
+    AppContent.ClearSearchCache();
     if (m_running.load(std::memory_order_acquire)) {
         // StartBackgroundScan only launches the scan thread and returns
         // Rescan must not report completion until the scan is done

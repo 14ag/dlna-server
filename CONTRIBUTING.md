@@ -37,12 +37,6 @@ cmake --build build-windows --config Release
 cmake --install build-windows --config Release
 ```
 
-Run the main Windows protocol smoke test:
-
-```powershell
-.\tests\verify-smoke.ps1
-```
-
 ## POSIX Development
 
 Requirements:
