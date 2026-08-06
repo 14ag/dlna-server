@@ -33,8 +33,7 @@ bool SendKill();
 
 // Start a background thread listening on the domain socket for IPC commands
 // (e.g. "show"). The callback is invoked from the listener thread with the
-// received command text (trailing newline stripped). Must be thread-safe;
-// for FLTK, use Fl::awake() to marshal to the main thread.
+// received command text (trailing newline stripped)
 void StartListening(void (*onCommand)(const std::string&));
 
 // Stop the listener, release the file lock, and clean up socket/lock files.

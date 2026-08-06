@@ -94,7 +94,7 @@ std::wstring MovieTitleFromPath(const std::wstring& moviePath) {
     // terminates the process. SourceStemName operates on std::wstring
     // with no fixed-size intermediate buffer, so it has no length at
     // which it can fail this way. It is the same helper
-    // fltk_gui_main.cpp::TitleFromPath already uses for the identical
+    // gtk4.cpp::TitleFromPath already uses for the identical
     // POSIX-side "Default playlist entry" title derivation -- this
     // change makes the Win32 side use the same safe, already-audited
     // logic instead of a separate hand-rolled Win32-only version.

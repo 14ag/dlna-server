@@ -4,7 +4,6 @@
 // single source of truth for every ui dimension color and font size
 // used by both the win32 front end and the gtk4 front end
 // tools gen_gtk_style py parses this file to emit resources gtk style css
-// no windows types no gtk types no fltk types so it stays platform neutral
 
 struct RgbColor {
     int r;

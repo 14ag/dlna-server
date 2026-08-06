@@ -83,11 +83,11 @@ def test_desktop_file_icon_matches_installed_icon_name():
 def test_desktop_file_startup_wm_class_matches_gtk4_app_id():
     text = DESKTOP_TEMPLATE.read_text()
     gtk4_main = (REPO_ROOT / "src" / "gtk4_gui_main.cpp").read_text()
-    assert 'gtk_application_new("dlna-server"' in gtk4_main, (
-        "gtk4_gui_main.cpp app ID should be dlna-server so the GTK4 WM_CLASS"
-        " matches the .desktop StartupWMClass"
+    assert 'gtk_application_new("com.github.dlna-server-14ag"' in gtk4_main, (
+        "gtk4_gui_main.cpp app ID should be com.github.dlna-server-14ag so the"
+        " GTK4 WM_CLASS matches the .desktop StartupWMClass"
     )
-    assert "StartupWMClass=dlna-server" in text
+    assert "StartupWMClass=com.github.dlna-server-14ag" in text
 
 
 def test_desktop_file_validate_reports_no_errors():

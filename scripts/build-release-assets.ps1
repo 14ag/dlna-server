@@ -1,9 +1,7 @@
 param(
     [string]$Version = "1.7.0",
     [string]$WslDistro = "Ubuntu",
-    [string]$Platform = "winx64,winx86,linux",
-    [Alias("no-clean")]
-    [switch]$NoClean
+    [string]$Platform = "winx64,winx86,linux"
 )
 
 function Invoke-NativeChecked {
@@ -165,9 +163,9 @@ function Initialize-PlatformOutput {
     param([Parameter(Mandatory = $true)][string]$Name)
 
     $dir = $platformDirs[$Name]
-    if (-not $NoClean) {
-        Remove-DirectoryInsideRepo -Path $dir
-    }
+    
+    Remove-DirectoryInsideRepo -Path $dir
+    
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
 }
 
@@ -200,11 +198,7 @@ function New-SourceReleaseArchive {
 }
 
 function Invoke-LinuxReleaseAssets {
-    param(
-        [Parameter(Mandatory = $true)][string]$Version,
-        [Parameter(Mandatory = $true)][switch]$NoClean
-    )
-
+    
     $drive = $repo.Substring(0, 1).ToLowerInvariant()
     $repoWsl = "/mnt/$drive" + $repo.Substring(2).Replace("\", "/")
     $repoWslEscaped = $repoWsl.Replace("'", "'\''")
@@ -220,22 +214,20 @@ function Invoke-LinuxReleaseAssets {
     $linuxOutputWsl = "/mnt/$drive" + $platformDirs["linux"].Substring(2).Replace("\", "/")
     $linuxStageWsl = "$repoWsl/build-release-linux-stage"
     $releaseToolsWsl = "/mnt/$drive" + (Join-Path $releaseTools "linux").Substring(2).Replace("\", "/")
-    $noCleanValue = if ($NoClean) { "1" } else { "0" }
-    $sudoPassword = ""
+    $sudoPassword = " "
     if ($env:DLNA_SUDO_PASSWORD) {
         $sudoPassword = $env:DLNA_SUDO_PASSWORD.Replace("'", "'\''")
     }
     $bashTemplate = @'
 cd '__REPO_WSL__' &&
-tr -d '\r' < scripts/build-linux-desktop-assets.sh > /tmp/dlna-server-build-linux-desktop-assets.sh &&
-chmod +x /tmp/dlna-server-build-linux-desktop-assets.sh &&
-DLNA_REPO_ROOT='__REPO_WSL__' DLNA_OUTPUT_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_PLATFORM_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_STAGE_DIR='__LINUX_STAGE_WSL__' DLNA_RELEASE_TOOLS_DIR='__TOOLS_WSL__' DLNA_NO_CLEAN='__NO_CLEAN__' LINUXDEPLOY='__LINUXDEPLOY_WSL__' APPIMAGE_RUNTIME='__RUNTIME_WSL__' DLNA_SUDO_PASSWORD='__SUDO_PASSWORD__' DLNA_SERVER_VERSION='__VERSION__' bash /tmp/dlna-server-build-linux-desktop-assets.sh
+tr -d '\r' < scripts/build-linux-assets.sh > /tmp/dlna-server-build-linux-assets.sh &&
+chmod +x /tmp/dlna-server-build-linux-assets.sh &&
+DLNA_REPO_ROOT='__REPO_WSL__' DLNA_OUTPUT_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_PLATFORM_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_STAGE_DIR='__LINUX_STAGE_WSL__' DLNA_RELEASE_TOOLS_DIR='__TOOLS_WSL__' LINUXDEPLOY='__LINUXDEPLOY_WSL__' APPIMAGE_RUNTIME='__RUNTIME_WSL__' DLNA_SUDO_PASSWORD='__SUDO_PASSWORD__' DLNA_SERVER_VERSION='__VERSION__' bash /tmp/dlna-server-build-linux-assets.sh
 '@
     $bashCommand = $bashTemplate.Replace("__REPO_WSL__", $repoWslEscaped)
     $bashCommand = $bashCommand.Replace("__LINUX_OUTPUT_WSL__", $linuxOutputWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__LINUX_STAGE_WSL__", $linuxStageWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__TOOLS_WSL__", $releaseToolsWsl.Replace("'", "'\''"))
-    $bashCommand = $bashCommand.Replace("__NO_CLEAN__", $noCleanValue)
     $bashCommand = $bashCommand.Replace("__LINUXDEPLOY_WSL__", $linuxdeployWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__RUNTIME_WSL__", $runtimeWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__SUDO_PASSWORD__", $sudoPassword)
@@ -267,8 +259,7 @@ if ($selectedPlatforms -contains "winx64") {
             -Arch x64 `
             -InstallDir $platformDirs["winx64"] `
             -RepoRoot $repo `
-            -BuildDir (Join-Path $repo "build-release-winx64") `
-            -NoClean:$NoClean
+            -BuildDir (Join-Path $repo "build-release-winx64")
         Compress-Archive -LiteralPath (Join-Path $platformDirs["winx64"] "DLNA Server.exe") `
             -DestinationPath (Join-Path $platformDirs["winx64"] "dlna-server-$Version-windows-x64.zip") -Force
     } catch {
@@ -282,8 +273,7 @@ if ($selectedPlatforms -contains "winx86") {
             -Arch Win32 `
             -InstallDir $platformDirs["winx86"] `
             -RepoRoot $repo `
-            -BuildDir (Join-Path $repo "build-release-winx86") `
-            -NoClean:$NoClean
+            -BuildDir (Join-Path $repo "build-release-winx86")
         Compress-Archive -LiteralPath (Join-Path $platformDirs["winx86"] "DLNA Server.exe") `
             -DestinationPath (Join-Path $platformDirs["winx86"] "dlna-server-$Version-windows-x86.zip") -Force
     } catch {
@@ -293,7 +283,7 @@ if ($selectedPlatforms -contains "winx86") {
 
 if ($selectedPlatforms -contains "linux") {
     try {
-        Invoke-LinuxReleaseAssets -Version $Version -NoClean:$NoClean
+        Invoke-LinuxReleaseAssets -Version $Version
     }
     catch {
         Write-Warning "linux build failed: $_"
@@ -319,7 +309,6 @@ foreach ($macPlatform in @("macos-x64", "macos-arm64")) {
         $arch = if ($macPlatform -eq "macos-x64") { "x86_64" } else { "arm64" }
         $env:DLNA_MACOS_ARCH = $arch
         $env:DLNA_MACOS_PLATFORM_DIR = $platformDirs[$macPlatform]
-        $env:DLNA_NO_CLEAN = if ($NoClean) { "1" } else { "0" }
         try {
             $result = Invoke-NativeChecked "bash" @("scripts/build-macos-dmg.sh")
             if (-not $result) {
@@ -329,7 +318,6 @@ foreach ($macPlatform in @("macos-x64", "macos-arm64")) {
         finally {
             Remove-Item Env:\DLNA_MACOS_ARCH -ErrorAction SilentlyContinue
             Remove-Item Env:\DLNA_MACOS_PLATFORM_DIR -ErrorAction SilentlyContinue
-            Remove-Item Env:\DLNA_NO_CLEAN -ErrorAction SilentlyContinue
         }
     }
 }

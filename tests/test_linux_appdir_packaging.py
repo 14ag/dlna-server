@@ -23,11 +23,11 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("Name=DLNA Server", desktop)
         self.assertIn("Exec=dlna-server-gui", desktop)
         self.assertIn("Icon=dlna-server", desktop)
-        self.assertIn("StartupWMClass=dlna-server", desktop)
+        self.assertIn("StartupWMClass=com.github.dlna-server-14ag", desktop)
 
     def test_linux_desktop_installers_are_scripted(self):
         cmake = self.read("CMakeLists.txt")
-        script = self.read("scripts/build-linux-desktop-assets.sh")
+        script = self.read("scripts/build-linux-assets.sh")
         gitattributes = self.read(".gitattributes")
         flatpak = self.read("packaging/flatpak/com.github.14ag.dlna_server.yml")
         desktop = self.read("packaging/flatpak/com.github.14ag.dlna_server.desktop")
@@ -55,7 +55,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("output/winx86/*.zip", workflow)
         self.assertIn("flatpak flatpak-builder", workflow)
         self.assertIn("org.freedesktop.Sdk//24.08", workflow)
-        self.assertIn("scripts/build-linux-desktop-assets.sh", workflow)
+        self.assertIn("scripts/build-linux-assets.sh", workflow)
 
     def test_macos_dmg_packaging_prefers_native_gui(self):
         cmake = self.read("CMakeLists.txt")
@@ -74,7 +74,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("notarytool submit", script)
 
     def test_wslg_gui_smoke_prereqs_are_in_build_and_pytest_wiring(self):
-        linux_script = self.read("scripts/build-linux-desktop-assets.sh")
+        linux_script = self.read("scripts/build-linux-assets.sh")
         conftest = self.read("tests/conftest.py")
 
         self.assertIn("libgtk-4-dev", linux_script)

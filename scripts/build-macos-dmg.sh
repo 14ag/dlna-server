@@ -24,12 +24,7 @@ case "$platform_dir" in /*) ;; *) platform_dir="$repo_root/$platform_dir" ;; esa
 case "$build_dir" in /*) ;; *) build_dir="$repo_root/$build_dir" ;; esac
 case "$install_dir" in /*) ;; *) install_dir="$repo_root/$install_dir" ;; esac
 
-if [ "${DLNA_NO_CLEAN:-0}" != "1" ]; then
-    case "$platform_dir" in
-        "$repo_root"/output/*) rm -rf "$platform_dir" ;;
-        *) echo "Refusing to clean non-output platform dir: $platform_dir" >&2; exit 1 ;;
-    esac
-fi
+rm -rf "$platform_dir"
 mkdir -p "$platform_dir"
 
 cmake -S "$repo_root" -B "$build_dir" \
