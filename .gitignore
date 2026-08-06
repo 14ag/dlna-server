@@ -109,3 +109,5 @@ temp/dlna_server_test5/config.ini
 temp/dlna_server_test5/stderr.txt
 temp/dlna_server_test5/stdout.txt
 temp/server_test/config.ini
+current_workload.txt
+pre_existing_fails.txt

@@ -12,7 +12,7 @@ Implemented in `src/httpserver.cpp` (Windows) and `src/posix_httpserver.cpp` (PO
 ## Connection handling
 
 - Windows: `CreateThreadpoolWork` per accepted connection, pool sized 4–64 threads (`SetThreadpoolThreadMinimum`/`Maximum`).
-- POSIX: one `std::thread` per connection, capped at `kMaxClientThreads` (64). Past the cap, new connections get `503 Service Unavailable` and are closed immediately. Finished threads are reaped opportunistically in the accept loop (`ReapFinishedClientThreads`).
+- POSIX: accepted connections are dispatched to a pre-spawned `BoundedThreadPool` sized to `kMaxClientThreads` (64) for both worker count and queue depth, mirroring the pool-based model the Windows build uses. When the queue is full, the accept loop blocks on `Submit()` until a worker frees up instead of rejecting the connection.
 - Both sides check `IPWhitelist::Get().IsAllowed(clientIp)` right after `accept()`, before any request is read, and respond `403 Forbidden` if the address isn't allowed.
 - HTTP/1.1 keep-alive is honored based on the `Connection` header and, absent one, the request's HTTP version (`ShouldKeepAlive`).
 

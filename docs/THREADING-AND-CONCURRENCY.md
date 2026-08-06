@@ -15,7 +15,7 @@
 ## HTTP server threading
 
 - **Windows**: `PTP_POOL` thread pool (4–64 threads), one `PTP_WORK` item per connection. `HttpServer::Stop()` calls `CloseThreadpoolCleanupGroupMembers` before closing the pool, which blocks until in-flight work finishes.
-- **POSIX**: one accept thread per listen socket (IPv4, IPv6), one detached-but-tracked `std::thread` per connection, capped at `kMaxClientThreads` (64). `m_clientThreads` is guarded by `m_clientMutex`; finished threads are reaped opportunistically from the accept loop rather than via a dedicated reaper thread, avoiding a third kind of thread just for cleanup bookkeeping. `Stop()` joins every remaining client thread before returning.
+- **POSIX**: one accept thread per listen socket (IPv4, IPv6). Accepted connections are dispatched to a pre-spawned `BoundedThreadPool` (`m_clientPool`) sized to `kMaxClientThreads` (64) for both worker count and queue depth, replacing a `std::thread` spawned per connection. When the queue is full, the accept loop blocks on `Submit()` until a worker frees up. `Stop()` joins the accept threads and destroys the pool, which signals stop and joins every worker.
 - Both sides check `m_running.load()` inside long-running send loops (file/remote streaming) so a `Stop()` call interrupts an in-progress transfer rather than waiting for it to finish naturally.
 
 ## SSDP threading

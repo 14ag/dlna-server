@@ -209,37 +209,12 @@ function Invoke-LinuxReleaseAssets {
     $repoWsl = "/mnt/$drive" + $repo.Substring(2).Replace("\", "/")
     $repoWslEscaped = $repoWsl.Replace("'", "'\''")
     $toolsDir = Join-Path $releaseTools "windows"
-    $fltkTag = "release-1.4.5"
-    $fltkSha256 = "7715e69ce081fa9ce6da48bb0dd3b07a4cf2cf937813814c04272f36fff593ea"
-    $fltkSource = Join-Path $toolsDir "fltk-$fltkTag"
-    $fltkArchive = Join-Path $toolsDir "fltk-$fltkTag.tar.gz"
-
-    if (-not (Test-Path -LiteralPath (Join-Path $fltkSource "CMakeLists.txt"))) {
-        New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
-        $fltkUrl = "https://github.com/fltk/fltk/archive/refs/tags/$fltkTag.tar.gz"
-        Save-UrlIfMissing $fltkUrl $fltkArchive $fltkSha256
-
-        $extractDir = Join-Path $toolsDir "fltk-extract"
-        Remove-DirectoryInsideRepo -Path $extractDir
-        New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
-        Invoke-NativeChecked "tar.exe" @("-xzf", $fltkArchive, "-C", $extractDir)
-
-        $extractedSource = Get-ChildItem -LiteralPath $extractDir -Directory | Select-Object -First 1
-        if (-not $extractedSource) {
-            throw "Could not extract FLTK archive: $fltkArchive"
-        }
-        Remove-DirectoryInsideRepo -Path $fltkSource
-        Move-Item -LiteralPath $extractedSource.FullName -Destination $fltkSource
-        Remove-DirectoryInsideRepo -Path $extractDir
-    }
-
     $linuxdeployVersion = "1-alpha-20251107-1"
     $linuxdeployPath = Join-Path $toolsDir "linuxdeploy-x86_64.AppImage"
     $runtimePath = Join-Path $toolsDir "runtime-x86_64"
     Save-UrlIfMissing "https://github.com/linuxdeploy/linuxdeploy/releases/download/$linuxdeployVersion/linuxdeploy-x86_64.AppImage" $linuxdeployPath "c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
     Save-UrlIfMissing "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64" $runtimePath "a2419dce47568395ae79c01ffa9a5a341dd339581352ff104d073527543177e5"
 
-    $fltkWsl = "/mnt/$drive" + $fltkSource.Substring(2).Replace("\", "/")
     $linuxdeployWsl = "/mnt/$drive" + $linuxdeployPath.Substring(2).Replace("\", "/")
     $runtimeWsl = "/mnt/$drive" + $runtimePath.Substring(2).Replace("\", "/")
     $linuxOutputWsl = "/mnt/$drive" + $platformDirs["linux"].Substring(2).Replace("\", "/")
@@ -254,14 +229,13 @@ function Invoke-LinuxReleaseAssets {
 cd '__REPO_WSL__' &&
 tr -d '\r' < scripts/build-linux-desktop-assets.sh > /tmp/dlna-server-build-linux-desktop-assets.sh &&
 chmod +x /tmp/dlna-server-build-linux-desktop-assets.sh &&
-DLNA_REPO_ROOT='__REPO_WSL__' DLNA_OUTPUT_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_PLATFORM_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_STAGE_DIR='__LINUX_STAGE_WSL__' DLNA_RELEASE_TOOLS_DIR='__TOOLS_WSL__' DLNA_NO_CLEAN='__NO_CLEAN__' DLNA_FLTK_SOURCE_DIR='__FLTK_WSL__' LINUXDEPLOY='__LINUXDEPLOY_WSL__' APPIMAGE_RUNTIME='__RUNTIME_WSL__' DLNA_SUDO_PASSWORD='__SUDO_PASSWORD__' DLNA_SERVER_VERSION='__VERSION__' bash /tmp/dlna-server-build-linux-desktop-assets.sh
+DLNA_REPO_ROOT='__REPO_WSL__' DLNA_OUTPUT_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_PLATFORM_DIR='__LINUX_OUTPUT_WSL__' DLNA_LINUX_STAGE_DIR='__LINUX_STAGE_WSL__' DLNA_RELEASE_TOOLS_DIR='__TOOLS_WSL__' DLNA_NO_CLEAN='__NO_CLEAN__' LINUXDEPLOY='__LINUXDEPLOY_WSL__' APPIMAGE_RUNTIME='__RUNTIME_WSL__' DLNA_SUDO_PASSWORD='__SUDO_PASSWORD__' DLNA_SERVER_VERSION='__VERSION__' bash /tmp/dlna-server-build-linux-desktop-assets.sh
 '@
     $bashCommand = $bashTemplate.Replace("__REPO_WSL__", $repoWslEscaped)
     $bashCommand = $bashCommand.Replace("__LINUX_OUTPUT_WSL__", $linuxOutputWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__LINUX_STAGE_WSL__", $linuxStageWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__TOOLS_WSL__", $releaseToolsWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__NO_CLEAN__", $noCleanValue)
-    $bashCommand = $bashCommand.Replace("__FLTK_WSL__", $fltkWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__LINUXDEPLOY_WSL__", $linuxdeployWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__RUNTIME_WSL__", $runtimeWsl.Replace("'", "'\''"))
     $bashCommand = $bashCommand.Replace("__SUDO_PASSWORD__", $sudoPassword)

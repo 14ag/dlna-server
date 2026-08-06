@@ -47,7 +47,7 @@
 - After completing a task, verify each user prompt item was addressed.
 - Run `python -m pytest -q --tb=no`.
 - Run Windows CMake configure/build for `dlna-server` when Windows build files changed.
-- Run POSIX CMake configure/build with `-DDLNA_ENABLE_FLTK_GUI=OFF` when POSIX/shared code changed.
+- Run POSIX CMake configure/build with `-DDLNA_ENABLE_GTK4_GUI=OFF` when POSIX/shared code changed.
 - Run smoke scripts in the tests folder.
 
 
