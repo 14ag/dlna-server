@@ -249,6 +249,11 @@ bool Config::IsProxyStreamsEnabled() const {
     return proxyStreams;
 }
 
+std::wstring Config::GetNetworkInterfaceAllowList() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return networkInterfaceAllowList;
+}
+
 int ParsePortOrDefault(const std::string& value, int fallback) {
     int parsed = ParseIntOrDefault(value, fallback);
     return IsValidPort(parsed) ? parsed : fallback;

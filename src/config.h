@@ -127,6 +127,7 @@ public:
     int GetPort() const;
     bool IsSortByTitleEnabled() const;
     bool IsProxyStreamsEnabled() const;
+    std::wstring GetNetworkInterfaceAllowList() const;
 
     std::vector<MediaSource> GetRuntimeSourceOverride() const {
         std::shared_lock<std::shared_mutex> lock(m_mutex);
