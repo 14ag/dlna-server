@@ -144,3 +144,40 @@ Parsed in the same way on every platform — overrides are applied after config 
 | `--print-effective-media-sources` | Dumps `effectiveMediaSources` (sources + runtime overrides), one per line |
 | `--print-clear-override-then-effective` | Calls `ClearRuntimeSourceOverride()`, then dumps `effectiveMediaSources` — verifies that cleared-override state matches the persisted list |
 | `--print-source-override-lifecycle <quoted-comma-list>` | Sets runtime source override, starts the server, polls scan progress until complete, then stops — validates the override-start-stop lifecycle end-to-end |
+| `--print-clamp-browse-requested-count <requested> <available>` | Clamps a requested Browse result count against the available item count via `ClampBrowseRequestedCount()`, prints the result |
+| `--print-close-pending-lifecycle` | Drives `ClosePendingState` through request → stop → restart transitions and prints each state value |
+| `--print-concurrent-start-rescan-safety` | Starts the server while `Rescan()` runs concurrently; prints `start-ok` and the resulting leaf-media-item count |
+| `--print-config-load-lockstate` | Loads the config through `Config::Load()` and reports whether it completes |
+| `--print-config-path` | Prints the resolved config file path |
+| `--print-debug-log-session-truncation <path>` | Reuses the debug-log handle across two writes and prints whether the same handle was reused |
+| `--print-default-playlist-path` | Prints the default playlist path resolved next to the config file |
+| `--print-dlna-server-header` | Prints the SSDP `SERVER:` header value produced by `GetDlnaServerHeader()` |
+| `--print-function-key-action <vkCode> <isRunning> <isBusy> <isScanning>` | Runs `DecideFunctionKeyAction()` with four `0`/`1` flags and prints the action (`show-help`, `rescan`, `refresh-source-list`, `show-context-menu`, or `none`) |
+| `--print-is-plausible-copydata-size <cbData>` | Passes a copy-data payload size to `IsPlausibleWideStringCopyDataSize()` and prints `1`/`0` |
+| `--print-log-since-lifecycle` | Exercises `GetSystemLogSince()` and prints latest-sequence values across two writes |
+| `--print-max-client-threads` | Prints the `kMaxClientThreads` constant shared by both HTTP server implementations |
+| `--print-media-database-id-overflow-guard <dbPath>` | Drives `MediaDatabase` stable-ID allocation past the overflow guard and prints the result |
+| `--print-media-database-id-reuse-lifecycle` | Exercises `MediaDatabase` stable-ID reuse across scan passes and prints the assigned IDs |
+| `--print-media-display-title <showFileNames> <titleOverride> <path>` | Builds the display title via `BuildDisplayTitleForMediaFile()` and prints it |
+| `--print-media-resource-url-suffix <path>` | Prints the resource-URL extension suffix via `BuildMediaResourceUrlExtensionSuffix()` |
+| `--print-media-source-file-extensions` | Prints each registered media-source file extension on its own line |
+| `--print-movie-title-from-path <path>` | Derives a movie title from a path via `SourceStemName()` and prints it |
+| `--print-network-endpoint-count <port>` | Enumerates network endpoints for `<port>` and prints the count |
+| `--print-notify-pool-worker-count` | Prints the GENA notify pool worker count constant |
+| `--print-remote-probe-cache-lifecycle <url>` | Probes a remote URL twice through the probe cache and prints the recompute counters (hit vs miss) |
+| `--print-resolve-bundled-resource <name>` | Resolves a bundled resource path via `ResolveBundledResourcePath()` and prints it |
+| `--print-routable-host-cache-invalidation` | Calls `GetRoutableHostUrl()` twice and prints whether the cached value was recomputed |
+| `--print-routable-host-url-twice <port1> <port2>` | Resolves the routable host URL twice for two ports and prints both results |
+| `--print-should-close-now <isRunning> <isBusy>` | Passes two `0`/`1` flags to `ShouldCloseNow()` and prints the decision |
+| `--print-should-drop-link-local-endpoint <candidateIsLinkLocal> <anyNonLinkLocalExists>` | Passes two `0`/`1` flags to `ShouldDropLinkLocalEndpoint()` and prints the decision |
+| `--print-should-use-unlisted-interface <isVirtual> <hasGateway>` | Passes two `0`/`1` flags to `ShouldUseUnlistedInterface()` and prints the decision |
+| `--print-single-file-source-scan` | Starts the server with a single-file source, waits for scan completion, prints the leaf-media-item count |
+| `--print-single-instance-lifecycle` | Exercises the single-instance lock acquire/listen/stop lifecycle and prints each transition |
+| `--print-single-instance-retry-timing` | Prints the single-instance retry timing (attempt count and delay) used when the peer is not yet reachable |
+| `--print-sockaddr-length-safety <reportedLength> <destinationCapacity>` | Passes a sockaddr length and destination capacity to `IsSockaddrLengthSafeToCopy()` and prints `1`/`0` |
+| `--print-strip-resource-id-extension <suffix>` | Strips an extension suffix from a resource ID via `StripResourceIdExtension()` and prints the result |
+| `--print-thread-guard-behavior` | Runs a guarded thread entry that throws and prints whether the exception was caught (`RunGuarded` behavior) |
+| `--print-thread-pool-exception-resilience` | Submits a throwing task to a `BoundedThreadPool` and verifies the pool survives; prints `1`/`0` |
+| `--print-transmitfile-chunk-plan <totalBytes>` | Computes the transmit-file chunk sizes via `ComputeTransmitFileChunkSizes()` and prints each chunk size |
+| `--print-tray-notify-decode <rawLParam> <expectedIconId>` | Decodes a tray notification `lParam` via `DecodeTrayNotifyEvent()` and prints the action |
+| `--print-trim-wide <text>` | Trims leading/trailing whitespace via `TrimWide()` and prints the result |
