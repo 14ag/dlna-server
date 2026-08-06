@@ -97,11 +97,10 @@ std::wstring BrowseFolder(HWND owner) {
 }
 
 std::wstring BuildMediaSourceFilterPattern() {
-    // FEAT-01: built from the single shared extension list in
+    // built from the single shared extension list in
     // media_source_file_types.h (media + playlist extensions combined)
     // instead of a separately hand-typed string literal, so this can
-    // never drift out of sync with the POSIX build's equivalent filter
-    // in fltk_gui_main.cpp again.
+    // never drift out of sync with the POSIX build
     std::wstring pattern;
     for (const auto& ext : GetMediaSourceFileExtensions()) {
         if (!pattern.empty()) pattern += L";";

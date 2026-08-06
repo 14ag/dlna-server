@@ -1376,7 +1376,6 @@ void BuildMainWindow(GtkApplication* app) {
     gtk_window_set_default_size(GTK_WINDOW(window),
                                 UiTokens::kWindowWidth, UiTokens::kWindowHeight);
     gtk_window_set_resizable(GTK_WINDOW(window), TRUE);
-    // min size mirrors fltk size_range(440, 460)
     gtk_widget_set_size_request(window, UiTokens::kWindowWidth, 460);
 
     GtkWidget* fixed = gtk_fixed_new();

@@ -69,7 +69,7 @@ jobs:
           DLNA_LINUX_PLATFORM_DIR: output/linux
           DLNA_LINUX_INSTALL_DIR: output/linux/install
           DLNA_RELEASE_TOOLS_DIR: build-release-tools/linux
-        run: bash scripts/build-linux-desktop-assets.sh
+        run: bash scripts/build-linux-assets.sh
       - name: Upload Linux assets
         uses: softprops/action-gh-release@v2
         with:

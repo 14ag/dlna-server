@@ -47,9 +47,9 @@ class TestConfigHeader:
 
 class TestGtk4WindowIdentity:
     def test_app_id_set(self):
-        """The GTK4 application must use app ID 'dlna-server' so WM_CLASS matches StartupWMClass."""
+        """The GTK4 application must use app ID 'com.github.dlna-server-14ag' so WM_CLASS matches StartupWMClass."""
         src = _source("gtk4_gui_main.cpp")
-        assert 'gtk_application_new("dlna-server"' in src
+        assert 'gtk_application_new("com.github.dlna-server-14ag"' in src
 
     def test_css_loaded_via_resolver(self):
         """The GTK4 startup must load style.css via ResolveBundledResourcePath."""
@@ -102,13 +102,13 @@ class TestDesktopIntegration:
         assert "gtk-update-icon-cache" in cmake_in
 
     def test_startup_wm_class(self):
-        """Both .desktop files must declare StartupWMClass=dlna-server."""
+        """Both .desktop files must declare StartupWMClass=com.github.dlna-server-14ag."""
         for desktop in [
             "packaging/linux/dlna-server.appimage.desktop",
             "packaging/flatpak/com.github.14ag.dlna_server.desktop",
         ]:
             text = (ROOT / desktop).read_text(encoding="utf-8")
-            assert "StartupWMClass=dlna-server" in text
+            assert "StartupWMClass=com.github.dlna-server-14ag" in text
 
     def test_icon_name(self):
         """Both .desktop files must declare Icon=dlna-server or compat variant."""

@@ -13,7 +13,7 @@ Icon=dlna-server
 Terminal=false
 Categories=AudioVideo;Network;FileTransfer;
 Keywords=DLNA;UPnP;media;server;streaming;
-StartupWMClass=dlna-server
+StartupWMClass=com.github.dlna-server-14ag
 StartupNotify=true
 ")
 

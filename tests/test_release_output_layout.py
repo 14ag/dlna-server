@@ -10,7 +10,7 @@ class ReleaseOutputLayoutTests(unittest.TestCase):
         return (ROOT / path).read_text(encoding="utf-8")
 
     def test_linux_release_script_keeps_artifacts_under_linux_folder(self):
-        script = self.read("scripts/build-linux-desktop-assets.sh")
+        script = self.read("scripts/build-linux-assets.sh")
 
         self.assertIn('platform_dir=${DLNA_LINUX_PLATFORM_DIR:-"$repo_root/output/linux"}', script)
         self.assertIn('release_stage_dir=${DLNA_LINUX_STAGE_DIR:-"$repo_root/build-release-linux-stage"}', script)

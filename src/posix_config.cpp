@@ -289,7 +289,7 @@ std::wstring Config::GetDefaultPlaylistPath() {
     return Utf8ToWide(path.substr(0, slash + 1) + "default.m3u");
 }
 
-// Intentionally inert: the FLTK settings dialog no longer exposes a
+// Intentionally inert: the settings dialog no longer exposes a
 // "run on startup" control on POSIX (see remediation workflow Phase 6E),
 // so RunOnBoot in a legacy config.ini is read and persisted but never
 // acted on. Re-implement this only alongside an explicit XDG autostart

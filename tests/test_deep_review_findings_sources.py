@@ -162,12 +162,12 @@ def test_ssdp_jitter_helpers_are_shared_not_duplicated():
 
 def test_release_scripts_enforce_platform_output_contracts():
     ps1 = read("scripts/build-release-assets.ps1")
-    linux = read("scripts/build-linux-desktop-assets.sh")
+    linux = read("scripts/build-linux-assets.sh")
     bat = read("build-assets.bat")
     cmake = read("CMakeLists.txt")
 
     assert "Test-SelectedPlatformPrerequisites" in ps1
-    assert "DLNA_NO_CLEAN" in ps1 and "DLNA_MACOS_PLATFORM_DIR" in ps1
+    assert "DLNA_NO_CLEAN" not in ps1 and "DLNA_MACOS_PLATFORM_DIR" in ps1
     assert "New-SourceReleaseArchive" in ps1
     assert "release_stage_dir" in linux
     assert "find \"$output_dir\" -maxdepth 1 -type f -name '*.AppImage' -delete" in linux

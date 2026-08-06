@@ -1,7 +1,7 @@
 # DLNA Server Agent Rules
 
 - Always use caveman skill in this repo.
-- Use `git` for git tasks. Use `gh` for GitHub tasks.
+- Use `git` for git tasks. Use `gh` for GitHub tasks. that the user explicitly approves. never create a branch, never commit
 - When user names a skill, follow that skill to the latter.
 - No fallbacks when user states a requirement. Ask a yes/no question if requirement conflict exists.
 - sudo password for wsl is in the .env file
@@ -34,7 +34,6 @@
 - `output/` root is only for source release zip and release `.md` files.
 - Build scripts must not clean `output/` root.
 - Build scripts clean selected `output/{platform}` folders by default, then recreate them.
-- `--no-clean` preserves selected platform folders.
 - `--platform` accepts comma-separated platform names. Default builds all supported platforms; do not add an `all` flag.
 - Supported platform names: `winx64`, `winx86`, `linux`, `macos-x64`, `macos-arm64`.
 

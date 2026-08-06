@@ -5,10 +5,7 @@
 #include <vector>
 
 // Single source of truth for the "Add media source" dialog's File...
-// picker filter, on both platforms:
-//   - Win32:  src/mainwindow.cpp   (COMDLG_FILTERSPEC pattern string)
-//   - POSIX:  src/fltk_gui_main.cpp (Fl_Native_File_Chooser filter string)
-//
+
 // FEAT-01: the File... and Playlist... buttons were merged into one
 // File... button, so this list is the union of what used to be two
 // separate hand-maintained lists (BrowseMediaFile's media extensions in
