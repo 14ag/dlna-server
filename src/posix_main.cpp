@@ -14,6 +14,7 @@
 #include "playlist_scan_concurrency.h"
 #include "media_sources.h"
 #include "media_source_file_types.h"
+#include "contentdirectory.h"
 #include "thread_guard.h"
 #include "scan_cancellation.h"
 #include "server.h"
@@ -34,6 +35,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -367,6 +369,12 @@ int main(int argc, char** argv) {
             std::cout << (ShouldDropLinkLocalEndpoint(candidateIsLinkLocal, anyNonLinkLocalExists) ? "1" : "0") << std::endl;
             return 0;
         }
+        else if (arg == "--print-should-evict-before-cache-insert" && i + 2 < argc) {
+            size_t currentSize = static_cast<size_t>(std::atoll(argv[++i]));
+            size_t capacity = static_cast<size_t>(std::atoll(argv[++i]));
+            std::cout << (ShouldEvictBeforeCacheInsert(currentSize, capacity) ? "1" : "0") << std::endl;
+            return 0;
+        }
         else if (arg == "--print-debug-log-requires-restart" && i + 2 < argc) {
             ConfigSnapshot before{};
             ConfigSnapshot after{};
@@ -568,6 +576,21 @@ int main(int argc, char** argv) {
             }
             return 0;
         }
+        else if (arg == "--print-media-format-lookup" && i + 1 < argc) {
+            // regression hook for the extension hash lookup change
+            // prints the resolved media format fields on three lines or
+            // the single line "no-match" when no format matches
+            std::wstring extArg = Utf8ToWide(argv[++i]);
+            MediaFormatInfo info;
+            if (!GetMediaFormatForExtension(extArg, info)) {
+                std::wcout << L"no-match" << std::endl;
+            } else {
+                std::wcout << info.mimeType << std::endl;
+                std::wcout << info.upnpClass << std::endl;
+                std::wcout << Utf8ToWide(info.dlnaProfile) << std::endl;
+            }
+            return 0;
+        }
         else if (arg == "--print-media-sources") {
             auto snap = AppConfig.Snapshot();
             for (const auto& src : snap.mediaSources) {
@@ -666,11 +689,58 @@ int main(int argc, char** argv) {
             DLNAServer.Stop();
             return 0;
         }
+        else if (arg == "--print-search-cache-cleared-on-rescan") {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            if (!startOk) {
+                std::wcerr << L"start failed: " << reason << std::endl;
+                return 1;
+            }
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            const std::string searchSoap =
+                "<?xml version=\"1.0\"?>\n"
+                "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
+                "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\n"
+                "  <s:Body>\n"
+                "    <u:Search xmlns:u=\"urn:schemas-upnp-org:service:ContentDirectory:1\">\n"
+                "      <ContainerID>0</ContainerID>\n"
+                "      <SearchCriteria></SearchCriteria>\n"
+                "      <Filter>*</Filter>\n"
+                "      <StartingIndex>0</StartingIndex>\n"
+                "      <RequestedCount>100</RequestedCount>\n"
+                "      <SortCriteria></SortCriteria>\n"
+                "    </u:Search>\n"
+                "  </s:Body>\n"
+                "</s:Envelope>\n";
+            AppContent.HandleContentDirectoryControl(searchSoap, "http://127.0.0.1:0");
+            std::wcout << L"before-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
+            DLNAServer.Rescan();
+            std::wcout << L"after-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
         else if (arg == "--print-thread-guard-behavior") {
             RunGuarded(L"test-thread", []() {
                 throw std::runtime_error("synthetic-test-exception");
             });
             std::cout << "guard-caught-exception=1" << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-thread-pool-exception-resilience") {
+            BoundedThreadPool pool(1);
+            std::promise<bool> survived;
+            std::future<bool> survivedFuture = survived.get_future();
+            pool.Submit([]() {
+                throw std::runtime_error("synthetic-pool-test-exception");
+            });
+            pool.Submit([&survived]() {
+                survived.set_value(true);
+            });
+            bool ok = survivedFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready
+                       && survivedFuture.get();
+            std::cout << "pool-survived-exception=" << (ok ? 1 : 0) << std::endl;
             return 0;
         }
         else if (arg == "--debug") AppConfig.debugLog = true;

@@ -17,6 +17,7 @@
 #include <shlwapi.h>
 #pragma comment(lib, "mswsock.lib")
 #include <climits>
+#include <exception>
 #include <sstream>
 
 namespace {
@@ -343,7 +344,20 @@ DWORD WINAPI HttpServer::AcceptThreadWorker(LPVOID lpParam) {
 void CALLBACK HttpServer::WorkerCallback(PTP_CALLBACK_INSTANCE, PVOID Context, PTP_WORK Work) {
     WorkData* wd = reinterpret_cast<WorkData*>(Context);
     HttpServer* server = wd->pServer;
-    server->HandleClient(wd->s, wd->ip);
+    // an exception escaping HandleClient must never cross this
+    // windows threadpool callback boundary
+    // an uncaught exception here terminates the whole process for
+    // every connected client not just the one that triggered it
+    // see SEI CERT ERR51 CPP and the mirrored fix in
+    // BoundedThreadPool WorkerLoop for the posix side of this
+    // same class of bug
+    try {
+        server->HandleClient(wd->s, wd->ip);
+    } catch (const std::exception& ex) {
+        LogPrint(L"[pool-guard] Unhandled exception in HandleClient: %hs", ex.what());
+    } catch (...) {
+        LogPrint(L"[pool-guard] Unknown unhandled exception in HandleClient");
+    }
     closesocket(wd->s);
     delete wd;
     server->m_activeClientCount.fetch_sub(1, std::memory_order_relaxed);

@@ -75,6 +75,25 @@ long long ProbeRemoteContentLength(const std::wstring& url);
 // GetRoutableHostUrlRecomputeCountForTest() in netutils.h.
 long GetRemoteProbeRecomputeCountForTest();
 
+// hard cap on how many distinct remote urls the content length probe
+// cache in network_sources cpp may hold at once
+// without this a long running server with a large or churning ftp
+// or http media library grows this cache without limit
+inline constexpr size_t kMaxRemoteProbeCacheEntries = 2000;
+
+// pure predicate true when the cache already holds capacity or more
+// entries and the key about to be inserted is not already one of
+// them so the caller must evict something first
+// see ProbeRemoteContentLength in network_sources cpp for the call
+// site and see IsSockaddrLengthSafeToCopy in netutils h for the same
+// style of extracted pure predicate already used in this codebase
+inline bool ShouldEvictBeforeCacheInsert(size_t currentCacheSize, size_t capacity) {
+    return currentCacheSize >= capacity;
+}
+
+// test only how many entries are currently held in the probe cache
+long GetRemoteProbeCacheSizeForTest();
+
 bool StreamRemoteContent(const std::wstring& url,
                          bool useRange,
                          long long startByte,

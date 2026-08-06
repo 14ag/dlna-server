@@ -911,6 +911,18 @@ long long ProbeRemoteContentLength(const std::wstring& url) {
 
     {
         std::lock_guard<std::mutex> lock(g_probeCacheMutex);
+        if (g_probeCache.find(url) == g_probeCache.end() &&
+            ShouldEvictBeforeCacheInsert(g_probeCache.size(), kMaxRemoteProbeCacheEntries)) {
+            // evict whichever entry expires soonest so this cache
+            // never grows past kMaxRemoteProbeCacheEntries no matter
+            // how many distinct remote urls this server probes over
+            // its uptime
+            auto soonestToExpire = std::min_element(g_probeCache.begin(), g_probeCache.end(),
+                [](const auto& a, const auto& b) { return a.second.expiresAt < b.second.expiresAt; });
+            if (soonestToExpire != g_probeCache.end()) {
+                g_probeCache.erase(soonestToExpire);
+            }
+        }
         g_probeCache[url] = ProbeCacheEntry{ length, now + kRemoteProbeCacheTtl };
         ++g_probeRecomputeCount;
     }
@@ -928,6 +940,11 @@ AdaptiveConcurrencyLimiter& GetRemoteProbeLimiter() {
 long GetRemoteProbeRecomputeCountForTest() {
     std::lock_guard<std::mutex> lock(g_probeCacheMutex);
     return g_probeRecomputeCount;
+}
+
+long GetRemoteProbeCacheSizeForTest() {
+    std::lock_guard<std::mutex> lock(g_probeCacheMutex);
+    return static_cast<long>(g_probeCache.size());
 }
 
 bool StreamRemoteContent(const std::wstring& url,

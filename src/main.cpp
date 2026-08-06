@@ -4,6 +4,7 @@
 #include <chrono>
 #include <csignal>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -35,6 +36,7 @@
 #include "transmitfile_chunking.h"
 #include "cli_flags.h"
 #include "media_source_file_types.h"
+#include "contentdirectory.h"
 #include "upnp_eventing.h"
 #include "server_close_policy.h"
 #include "close_pending_state.h"
@@ -367,6 +369,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::wcout << (ShouldDropLinkLocalEndpoint(candidateIsLinkLocal, anyNonLinkLocalExists) ? L"1" : L"0") << std::endl;
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-should-evict-before-cache-insert") == 0 && i + 2 < argc) {
+            size_t currentSize = static_cast<size_t>(_wtoi64(argv[++i]));
+            size_t capacity = static_cast<size_t>(_wtoi64(argv[++i]));
+            std::wcout << (ShouldEvictBeforeCacheInsert(currentSize, capacity) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-transmitfile-chunk-plan") == 0 && i + 1 < argc) {
             long long totalBytes = _wtoi64(argv[++i]);
             for (long long chunkSize : ComputeTransmitFileChunkSizes(totalBytes)) {
@@ -500,6 +508,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         } else if (wcscmp(argv[i], L"--print-media-source-file-extensions") == 0) {
             for (const auto& ext : GetMediaSourceFileExtensions()) {
                 std::wcout << ext << std::endl;
+            }
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-media-format-lookup") == 0 && i + 1 < argc) {
+            // regression hook for the extension hash lookup change
+            // prints the resolved media format fields on three lines or
+            // the single line "no-match" when no format matches
+            std::wstring extArg = argv[++i];
+            MediaFormatInfo info;
+            if (!GetMediaFormatForExtension(extArg, info)) {
+                std::wcout << L"no-match" << std::endl;
+            } else {
+                std::wcout << info.mimeType << std::endl;
+                std::wcout << info.upnpClass << std::endl;
+                std::wcout << Utf8ToWide(info.dlnaProfile) << std::endl;
             }
             LocalFree(argv);
             return 0;
@@ -653,6 +676,39 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             DLNAServer.Stop();
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-search-cache-cleared-on-rescan") == 0) {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            if (!startOk) {
+                std::wcerr << L"start failed: " << reason << std::endl;
+                LocalFree(argv);
+                return 1;
+            }
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            const std::string searchSoap =
+                "<?xml version=\"1.0\"?>\n"
+                "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
+                "s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\n"
+                "  <s:Body>\n"
+                "    <u:Search xmlns:u=\"urn:schemas-upnp-org:service:ContentDirectory:1\">\n"
+                "      <ContainerID>0</ContainerID>\n"
+                "      <SearchCriteria></SearchCriteria>\n"
+                "      <Filter>*</Filter>\n"
+                "      <StartingIndex>0</StartingIndex>\n"
+                "      <RequestedCount>100</RequestedCount>\n"
+                "      <SortCriteria></SortCriteria>\n"
+                "    </u:Search>\n"
+                "  </s:Body>\n"
+                "</s:Envelope>\n";
+            AppContent.HandleContentDirectoryControl(searchSoap, "http://127.0.0.1:0");
+            std::wcout << L"before-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
+            DLNAServer.Rescan();
+            std::wcout << L"after-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
+            DLNAServer.Stop();
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-thread-guard-behavior") == 0) {
             // Regression test for Task 1.1's RunGuarded helper itself:
             // proves an exception thrown inside it does not propagate
@@ -661,6 +717,21 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 throw std::runtime_error("synthetic-test-exception");
             });
             std::cout << "guard-caught-exception=1" << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-thread-pool-exception-resilience") == 0) {
+            BoundedThreadPool pool(1);
+            std::promise<bool> survived;
+            std::future<bool> survivedFuture = survived.get_future();
+            pool.Submit([]() {
+                throw std::runtime_error("synthetic-pool-test-exception");
+            });
+            pool.Submit([&survived]() {
+                survived.set_value(true);
+            });
+            bool ok = survivedFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready
+                       && survivedFuture.get();
+            std::wcout << L"pool-survived-exception=" << (ok ? 1 : 0) << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-tray-notify-decode") == 0 && i + 2 < argc) {

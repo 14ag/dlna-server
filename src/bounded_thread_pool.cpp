@@ -1,4 +1,7 @@
 #include "bounded_thread_pool.h"
+#include "log.h"
+
+#include <exception>
 
 BoundedThreadPool::BoundedThreadPool(size_t workerCount, size_t maxQueueDepth)
     : m_maxQueueDepth(maxQueueDepth) {
@@ -44,6 +47,20 @@ void BoundedThreadPool::WorkerLoop() {
             m_queue.pop_front();
         }
         m_spaceCv.notify_one();
-        task();
+        // an exception escaping this call propagates out of the std
+        // thread entry function backing this worker
+        // per the c plus plus standard thread constructor clause the
+        // runtime calls std terminate when that happens
+        // this pool is shared by every connected client and every
+        // scan worker not just the one task that threw
+        // see SEI CERT ERR51 CPP and the matching guard already used
+        // for other thread entry points in thread_guard h
+        try {
+            task();
+        } catch (const std::exception& ex) {
+            LogPrint(L"[pool-guard] Unhandled exception in pooled task: %hs", ex.what());
+        } catch (...) {
+            LogPrint(L"[pool-guard] Unknown unhandled exception in pooled task");
+        }
     }
 }
