@@ -8,5 +8,5 @@ Icon=com.github.14ag.dlna_server
 Terminal=false
 Categories=AudioVideo;Network;FileTransfer;
 Keywords=DLNA;UPnP;media;server;streaming;
-StartupWMClass=com.github.dlna-server-14ag
+StartupWMClass=com.github.14ag.dlna_server
 StartupNotify=true

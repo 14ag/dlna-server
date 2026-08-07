@@ -15,6 +15,7 @@ modules:
       - -DCMAKE_BUILD_TYPE=Release
       - -DCMAKE_INSTALL_PREFIX=/app
       - -DDLNA_ENABLE_GTK4_GUI=ON
+      - -DDLNA_FLATPAK_BUILD=ON
     sources:
       - type: dir
         path: ../..

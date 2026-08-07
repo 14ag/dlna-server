@@ -297,6 +297,73 @@ def dlna_binary():
 
 
 @pytest.fixture
+def dlna_server_gui_binary():
+    # DLNA_GUI_BINARY env var overrides all auto-detection
+    env_path = os.environ.get("DLNA_GUI_BINARY")
+    if env_path:
+        p = Path(env_path)
+        if p.exists():
+            return str(p)
+        pytest.skip(f"DLNA_GUI_BINARY={env_path} set but binary not found")
+
+    root = Path(__file__).resolve().parent
+    candidates = [
+        root.parent / "output" / "linux" / "dlna-server-gui-bin",
+        root.parent / "build" / "dlna-server-gui-bin",
+        root.parent / "build-test" / "dlna-server-gui-bin",
+        root.parent / "build-release-linux-stage" / "usr" / "bin" / "dlna-server-gui-bin",
+    ]
+    for path in candidates:
+        if path.exists():
+            return str(path)
+    pytest.skip("GTK4 GUI binary not found (set DLNA_GUI_BINARY env var to path)")
+
+
+@pytest.fixture
+def xvfb():
+    """Start a private Xvfb on the X authority so GUI tests get a live DISPLAY.
+
+    This hands back the environment the parent should pass to Popen(env=...),
+    and shuts the X server down on teardown. Tests must pass this env into any
+    subprocess they spawn (xvfb-run is avoided because these tests hold the
+    child open with Popen and need a persistent DISPLAY).
+    """
+    import shutil
+    import socket
+    if shutil.which("Xvfb") is None:
+        pytest.skip("Xvfb not installed")
+    display = f":{100 + (os.getpid() % 4000)}"
+    proc = subprocess.Popen(
+        ["Xvfb", display, "-screen", "0", "1280x800x24", "-nolisten", "tcp"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.time() + 5
+        ok = False
+        while time.time() < deadline:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                sock.connect(f"/tmp/.X11-unix/X{display.lstrip(':')}")
+                ok = True
+                break
+            except (OSError, socket.error):
+                time.sleep(0.1)
+            finally:
+                sock.close()
+        if not ok:
+            pytest.fail("Xvfb did not become ready in time")
+        yield dict(os.environ, DISPLAY=display)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
+
+
+@pytest.fixture
 def media_source_dir(tmp_path):
     d = tmp_path / "media"
     d.mkdir()

@@ -179,6 +179,7 @@ else()
     include(FetchContent)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     option(DLNA_ENABLE_GTK4_GUI "Build the native GTK4 Linux GUI" ON)
+    option(DLNA_FLATPAK_BUILD "Use the flatpak specific GApplication id" OFF)
 
 add_library(dlna_core STATIC
          src/access_keys.cpp
@@ -206,6 +207,7 @@ add_library(dlna_core STATIC
          src/playlist_scan_concurrency.cpp
          src/settings_restart.cpp
          src/posix_single_instance.cpp
+         src/posix_daemonize.cpp
          src/netchange_watch_posix.cpp
          src/dirwatch_posix.cpp
      )
@@ -244,6 +246,9 @@ add_library(dlna_core STATIC
         set_target_properties(dlna-server-gui-gtk4 PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
         dlna_enable_warnings(dlna-server-gui-gtk4)
         target_compile_definitions(dlna-server-gui-gtk4 PRIVATE DLNA_POSIX_GUI=1)
+        if(DLNA_FLATPAK_BUILD)
+            target_compile_definitions(dlna-server-gui-gtk4 PRIVATE DLNA_FLATPAK_BUILD=1)
+        endif()
         target_link_libraries(dlna-server-gui-gtk4 PRIVATE dlna_core PkgConfig::GTK4 Threads::Threads)
         install(TARGETS dlna-server-gui-gtk4 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})

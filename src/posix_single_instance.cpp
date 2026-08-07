@@ -108,6 +108,29 @@ bool SendShow() {
     return true;
 }
 
+bool SendSourceOverride(const std::string& payload) {
+    const std::string sockPath = GetSocketPath();
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+
+    struct sockaddr_un addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, sockPath.c_str(), sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    if (::connect(fd, reinterpret_cast<const struct sockaddr*>(&addr),
+                  sizeof(addr)) < 0) {
+        ::close(fd);
+        return false;
+    }
+
+    const std::string message = "source:" + payload + "\n";
+    ::write(fd, message.data(), message.size());
+    ::close(fd);
+    return true;
+}
+
 bool SendShowWithRetry(int maxAttempts, int delayMs) {
     for (int attempt = 0; attempt < maxAttempts; ++attempt) {
         if (SendShow()) return true;
@@ -139,6 +162,19 @@ bool SendKill() {
     ::write(fd, kKill, sizeof(kKill) - 1);
     ::close(fd);
     return true;
+}
+
+bool KillExistingAndReacquire(int maxAttempts, int delayMs) {
+    if (!SendKill()) {
+        // nothing was listening to kill try to acquire directly this
+        // covers a stale lock file left by a process that crashed
+        return TryAcquireLock();
+    }
+    for (int attempt = 0; attempt < maxAttempts; ++attempt) {
+        if (TryAcquireLock()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+    }
+    return false;
 }
 
 void StartListening(void (*onCommand)(const std::string&)) {

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <ctime>
+#include <atomic>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -38,6 +39,11 @@ std::wstring TimestampPrefix() {
 
 std::FILE* g_debugLogFile = nullptr;
 std::string g_debugLogPath;
+std::atomic<bool> g_consoleEchoEnabled(false);
+
+void SetConsoleEchoEnabled(bool enabled) {
+    g_consoleEchoEnabled.store(enabled, std::memory_order_relaxed);
+}
 
 std::FILE* OpenOrReuseDebugLogFile(const std::string& path) {
     if (g_debugLogFile && g_debugLogPath == path) {
@@ -82,7 +88,10 @@ std::lock_guard<std::mutex> lock(g_logMutex);
     if (g_lines.size() > kMaxLogLines) {
         g_lines.pop_front();
     }
-    std::fwprintf(stderr, L"%ls\n", line.c_str());
+    if (g_consoleEchoEnabled.load(std::memory_order_relaxed)) {
+        std::fwprintf(stderr, L"%ls\n", line.c_str());
+        std::fflush(stderr);
+    }
     if (writeDebugLog) {
         std::FILE* file = GetDebugLogFile();
         if (file) {
