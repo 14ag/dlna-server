@@ -196,8 +196,8 @@ Config::Config()
       presentationUrl(L"/"),
       runOnBoot(false),
       defaultPlaylistEnabled(false),
-      defaultPlaylistPath(L""),
-      backgroundScanEnabled(false) {
+      backgroundScanEnabled(false),
+      defaultPlaylistPath(L"") {
 }
 
 ConfigSnapshot Config::Snapshot() const {

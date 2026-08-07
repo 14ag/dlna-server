@@ -1494,7 +1494,8 @@ void BuildMainWindow(GtkApplication* app) {
     g_signal_connect(g_sources, "row-selected", G_CALLBACK(OnSourceSelectionChanged), nullptr);
 
     GtkDropTarget* sourceDropTarget = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
-    gtk_drop_target_set_gtypes(sourceDropTarget, (GType[]){ GDK_TYPE_FILE_LIST }, 1);
+    GType fileListGTypes[] = { GDK_TYPE_FILE_LIST };
+    gtk_drop_target_set_gtypes(sourceDropTarget, fileListGTypes, 1);
     g_signal_connect(sourceDropTarget, "accept", G_CALLBACK(+[](GtkDropTarget*, GdkDrop*, gpointer) -> gboolean {
         // matches ShouldAllowSourceDrop in source drop policy h a busy or
         // running server disallows the drop exactly like the windows build

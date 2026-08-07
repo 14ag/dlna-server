@@ -103,7 +103,8 @@ bool SendShow() {
     }
 
     static const char kShow[] = "show\n";
-    ::write(fd, kShow, sizeof(kShow) - 1);
+    const ssize_t sent = ::write(fd, kShow, sizeof(kShow) - 1);
+    (void)sent;
     ::close(fd);
     return true;
 }
@@ -126,7 +127,8 @@ bool SendSourceOverride(const std::string& payload) {
     }
 
     const std::string message = "source:" + payload + "\n";
-    ::write(fd, message.data(), message.size());
+    const ssize_t sent = ::write(fd, message.data(), message.size());
+    (void)sent;
     ::close(fd);
     return true;
 }
@@ -159,7 +161,8 @@ bool SendKill() {
     }
 
     static const char kKill[] = "kill\n";
-    ::write(fd, kKill, sizeof(kKill) - 1);
+    const ssize_t sent = ::write(fd, kKill, sizeof(kKill) - 1);
+    (void)sent;
     ::close(fd);
     return true;
 }
