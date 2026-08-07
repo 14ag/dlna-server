@@ -193,6 +193,8 @@ SSDP::SSDP() : m_running(false), m_ipv4Socket(-1), m_ipv6Socket(-1) {
 }
 
 bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid) {
+    (void)port;
+    (void)serverName;
     if (m_running.load()) return true;
     m_endpoints = endpoints;
     m_uuidStr = WideToUtf8(uuid);

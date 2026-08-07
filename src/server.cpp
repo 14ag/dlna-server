@@ -40,7 +40,7 @@ Server& Server::Get() {
     return instance;
 }
 
-Server::Server() : m_running(false), m_stopping(false), m_stopWatch(false), m_initialScanComplete(false), m_initialScanInProgress(false) {
+Server::Server() : m_running(false), m_stopping(false), m_initialScanComplete(false), m_initialScanInProgress(false), m_stopWatch(false) {
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 }

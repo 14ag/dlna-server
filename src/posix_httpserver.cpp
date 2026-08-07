@@ -210,7 +210,8 @@ void HttpServer::Stop() {
     AppEvents.ClearSubscriptions();
     if (m_wakeupWriteFd >= 0) {
         char byte = 0;
-        write(m_wakeupWriteFd, &byte, 1);
+        const ssize_t sent = write(m_wakeupWriteFd, &byte, 1);
+        (void)sent;
     }
     if (m_listenSocketV4 >= 0) { shutdown(m_listenSocketV4, SHUT_RDWR); close(m_listenSocketV4); m_listenSocketV4 = -1; }
     if (m_listenSocketV6 >= 0) { shutdown(m_listenSocketV6, SHUT_RDWR); close(m_listenSocketV6); m_listenSocketV6 = -1; }
