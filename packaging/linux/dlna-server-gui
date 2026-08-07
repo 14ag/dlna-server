@@ -1,6 +1,14 @@
 #!/bin/sh
 set -eu
 
+# on wslg a direct wslg exe -- usr bin dlna dash server dash gui invocation
+# carries no wayland xdg activation token so the compositor is not required
+# to raise or focus the new window per the xdg activation v1 protocol
+# prefer launching through the installed desktop entry for example
+# wslg exe -d ubuntu -- gtk-launch dlna-server
+# which does carry a token the raw command still works it may just open
+# without focus the first time
+
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 server_bin=${DLNA_SERVER_BIN:-"$script_dir/dlna-server"}
 native_gui=${DLNA_SERVER_GUI_BIN:-"$script_dir/dlna-server-gui-bin"}

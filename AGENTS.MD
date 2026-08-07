@@ -1,5 +1,6 @@
 # DLNA Server Agent Rules
 
+- never compress this file
 - Always use caveman skill in this repo.
 - Use `git` for git tasks. Use `gh` for GitHub tasks. that the user explicitly approves. never create a branch, never commit
 - When user names a skill, follow that skill to the latter.

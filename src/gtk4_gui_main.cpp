@@ -21,6 +21,7 @@
 #include "settings_help.h"
 #include "cli_flags.h"
 #include "posix_single_instance.h"
+#include "source_drop_policy.h"
 #include "ui_tokens.h"
 #include "server_ui_state.h"
 #include "posix_tray.h"
@@ -1154,6 +1155,44 @@ void SetPendingResult(ServerUiState state, bool success, const std::string& mess
     g_hasPendingResult = true;
 }
 
+void ApplySourceOverridePayload(const std::string& payload) {
+    std::vector<std::wstring> parsed = ParseQuotedCommaList(Utf8ToWide(payload));
+    std::vector<MediaSource> overrideSources;
+    for (auto& p : parsed) {
+        if (!p.empty()) overrideSources.push_back({p});
+    }
+    if (IsBusy()) {
+        // a start stop or restart worker is already in flight drop this
+        // request rather than race it matches the WM COPYDATA IsBusy guard
+        // on the windows build
+        return;
+    }
+    if (DLNAServer.IsRunning()) {
+        std::vector<MediaSource> forRestart = overrideSources;
+        if (g_worker.joinable()) g_worker.join();
+        g_state = ServerUiState::Stopping;
+        RefreshStatus();
+        g_worker = std::thread([forRestart]() {
+            RunGuarded(L"gtk4-source-override-restart", [forRestart]() {
+                DLNAServer.Stop();
+                AppConfig.SetRuntimeSourceOverride(forRestart);
+                SetPendingResult(ServerUiState::Stopping, true, "");
+                std::wstring reason;
+                bool ok = DLNAServer.Start(reason);
+                std::string message;
+                if (!ok) {
+                    message = "server could not start\n";
+                    if (!reason.empty()) message += WideToUtf8(reason);
+                }
+                SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, message);
+            });
+        });
+    } else {
+        AppConfig.SetRuntimeSourceOverride(overrideSources);
+        RefreshSourceList();
+    }
+}
+
 void StartServer() {
     if (IsBusy() || g_state == ServerUiState::Running) return;
     if (AppConfig.mediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
@@ -1348,6 +1387,20 @@ void OnSingleInstanceCommand(const std::string& cmd) {
             }
             return G_SOURCE_REMOVE;
         }, nullptr);
+        return;
+    }
+    if (cmd.rfind("source:", 0) == 0) {
+        std::string payload = cmd.substr(7);
+        // marshal back onto the gtk main thread this callback runs on the
+        // posix single instance listener thread and must never touch gtk
+        // widgets directly see StartListening in posix single instance cpp
+        auto* heapPayload = new std::string(std::move(payload));
+        g_idle_add(+[](gpointer data) -> gboolean {
+            std::string* p = static_cast<std::string*>(data);
+            ApplySourceOverridePayload(*p);
+            delete p;
+            return G_SOURCE_REMOVE;
+        }, heapPayload);
     }
 }
 
@@ -1439,6 +1492,44 @@ void BuildMainWindow(GtkApplication* app) {
     gtk_list_box_set_selection_mode(GTK_LIST_BOX(g_sources), GTK_SELECTION_SINGLE);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(g_sourcesScrolled), g_sources);
     g_signal_connect(g_sources, "row-selected", G_CALLBACK(OnSourceSelectionChanged), nullptr);
+
+    GtkDropTarget* sourceDropTarget = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
+    gtk_drop_target_set_gtypes(sourceDropTarget, (GType[]){ GDK_TYPE_FILE_LIST }, 1);
+    g_signal_connect(sourceDropTarget, "accept", G_CALLBACK(+[](GtkDropTarget*, GdkDrop*, gpointer) -> gboolean {
+        // matches ShouldAllowSourceDrop in source drop policy h a busy or
+        // running server disallows the drop exactly like the windows build
+        return ShouldAllowSourceDrop(IsBusy() || DLNAServer.IsRunning()) ? TRUE : FALSE;
+    }), nullptr);
+    g_signal_connect(sourceDropTarget, "drop", G_CALLBACK(+[](GtkDropTarget*, const GValue* value, double, double, gpointer) -> gboolean {
+        if (ShouldAllowSourceDrop(IsBusy() || DLNAServer.IsRunning()) == false) return FALSE;
+        if (!G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST)) return FALSE;
+        GSList* files = static_cast<GSList*>(g_value_get_boxed(value));
+        bool addedAny = false;
+        for (GSList* it = files; it != nullptr; it = it->next) {
+            GFile* file = G_FILE(it->data);
+            gchar* path = g_file_get_path(file);
+            if (path == nullptr) continue;
+            std::wstring widePath = ToWide(path);
+            g_free(path);
+            // directories are always accepted files are checked against
+            // the same supported extension list IsSupportedLocalMediaOrPlaylistPath
+            // already implements on both platforms see dlna utils cpp
+            if (IsSupportedLocalMediaOrPlaylistPath(widePath)) {
+                GtkWidget* row = gtk_list_box_row_new();
+                GtkWidget* rowLabel = gtk_label_new(ToUtf8(widePath).c_str());
+                gtk_label_set_xalign(GTK_LABEL(rowLabel), 0.0f);
+                gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), rowLabel);
+                gtk_list_box_append(GTK_LIST_BOX(g_sources), row);
+                addedAny = true;
+            }
+        }
+        if (addedAny) {
+            SaveSourcesFromList();
+            RefreshEmptyState();
+        }
+        return addedAny ? TRUE : FALSE;
+    }), nullptr);
+    gtk_widget_add_controller(g_sources, GTK_EVENT_CONTROLLER(sourceDropTarget));
 
     GtkEventController* keyController = gtk_event_controller_key_new();
     gtk_widget_add_controller(g_sources, keyController);
@@ -1696,7 +1787,100 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, HandleTerminationSignal);
     AppConfig.Load();
 
+    bool killServer = false;
+    bool explicitHeadless = false;
+    std::vector<std::wstring> runtimeSources;
+    bool wroteConfigOverride = false;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--kill-server" || arg == "-k") {
+            killServer = true;
+        } else if (arg == "--headless" || arg == "-h") {
+            // accepted for command line symmetry with the windows and posix
+            // non gui builds this binary has no headless versus windowed
+            // code path distinction of its own it always creates a window
+            // the flag only matters for whether a second launch is allowed
+            // to auto elevate itself see ShouldStartHeadless in startup mode h
+            explicitHeadless = true;
+        } else if (arg == "--port" && i + 1 < argc) {
+            int port = 0;
+            if (TryParsePortStrict(argv[++i], port)) {
+                AppConfig.Mutate([port](Config& cfg) { cfg.port = port; });
+                wroteConfigOverride = true;
+            }
+        } else if (arg == "--name" && i + 1 < argc) {
+            std::wstring name = Utf8ToWide(argv[++i]);
+            AppConfig.Mutate([&name](Config& cfg) { cfg.serverName = name; });
+            wroteConfigOverride = true;
+        } else if (arg == "--uuid" && i + 1 < argc) {
+            std::wstring uuid = Utf8ToWide(argv[++i]);
+            AppConfig.Mutate([&uuid](Config& cfg) { cfg.deviceUUID = uuid; });
+            wroteConfigOverride = true;
+        } else if (arg == "--debug") {
+            AppConfig.Mutate([](Config& cfg) { cfg.debugLog = true; });
+            wroteConfigOverride = true;
+        } else if (arg == "--source" && i + 1 < argc) {
+            ++i;
+            std::vector<std::wstring> parsed = ParseQuotedCommaList(Utf8ToWide(argv[i]));
+            if (parsed.empty()) {
+                runtimeSources.push_back(Utf8ToWide(argv[i]));
+            } else {
+                for (auto& p : parsed) runtimeSources.push_back(p);
+            }
+        } else if (arg == "--dump-widget-geometry" || arg == "--dump-log-dialog-reopen" ||
+                   arg == "--dump-msgbox-parent") {
+            // handled later by the existing hidden flag stripping loop
+            continue;
+        } else if (!arg.empty() && arg[0] != '-') {
+            // bare positional argument dropped onto the exe or passed by a
+            // context menu integration is a source path on its own see the
+            // both section source flag requirement in the workflow doc
+            runtimeSources.push_back(Utf8ToWide(argv[i]));
+        }
+    }
+    // saves port name uuid debug to config so the user does not have to
+    // retype them next launch source overrides are deliberately excluded
+    // they stay session only per the both section requirement
+    if (wroteConfigOverride) {
+        AppConfig.Save();
+    }
+
+    if (killServer) {
+        SingleInstance::SendKill();
+        return 0;
+    }
+
+    std::wstring sourcePayload;
+    if (!runtimeSources.empty()) {
+        sourcePayload = BuildQuotedCommaList(runtimeSources);
+        std::vector<MediaSource> overrideSources;
+        for (const auto& s : runtimeSources) overrideSources.push_back({s});
+        AppConfig.SetRuntimeSourceOverride(overrideSources);
+    }
+    (void)explicitHeadless; // reserved, this binary has no separate headless UI path
+
+    // console echo is only ever turned on for the real foreground debug
+    // session every --print-* early return above this line already exited
+    // before reaching here so a test flag combined with --debug never
+    // gets echo turned on see IsTestOnlyFlag in cli_flags h task 8
+    bool sawTestOnlyFlag = false;
+    for (int i = 1; i < argc; ++i) {
+        if (IsTestOnlyFlag(std::string(argv[i]))) { sawTestOnlyFlag = true; break; }
+    }
+    if (AppConfig.debugLog && !sawTestOnlyFlag) {
+        SetConsoleEchoEnabled(true);
+    }
+
     if (!SingleInstance::TryAcquireLock()) {
+        if (!sourcePayload.empty()) {
+            // a running instance already exists forward the override instead
+            // of showing the window matches WM COPYDATA on the windows build
+            if (!SingleInstance::SendSourceOverride(WideToUtf8(sourcePayload))) {
+                std::cerr << "dlna-server-gui: another instance appears to be "
+                             "starting or is unreachable; exiting without action." << std::endl;
+            }
+            return 0;
+        }
         if (!SingleInstance::SendShowWithRetry()) {
             LogPrint(L"Another instance appears to be starting or is unreachable; exiting without action.");
             std::cerr << "dlna-server-gui: another instance appears to be "
@@ -1708,7 +1892,16 @@ int main(int argc, char** argv) {
     GtkApplication* app = nullptr;
     int result = 1;
     for (int attempt = 0; attempt < kGuiStartupMaxAttempts; ++attempt) {
-        app = gtk_application_new("com.github.dlna-server-14ag", G_APPLICATION_FLAGS_NONE);
+        // must equal the basename of the installed desktop file minus the
+        // extension see packaging linux install desktop cmake in which
+        // installs dlna dash server dot desktop with icon equals dlna dash server
+        // a mismatched id here is why a native wayland shell such as wslg
+        // falls back to a generic icon for this window see the workflow doc
+#ifdef DLNA_FLATPAK_BUILD
+        app = gtk_application_new("com.github.14ag.dlna_server", G_APPLICATION_FLAGS_NONE);
+#else
+        app = gtk_application_new("dlna-server", G_APPLICATION_FLAGS_NONE);
+#endif
         // connect before register so the startup signal emitted during
         // registration reaches OnAppStartup instead of firing into the void
         g_signal_connect(app, "startup", G_CALLBACK(OnAppStartup), nullptr);

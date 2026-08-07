@@ -26,6 +26,20 @@ bool SendShow();
 // dlna-server-qa-audit-and-posix-gui-lifecycle-workflow-05-08-26.md.
 bool SendShowWithRetry(int maxAttempts = 5, int delayMs = 200);
 
+// sends a source colon prefixed payload to the already running instance
+// payload must already be in the quoted comma list format produced by
+// BuildQuotedCommaList in dlna utils h the receiving OnSingleInstanceCommand
+// callback is responsible for stripping the source colon prefix and calling
+// ParseQuotedCommaList itself this mirrors WM COPYDATA on the windows build
+bool SendSourceOverride(const std::string& payload);
+
+// sends kill to whatever instance currently holds the lock then polls
+// TryAcquireLock until it succeeds or maxAttempts is exhausted returns
+// true once this process owns the lock false if the previous instance
+// never released it in time mirrors the bounded retry shape already
+// used by SendShowWithRetry above for the symmetric startup race
+bool KillExistingAndReacquire(int maxAttempts = 25, int delayMs = 200);
+
 // Connect to the running instance's domain socket and send "kill" command
 // (the receiving instance stops its server and exits). Returns true if the
 // message was delivered.
