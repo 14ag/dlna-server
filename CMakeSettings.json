@@ -1,26 +1,13 @@
 ﻿{
-  "$schema": "https://json.schemastore.org/cmake-settings.json",
-  "version": "1.0",
   "configurations": [
     {
-      "name": "x64-Debug-vcpkg",
-      "generator": "Visual Studio 17 2022",
+      "name": "x64-Debug",
+      "generator": "Ninja",
       "configurationType": "Debug",
       "inheritEnvironments": [ "msvc_x64_x64" ],
       "buildRoot": "${projectDir}\\out\\build\\${name}",
       "installRoot": "${projectDir}\\out\\install\\${name}",
-      "cmakeCommandArgs": "-A x64 -DCMAKE_TOOLCHAIN_FILE=C:/Users/philip/vcpkg/scripts/buildsystems/vcpkg.cmake",
-      "buildCommandArgs": "",
-      "ctestCommandArgs": ""
-    },
-    {
-      "name": "x64-Release-vcpkg",
-      "generator": "Visual Studio 17 2022",
-      "configurationType": "Release",
-      "inheritEnvironments": [ "msvc_x64_x64" ],
-      "buildRoot": "${projectDir}\\out\\build\\${name}",
-      "installRoot": "${projectDir}\\out\\install\\${name}",
-      "cmakeCommandArgs": "-A x64 -DCMAKE_TOOLCHAIN_FILE=C:/Users/philip/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "cmakeCommandArgs": "",
       "buildCommandArgs": "",
       "ctestCommandArgs": ""
     }

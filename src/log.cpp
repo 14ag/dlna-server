@@ -20,28 +20,6 @@ void SetConsoleEchoEnabled(bool enabled) {
     g_consoleEchoEnabled.store(enabled, std::memory_order_relaxed);
 }
 
-FILE* OpenOrReuseDebugLogFile(const std::wstring& path) {
-    if (g_debugLogFile && g_debugLogPath == path) {
-        return g_debugLogFile;
-    }
-    if (g_debugLogFile) {
-        fclose(g_debugLogFile);
-        g_debugLogFile = NULL;
-    }
-    // w truncates any leftover content from a previous run the very
-    // first time this path is opened during this process so a debug
-    // log enabled session always starts from an empty file every
-    // later LogPrint call in this same run reuses this same handle
-    // through the cache check above and only appends never truncates
-    // again this matches posix_log cpp which already used w for the
-    // same reason see the workflow document for the full rationale
-    g_debugLogFile = _wfsopen(path.c_str(), L"w,ccs=UTF-8", _SH_DENYNO);
-    if (g_debugLogFile) {
-        g_debugLogPath = path;
-    }
-    return g_debugLogFile;
-}
-
 FILE* GetDebugLogFile() {
     std::wstring configPath = AppConfig.GetConfigPath();
     wchar_t szPath[MAX_PATH] = {};
@@ -51,7 +29,20 @@ FILE* GetDebugLogFile() {
     wcscpy_s(szPath, configPath.c_str());
     PathRemoveFileSpecW(szPath);
     PathAppendW(szPath, L"debug.log");
-    return OpenOrReuseDebugLogFile(std::wstring(szPath));
+
+    std::wstring path(szPath);
+    if (g_debugLogFile && g_debugLogPath == path) {
+        return g_debugLogFile;
+    }
+    if (g_debugLogFile) {
+        fclose(g_debugLogFile);
+        g_debugLogFile = NULL;
+    }
+    g_debugLogFile = _wfsopen(path.c_str(), L"a,ccs=UTF-8", _SH_DENYNO);
+    if (g_debugLogFile) {
+        g_debugLogPath = path;
+    }
+    return g_debugLogFile;
 }
 
 void LogPrint(const wchar_t* fmt, ...) {

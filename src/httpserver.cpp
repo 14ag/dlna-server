@@ -9,21 +9,14 @@
 #include "netutils.h"
 #include "network_sources.h"
 #include "upnp_eventing.h"
-#include "transmitfile_chunking.h"
 #include "../resources/resource.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <mswsock.h>
 #include <shlwapi.h>
-#pragma comment(lib, "mswsock.lib")
 #include <climits>
 #include <sstream>
 
 namespace {
-
-// mirrors kMaxClientThreads in posix_httpserver cpp keep both values
-// equal if one changes update the other and this comment
-constexpr size_t kMaxClientThreads = 64;
 
 void SendAll(SOCKET s, const char* data, int len) {
     while (len > 0) {
@@ -61,18 +54,6 @@ struct ScopedHandle {
 
     HANDLE handle;
 };
-
-bool TransmitFileChunked(SOCKET s, HANDLE hFile, long long startOffset, long long totalBytes) {
-    long long offset = startOffset;
-    for (long long chunkSize : ComputeTransmitFileChunkSizes(totalBytes)) {
-        LARGE_INTEGER movePos = {};
-        movePos.QuadPart = offset;
-        if (!SetFilePointerEx(hFile, movePos, NULL, FILE_BEGIN)) return false;
-        if (!TransmitFile(s, hFile, static_cast<DWORD>(chunkSize), 0, NULL, NULL, 0)) return false;
-        offset += chunkSize;
-    }
-    return true;
-}
 
 void SetSocketTimeouts(SOCKET s) {
     constexpr DWORD kDefaultTimeoutMs = 10000;
@@ -320,18 +301,9 @@ DWORD WINAPI HttpServer::AcceptThreadWorker(LPVOID lpParam) {
                 continue;
             }
 
-            if (pThis->m_activeClientCount.load(std::memory_order_relaxed) >= kMaxClientThreads) {
-                static const char* busy = "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-                send(clientSocket, busy, static_cast<int>(strlen(busy)), 0);
-                closesocket(clientSocket);
-                continue;
-            }
-            pThis->m_activeClientCount.fetch_add(1, std::memory_order_relaxed);
-
             WorkData* wd = new WorkData{ pThis, clientSocket, clientIP };
             PTP_WORK work = CreateThreadpoolWork(WorkerCallback, wd, &pThis->m_cbe);
             if (!work) {
-                pThis->m_activeClientCount.fetch_sub(1, std::memory_order_relaxed);
                 closesocket(clientSocket);
                 delete wd;
                 continue;
@@ -346,11 +318,9 @@ DWORD WINAPI HttpServer::AcceptThreadWorker(LPVOID lpParam) {
 
 void CALLBACK HttpServer::WorkerCallback(PTP_CALLBACK_INSTANCE, PVOID Context, PTP_WORK Work) {
     WorkData* wd = reinterpret_cast<WorkData*>(Context);
-    HttpServer* server = wd->pServer;
-    server->HandleClient(wd->s, wd->ip);
+    wd->pServer->HandleClient(wd->s, wd->ip);
     closesocket(wd->s);
     delete wd;
-    server->m_activeClientCount.fetch_sub(1, std::memory_order_relaxed);
     CloseThreadpoolWork(Work);
 }
 
@@ -459,7 +429,7 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
 
             if (path.rfind("/media/", 0) == 0) {
                 int fileId = -1;
-                if (!TryParseIntStrict(StripResourceIdExtension(path.substr(7)), fileId) || fileId < 0) {
+                if (!TryParseIntStrict(path.substr(7), fileId) || fileId < 0) {
                     SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }
@@ -638,10 +608,25 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                         }
 
                         SetSocketStreamTimeouts(clientSocket);
-                        if (!TransmitFileChunked(clientSocket, hFile.get(), startByte, contentLength)) {
-                            return;
+                        LARGE_INTEGER movePos = {};
+                        movePos.QuadPart = startByte;
+                        SetFilePointerEx(hFile.get(), movePos, NULL, FILE_BEGIN);
+
+                        long long remaining = contentLength;
+                        char fileBuf[65536];
+                        DWORD bytesToRead = 0;
+                        DWORD bytesReadFile = 0;
+
+                        while (remaining > 0 && m_running.load()) {
+                            bytesToRead = (remaining > static_cast<long long>(sizeof(fileBuf))) ? static_cast<DWORD>(sizeof(fileBuf)) : static_cast<DWORD>(remaining);
+                            if (!ReadFile(hFile.get(), fileBuf, bytesToRead, &bytesReadFile, NULL) || bytesReadFile == 0) {
+                                break;
+                            }
+
+                            if (!TrySendAll(clientSocket, fileBuf, bytesReadFile)) break;
+                            remaining -= bytesReadFile;
                         }
-                        if (!keepAlive) return;
+                        if (remaining > 0 || !keepAlive) return;
                         continue;
                     }
                 }
@@ -680,8 +665,8 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                         return;
                     }
 
-                    bool streamed = StreamRemoteContent(item.subtitlePath, false, 0, 0, [&](const char* subBuf, size_t subRead) {
-                        return TrySendAll(clientSocket, subBuf, subRead) && m_running.load();
+                    bool streamed = StreamRemoteContent(item.subtitlePath, false, 0, 0, [&](const char* data, size_t length) {
+                        return TrySendAll(clientSocket, data, length) && m_running.load();
                     });
                     if (!streamed) {
                         LogPrint(L"Remote subtitle unavailable: %ls", RedactUrlForLog(item.subtitlePath).c_str());
@@ -714,9 +699,14 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             return;
                         }
 
-                        TransmitFile(clientSocket, hFile.get(),
-                                     static_cast<DWORD>(totalBytes), 0,
-                                     NULL, NULL, 0);
+                        char subBuf[16384];
+                        DWORD subRead = 0;
+                        while (m_running.load()) {
+                            if (!ReadFile(hFile.get(), subBuf, sizeof(subBuf), &subRead, NULL) ||
+                                subRead == 0)
+                                break;
+                            if (!TrySendAll(clientSocket, subBuf, subRead)) break;
+                        }
                         return;
                     }
                 }
@@ -751,9 +741,12 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             return;
                         }
 
-                        TransmitFile(clientSocket, hFile.get(),
-                                     static_cast<DWORD>(fileSize.QuadPart), 0,
-                                     NULL, NULL, 0);
+                        char artBuf[16384];
+                        DWORD artRead = 0;
+                        while (m_running.load()) {
+                            if (!ReadFile(hFile.get(), artBuf, sizeof(artBuf), &artRead, NULL) || artRead == 0) break;
+                            if (!TrySendAll(clientSocket, artBuf, artRead)) break;
+                        }
                         return;
                     }
                 }

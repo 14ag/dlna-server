@@ -14,43 +14,7 @@ function(dlna_enable_warnings target_name)
     endif()
 endfunction()
 
-find_package(ZLIB)
-
-# Some CMake configurations provide ZLIB via imported targets instead of
-# setting ZLIB_FOUND. Treat either as success.
-if(NOT (ZLIB_FOUND OR TARGET ZLIB::ZLIB))
-    # Try to locate zlib in common vcpkg locations (helpful on Windows)
-    if(DEFINED ENV{VCPKG_ROOT})
-        set(_vcpkg_root $ENV{VCPKG_ROOT})
-    elseif(EXISTS "${CMAKE_SOURCE_DIR}/../vcpkg")
-        set(_vcpkg_root "${CMAKE_SOURCE_DIR}/../vcpkg")
-    elseif(EXISTS "C:/vcpkg")
-        set(_vcpkg_root "C:/vcpkg")
-    endif()
-
-    if(DEFINED _vcpkg_root)
-        file(GLOB _zlibs "${_vcpkg_root}/installed/*/lib/zlib.lib" "${_vcpkg_root}/installed/*/lib/zlibstatic.lib")
-        if(_zlibs)
-            list(GET _zlibs 0 _zlib_lib)
-            get_filename_component(_triplet_dir "${_zlib_lib}" DIRECTORY)
-            get_filename_component(_triplet_name "${_triplet_dir}" NAME)
-            set(ZLIB_LIBRARY "${_zlib_lib}")
-            set(ZLIB_INCLUDE_DIR "${_vcpkg_root}/installed/${_triplet_name}/include")
-            find_package(ZLIB REQUIRED)
-        endif()
-    endif()
-
-    if(NOT ZLIB_FOUND)
-        message(FATAL_ERROR "Could NOT find ZLIB (missing: ZLIB_LIBRARY ZLIB_INCLUDE_DIR)\n\n"
-            "Common fixes:\n"
-            "  - If you use vcpkg (recommended), install zlib for your triplet and re-run CMake:\n"
-            "      from vcpkg root: .\\vcpkg install zlib:x64-windows\n"
-            "      then configure CMake with the vcpkg toolchain file:\n"
-            "      cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake\n\n"
-            "  - Or point CMake directly to an installed zlib:\n"
-            "      -DZLIB_INCLUDE_DIR=\"C:/path/to/zlib/include\" -DZLIB_LIBRARY=\"C:/path/to/zlib/lib/zlib.lib\"\n")
-    endif()
-endif()
+find_package(ZLIB REQUIRED)
 if(TARGET ZLIB::ZLIBSTATIC AND NOT TARGET ZLIB::ZLIB)
     add_library(ZLIB::ZLIB ALIAS ZLIB::ZLIBSTATIC)
 endif()
@@ -64,7 +28,6 @@ endfunction()
 if(WIN32)
 set(SOURCES
          src/access_keys.cpp
-         src/tray_notify.cpp
          src/access_key_hook.cpp
          src/mainwindow.cpp
          src/settingsdlg.cpp
@@ -96,14 +59,11 @@ set(SOURCES
          src/ipwhitelist.cpp
           src/firewall_access_win.cpp
           src/source_drop_target.cpp
-           src/log.cpp
-           src/netchange_watch_win.cpp
-           src/dirwatch_win.cpp
-       )
+          src/log.cpp
+      )
 
 set(HEADERS
          src/access_keys.h
-         src/tray_notify.h
          src/cli_flags.h
          src/settings_help.h
          src/mainwindow.h
@@ -113,9 +73,7 @@ set(HEADERS
          src/server.h
          src/netutils.h
          src/netutils_internal.h
-         src/network_interface_policy.h
          src/httpserver.h
-         src/transmitfile_chunking.h
          src/http_common.h
          src/contentdirectory.h
          src/upnp_eventing.h
@@ -133,28 +91,19 @@ set(HEADERS
          src/settings_restart.h
          src/source_list_focus.h
          src/hover_focus_state.h
-          src/scan_cancellation.h
-          src/input_gate.h
-          src/modal_focus.h
-          src/thread_guard.h
+         src/scan_cancellation.h
+         src/input_gate.h
+         src/modal_focus.h
          src/config.h
          src/ipwhitelist.h
           src/firewall_access.h
           src/source_drop_target.h
-          src/source_drop_policy.h
-          src/media_source_file_types.h
             src/startup_mode.h
-             src/server_close_policy.h
-             src/close_pending_state.h
-             src/function_key_action.h
+            src/server_close_policy.h
             src/ui_font.h
             src/dark_frame.h
-             src/log.h
-             src/network_change_debounce.h
-             src/netchange_watch.h
-             src/fs_change_debounce.h
-             src/dirwatch.h
-           resources/resource.h
+            src/log.h
+          resources/resource.h
      )
 
     list(REMOVE_ITEM SOURCES src/main.cpp)
@@ -182,7 +131,6 @@ else()
 
 add_library(dlna_core STATIC
          src/access_keys.cpp
-         src/tray_notify.cpp
          src/posix_server.cpp
          src/posix_ssdp.cpp
          src/ssdp_common.cpp
@@ -205,9 +153,6 @@ add_library(dlna_core STATIC
          src/bounded_thread_pool.cpp
          src/playlist_scan_concurrency.cpp
          src/settings_restart.cpp
-         src/posix_single_instance.cpp
-         src/netchange_watch_posix.cpp
-         src/dirwatch_posix.cpp
      )
     dlna_enable_warnings(dlna_core)
     dlna_link_required_curl(dlna_core)
@@ -245,14 +190,9 @@ add_library(dlna_core STATIC
                 FetchContent_Populate(fltk)
                 add_subdirectory(${fltk_SOURCE_DIR} ${fltk_BINARY_DIR} EXCLUDE_FROM_ALL)
             endif()
-            set(DLNA_FLTK_TARGET fltk fltk_images)
+            set(DLNA_FLTK_TARGET fltk)
         else()
             set(DLNA_FLTK_TARGET ${FLTK_LIBRARIES})
-        endif()
-        # Fl_PNG_Image requires fltk_images; ensure it is linked for
-        # both system-FLTK and FetchContent builds.
-        if(NOT DLNA_FLTK_TARGET MATCHES "fltk_images")
-            list(APPEND DLNA_FLTK_TARGET fltk_images)
         endif()
         add_executable(dlna-server-gui-native src/fltk_gui_main.cpp)
         set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
@@ -310,14 +250,7 @@ add_library(dlna_core STATIC
         if(DLNA_ENABLE_FLTK_GUI)
             configure_file(packaging/linux/install_desktop.cmake.in "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake" @ONLY)
             configure_file(packaging/linux/dlna-server.appdata.xml.in "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" @ONLY)
-            # Install SVG into hicolor scalable tree for desktop-env icon lookup
             install(FILES resources/dlna-server.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
-            # Install PNG icons into hicolor fixed-size directories so DEs
-            # find the icon by name (Icon=dlna-server in .desktop files).
-            install(FILES resources/server_icon_48.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps   RENAME dlna-server.png)
-            install(FILES resources/server_icon_120.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps RENAME dlna-server.png)
-            install(FILES resources/server_icon_256.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps RENAME dlna-server.png)
-            # Also keep a copy in the app-specific data dir for runtime loading
             install(FILES
                 resources/server_icon_48.png
                 resources/server_icon_120.png

@@ -1,8 +1,6 @@
 #include "netutils.h"
 #include "netutils_internal.h"
-#include "network_interface_policy.h"
 #include "dlna_utils.h"
-#include "log.h"
 #include <windows.h>
 #include <iphlpapi.h>
 #include <ws2tcpip.h>
@@ -81,12 +79,7 @@ void AddEndpointForUnicast(std::vector<NetworkEndpoint>& endpoints,
     endpoint.interfaceIndex = (endpoint.family == AF_INET6) ? adapter->Ipv6IfIndex : adapter->IfIndex;
     endpoint.prefixLength = unicast->OnLinkPrefixLength;
     endpoint.sockaddrLen = unicast->Address.iSockaddrLength;
-    if (!IsSockaddrLengthSafeToCopy(endpoint.sockaddrLen, sizeof(endpoint.sockaddr))) {
-        LogPrint(L"Adapter unicast address rejected: sockaddr length %d exceeds destination capacity %zu",
-                 endpoint.sockaddrLen, sizeof(endpoint.sockaddr));
-        return;
-    }
-    memcpy(&endpoint.sockaddr, unicast->Address.lpSockaddr, static_cast<size_t>(endpoint.sockaddrLen));
+    memcpy(&endpoint.sockaddr, unicast->Address.lpSockaddr, endpoint.sockaddrLen);
 
     if (endpoint.family == AF_INET6) {
         SOCKADDR_IN6* addr6 = reinterpret_cast<SOCKADDR_IN6*>(&endpoint.sockaddr);
@@ -123,9 +116,9 @@ bool IsLikelyVirtualAdapter(const std::wstring& friendlyName) {
     return false;
 }
 
-bool InterfaceAllowListPermits(const std::wstring& allowList, const std::wstring& friendlyName, bool hasDefaultGateway) {
+bool InterfaceAllowListPermits(const std::wstring& allowList, const std::wstring& friendlyName) {
     if (allowList.empty()) {
-        return ShouldUseUnlistedInterface(IsLikelyVirtualAdapter(friendlyName), hasDefaultGateway);
+        return !IsLikelyVirtualAdapter(friendlyName);
     }
     size_t start = 0;
     while (start <= allowList.size()) {
@@ -275,8 +268,7 @@ std::string BuildHttpDateHeaderValue() {
 bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList, std::vector<NetworkEndpoint>& endpoints) {
     endpoints.clear();
 
-    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER |
-                  GAA_FLAG_INCLUDE_GATEWAYS;
+    ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
     ULONG bufferSize = 16 * 1024;
     std::vector<unsigned char> buffer(bufferSize);
     IP_ADAPTER_ADDRESSES* addresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data());
@@ -299,11 +291,7 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
         if (adapter->Flags & IP_ADAPTER_NO_MULTICAST) {
             continue;
         }
-        // GAA_FLAG_INCLUDE_GATEWAYS (Step 2.2) populates this list per
-        // adapter; NULL means this specific adapter has no configured
-        // default gateway. See Task 2 citations C1-C3.
-        const bool adapterHasDefaultGateway = adapter->FirstGatewayAddress != NULL;
-        if (!InterfaceAllowListPermits(interfaceAllowList, adapter->FriendlyName ? std::wstring(adapter->FriendlyName) : std::wstring(), adapterHasDefaultGateway)) {
+        if (!InterfaceAllowListPermits(interfaceAllowList, adapter->FriendlyName ? std::wstring(adapter->FriendlyName) : std::wstring())) {
             continue;
         }
 
@@ -334,25 +322,6 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
             AddEndpointForUnicast(endpoints, adapter, chosenV6, port);
         }
     }
-
-    // drop link local endpoints whenever something better exists see
-    // ShouldDropLinkLocalEndpoint in netutils h for the full rationale
-    // this also means an adapter with only a link local ipv6 address
-    // stops being joined for ipv6 ssdp multicast once its endpoint is
-    // filtered out here since Server and SSDP both walk this same
-    // returned list to decide which interfaces to join that is
-    // intentional not an oversight a control point reaching this
-    // server over ipv6 on that adapter will simply get no ipv6 ssdp
-    // response at all and fall back to whatever ipv4 response also
-    // reached it exactly the working path your pc already uses
-    const bool anyNonLinkLocalExists = std::any_of(endpoints.begin(), endpoints.end(),
-        [](const NetworkEndpoint& ep) { return !ep.isLinkLocal; });
-    endpoints.erase(
-        std::remove_if(endpoints.begin(), endpoints.end(),
-            [anyNonLinkLocalExists](const NetworkEndpoint& ep) {
-                return ShouldDropLinkLocalEndpoint(ep.isLinkLocal, anyNonLinkLocalExists);
-            }),
-        endpoints.end());
 
     return !endpoints.empty();
 }
@@ -422,44 +391,29 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
     return false;
 }
 
-namespace {
-// guarded because HandleClient calls GetRoutableHostUrl from many
-// concurrent client threads on both platforms see the workflow
-// document for the full rationale
-std::mutex g_routableHostCacheMutex;
-std::string g_routableHostCached;
-int g_routableHostCachedPort = 0;
-bool g_routableHostCacheValid = false;
-long g_routableHostRecomputeCount = 0;
-}
-
-void InvalidateRoutableHostUrlCache() {
-    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
-    g_routableHostCacheValid = false;
-}
-
-long GetRoutableHostUrlRecomputeCountForTest() {
-    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
-    return g_routableHostRecomputeCount;
-}
-
 std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
-    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
-    if (!g_routableHostCacheValid || g_routableHostCachedPort != port) {
-        ++g_routableHostRecomputeCount;
-        g_routableHostCached.clear();
+    // guarded because HandleClient calls this from many concurrent
+    // client threads on both platforms see the workflow document task 2
+    static std::mutex cacheMutex;
+    static std::string cachedHost;
+    static int cachedPort = 0;
+    static bool cachedValid = false;
+
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    if (!cachedValid || cachedPort != port) {
+        cachedHost.clear();
         std::vector<NetworkEndpoint> endpoints;
         if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
             for (const auto& ep : endpoints) {
                 // first non link local endpoint is the best routable address
                 if (!ep.isLinkLocal) {
-                    g_routableHostCached = ep.address + ":" + std::to_string(port);
+                    cachedHost = ep.address + ":" + std::to_string(port);
                     break;
                 }
             }
         }
-        g_routableHostCachedPort = port;
-        g_routableHostCacheValid = true;
+        cachedPort = port;
+        cachedValid = true;
     }
-    return g_routableHostCached;
+    return cachedHost;
 }

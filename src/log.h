@@ -14,17 +14,6 @@ std::wstring GetSystemLog();
 // CONOUT$ handle is harmless but pointless overhead on every log line.
 void SetConsoleEchoEnabled(bool enabled);
 
-// test only exposes the truncate then reuse decision so a print flag
-// test can drive it against an explicit temp path with no dependency
-// on AppConfig GetConfigPath at all every normal LogPrint call still
-// goes through GetDebugLogFile which derives the real path and then
-// calls this same function so production behavior is unchanged
-#ifdef _WIN32
-FILE* OpenOrReuseDebugLogFile(const std::wstring& path);
-#else
-std::FILE* OpenOrReuseDebugLogFile(const std::string& path);
-#endif
-
 struct LogSnapshot {
     unsigned long long latestSequence = 0;
     std::wstring text; // only lines appended after the requested sequence; empty if none

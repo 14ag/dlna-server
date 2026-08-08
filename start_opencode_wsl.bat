@@ -1,1 +1,0 @@
-wsl -d Ubuntu bash -c "/home/linuxbrew/.linuxbrew/bin/opencode --continue"
