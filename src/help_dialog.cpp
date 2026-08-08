@@ -41,36 +41,15 @@ LRESULT CALLBACK HelpWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
         HWND edit = CreateWindowExW(0, MSFTEDIT_CLASS, L"",
             WS_VISIBLE | WS_CHILD | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL,
-            10, 10, 530, 390, hwnd, NULL, GetModuleHandleW(NULL), NULL);
+            10, 10, 380, 310, hwnd, NULL, GetModuleHandleW(NULL), NULL);
         if (font) {
             SendMessageW(edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
         }
 
-        // EM_SETTABSTOPS uses dialog template units which require
-        // MapDialogRect and a real dialog box handle this window is a
-        // plain popup created with CreateWindowExW not a dialog box so
-        // no valid conversion exists for that message use richedit
-        // paragraph format tab stops instead measured in twips a
-        // fixed physical unit independent of dialog box status see
-        // the workflow document task 10 citations
-        std::vector<std::wstring> allLabels;
-        for (auto& f : GetCliFlagTable()) allLabels.push_back(f.flag);
-        for (auto& s : GetSettingsHelpTable()) allLabels.push_back(s.label);
-
-        int longestLabelPx = 0;
-        HDC measureDc = GetDC(edit);
-        HGDIOBJ oldFontObj = font ? SelectObject(measureDc, font) : nullptr;
-        for (const auto& label : allLabels) {
-            SIZE extent = {};
-            GetTextExtentPoint32W(measureDc, label.c_str(), static_cast<int>(label.size()), &extent);
-            if (extent.cx > longestLabelPx) longestLabelPx = extent.cx;
-        }
-        if (oldFontObj) SelectObject(measureDc, oldFontObj);
-        const int columnGutterPx = 24;
-        const int tabStopPx = longestLabelPx + columnGutterPx;
-        const int dpiX = GetDeviceCaps(measureDc, LOGPIXELSX);
-        ReleaseDC(edit, measureDc);
-        const LONG tabStopTwips = MulDiv(tabStopPx, 1440, dpiX > 0 ? dpiX : 96);
+        // set tab stop for two-column layout (flag column vs description column)
+        // EM_SETTABSTOPS uses dialog units; at default 96dpi, 1 dialog unit = 1/4 character
+        int tabStop = 160;
+        SendMessageW(edit, EM_SETTABSTOPS, 1, reinterpret_cast<LPARAM>(&tabStop));
 
         // build text with tab between flag and description
         std::wstring text = L"Command-Line Flags\n\n";
@@ -83,16 +62,6 @@ LRESULT CALLBACK HelpWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
 
         SetWindowTextW(edit, text.c_str());
-
-        // apply the measured tab stop to every paragraph in twips
-        PARAFORMAT2 tabFormat = {};
-        tabFormat.cbSize = sizeof(tabFormat);
-        tabFormat.dwMask = PFM_TABSTOPS;
-        tabFormat.cTabCount = 1;
-        tabFormat.rgxTabs[0] = tabStopTwips;
-        SendMessageW(edit, EM_SETSEL, 0, -1);
-        SendMessageW(edit, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&tabFormat));
-        SendMessageW(edit, EM_SETSEL, 0, 0);
 
         // apply bold formatting to section headers
         CHARFORMAT2W cf = {};
@@ -152,8 +121,8 @@ void HelpDialog::Show(HWND hParent) {
         registered = true;
     }
 
-    const int width = 560;
-    const int height = 420;
+    const int width = 400;
+    const int height = 330;
 
     HelpDialogState state;
     state.owner = hParent;

@@ -5,7 +5,6 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <vector>
 
 constexpr int kPersistentMediaIdBase = 1000000;
 
@@ -50,15 +49,6 @@ private:
     std::unordered_map<std::wstring, Record> m_records;
     int m_nextId = kPersistentMediaIdBase;
     std::unordered_set<std::wstring> m_touchedThisPass;
-    // IDs freed by PruneUntouched() for records not touched during the
-    // most recently completed scan pass. GetOrCreateStableIdLocked()
-    // pops from here (LIFO) before ever incrementing m_nextId, so a
-    // long-running server whose media set churns does not permanently
-    // consume a fresh ID for every key it has ever seen once. Not
-    // persisted across process restarts -- an acceptable, deliberate
-    // simplification: the free-list only needs to bound growth WITHIN
-    // one long-running process's lifetime. See F-CMR-04.
-    std::vector<int> m_freedIds;
 };
 
 #endif // MEDIA_DATABASE_H

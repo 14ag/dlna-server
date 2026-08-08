@@ -43,7 +43,7 @@ class PlaylistNetworkSourceTests(unittest.TestCase):
             self.assertIn(token, windows_gui + fltk_gui)
         self.assertNotIn("smb://", windows_gui + fltk_gui)
 
-        self.assertNotIn("BrowsePlaylist", windows_gui)
+        self.assertIn("BrowsePlaylist", windows_gui)
         self.assertIn("Fl_Native_File_Chooser", fltk_gui)
         self.assertIn("fl_input", fltk_gui)
 

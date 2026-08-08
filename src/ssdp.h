@@ -3,7 +3,6 @@
 
 #include <string>
 #include <vector>
-#include <deque>
 #include <atomic>
 #ifdef _WIN32
 #include <winsock2.h>
@@ -73,14 +72,7 @@ private:
     std::thread m_initialBurstThread;
     std::mutex m_responseMutex;
     std::condition_variable m_responseCondition;
-    // deque, not vector: QueueSearchResponses() evicts the oldest queued
-    // response with pop_front() once the queue hits
-    // kMaxDelayedResponses. On a vector that eviction was
-    // erase(begin()), an O(n) shift of every remaining element, on
-    // every single eviction -- under a sustained M-SEARCH flood the
-    // queue sits at the cap and every arrival evicts one, making the
-    // steady-state cost O(n) per incoming search. See F-PERF-01.
-    std::deque<DelayedSearchResponse> m_delayedResponses;
+    std::vector<DelayedSearchResponse> m_delayedResponses;
     std::mutex m_socketMutex;
 
     std::vector<NetworkEndpoint> m_endpoints;

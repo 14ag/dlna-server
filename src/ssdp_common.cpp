@@ -13,7 +13,7 @@ std::vector<SSDPTarget> BuildAdvertisedTargets(const std::string& uuid) {
     };
 }
 
-bool CoalesceDelayedResponse(std::deque<DelayedSearchResponse>& queue, DelayedSearchResponse&& response) {
+bool CoalesceDelayedResponse(std::vector<DelayedSearchResponse>& queue, DelayedSearchResponse&& response) {
     for (auto& queued : queue) {
         if (queued.remoteLen == response.remoteLen &&
             std::memcmp(&queued.remoteAddr, &response.remoteAddr, static_cast<size_t>(response.remoteLen)) == 0 &&

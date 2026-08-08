@@ -2,8 +2,6 @@
 #define MAINWINDOW_H
 
 #include <windows.h>
-#include "close_pending_state.h"
-#include "copydata_validation.h"
 #include "access_keys.h"
 #include "source_drop_target.h"
 #include "source_list_focus.h"
@@ -40,17 +38,11 @@ public:
     // asks this instance to stop the server and close entirely
     // sent by a separate short lived process launched with kill server or k
     static constexpr UINT WM_REQUEST_SHUTDOWN = WM_APP + 21;
-    // sent by --kill-server: stops the server synchronously, then
-    // destroys the window. unlike WM_REQUEST_SHUTDOWN this always
-    // performs a full graceful teardown that emits ssdp:byebye
-    // regardless of current server state.
-    static constexpr UINT WM_KILL_SERVER = WM_APP + 22;
     // dwData discriminator used on the wm copydata messages this app sends
     // to itself from a second process see main cpp for the sender side
     static constexpr ULONG_PTR kCopyDataSourceReplace = 1;
 
     bool TryHandleAccessKeyChar(wchar_t ch);
-    bool TryHandleFunctionKey(WPARAM vkCode);
     void RefreshToolbarMnemonics();
 
 private:
@@ -62,7 +54,6 @@ private:
     void AddTrayIcon();
     void RemoveTrayIcon();
     void ShowTrayMenu();
-    void ShowSourceListContextMenu(HWND sourceHwnd, int screenX, int screenY);
     void RestoreAndFocusMainWindow();
     // adds one path as a media source if it is not already present
     // returns true if it was actually added false if it was a duplicate
@@ -121,7 +112,6 @@ private:
     KeyboardCueState m_cueState;
     ServerUiState m_state;
     std::wstring m_statusEndpoint;
-    ClosePendingState m_closePending;
     std::thread m_worker;
 
     bool m_startedHeadless;
@@ -134,7 +124,6 @@ private:
     RECT m_listRingRect = {0, 0, 0, 0};
     std::unordered_map<HWND, bool> m_mouseTracking;
     SourceListDropTarget* m_sourceDropTarget = nullptr;
-    HPOWERNOTIFY m_hSuspendResumeNotify = NULL;
 };
 
 #endif // MAINWINDOW_H

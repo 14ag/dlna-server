@@ -2,8 +2,6 @@ import subprocess
 import pytest
 from pathlib import Path
 
-pytestmark = pytest.mark.windows_only
-
 
 class TestCliFlagsSingleSource:
 

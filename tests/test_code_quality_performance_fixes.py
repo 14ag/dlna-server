@@ -207,29 +207,3 @@ class TestSubtitleLookupCaching:
     def test_subtitle_uppercase_extension(self, dlna_binary, media_source_dir):
         """Uppercase .SRT found (cached listing, not stat-based)."""
         assert self._has_caption_info(dlna_binary, media_source_dir, "Movie.mp4", "Movie.SRT")
-
-
-class TestSingleInstanceLifecycle:
-    """Task 2: SingleInstance::ReleaseLock() must return deterministically."""
-
-    def test_single_instance_lifecycle_does_not_hang(self, dlna_binary):
-        result = subprocess.run(
-            [dlna_binary, "--print-single-instance-lifecycle"],
-            capture_output=True, text=True, timeout=5)
-        assert result.returncode == 0
-        lines = result.stdout.strip().splitlines()
-        assert lines[0] == "lock-acquired"
-        assert "released" in lines
-
-
-class TestLogSinceIncrementalFetch:
-    """Task 7: GetSystemLogSince() incremental fetch for LogDialog."""
-
-    def test_log_since_incremental_fetch(self, dlna_binary):
-        result = subprocess.run(
-            [dlna_binary, "--print-log-since-lifecycle"],
-            capture_output=True, text=True, timeout=5)
-        assert result.returncode == 0
-        output = result.stdout
-        assert "has-new-line" in output
-        assert "no-old-line-leak" in output

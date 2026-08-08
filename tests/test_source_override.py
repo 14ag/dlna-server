@@ -1,7 +1,6 @@
 import os
 import shutil
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 
@@ -14,37 +13,24 @@ def binary_dir(dlna_binary):
 
 
 @pytest.fixture
-def config_backup(binary_dir, tmp_path):
-    if os.name == "nt":
-        config_path = binary_dir / "config.ini"
-        config_root = binary_dir
-    else:
-        config_root = tmp_path / "config"
-        config_path = config_root / "dlna-server" / "config.ini"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
+def config_backup(binary_dir):
+    config_path = binary_dir / "config.ini"
     backup = None
     if config_path.exists():
         backup = config_path.read_bytes()
-    yield config_path, backup, config_root
+    yield config_path, backup
     if backup is not None:
-        config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_bytes(backup)
     elif config_path.exists():
         config_path.unlink(missing_ok=True)
 
 
-def run_print(binary, binary_dir, config_root, *args):
-    env = os.environ.copy()
-    if os.name != "nt":
-        env["XDG_CONFIG_HOME"] = str(config_root)
-        env["HOME"] = str(config_root)
-        env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="dlna-runtime-")
+def run_print(binary, binary_dir, *args):
     result = subprocess.run(
         [str(binary), *args],
         cwd=str(binary_dir),
         capture_output=True,
         text=True,
-        env=env,
         timeout=15,
     )
     return result.stdout.strip().splitlines()
@@ -65,11 +51,10 @@ def test_effective_media_sources_falls_back_to_config_when_no_override(
 ):
     src = tmp_path / "configured"
     src.mkdir()
-    config_path, _, config_root = config_backup
+    config_path, _ = config_backup
     write_config(config_path, str(src), 18201)
 
-    out = run_print(
-        dlna_binary, binary_dir, config_root, "--print-effective-media-sources")
+    out = run_print(dlna_binary, binary_dir, "--print-effective-media-sources")
     assert out == [str(src)]
 
 
@@ -78,7 +63,7 @@ def test_effective_media_sources_reflects_override_not_config(
 ):
     configured = tmp_path / "configured"
     configured.mkdir()
-    config_path, _, config_root = config_backup
+    config_path, _ = config_backup
     write_config(config_path, str(configured), 18202)
 
     override = tmp_path / "override"
@@ -90,22 +75,20 @@ def test_effective_media_sources_reflects_override_not_config(
     out = run_print(
         dlna_binary,
         binary_dir,
-        config_root,
         "--source", f'"{override}"',
         "--print-effective-media-sources",
     )
     assert out == [str(override)]
 
     # the raw, persisted list must be unaffected by the override
-    out_raw = run_print(
-        dlna_binary, binary_dir, config_root, "--print-media-sources")
+    out_raw = run_print(dlna_binary, binary_dir, "--print-media-sources")
     assert out_raw == [str(configured)]
 
 
 def test_override_with_multiple_quoted_comma_paths(
     dlna_binary, binary_dir, tmp_path, config_backup
 ):
-    config_path, _, config_root = config_backup
+    config_path, _ = config_backup
     write_config(config_path, str(tmp_path / "unused"), 18203)
     a = tmp_path / "a"; a.mkdir()
     b = tmp_path / "b"; b.mkdir()
@@ -113,7 +96,6 @@ def test_override_with_multiple_quoted_comma_paths(
     out = run_print(
         dlna_binary,
         binary_dir,
-        config_root,
         "--source", f'"{a}","{b}"',
         "--print-effective-media-sources",
     )
@@ -127,7 +109,7 @@ def test_clear_override_reverts_to_config_sources(
 ):
     configured = tmp_path / "configured"
     configured.mkdir()
-    config_path, _, config_root = config_backup
+    config_path, _ = config_backup
     write_config(config_path, str(configured), 18204)
     override = tmp_path / "override"
     override.mkdir()
@@ -135,7 +117,6 @@ def test_clear_override_reverts_to_config_sources(
     out = run_print(
         dlna_binary,
         binary_dir,
-        config_root,
         "--source", f'"{override}"',
         "--print-clear-override-then-effective",
     )
@@ -150,7 +131,7 @@ def test_stop_clears_override_across_a_real_start_stop_cycle(
 ):
     configured = tmp_path / "configured"
     configured.mkdir()
-    config_path, _, config_root = config_backup
+    config_path, _ = config_backup
     write_config(config_path, str(configured), 18205)
     override = tmp_path / "override"
     override.mkdir()
@@ -158,7 +139,6 @@ def test_stop_clears_override_across_a_real_start_stop_cycle(
     out = run_print(
         dlna_binary,
         binary_dir,
-        config_root,
         "--print-source-override-lifecycle", str(override),
     )
     assert "--override-active--" in out
@@ -175,11 +155,8 @@ def test_stop_clears_override_across_a_real_start_stop_cycle(
 def test_start_succeeds_with_only_an_override_and_empty_config_sources(
     dlna_binary, binary_dir, tmp_path
 ):
-    config_root = binary_dir if os.name == "nt" else (tmp_path / "config")
-    config_path = config_root / "config.ini" if os.name == "nt" else (
-        config_root / "dlna-server" / "config.ini")
+    config_path = binary_dir / "config.ini"
     old = None
-    config_path.parent.mkdir(parents=True, exist_ok=True)
     if config_path.exists():
         old = config_path.read_bytes()
     try:
@@ -187,18 +164,12 @@ def test_start_succeeds_with_only_an_override_and_empty_config_sources(
         override = tmp_path / "override"
         override.mkdir()
 
-        env = os.environ.copy()
-        if os.name != "nt":
-            env["XDG_CONFIG_HOME"] = str(config_root)
-            env["HOME"] = str(config_root)
-            env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="dlna-runtime-")
         proc = subprocess.Popen(
             [str(dlna_binary), "--source", f'"{override}"'],
             cwd=str(binary_dir),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env=env,
         )
         try:
             # posix_main.cpp blocks on a signal after a successful Start(); a

@@ -2,6 +2,10 @@
 #include <shellapi.h>
 #include <string>
 
+bool ShouldAllowSourceDrop(bool serverBusyOrRunning) {
+    return !serverBusyOrRunning;
+}
+
 SourceListDropTarget::SourceListDropTarget(std::function<bool()> isServerBusyOrRunning,
                                            std::function<void(const std::vector<std::wstring>&)> onFilesDropped)
     : m_refCount(1),

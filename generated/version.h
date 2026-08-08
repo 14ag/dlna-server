@@ -1,4 +1,0 @@
-#ifndef DLNA_VERSION_H
-#define DLNA_VERSION_H
-#define DLNA_SERVER_VERSION_STRING "1.7.0"
-#endif // DLNA_VERSION_H

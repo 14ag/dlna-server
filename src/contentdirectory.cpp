@@ -6,7 +6,6 @@
 #include "netutils.h"
 #include "network_sources.h"
 #include "server.h"
-#include "browse_page_cap.h"
 #include <algorithm>
 #include <filesystem>
 #include <sstream>
@@ -280,7 +279,7 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
     returnCount = 0;
     const int safeStart = (std::max)(0, startingIndex);
     const int available = safeStart >= static_cast<int>(items.size()) ? 0 : static_cast<int>(items.size()) - safeStart;
-    const int requested = ClampBrowseRequestedCount(requestedCount, available);
+    const int requested = requestedCount == 0 ? available : (std::min)(requestedCount, available);
     const auto childCounts = AppMedia.GetChildCounts(items, static_cast<size_t>(safeStart), static_cast<size_t>(requested));
     const bool proxyStreams = AppConfig.IsProxyStreamsEnabled();
     const bool includeTitle = ApplyDidlFilter(filter, "dc:title");
@@ -324,8 +323,8 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
                 if (hasKnownSize) {
                     entry << " size=\"" << it.sizeBytes << "\"";
                 }
-                 const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !proxyStreams && !ShouldProxyRemoteUrl(it.path);
-                 entry << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id) + BuildMediaResourceUrlExtensionSuffix(it.path))) << "</res>";
+                const bool exposeRemoteDirect = IsRemoteMediaUrl(it.path) && !proxyStreams && !ShouldProxyRemoteUrl(it.path);
+                entry << ">" << (exposeRemoteDirect ? XMLEscapeUtf8(WideToUtf8(it.path)) : ("http://" + hostUrl + "/media/" + std::to_string(it.id))) << "</res>";
             }
             if (!it.subtitlePath.empty()) {
                 std::wstring subExtW = SourceExtension(it.subtitlePath);

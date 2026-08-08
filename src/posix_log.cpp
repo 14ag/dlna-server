@@ -14,6 +14,8 @@ namespace {
 std::mutex g_logMutex;
 std::deque<std::pair<unsigned long long, std::wstring>> g_lines;
 unsigned long long g_nextSeq = 1;
+std::FILE* g_debugLogFile = nullptr;
+std::string g_debugLogPath;
 constexpr size_t kMaxLogLines = 1000;
 
 std::wstring TimestampPrefix() {
@@ -34,12 +36,12 @@ std::wstring TimestampPrefix() {
                   ts.tv_nsec / 1000000);
     return buffer;
 }
-}
 
-std::FILE* g_debugLogFile = nullptr;
-std::string g_debugLogPath;
+std::FILE* GetDebugLogFile() {
+    std::string path = WideToUtf8(AppConfig.GetConfigPath());
+    const size_t slash = path.find_last_of('/');
+    path = (slash == std::string::npos ? std::string() : path.substr(0, slash + 1)) + "debug.log";
 
-std::FILE* OpenOrReuseDebugLogFile(const std::string& path) {
     if (g_debugLogFile && g_debugLogPath == path) {
         return g_debugLogFile;
     }
@@ -47,24 +49,12 @@ std::FILE* OpenOrReuseDebugLogFile(const std::string& path) {
         std::fclose(g_debugLogFile);
         g_debugLogFile = nullptr;
     }
-    // w truncates any leftover content from a previous run the very
-    // first time this path is opened during this process so a debug
-    // log enabled session always starts from an empty file this
-    // already matched log cpp on windows keep both truncating on
-    // first open of a session for platform symmetry see the workflow
-    // document task for the windows side of this same fix
     g_debugLogFile = std::fopen(path.c_str(), "w");
     if (g_debugLogFile) {
         g_debugLogPath = path;
     }
     return g_debugLogFile;
 }
-
-std::FILE* GetDebugLogFile() {
-    std::string path = WideToUtf8(AppConfig.GetConfigPath());
-    const size_t slash = path.find_last_of('/');
-    path = (slash == std::string::npos ? std::string() : path.substr(0, slash + 1)) + "debug.log";
-    return OpenOrReuseDebugLogFile(path);
 }
 
 void LogPrint(const wchar_t* fmt, ...) {

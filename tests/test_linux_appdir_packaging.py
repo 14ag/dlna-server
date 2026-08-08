@@ -73,19 +73,14 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("hdiutil create", script)
         self.assertIn("notarytool submit", script)
 
-    def test_wslg_gui_smoke_prereqs_are_in_build_and_pytest_wiring(self):
-        linux_script = self.read("scripts/build-linux-desktop-assets.sh")
-        conftest = self.read("tests/conftest.py")
+    def test_wslg_gui_smoke_script_checks_native_deps(self):
+        script = self.read("tests/verify-wslg-gui.ps1")
 
-        self.assertIn("libx11-dev", linux_script)
-        self.assertIn("libxft-dev", linux_script)
-        self.assertIn("libxext-dev", linux_script)
-        self.assertIn("libxinerama-dev", linux_script)
-        self.assertIn("libxcursor-dev", linux_script)
-        self.assertIn("libxrender-dev", linux_script)
-        self.assertIn("libxfixes-dev", linux_script)
-        self.assertIn('-DDLNA_ENABLE_FLTK_GUI=ON', linux_script)
-        self.assertIn("DLNA_GUI_BINARY", conftest)
+        self.assertIn("DLNA_ENABLE_FLTK_GUI=ON", script)
+        self.assertIn("libx11-dev", script)
+        self.assertIn("WAYLAND_DISPLAY", script)
+        self.assertIn("dlna-server-gui", script)
+        self.assertIn("PASS WSLg native GUI launch smoke", script)
 
     def test_fltk_gui_is_only_posix_desktop_ui(self):
         cmake = self.read("CMakeLists.txt")
@@ -107,7 +102,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("src/posix_server.cpp", cmake)
         self.assertIn("Threads::Threads", cmake)
         self.assertIn("#include <FL/Fl_Window.H>", gui_source)
-        self.assertNotIn("DLNA Server is stopped", gui_source)
+        self.assertIn("DLNA Server is stopped", gui_source)
         self.assertFalse((ROOT / "src/posix_gui.py").exists())
         self.assertFalse((ROOT / "tests/test_posix_gui.py").exists())
         self.assertNotIn("tkinter", linux_launcher + mac_launcher + cmake)
@@ -140,7 +135,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("Fl::focus(state->subtitle)", gui_source)
         self.assertIn("Fl::focus(&dialog)", gui_source)
         self.assertIn("void resize", gui_source)
-        self.assertIn("DLNAServer.Start(", gui_source)
+        self.assertIn("DLNAServer.Start()", gui_source)
         self.assertIn("DLNAServer.Stop()", gui_source)
         self.assertIn("AppConfig.Save()", gui_source)
         self.assertIn("DLNAServer.Rescan()", gui_source)
