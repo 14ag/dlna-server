@@ -45,6 +45,11 @@ private:
 
     std::atomic<bool> m_running;
     std::atomic<bool> m_stopping;
+    // claimed for the duration of Start()'s body only released when
+    // Start() returns by any path see the StartingGuard raii type
+    // inside Start() itself this is not the same flag as m_running
+    // m_running only becomes true once startup has fully succeeded
+    std::atomic<bool> m_starting;
     std::atomic<bool> m_initialScanComplete;   // becomes: "root container exists"
     std::atomic<bool> m_initialScanInProgress; // NEW: true while the very first scan runs
     std::wstring m_endpoint;

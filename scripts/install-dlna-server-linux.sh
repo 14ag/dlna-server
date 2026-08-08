@@ -37,10 +37,10 @@ if [ -z "$package_path" ]; then
 fi
 
 if [ -z "$package_path" ] || [ ! -f "$package_path" ]; then
-    # No Debian package was produced (e.g. gtk-update-icon-cache fails during
-    # CPack packaging in constrained environments). Fall back to the binaries
-    # already installed to /usr/local by build-linux-assets.sh in install-only
-    # mode, mirroring them into the well-known /usr/bin paths.
+    # No Debian package was produced (--no-deb or packaging skipped in
+    # constrained environments). Fall back to the binaries already installed
+    # to /usr/local by build-linux-assets.sh in install-only mode, mirroring
+    # them into the well-known /usr/bin paths.
     if [ -x /usr/local/bin/dlna-server-gui-bin ] && [ -x /usr/local/bin/dlna-server ]; then
         sudo_run cp /usr/local/bin/dlna-server /usr/bin/dlna-server
         sudo_run cp /usr/local/bin/dlna-server-gui-bin /usr/bin/dlna-server-gui-bin
@@ -62,6 +62,13 @@ if ! command -v dpkg >/dev/null 2>&1; then
     exit 1
 fi
 
+# A fresh .deb is available, so clean out any previously installed binaries
+# (both /usr/local from make install and the old /usr/bin package) before
+# installing the new archive, keeping the layout consistent.
+sudo_run rm -f /usr/local/bin/dlna-server
+sudo_run rm -f /usr/local/bin/dlna-server-gui
+sudo_run rm -f /usr/local/bin/dlna-server-gui-bin
+sudo_run rm -rf /usr/local/share/dlna-server
 sudo_run dpkg -P dlna-server
 sudo_run dpkg -i "$package_path"
 echo "Installed: $package_path"

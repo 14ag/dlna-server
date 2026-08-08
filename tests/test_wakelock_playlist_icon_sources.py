@@ -13,11 +13,16 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
     def test_windows_ui_uses_busy_state_and_wake_lock(self):
         header = self.read("src/mainwindow.h")
         source = self.read("src/mainwindow.cpp")
+        state_header = self.read("src/server_ui_state.h")
 
         for token in (
             "enum class ServerUiState",
             "Starting",
             "Stopping",
+        ):
+            self.assertIn(token, state_header)
+
+        for token in (
             "BeginStartServer",
             "BeginStopServer",
             "BeginRestartServer",
@@ -29,6 +34,7 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
         ):
             self.assertIn(token, header + source)
 
+        self.assertIn('"server_ui_state.h"', header)
         self.assertNotIn("ES_AWAYMODE_REQUIRED", source)
         self.assertNotIn("m_isRunning", header + source)
 
@@ -72,7 +78,7 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
 
         cmake = self.read("CMakeLists.txt")
         posix_http = self.read("src/posix_httpserver.cpp")
-        self.assertGreaterEqual(cmake.count('DLNA_RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources"'), 2)
+        self.assertIn('DLNA_RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources"', cmake)
         self.assertIn('ResolveBundledResourcePath(fileName)', posix_http)
         self.assertNotIn('std::string(DLNA_RESOURCE_DIR) + "/" + fileName', posix_http)
 

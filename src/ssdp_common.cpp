@@ -26,10 +26,26 @@ bool CoalesceDelayedResponse(std::deque<DelayedSearchResponse>& queue, DelayedSe
     return false;
 }
 
-unsigned int ComputeDelayMilliseconds(int mxSeconds) {
+unsigned int ComputeMaxDelayMilliseconds(int mxSeconds) {
     int boundedSeconds = (std::max)(0, (std::min)(mxSeconds, 5));
     if (boundedSeconds <= 1) return 0;
-    unsigned int maxDelay = static_cast<unsigned int>(boundedSeconds * 1000);
+    unsigned int fullWindowMs = static_cast<unsigned int>(boundedSeconds * 1000);
+    // pupnp derived control points such as vlc use the mx value both
+    // as the m search header field and as their own read timeout for
+    // the search response socket see SearchByTarget in pupnp source
+    // file ssdp ctrlpt c where timeTillRead is set equal to mx
+    // a reply scheduled near the full mx window can therefore arrive
+    // after the client has already stopped listening for one
+    // scaling the legal zero to mx window down to four fifths keeps
+    // every possible delay value fully inside the spec legal range
+    // while leaving a fixed margin before that hard client side cutoff
+    constexpr unsigned int kMaxDelayFractionNumerator = 4;
+    constexpr unsigned int kMaxDelayFractionDenominator = 5;
+    return (fullWindowMs * kMaxDelayFractionNumerator) / kMaxDelayFractionDenominator;
+}
+
+unsigned int ComputeDelayMilliseconds(int mxSeconds) {
+    unsigned int maxDelay = ComputeMaxDelayMilliseconds(mxSeconds);
     if (maxDelay == 0) return 0;
     static thread_local std::mt19937 generator(std::random_device{}());
     std::uniform_int_distribution<unsigned int> distribution(0, maxDelay);

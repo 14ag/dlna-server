@@ -37,6 +37,7 @@
 #include "cli_flags.h"
 #include "media_source_file_types.h"
 #include "contentdirectory.h"
+#include "ssdp_common.h"
 #include "upnp_eventing.h"
 #include "server_close_policy.h"
 #include "close_pending_state.h"
@@ -490,8 +491,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::wcout << kMaxClientThreads << std::endl;
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-remote-probe-cache-lifecycle") == 0 && i + 1 < argc) {
+            std::wstring probeUrl = argv[++i];
+            long before = GetRemoteProbeRecomputeCountForTest();
+            ProbeRemoteContentLength(probeUrl);
+            long afterFirst = GetRemoteProbeRecomputeCountForTest();
+            ProbeRemoteContentLength(probeUrl);
+            long afterSecond = GetRemoteProbeRecomputeCountForTest();
+            std::cout << "before=" << before << std::endl;
+            std::cout << "after-first-probe=" << afterFirst << std::endl;
+            std::cout << "after-second-probe=" << afterSecond << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-dlna-server-header") == 0) {
             std::cout << GetDlnaServerHeader() << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-ssdp-response-delay-bound") == 0 && i + 1 < argc) {
+            int mx = _wtoi(argv[++i]);
+            std::cout << ComputeMaxDelayMilliseconds(mx) << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-config-path") == 0) {
@@ -652,6 +670,29 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
 
             std::wcout << L"done" << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-concurrent-start-start-safety") == 0) {
+            std::wstring reasonA;
+            std::wstring reasonB;
+            bool startOkA = false;
+            bool startOkB = false;
+            std::thread threadA([&]() { startOkA = DLNAServer.Start(reasonA); });
+            std::thread threadB([&]() { startOkB = DLNAServer.Start(reasonB); });
+            threadA.join();
+            threadB.join();
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            const bool exactlyOneSucceeded = (startOkA != startOkB) || (startOkA && startOkB);
+            std::wcout << L"a-ok=" << (startOkA ? L"1" : L"0") << std::endl;
+            std::wcout << L"b-ok=" << (startOkB ? L"1" : L"0") << std::endl;
+            std::wcout << L"a-reason=" << reasonA << std::endl;
+            std::wcout << L"b-reason=" << reasonB << std::endl;
+            std::wcout << L"is-running=" << (DLNAServer.IsRunning() ? L"1" : L"0") << std::endl;
+            (void)exactlyOneSucceeded;
+            DLNAServer.Stop();
+            std::wcout << L"after-stop-running=" << (DLNAServer.IsRunning() ? L"1" : L"0") << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-single-file-source-scan") == 0) {

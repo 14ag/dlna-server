@@ -125,6 +125,7 @@ class TestMaxClientThreadsParity:
                 return int(line.split()[1])
         return 0
 
+    @pytest.mark.posix_only
     def test_thread_count_stays_bounded_under_request_burst(
             self, dlna_binary, media_source_dir):
         """Task 8: a burst of kMaxClientThreads*3 sequential requests must

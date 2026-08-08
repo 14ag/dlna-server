@@ -106,9 +106,14 @@ def test_join_url_removed_resolve_playlist_entry_uses_resolve_relative_url():
 def test_http_worker_limits_aligned():
     win_http = read("src/httpserver.cpp")
     posix_http = read("src/posix_httpserver.cpp")
+    common = read("src/http_common.h")
 
-    assert "SetThreadpoolThreadMaximum(m_threadPool, 64)" in win_http
-    assert "constexpr size_t kMaxClientThreads = 64" in posix_http
+    # canonical definition lives exactly once in the shared header
+    assert "constexpr size_t kMaxClientThreads = 64" in common
+    # both platforms must consume the shared constant rather than a
+    # hand-synced literal of their own
+    assert "kMaxClientThreads" in win_http
+    assert "kMaxClientThreads" in posix_http
 
 
 def test_split_header_and_stream_timeouts():
