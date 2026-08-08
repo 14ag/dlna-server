@@ -107,7 +107,10 @@ class ServerClient:
         req = urllib.request.Request(
             url, data=envelope.encode("utf-8"), headers=headers,
             method="POST")
-        with urllib.request.urlopen(req) as resp:
+        # explicit socket timeout so a stalled server can never block a
+        # worker thread forever see concurrent-suite-hang-report md the
+        # urlopen default has no timeout and shutdown wait hangs on it
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return resp.read().decode("utf-8")
 
     def soap_browse(self, object_id="0",
@@ -361,6 +364,73 @@ def xvfb():
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=3)
+
+
+def _candidate_runtime_dirs():
+    """Return every XDG_RUNTIME_DIR a leftover daemon may be bound to.
+
+    The single-instance socket lives at <XDG_RUNTIME_DIR>/dlna-server.sock (or
+    the /tmp/dlna-server-<uid> fallback when unset), so a daemon survives its
+    hard-killed parent bound to whatever runtime dir it was launched with.
+    _launch_server() gives each launch a fresh /tmp/dlna-runtime-* dir, so a
+    daemon from a prior run can sit under any of those plus the default fallback.
+    Collect all of them so the guard can send --kill-server to each.
+    """
+    dirs = set()
+
+    uid_fallback = ""
+    if os.name != "nt":
+        try:
+            uid_fallback = f"/tmp/dlna-server-{os.getuid()}"
+        except (AttributeError, OSError):
+            pass
+    if uid_fallback:
+        dirs.add(uid_fallback)
+
+    scan_roots = [Path("/tmp")] if os.name != "nt" else []
+    for root in scan_roots:
+        if root.is_dir():
+            for child in root.iterdir():
+                name = child.name
+                if name.startswith("dlna-runtime-") and child.is_dir():
+                    dirs.add(str(child))
+
+    return sorted(dirs)
+
+
+def _kill_all_runtime_instances():
+    """Send --kill-server for every runtime dir a leftover daemon may hold.
+
+    A daemonized/non-debug server survives its parent, so a stale instance from
+    a prior test or a hard-killed run can still hold the single-instance lock or
+    an SSDP port. Offload each one with the app's own --kill-server flag (once
+    per distinct candidate runtime dir) before running anything. Silently
+    no-ops when no binary is known.
+    """
+    binary = os.environ.get("DLNA_SERVER") or os.environ.get("DLNA_CLI_BINARY")
+    if not binary:
+        return
+
+    base_env = os.environ.copy()
+    for runtime_dir in _candidate_runtime_dirs():
+        env = dict(base_env)
+        env["XDG_RUNTIME_DIR"] = runtime_dir
+        try:
+            subprocess.run(
+                [binary, "--kill-server"],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+@pytest.fixture(autouse=True)
+def _kill_previously_running_instance() -> None:
+    _kill_all_runtime_instances()
 
 
 @pytest.fixture

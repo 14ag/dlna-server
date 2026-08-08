@@ -15,6 +15,7 @@
 #include "media_sources.h"
 #include "media_source_file_types.h"
 #include "contentdirectory.h"
+#include "ssdp_common.h"
 #include "thread_guard.h"
 #include "scan_cancellation.h"
 #include "server.h"
@@ -475,6 +476,11 @@ int main(int argc, char** argv) {
             std::cout << GetDlnaServerHeader() << std::endl;
             return 0;
         }
+        else if (arg == "--print-ssdp-response-delay-bound" && i + 1 < argc) {
+            int mx = std::atoi(argv[++i]);
+            std::cout << ComputeMaxDelayMilliseconds(mx) << std::endl;
+            return 0;
+        }
         else if (arg == "--print-should-allow-source-drop" && i + 1 < argc) {
             // ShouldAllowSourceDrop now lives in source drop policy h
             // no ole drop target exists on posix today
@@ -689,6 +695,29 @@ int main(int argc, char** argv) {
             std::wcout << L"leaf-media-items=" << leafMediaItems << std::endl;
             DLNAServer.Stop();
             std::wcout << L"done" << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-concurrent-start-start-safety") {
+            std::wstring reasonA;
+            std::wstring reasonB;
+            bool startOkA = false;
+            bool startOkB = false;
+            std::thread threadA([&]() { startOkA = DLNAServer.Start(reasonA); });
+            std::thread threadB([&]() { startOkB = DLNAServer.Start(reasonB); });
+            threadA.join();
+            threadB.join();
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            const bool exactlyOneSucceeded = (startOkA != startOkB) || (startOkA && startOkB);
+            std::wcout << L"a-ok=" << (startOkA ? L"1" : L"0") << std::endl;
+            std::wcout << L"b-ok=" << (startOkB ? L"1" : L"0") << std::endl;
+            std::wcout << L"a-reason=" << reasonA << std::endl;
+            std::wcout << L"b-reason=" << reasonB << std::endl;
+            std::wcout << L"is-running=" << (DLNAServer.IsRunning() ? L"1" : L"0") << std::endl;
+            (void)exactlyOneSucceeded;
+            DLNAServer.Stop();
+            std::wcout << L"after-stop-running=" << (DLNAServer.IsRunning() ? L"1" : L"0") << std::endl;
             return 0;
         }
         else if (arg == "--print-single-file-source-scan") {

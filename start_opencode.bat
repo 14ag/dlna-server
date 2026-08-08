@@ -1,1 +1,1 @@
-opencode --continue
+opencode web

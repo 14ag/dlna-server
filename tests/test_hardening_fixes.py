@@ -39,7 +39,8 @@ class HardeningFixSourceTests(unittest.TestCase):
         self.assertIn("std::shared_mutex", whitelist_h)
         self.assertIn("std::unique_lock<std::shared_mutex>", whitelist_cpp)
         self.assertIn("std::shared_lock<std::shared_mutex>", whitelist_cpp)
-        self.assertIn("m_clientThreads", http_h + posix_http)
+        self.assertIn("m_clientPool", http_h + posix_http)
+        self.assertIn("m_activeClientCount", windows_http)
         self.assertNotIn(".detach()", posix_http)
         for source in (posix_http, windows_http):
             self.assertIn("SO_RCVTIMEO", source)

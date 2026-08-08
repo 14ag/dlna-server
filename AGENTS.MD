@@ -21,7 +21,7 @@
 
 - never build manually. always use the build scripts. never edit the build scripts unless it has bugs
 - build windows assets using command `& .\build-assets.bat --platform winx64 2>&1 | Select-Object -Last 30`
-- build linux assets using command `wsl.exe -d Ubuntu -- bash -lc 'cd /mnt/c/Users/philip/sauce/dlna-server && DLNA_SUDO_PASSWORD=" " ./build-assets.sh'` this script will handle everything (copying assets, building and installing)
+- build linux assets using command `wsl.exe -d Ubuntu -- bash -lc 'cd /mnt/c/Users/philip/sauce/dlna-server && DLNA_SUDO_PASSWORD=" " ./build-assets.sh'` with no extra parameters.this script will handle everything (copying assets, building and installing)
 - CMake requires libcurl. Do not add curl CLI or legacy IO fallback.
 - Windows build deps use vcpkg. Expected root is `$env:VCPKG_ROOT` or `$env:USERPROFILE\vcpkg`.
 - Windows curl packages: `curl:x64-windows-static` and `curl:x86-windows-static`.
@@ -45,7 +45,20 @@
 - Prefer blackbox tests for HTTP, SOAP, SSDP, GENA, media browse, playlists, remote IO, packaging, and build outputs.
 - Use source-contract tests only when device/platform behavior cannot run in CI.
 - After completing a task, verify each user prompt item was addressed.
-- Run `python -m pytest -q --tb=no`.
+- Run `python -m pytest -q --tb=no` for new tests that have just been added 
+- Run 
+```powershell
+python -m pytest -v --tb=no 2>&1 | Select-String -Pattern "FAILED|ERROR|SKIP" 
+
+```
+or
+
+```bash
+python -m pytest -v --tb=no 2>&1 | grep -E "FAILED|ERROR|SKIP"
+
+```
+when executing the full test suite so as to filter out failed tests.
+- there should never be skipped tests. all tests should be marked with platform so that they are deselected when they can not run in the curent platform. if a test is skipped, it should be fixed or removed
 - Run Windows CMake configure/build for `dlna-server` when Windows build files changed.
 - Run POSIX CMake configure/build with `-DDLNA_ENABLE_GTK4_GUI=OFF` when POSIX/shared code changed.
 - Run smoke scripts in the tests folder.

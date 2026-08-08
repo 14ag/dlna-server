@@ -40,7 +40,7 @@ Server& Server::Get() {
     return instance;
 }
 
-Server::Server() : m_running(false), m_stopping(false), m_initialScanComplete(false), m_initialScanInProgress(false), m_stopWatch(false) {
+Server::Server() : m_running(false), m_stopping(false), m_starting(false), m_initialScanComplete(false), m_initialScanInProgress(false), m_stopWatch(false) {
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 }
@@ -225,6 +225,15 @@ void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
 
 bool Server::Start(std::wstring& outReason) {
     if (m_running.load(std::memory_order_acquire)) return true;
+    bool expectedNotStarting = false;
+    if (!m_starting.compare_exchange_strong(expectedNotStarting, true, std::memory_order_acq_rel)) {
+        outReason = L"Server is already starting on another thread";
+        return false;
+    }
+    struct StartingGuard {
+        std::atomic<bool>& flag;
+        ~StartingGuard() { flag.store(false, std::memory_order_release); }
+    } startingGuard{ m_starting };
     m_stopping.store(false, std::memory_order_release);
     AppScanCancel.BeginScan();
 

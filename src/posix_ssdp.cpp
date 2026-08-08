@@ -27,8 +27,15 @@
 #ifndef IP_UNICAST_IF
 // value from the upstream linux kernel patch that introduced this option
 // see include/linux/in.h in torvalds/linux commit 76e21053b5bf
-// not always exposed by netinet in h on every libc version this project targets
+// not always exposed by netinet in,h on every libc version this project targets
 #define IP_UNICAST_IF 50
+#endif
+#ifndef IPV6_UNICAST_IF
+// fallback definition for older headers that predate this constant
+// value 76 is the stable linux kernel option number for this option
+// it is the ipv6 counterpart of ip unicast if added for the wine project
+// see the workflow document citations for the kernel commit reference
+#define IPV6_UNICAST_IF 76
 #endif
 
 namespace {
@@ -113,46 +120,56 @@ int CreateIPv6Socket(const std::vector<NetworkEndpoint>& endpoints) {
     return fd;
 }
 
-// multicast steers the egress interface for a packet whose destination is a
-// multicast address only IP_MULTICAST_IF and IPV6_MULTICAST_IF are consulted
-// on that send path see ip 7 and the kernel source cited in the workflow doc
-// unicast steers the egress interface for a packet whose destination is a
-// single host address IP_MULTICAST_IF has zero effect there the correct
-// option is IP_UNICAST_IF this mirrors SetOutboundInterface in src ssdp cpp
-// which already branches the same way for windows via IP_UNICAST_IF
-bool SetOutboundInterface(int fd, const NetworkEndpoint& endpoint, bool multicast) {
+// selects the outbound interface for a multicast destined send
+// used only by SendNotifyRound for the periodic alive and byebye notify
+// never call this before a unicast destined send see the function below
+bool SetMulticastOutboundInterface(int fd, const NetworkEndpoint& endpoint) {
     if (endpoint.family == AF_INET) {
-        if (multicast) {
-            in_addr addr = reinterpret_cast<const sockaddr_in*>(&endpoint.sockaddr)->sin_addr;
-            if (setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &addr, sizeof(addr)) != 0) {
-                LogPrint(L"IP_MULTICAST_IF failed for interface %lu.", endpoint.interfaceIndex);
-                return false;
-            }
-            return true;
-        }
-#ifdef __linux__
-        int ifIndex = static_cast<int>(endpoint.interfaceIndex);
-        if (setsockopt(fd, IPPROTO_IP, IP_UNICAST_IF, &ifIndex, sizeof(ifIndex)) != 0) {
-            LogPrint(L"IP_UNICAST_IF failed for interface %lu falling back to default route selection.", endpoint.interfaceIndex);
-        }
-        return true;
-#else
-        // macOS and the BSDs have no IP_UNICAST_IF equivalent the unicast
-        // reply relies on the kernel default route to the requester address
-        // this is an accepted platform limitation not silently omitted
-        return true;
-#endif
-    } else if (endpoint.family == AF_INET6) {
-        unsigned int ifIndex = static_cast<unsigned int>(endpoint.interfaceIndex);
-        int level = multicast ? IPV6_MULTICAST_IF : IPV6_MULTICAST_IF;
-        if (setsockopt(fd, IPPROTO_IPV6, level, &ifIndex, sizeof(ifIndex)) != 0) {
-            LogPrint(L"Outbound IPv6 interface select failed for interface %lu.", endpoint.interfaceIndex);
+        in_addr addr = reinterpret_cast<const sockaddr_in*>(&endpoint.sockaddr)->sin_addr;
+        if (setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &addr, sizeof(addr)) != 0) {
+            LogPrint(L"IP_MULTICAST_IF failed for interface %lu.", endpoint.interfaceIndex);
             return false;
         }
-        // ipv6 unicast replies are not steered by an extra sockopt here
-        // sin6_scope_id already carried on response remoteAddr from recvfrom
-        // is sufficient for the kernel to route a link local reply correctly
-        // per rfc 4007 revisit only if a matching ipv6 report is filed
+    } else if (endpoint.family == AF_INET6) {
+        unsigned int ifIndex = static_cast<unsigned int>(endpoint.interfaceIndex);
+        if (setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_IF, &ifIndex, sizeof(ifIndex)) != 0) {
+            LogPrint(L"IP_MULTICAST_IF failed for interface %lu.", endpoint.interfaceIndex);
+            return false;
+        }
+    }
+    return true;
+}
+
+// selects the outbound interface for a unicast destined send
+// used only by SendDelayedSearchResponse for the m search reply
+// ip multicast if has no defined effect on a unicast destination
+// per the linux ip 7 man page so it must never be used here
+// ip unicast if pins the real outbound interface where the running
+// kernel defines it and is a best effort call everywhere else so a
+// platform without this option still gets correct default kernel
+// routing for the unicast destination instead of a wrong pin
+// this function always returns true unlike the multicast one above
+// because a failed or unavailable pin still leaves a fully working
+// send behind through normal kernel routing while returning false
+// here would turn a soft hint into a hard failure on the one path
+// every discovering client actually depends on
+bool SetUnicastOutboundInterface(int fd, const NetworkEndpoint& endpoint) {
+    if (endpoint.family == AF_INET) {
+#ifdef IP_UNICAST_IF
+        unsigned int ifIndex = static_cast<unsigned int>(endpoint.interfaceIndex);
+        setsockopt(fd, IPPROTO_IP, IP_UNICAST_IF, &ifIndex, sizeof(ifIndex));
+#else
+        (void)fd;
+        (void)endpoint;
+#endif
+    } else if (endpoint.family == AF_INET6) {
+#ifdef IPV6_UNICAST_IF
+        unsigned int ifIndex = static_cast<unsigned int>(endpoint.interfaceIndex);
+        setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_IF, &ifIndex, sizeof(ifIndex));
+#else
+        (void)fd;
+        (void)endpoint;
+#endif
     }
     return true;
 }
@@ -246,7 +263,7 @@ void SSDP::SendNotifyRound(const char* nts) {
         socklen_t destLen = 0;
         std::string hostHeader;
         if (!BuildMulticastDestination(endpoint, dest, destLen, hostHeader)) continue;
-        if (!SetOutboundInterface(socketFd, endpoint, true)) {
+        if (!SetMulticastOutboundInterface(socketFd, endpoint)) {
             continue;
         }
 
@@ -304,7 +321,7 @@ void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
 void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
     if (!m_running.load()) return;
     std::lock_guard<std::mutex> socketLock(m_socketMutex);
-    if (!SetOutboundInterface(response.socket, response.endpoint, false)) return;
+    if (!SetUnicastOutboundInterface(response.socket, response.endpoint)) return;
     for (size_t i = 0; i < response.messages.size(); ++i) {
         const std::string& message = response.messages[i];
         ssize_t sent = sendto(response.socket,
