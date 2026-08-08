@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+server_bin=${DLNA_SERVER_BIN:-"$script_dir/dlna-server"}
+native_gui=${DLNA_SERVER_GUI_BIN:-"$script_dir/dlna-server-gui-bin"}
+
+export DLNA_SERVER_BIN="$server_bin"
+
+if [ ! -x "$native_gui" ]; then
+    echo "DLNA Server native GUI is missing or not executable: $native_gui" >&2
+    echo "Rebuild with -DDLNA_ENABLE_FLTK_GUI=ON." >&2
+    exit 1
+fi
+
+if [ -z "${FLTK_BACKEND:-}" ] && [ -n "${DISPLAY:-}" ] && [ -r /proc/version ] && grep -qi microsoft /proc/version; then
+    export FLTK_BACKEND=x11
+fi
+
+exec "$native_gui" "$@"

@@ -91,7 +91,21 @@ def test_task7_catalog_reserve_present():
     assert "kInitialCatalogReserve" in src
     fn_start = src.index("void MediaSources::ResetForRescan")
     fn_end = src.index("\n}\n", fn_start)
-    assert "m_items.reserve(kInitialCatalogReserve)" in src[fn_start:fn_end]
+    body = src[fn_start:fn_end]
+    # Task 5.1 evolved this from the fixed baseline reserve
+    # (m_items.reserve(kInitialCatalogReserve)) to an ADAPTIVE reserve:
+    # size off the previous pass's catalog size with 12.5% slack, floored
+    # by kInitialCatalogReserve, applied to both m_items and m_idToIndex so
+    # neither repeatedly rehashes/reallocates for the same large catalog on
+    # every rescan. This contract test pins the NEW shape -- the computed
+    # reserveHint derived from previousSize -- not the old fixed reserve.
+    assert "previousSize" in body
+    assert "reserveHint" in body
+    assert "(std::max)" in body
+    assert "m_items.reserve(reserveHint)" in body
+    assert "m_idToIndex.reserve(reserveHint)" in body
+    # the old fixed-reserve shape is gone
+    assert "m_items.reserve(kInitialCatalogReserve)" not in body
 
 
 def test_task8_album_art_stat_calls_not_locked_for_whole_function():

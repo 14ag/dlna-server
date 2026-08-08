@@ -165,6 +165,7 @@ import socket
 import subprocess
 import threading
 import time
+import tempfile
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
@@ -180,6 +181,7 @@ from tests.fixtures.soap_client import (
     parse_system_update_id_response,
     build_search_envelope,
 )
+from tests.conftest import server_config_ini_path
 
 
 def _free_port():
@@ -188,10 +190,11 @@ def _free_port():
         return s.getsockname()[1]
 
 
-def _launch_dlna(binary_path, port, media_sources_str):
+def _launch_dlna(binary_path, port, media_sources_str, config_root=None):
     binary_dir = Path(binary_path).parent
-    config_ini = binary_dir / "config.ini"
+    config_ini = server_config_ini_path(binary_path, config_root)
     old = None
+    config_ini.parent.mkdir(parents=True, exist_ok=True)
     if config_ini.exists():
         old = config_ini.read_text(encoding="utf-8-sig")
     config_ini.write_text(
@@ -203,6 +206,10 @@ def _launch_dlna(binary_path, port, media_sources_str):
     )
     env = os.environ.copy()
     env["DLNA_SERVER_SKIP_FIREWALL"] = "1"
+    if os.name != "nt":
+        env["XDG_CONFIG_HOME"] = str(config_ini.parent.parent)
+        env["HOME"] = str(config_ini.parent.parent)
+        env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="dlna-runtime-")
     proc = subprocess.Popen(
         [str(binary_path), "--headless"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
@@ -368,8 +375,9 @@ class TestHlsServedManifestHasAbsoluteUris:
         with _hls_http_server() as (hls_port, server):
             url = f"http://127.0.0.1:{hls_port}/playlist.m3u8"
             dlna_port = _free_port()
+            config_root = Path(tempfile.mkdtemp(prefix="dlna-hls-config-"))
             proc, ok, old, ini = _launch_dlna(
-                dlna_binary, dlna_port, url)
+                dlna_binary, dlna_port, url, config_root)
             if not ok:
                 _stop_dlna(proc, old, ini)
                 pytest.fail(f"DLNA server not listening on {dlna_port}")
@@ -417,8 +425,9 @@ class TestHlsFetchFailureReturns502:
         with _hls_http_server() as (hls_port, server):
             url = f"http://127.0.0.1:{hls_port}/playlist.m3u8"
             dlna_port = _free_port()
+            config_root = Path(tempfile.mkdtemp(prefix="dlna-hls-config-"))
             proc, ok, old, ini = _launch_dlna(
-                dlna_binary, dlna_port, url)
+                dlna_binary, dlna_port, url, config_root)
             if not ok:
                 _stop_dlna(proc, old, ini)
                 pytest.fail(f"DLNA server not listening on {dlna_port}")

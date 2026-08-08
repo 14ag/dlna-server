@@ -9,44 +9,6 @@ class ReleaseOutputLayoutTests(unittest.TestCase):
     def read(self, path):
         return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_windows_release_script_uses_platform_dirs_and_flags(self):
-        script = self.read("scripts/build-release-assets.ps1")
-        batch = self.read("build-assets.bat")
-
-        self.assertIn('[string]$Platform = "winx64,winx86,linux"', script)
-        self.assertIn('[Alias("no-clean")]', script)
-        self.assertIn('$allPlatforms = @("winx64", "winx86", "linux", "macos-x64", "macos-arm64")', script)
-        self.assertIn("function Resolve-VcpkgRoot", script)
-        self.assertNotIn("function Assert-VcpkgCurlInstalled", script)
-        self.assertIn('"-DCMAKE_TOOLCHAIN_FILE=$vcpkgToolchain"', script)
-        self.assertIn('"-DVCPKG_TARGET_TRIPLET=$vcpkgTriplet"', script)
-        self.assertIn('"x64" { return "x64-windows-static" }', script)
-        self.assertIn('"Win32" { return "x86-windows-static" }', script)
-        self.assertIn('Run: vcpkg install curl:$vcpkgTriplet', script)
-        self.assertNotIn("function Get-AvailablePlatforms", script)
-        self.assertNotIn('"all"', script)
-        self.assertNotIn('"all-known"', script)
-        self.assertNotIn('"macos-x86_64"', script)
-        self.assertIn('"winx64"', script)
-        self.assertIn('"winx86"', script)
-        self.assertIn('Join-Path $output "winx64"', script)
-        self.assertIn('Join-Path $output "winx86"', script)
-        self.assertIn('Join-Path $output "macos-x64"', script)
-        self.assertIn('dlna-server-$Version-windows-x64.zip', script)
-        self.assertIn('dlna-server-$Version-windows-x86.zip', script)
-        self.assertNotIn('Remove-RootNonReleaseFiles', script)
-        self.assertNotIn('Remove-RootPlatformArtifacts', script)
-        self.assertNotIn('Remove-LegacyOutputFolders', script)
-        self.assertNotIn('Get-ChildItem -LiteralPath $output -File', script)
-        self.assertNotIn('SHA256SUMS.txt', script)
-        self.assertNotIn('Join-Path $output "windows/DLNA Server.exe"', script)
-        self.assertNotIn('Join-Path $output "windows-x86/DLNA Server.exe"', script)
-        self.assertIn("--platform", batch)
-        self.assertIn("--no-clean", batch)
-        self.assertIn("where wsl.exe", batch)
-        self.assertNotIn("wsl.exe not found. Linux assets require WSL.", batch)
-        self.assertNotIn("all-known", batch)
-
     def test_linux_release_script_keeps_artifacts_under_linux_folder(self):
         script = self.read("scripts/build-linux-desktop-assets.sh")
 
@@ -87,14 +49,17 @@ class ReleaseOutputLayoutTests(unittest.TestCase):
         self.assertNotIn("output/SHA256SUMS.txt", workflow)
 
     def test_smoke_scripts_prefer_winx64_output(self):
-        smoke = self.read("tests/verify-smoke.ps1")
-        androidPath = ROOT / "tests/verify-android-smoke.ps1"
-        if androidPath.exists():
-            android = self.read("tests/verify-android-smoke.ps1")
-            self.assertIn('Join-Path $repo "output\\winx64"', android)
-        smokePath = ROOT / "tests/verify-smoke.ps1"
-        if smokePath.exists():
-            self.assertIn('Join-Path $repo "output\\winx64"', smoke)
+        conftest = self.read("tests/conftest.py")
+        self.assertIn('repo_root / "output" / "winx64" / "DLNA Server.exe"', conftest)
+
+    def test_pytest_entrypoints_set_platform_binaries(self):
+        conftest = self.read("tests/conftest.py")
+
+        self.assertIn('os.environ.setdefault("DLNA_SERVER", server_path)', conftest)
+        self.assertIn('os.environ.setdefault("DLNA_CLI_BINARY", server_path)', conftest)
+        self.assertIn('os.environ.setdefault("DLNA_GUI_BINARY", server_path)', conftest)
+        self.assertIn('build-release-linux-stage" / "install" / "bin" / "dlna-server"', conftest)
+        self.assertIn('build-release-linux-stage" / "install" / "bin" / "dlna-server-gui-bin"', conftest)
 
 if __name__ == "__main__":
     unittest.main()

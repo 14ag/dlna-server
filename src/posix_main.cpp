@@ -1,18 +1,33 @@
 #include "config.h"
 #include "dlna_utils.h"
+#include "network_interface_policy.h"
+#include "http_common.h"
+#include "media_scan_common.h"
 #include "log.h"
 #include "netutils.h"
 #include "access_keys.h"
+#include "function_key_action.h"
 #include "hover_focus_state.h"
+#include "source_drop_policy.h"
 #include "input_gate.h"
 #include "network_sources.h"
 #include "playlist_scan_concurrency.h"
+#include "media_sources.h"
+#include "media_source_file_types.h"
+#include "thread_guard.h"
 #include "scan_cancellation.h"
 #include "server.h"
 #include "upnp_eventing.h"
+#include "transmitfile_chunking.h"
+#include "close_pending_state.h"
 #include "server_close_policy.h"
+#include "tray_notify.h"
 #include "settings_restart.h"
 #include "startup_mode.h"
+#include "posix_single_instance.h"
+#include "copydata_validation.h"
+#include "media_database.h"
+#include "browse_page_cap.h"
 
 #include <atomic>
 #include <chrono>
@@ -21,6 +36,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 
 namespace {
@@ -28,6 +44,12 @@ std::atomic<bool> g_stop(false);
 
 void HandleSignal(int) {
     g_stop = true;
+}
+
+void OnSingleInstanceCommand(const std::string& cmd) {
+    if (cmd == "kill") {
+        g_stop = true;
+    }
 }
 
 void PrintUsage(const char* exe) {
@@ -67,8 +89,17 @@ int main(int argc, char** argv) {
             AppConfig.SetRuntimeSourceOverride(immediateOverride);
         }
         else if (arg == "--kill-server" || arg == "-k") {
-            std::cerr << "kill-server is not supported on this platform" << std::endl;
-            return 1;
+            if (!SingleInstance::SendKill()) {
+                std::cerr << "No running dlna-server instance found." << std::endl;
+                return 1;
+            }
+            return 0;
+        }
+        else if (arg == "--headless" || arg == "-h") {
+            // No-op: the POSIX build has no GUI/console distinction, the
+            // server always runs without a window. Accepted for symmetry
+            // with the Win32 binary (main.cpp) so tests and wrappers that
+            // pass --headless do not have it mis-parsed as a media source.
         }
         else if (arg == "--print-scan-cancellation-lifecycle") {
             AppScanCancel.BeginScan();
@@ -77,6 +108,38 @@ int main(int argc, char** argv) {
             std::cout << (AppScanCancel.IsCancelled() ? "1" : "0") << std::endl;
             AppScanCancel.BeginScan();
             std::cout << (AppScanCancel.IsCancelled() ? "1" : "0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-single-instance-lifecycle") {
+            const bool acquired = SingleInstance::TryAcquireLock();
+            std::cout << (acquired ? "lock-acquired" : "lock-busy") << std::endl;
+            if (acquired) {
+                SingleInstance::StartListening([](const std::string&) {});
+                const bool sent = SingleInstance::SendShow();
+                std::cout << (sent ? "show-sent" : "show-failed") << std::endl;
+                SingleInstance::ReleaseLock();
+                std::cout << "released" << std::endl;
+            }
+            return 0;
+        }
+        else if (arg == "--print-log-since-lifecycle") {
+            LogPrint(L"line-one");
+            LogPrint(L"line-two");
+            LogSnapshot first = GetSystemLogSince(0);
+            std::wcout << L"first-latest=" << first.latestSequence << std::endl;
+            LogPrint(L"line-three");
+            LogSnapshot second = GetSystemLogSince(first.latestSequence);
+            std::wcout << L"second-latest=" << second.latestSequence << std::endl;
+            std::wcout << (second.text.find(L"line-three") != std::wstring::npos
+                                ? L"has-new-line" : L"missing-new-line") << std::endl;
+            std::wcout << (second.text.find(L"line-one") != std::wstring::npos
+                                ? L"leaked-old-line" : L"no-old-line-leak") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-config-load-lockstate") {
+            std::cout << "before load" << std::endl;
+            AppConfig.Load();
+            std::cout << "after load ok" << std::endl;
             return 0;
         }
         else if (arg == "--print-scan-concurrency" && i + 1 < argc) {
@@ -149,6 +212,20 @@ int main(int argc, char** argv) {
             std::cout << (AnyFieldHasContent(lens) ? "1" : "0") << std::endl;
             return 0;
         }
+        else if (arg == "--print-function-key-action" && i + 4 < argc) {
+            int vkCode = std::atoi(argv[++i]);
+            bool isRunning = std::string(argv[++i]) == "1";
+            bool isBusy = std::string(argv[++i]) == "1";
+            bool isScanning = std::string(argv[++i]) == "1";
+            switch (DecideFunctionKeyAction(vkCode, isRunning, isBusy, isScanning)) {
+            case FunctionKeyAction::ShowHelp: std::cout << "show-help" << std::endl; break;
+            case FunctionKeyAction::Rescan: std::cout << "rescan" << std::endl; break;
+            case FunctionKeyAction::RefreshSourceList: std::cout << "refresh-source-list" << std::endl; break;
+            case FunctionKeyAction::ShowSourceListContextMenu: std::cout << "show-context-menu" << std::endl; break;
+            case FunctionKeyAction::None: std::cout << "none" << std::endl; break;
+            }
+            return 0;
+        }
         else if (arg == "--print-is-recognized-playlist" && i + 2 < argc) {
             std::wstring path = Utf8ToWide(argv[++i]);
             std::wstring textFilePath = Utf8ToWide(argv[++i]);
@@ -180,6 +257,29 @@ int main(int argc, char** argv) {
             std::wcout << ResolveRelativeUrl(baseUrl, relativeUrl) << std::endl;
             return 0;
         }
+        else if (arg == "--print-media-resource-url-suffix" && i + 1 < argc) {
+            std::cout << BuildMediaResourceUrlExtensionSuffix(Utf8ToWide(argv[++i])) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-strip-resource-id-extension" && i + 1 < argc) {
+            std::cout << StripResourceIdExtension(argv[++i]) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-movie-title-from-path" && i + 1 < argc) {
+            // mirrors settingsdlg cpp MovieTitleFromPath on windows
+            // uses SourceStemName with a Media item fallback for an empty stem
+            std::wstring path = Utf8ToWide(argv[++i]);
+            std::wstring stem = SourceStemName(path);
+            std::wcout << (stem.empty() ? L"Media item" : stem) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-media-display-title" && i + 3 < argc) {
+            bool showFileNames = std::string(argv[++i]) == "1";
+            std::wstring titleOverride = Utf8ToWide(argv[++i]);
+            std::wstring path = Utf8ToWide(argv[++i]);
+            std::wcout << BuildDisplayTitleForMediaFile(showFileNames, titleOverride, path) << std::endl;
+            return 0;
+        }
         else if (arg == "--print-rewrite-hls-manifest" && i + 2 < argc) {
             std::wstring baseUrl = Utf8ToWide(argv[++i]);
             std::wstring textFilePath = Utf8ToWide(argv[++i]);
@@ -199,6 +299,57 @@ int main(int argc, char** argv) {
             bool isRunning = std::string(argv[++i]) == "1";
             bool isBusy = std::string(argv[++i]) == "1";
             std::wcout << (ShouldCloseNow(isRunning, isBusy) ? L"1" : L"0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-is-plausible-copydata-size" && i + 1 < argc) {
+            unsigned long cbData = std::strtoul(argv[++i], nullptr, 10);
+            std::wcout << (IsPlausibleWideStringCopyDataSize(cbData) ? L"1" : L"0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-media-database-id-reuse-lifecycle") {
+            MediaDatabase db;
+            std::wstring dbPath = L"test-media-cache-reuse.tsv"; // pytest passes a per-test tmp_path-scoped CWD
+            db.Load(dbPath); // fresh/empty file is fine, Load() tolerates a missing file
+            db.BeginScanPass();
+            int idA = db.GetOrCreateStableId(L"key-a");
+            int idB = db.GetOrCreateStableId(L"key-b");
+            int idC = db.GetOrCreateStableId(L"key-c");
+            std::wcout << L"initial=" << idA << L"," << idB << L"," << idC << std::endl;
+            // Simulate a second pass where key-b is no longer present.
+            db.BeginScanPass();
+            db.GetOrCreateStableId(L"key-a");
+            db.GetOrCreateStableId(L"key-c");
+            size_t pruned = db.PruneUntouched();
+            std::wcout << L"pruned=" << pruned << std::endl;
+            // A brand-new key in the THIRD pass should reuse key-b's freed ID
+            // rather than allocating a fresh one.
+            db.BeginScanPass();
+            db.GetOrCreateStableId(L"key-a");
+            db.GetOrCreateStableId(L"key-c");
+            int idD = db.GetOrCreateStableId(L"key-d");
+            std::wcout << L"reused=" << idD << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-media-database-id-overflow-guard" && i + 1 < argc) {
+            MediaDatabase db;
+            db.Load(Utf8ToWide(argv[++i]));
+            db.BeginScanPass();
+            int idA = db.GetOrCreateStableId(L"new-key-a");
+            int idB = db.GetOrCreateStableId(L"new-key-b");
+            std::wcout << idA << std::endl;
+            std::wcout << idB << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-clamp-browse-requested-count" && i + 2 < argc) {
+            int requestedCount = std::atoi(argv[++i]);
+            int available = std::atoi(argv[++i]);
+            std::cout << ClampBrowseRequestedCount(requestedCount, available) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-should-drop-link-local-endpoint" && i + 2 < argc) {
+            bool candidateIsLinkLocal = std::string(argv[++i]) == "1";
+            bool anyNonLinkLocalExists = std::string(argv[++i]) == "1";
+            std::cout << (ShouldDropLinkLocalEndpoint(candidateIsLinkLocal, anyNonLinkLocalExists) ? "1" : "0") << std::endl;
             return 0;
         }
         else if (arg == "--print-debug-log-requires-restart" && i + 2 < argc) {
@@ -250,8 +401,136 @@ int main(int argc, char** argv) {
             std::cout << second << std::endl;
             return 0;
         }
+        else if (arg == "--print-routable-host-cache-invalidation") {
+            long before = GetRoutableHostUrlRecomputeCountForTest();
+            GetRoutableHostUrl(9200, L"");
+            long afterFirst = GetRoutableHostUrlRecomputeCountForTest();
+            GetRoutableHostUrl(9200, L"");
+            long afterSecondSamePort = GetRoutableHostUrlRecomputeCountForTest();
+            InvalidateRoutableHostUrlCache();
+            GetRoutableHostUrl(9200, L"");
+            long afterInvalidate = GetRoutableHostUrlRecomputeCountForTest();
+            std::cout << "before=" << before << std::endl;
+            std::cout << "after-first-call=" << afterFirst << std::endl;
+            std::cout << "after-second-call-same-port=" << afterSecondSamePort << std::endl;
+            std::cout << "after-invalidate-then-call=" << afterInvalidate << std::endl;
+            return 0;
+        }
         else if (arg == "--print-notify-pool-worker-count") {
             std::cout << kMaxUpnpNotifyWorkers << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-should-allow-source-drop" && i + 1 < argc) {
+            // ShouldAllowSourceDrop now lives in source drop policy h
+            // no ole drop target exists on posix today
+            // this only regression tests the pure boolean rule itself
+            bool busyOrRunning = std::string(argv[++i]) == "1";
+            std::cout << (ShouldAllowSourceDrop(busyOrRunning) ? "1" : "0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-should-use-unlisted-interface" && i + 2 < argc) {
+            bool isVirtual = std::string(argv[++i]) == "1";
+            bool hasGateway = std::string(argv[++i]) == "1";
+            std::wcout << (ShouldUseUnlistedInterface(isVirtual, hasGateway) ? L"1" : L"0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-transmitfile-chunk-plan" && i + 1 < argc) {
+            // ComputeTransmitFileChunkSizes has no windows types
+            // exercised here on posix purely for cross platform coverage
+            // posix httpserver cpp itself calls sendfile not TransmitFile
+            // see TrySendFile in posix httpserver cpp for the actual posix transfer path
+            long long totalBytes = std::atoll(argv[++i]);
+            for (long long chunkSize : ComputeTransmitFileChunkSizes(totalBytes)) {
+                std::cout << chunkSize << std::endl;
+            }
+            return 0;
+        }
+        else if (arg == "--print-network-endpoint-count" && i + 1 < argc) {
+            int testPort = 0;
+            if (!TryParsePortStrict(argv[++i], testPort)) testPort = 8200;
+            std::vector<NetworkEndpoint> endpoints;
+            EnumerateNetworkEndpoints(testPort, L"", endpoints);
+            std::cout << endpoints.size() << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-sockaddr-length-safety" && i + 2 < argc) {
+            // IsSockaddrLengthSafeToCopy has no windows types
+            // lives in netutils h shared by both platforms already
+            int reportedLength = std::atoi(argv[++i]);
+            int destinationCapacity = std::atoi(argv[++i]);
+            std::cout << (IsSockaddrLengthSafeToCopy(reportedLength, static_cast<size_t>(destinationCapacity)) ? "1" : "0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-tray-notify-decode" && i + 2 < argc) {
+            unsigned long rawLParam = static_cast<unsigned long>(std::strtoul(argv[++i], nullptr, 0));
+            unsigned short expectedIconId = static_cast<unsigned short>(std::atoi(argv[++i]));
+            switch (DecodeTrayNotifyEvent(rawLParam, expectedIconId)) {
+            case TrayNotifyAction::Activate: std::cout << "activate" << std::endl; break;
+            case TrayNotifyAction::ShowMenu: std::cout << "showmenu" << std::endl; break;
+            case TrayNotifyAction::None: std::cout << "none" << std::endl; break;
+            }
+            return 0;
+        }
+        else if (arg == "--print-debug-log-session-truncation" && i + 1 < argc) {
+            std::string path = argv[++i];
+            {
+                std::ofstream leftover(path, std::ios::binary | std::ios::trunc);
+                leftover << "leftover line from a previous session\n";
+            }
+            FILE* first = OpenOrReuseDebugLogFile(path);
+            if (first) {
+                std::fprintf(first, "session line one\n");
+                std::fflush(first);
+            }
+            FILE* second = OpenOrReuseDebugLogFile(path);
+            if (second) {
+                std::fprintf(second, "session line two\n");
+                std::fflush(second);
+            }
+            std::cout << (first == second ? "same-handle-reused=1" : "same-handle-reused=0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-close-pending-lifecycle") {
+            ClosePendingState state;
+            std::wcout << L"initial-pending=" << (state.IsPending() ? 1 : 0) << std::endl;
+
+            state.RequestCloseOnceStopped();
+            std::wcout << L"after-request-pending=" << (state.IsPending() ? 1 : 0) << std::endl;
+
+            bool closeNow = state.ShouldCloseNowAfterOperation(true);
+            std::wcout << L"stop-completes-close-now=" << (closeNow ? 1 : 0) << std::endl;
+            std::wcout << L"after-close-pending=" << (state.IsPending() ? 1 : 0) << std::endl;
+
+            ClosePendingState restartCase;
+            restartCase.RequestCloseOnceStopped();
+            bool stopAgain = restartCase.ShouldStopAgainAfterOperation(true);
+            std::wcout << L"restart-reaches-running-stop-again=" << (stopAgain ? 1 : 0) << std::endl;
+            std::wcout << L"restart-still-pending=" << (restartCase.IsPending() ? 1 : 0) << std::endl;
+            bool closeNowAfterSecondStop = restartCase.ShouldCloseNowAfterOperation(true);
+            std::wcout << L"second-stop-completes-close-now=" << (closeNowAfterSecondStop ? 1 : 0) << std::endl;
+
+            ClosePendingState neverRequested;
+            std::wcout << L"never-requested-pending=" << (neverRequested.IsPending() ? 1 : 0) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-config-path") {
+            std::wcout << AppConfig.GetConfigPath() << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-default-playlist-path") {
+            // mirrors the windows F-02 regression hook in main cpp
+            // confirms GetDefaultPlaylistPath still resolves next to the config file
+            std::wcout << AppConfig.GetDefaultPlaylistPath() << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-resolve-bundled-resource" && i + 1 < argc) {
+            std::cout << ResolveBundledResourcePath(argv[++i]) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-media-source-file-extensions") {
+            for (const auto& ext : GetMediaSourceFileExtensions()) {
+                std::wcout << ext << std::endl;
+            }
             return 0;
         }
         else if (arg == "--print-media-sources") {
@@ -305,8 +584,66 @@ int main(int argc, char** argv) {
             for (auto& s : AppConfig.Snapshot().effectiveMediaSources) std::wcout << s.path << std::endl;
             return 0;
         }
+        else if (arg == "--print-concurrent-start-rescan-safety") {
+            std::thread rescanThread([]() { DLNAServer.Rescan(); });
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            rescanThread.join();
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+            int leafMediaItems = 0;
+            for (const auto& item : AppMedia.GetDescendants(0)) {
+                if (!item.isFolder) ++leafMediaItems;
+            }
+            std::wcout << L"leaf-media-items=" << leafMediaItems << std::endl;
+            DLNAServer.Stop();
+            std::wcout << L"done" << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-single-file-source-scan") {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            if (!startOk) {
+                std::wcerr << L"start failed: " << reason << std::endl;
+                return 1;
+            }
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            int leafMediaItems = 0;
+            std::wstring firstPath, firstMime, firstClass;
+            for (const auto& item : AppMedia.GetDescendants(0)) {
+                if (!item.isFolder) {
+                    ++leafMediaItems;
+                    if (leafMediaItems == 1) {
+                        firstPath = item.path;
+                        firstMime = item.mimeType;
+                        firstClass = item.upnpClass;
+                    }
+                }
+            }
+            std::wcout << L"leaf-media-items=" << leafMediaItems << std::endl;
+            std::wcout << L"first-path=" << firstPath << std::endl;
+            std::wcout << L"first-mime=" << firstMime << std::endl;
+            std::wcout << L"first-class=" << firstClass << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
+        else if (arg == "--print-thread-guard-behavior") {
+            RunGuarded(L"test-thread", []() {
+                throw std::runtime_error("synthetic-test-exception");
+            });
+            std::cout << "guard-caught-exception=1" << std::endl;
+            return 0;
+        }
         else if (arg == "--debug") AppConfig.debugLog = true;
-        else if (arg == "--help") { PrintUsage(argv[0]); return 0; }
+        else if (arg == "--help") {
+            PrintUsage(argv[0]);
+            std::cerr.flush();
+            return 0;
+        }
         else runtimeSources.push_back(Utf8ToWide(arg));
     }
     if (!runtimeSources.empty()) {
@@ -320,9 +657,24 @@ int main(int argc, char** argv) {
         PrintUsage(argv[0]);
         return 2;
     }
+
     std::signal(SIGPIPE, SIG_IGN);
     std::signal(SIGINT, HandleSignal);
     std::signal(SIGTERM, HandleSignal);
+
+    // Single-instance lock: if another instance is already running,
+    // try to show its window and exit.
+    if (!SingleInstance::TryAcquireLock()) {
+        if (SingleInstance::SendShow()) {
+            return 0;
+        }
+        std::cerr << "Another instance of dlna-server is already running." << std::endl;
+        return 1;
+    }
+    // Listen for IPC commands from short-lived --kill-server/--print-*
+    // second instances (a second instance requests a graceful stop via
+    // the "kill" command; see OnSingleInstanceCommand).
+    SingleInstance::StartListening(OnSingleInstanceCommand);
     std::wstring outReason;
     if (!DLNAServer.Start(outReason)) {
         std::wcerr << L"Failed to start server: " << outReason << std::endl;
@@ -330,5 +682,6 @@ int main(int argc, char** argv) {
     }
     while (!g_stop) std::this_thread::sleep_for(std::chrono::milliseconds(200));
     DLNAServer.Stop();
+    SingleInstance::ReleaseLock();
     return 0;
 }

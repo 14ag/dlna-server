@@ -227,12 +227,22 @@ std::wstring Config::GenerateUUID() {
 }
 
 std::wstring Config::GetDefaultPlaylistPath() {
+    // F-02: previously copied GetConfigPath()'s result into a fixed
+    // wchar_t[MAX_PATH] buffer via wcscpy_s before stripping the
+    // filename and appending "default.m3u" with PathRemoveFileSpecW /
+    // PathAppendW. Not reachable today because GetConfigPath() is
+    // itself bounded to MAX_PATH, but the pattern is fragile: it would
+    // silently become an F-01-class crash risk if GetConfigPath() ever
+    // starts returning a longer path. This is the same
+    // strip-filename-then-append-sibling-filename idiom already used
+    // (correctly, with no fixed buffer) by
+    // MediaDatabase::DefaultDatabasePath() in media_database.cpp and by
+    // the POSIX build's own Config::GetDefaultPlaylistPath() in
+    // posix_config.cpp -- reused here rather than reinvented.
     std::wstring path = GetConfigPath();
-    wchar_t buffer[MAX_PATH] = {};
-    wcscpy_s(buffer, path.c_str());
-    PathRemoveFileSpecW(buffer);
-    PathAppendW(buffer, L"default.m3u");
-    return buffer;
+    size_t slash = path.find_last_of(L"\\/");
+    std::wstring dir = slash == std::wstring::npos ? L"" : path.substr(0, slash + 1);
+    return dir + L"default.m3u";
 }
 
 void Config::SetRunOnBoot(bool enable) {
@@ -350,9 +360,23 @@ void Config::Save() {
     ss << "NetworkInterfaceAllowList=" << WideToUtf8(networkInterfaceAllowList) << "\n";
 
     static const std::string bom = "\xEF\xBB\xBF";
-    if (!WriteFileAtomicUtf8(path, bom + ss.str())) {
+    const std::string fileContent = bom + ss.str();
+    const bool runOnBootLocal = runOnBoot;
+    // Every field this function needs has already been copied into
+    // path/fileContent/runOnBootLocal above, all while m_mutex was held,
+    // so this is a consistent snapshot. Release the lock BEFORE touching
+    // disk: WriteFileAtomicUtf8() below is a synchronous write + rename
+    // that can take milliseconds under normal conditions and far longer
+    // under disk contention, and holding m_mutex (a shared_mutex)
+    // exclusively across it blocks every concurrent reader -- including
+    // AppConfig.GetPort()/IsDebugLogEnabled(), called on every HTTP
+    // request by httpserver.cpp/posix_httpserver.cpp's HandleClient().
+    // See F-LOCK-01.
+    lock.unlock();
+    const bool writeOk = WriteFileAtomicUtf8(path, fileContent);
+    if (!writeOk) {
         LogPrint(L"Config save failed: %ls", path.c_str());
     }
 
-    SetRunOnBoot(runOnBoot);
+    SetRunOnBoot(runOnBootLocal);
 }

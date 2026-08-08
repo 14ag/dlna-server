@@ -15,6 +15,19 @@ struct MediaIndexState;
 
 std::wstring ContainerLookupKey(int parentId, const std::wstring& title, const std::wstring& keyPath);
 
+// selects the dc title for a scanned media file in exactly the
+// same order MediaSources AddMediaFile used to inline
+// showFileNamesInsteadOfTitles wins first keeps the full file name
+// and its extension a nonempty titleOverride from a playlist EXTINF
+// line wins second and is never modified otherwise the file stem
+// plus its extension is used so the file type stays visible to
+// renderers that infer it from the displayed name see the workflow
+// document part 1 symptom 1c for the reference implementations this
+// default title format matches
+std::wstring BuildDisplayTitleForMediaFile(bool showFileNamesInsteadOfTitles,
+                                              const std::wstring& titleOverride,
+                                              const std::wstring& path);
+
 std::wstring BuildStableContainerKey(int parentId, const std::wstring& title, const std::wstring& keyPath,
                                      std::function<std::wstring(const std::wstring&)> canonicalize);
 

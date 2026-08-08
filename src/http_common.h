@@ -14,6 +14,12 @@ bool ShouldKeepAlive(const std::string& req);
 std::string SplitRequestTarget(const std::string& requestTarget);
 bool ValidateHostHeader(const std::string& host);
 
+// strips an optional trailing dot extension segment for example
+// turns 123 dot mkv into 123 leaving only the leading digits so
+// the caller can hand the result to TryParseIntStrict the media
+// subtitle and albumart routes all share this parsing shape
+std::string StripResourceIdExtension(const std::string& idAndSuffix);
+
 // recvOnce must behave like POSIX recv()/Winsock recv(): read up to the
 // requested byte count into the buffer, return the byte count read, 0 on
 // orderly shutdown, or a negative value on error. Callers supply a lambda

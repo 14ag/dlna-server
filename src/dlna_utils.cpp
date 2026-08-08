@@ -374,6 +374,12 @@ std::string GetDlnaServerHeader() {
 #endif
 }
 
+std::string BuildMediaResourceUrlExtensionSuffix(const std::wstring& sourcePath) {
+    std::wstring ext = SourceExtension(sourcePath);
+    if (ext.empty()) return std::string();
+    return WideToUtf8(ext);
+}
+
 std::string SubtitleMimeForExtension(const std::wstring& ext) {
     std::wstring lower = ToLowerWide(ext);
     if (lower == L".srt") return "text/srt; charset=utf-8";

@@ -2,6 +2,7 @@ import os
 import socket
 import subprocess
 import time
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -18,6 +19,70 @@ from tests.fixtures.soap_client import (
 
 if os.name == "nt":
     import ctypes
+
+
+def _pick_existing_binary(paths):
+    for path in paths:
+        if path.is_file():
+            if os.name == "nt" or os.access(path, os.X_OK):
+                return str(path)
+    return None
+
+
+def _configure_binary_envs():
+    root = Path(__file__).resolve().parent
+    repo_root = root.parent
+
+    if os.name == "nt":
+        server = repo_root / "output" / "winx64" / "DLNA Server.exe"
+        if server.is_file():
+            server_path = str(server)
+            os.environ.setdefault("DLNA_SERVER", server_path)
+            os.environ.setdefault("DLNA_CLI_BINARY", server_path)
+            os.environ.setdefault("DLNA_GUI_BINARY", server_path)
+        return
+
+    build_root = Path(os.environ.get("DLNA_BUILD_ROOT", Path.home() / "dlna-server-build"))
+    server = _pick_existing_binary([
+        repo_root / "build-release-linux-stage" / "install" / "bin" / "dlna-server",
+        build_root / "build-release-linux-stage" / "install" / "bin" / "dlna-server",
+        Path("/usr/bin/dlna-server"),
+        Path("/usr/local/bin/dlna-server"),
+    ])
+    gui = _pick_existing_binary([
+        repo_root / "build-release-linux-stage" / "install" / "bin" / "dlna-server-gui-bin",
+        build_root / "build-release-linux-stage" / "install" / "bin" / "dlna-server-gui-bin",
+        Path("/usr/bin/dlna-server-gui-bin"),
+        Path("/usr/local/bin/dlna-server-gui-bin"),
+    ])
+    if gui is None:
+        gui = server
+    if server is None:
+        server = gui
+    if gui:
+        os.environ.setdefault("DLNA_GUI_BINARY", gui)
+    if server:
+        os.environ.setdefault("DLNA_SERVER", server)
+        os.environ.setdefault("DLNA_CLI_BINARY", server)
+
+
+_configure_binary_envs()
+
+
+def pytest_collection_modifyitems(config, items):
+    deselected = []
+    remaining = []
+    for item in items:
+        if os.name == "nt" and item.get_closest_marker("posix_only"):
+            deselected.append(item)
+            continue
+        if os.name != "nt" and item.get_closest_marker("windows_only"):
+            deselected.append(item)
+            continue
+        remaining.append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = remaining
 
 
 class ServerClient:
@@ -79,9 +144,28 @@ def _free_port():
         return s.getsockname()[1]
 
 
-def _launch_server(binary_path, port, media_source_dir):
-    binary_dir = Path(binary_path).parent
-    config_ini = binary_dir / "config.ini"
+def _launch_server(binary_path, port, media_source_dir, config_dir=None):
+    binary_path = Path(binary_path)
+    if config_dir is None:
+        if os.name == "nt":
+            config_dir = binary_path.parent
+        else:
+            config_dir = Path(tempfile.mkdtemp(prefix="dlna-config-"))
+    else:
+        config_dir = Path(config_dir)
+
+    # Determine config file path based on platform
+    if os.name != "nt":
+        # POSIX: server reads from XDG_CONFIG_HOME/dlna-server/config.ini
+        config_subdir = config_dir / "dlna-server"
+        config_subdir.mkdir(parents=True, exist_ok=True)
+        config_ini = config_subdir / "config.ini"
+    else:
+        # Windows: server reads config.ini from its own directory.
+        # Tests still pass a temp config_dir for POSIX symmetry, but the
+        # binary resolves next to its executable, so keep the file there.
+        config_dir = binary_path.parent
+        config_ini = config_dir / "config.ini"
 
     old_config = None
     if config_ini.exists():
@@ -97,9 +181,27 @@ def _launch_server(binary_path, port, media_source_dir):
 
     env = os.environ.copy()
     env["DLNA_SERVER_SKIP_FIREWALL"] = "1"
+    if os.name != "nt":
+        env["XDG_CONFIG_HOME"] = str(config_dir)
+        env["HOME"] = str(config_dir)
+        env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="dlna-runtime-")
+        # Clean up any instance left over from a previous launch that shared
+        # this runtime dir before starting a fresh one. Best-effort: exits
+        # non-zero when no instance is listening (fresh dir), which is fine.
+        try:
+            subprocess.run(
+                [str(binary_path), "--kill-server"],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
 
     proc = subprocess.Popen(
-        [str(Path(binary_path)), "--headless"],
+        [str(binary_path), "--headless"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
@@ -119,6 +221,22 @@ def _launch_server(binary_path, port, media_source_dir):
     return proc, connected, old_config, config_ini
 
 
+def server_config_root(binary_path, config_root=None):
+    binary_path = Path(binary_path)
+    if os.name == "nt":
+        return binary_path.parent
+    if config_root is None:
+        return Path(tempfile.mkdtemp(prefix="dlna-config-"))
+    return Path(config_root)
+
+
+def server_config_ini_path(binary_path, config_root=None):
+    root = server_config_root(binary_path, config_root)
+    if os.name == "nt":
+        return root / "config.ini"
+    return root / "dlna-server" / "config.ini"
+
+
 def _teardown_server(proc, old_config, config_ini):
     proc.terminate()
     try:
@@ -135,19 +253,40 @@ def _teardown_server(proc, old_config, config_ini):
 
 @pytest.fixture
 def dlna_binary():
+    # DLNA_SERVER env var overrides all auto-detection
+    env_path = os.environ.get("DLNA_SERVER")
+    if env_path:
+        p = Path(env_path)
+        if p.exists():
+            return str(p)
+        pytest.skip(f"DLNA_SERVER={env_path} set but binary not found")
+
     root = Path(__file__).resolve().parent
-    candidates = [
-        root.parent / "output" / "winx64" / "DLNA Server.exe",
-        root.parent / "build_winx64" / "Release" / "DLNA Server.exe",
-        root.parent / "build_winx64" / "Debug" / "DLNA Server.exe",
-        root / "build_winx64" / "Release" / "DLNA Server.exe",
-        root / "build_winx64" / "Debug" / "DLNA Server.exe",
-        root.parent / "output" / "winx64" / "build" / "Release" / "DLNA Server.exe",
-    ]
+    candidates = []
+
+    if os.name == "nt":
+        candidates = [
+            root.parent / "output" / "winx64" / "DLNA Server.exe",
+            root.parent / "build_winx64" / "Release" / "DLNA Server.exe",
+            root.parent / "build_winx64" / "Debug" / "DLNA Server.exe",
+            root / "build_winx64" / "Release" / "DLNA Server.exe",
+            root / "build_winx64" / "Debug" / "DLNA Server.exe",
+            root.parent / "output" / "winx64" / "build" / "Release" / "DLNA Server.exe",
+        ]
+    else:
+        # POSIX (Linux/macOS) fallback paths
+        candidates = [
+            root.parent / "output" / "linux" / "dlna-server",
+            root.parent / "build" / "dlna-server",
+            root.parent / "build-test" / "dlna-server",
+            root.parent / "build-release-linux-stage" / "usr" / "bin" / "dlna-server",
+        ]
+
     for path in candidates:
         if path.exists():
             return str(path)
-    pytest.skip("DLNA Server executable not found")
+    pytest.skip("DLNA Server executable not found" +
+                (" (set DLNA_SERVER env var to path)" if os.name != "nt" else ""))
 
 
 @pytest.fixture
@@ -163,7 +302,8 @@ def running_server(dlna_binary, media_source_dir):
     port = _free_port()
 
     proc, connected, old_config, config_ini = _launch_server(
-        binary_path, port, media_source_dir)
+        binary_path, port, media_source_dir,
+        config_dir=media_source_dir.parent)
 
     if not connected:
         _teardown_server(proc, old_config, config_ini)

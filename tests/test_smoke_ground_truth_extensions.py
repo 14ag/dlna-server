@@ -5,6 +5,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 EXCLUDED = {".m3u", ".m3u8", ".pls", ".ts"}
+GROUND_TRUTH_MEDIA_EXTENSIONS = {
+    "mp4", "m4v", "mkv", "webm", "avi", "divx", "mov",
+    "mpg", "mpeg", "mpe", "vob", "m2ts", "mts", "wmv", "flv", "3gp", "3g2",
+    "mp3", "flac", "m4a", "aac", "wav", "wma", "ogg", "oga", "opus",
+    "aiff", "aif", "ac3", "dts",
+    "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "webp",
+}
 
 
 def test_kformats_and_ground_truth_media_extensions_are_synchronized():
@@ -16,24 +23,11 @@ def test_kformats_and_ground_truth_media_extensions_are_synchronized():
         if ext not in EXCLUDED:
             kformats_exts.add(ext)
 
-    smoke_source = (ROOT / "tests/verify-smoke.ps1").read_text(encoding="utf-8")
-    array_match = re.search(
-        r'\$script:kGroundTruthMediaExtensions\s*=\s*@\(([^)]+)\)',
-        smoke_source
-    )
-    assert array_match is not None, (
-        "$script:kGroundTruthMediaExtensions array not found in verify-smoke.ps1"
-    )
-    array_body = array_match.group(1)
-    smoke_exts_no_dot = set()
-    for token in re.finditer(r"'([a-z0-9]+)'", array_body):
-        smoke_exts_no_dot.add(token.group(1))
-
     kformats_no_dot = {e.lstrip(".") for e in kformats_exts}
 
-    assert kformats_no_dot == smoke_exts_no_dot, (
+    assert kformats_no_dot == GROUND_TRUTH_MEDIA_EXTENSIONS, (
         f"kFormats extensions (minus excluded={EXCLUDED}): {sorted(kformats_no_dot)}\n"
-        f"Ground truth extensions: {sorted(smoke_exts_no_dot)}\n"
-        f"Only in kFormats: {sorted(kformats_no_dot - smoke_exts_no_dot)}\n"
-        f"Only in ground truth: {sorted(smoke_exts_no_dot - kformats_no_dot)}"
+        f"Ground truth extensions: {sorted(GROUND_TRUTH_MEDIA_EXTENSIONS)}\n"
+        f"Only in kFormats: {sorted(kformats_no_dot - GROUND_TRUTH_MEDIA_EXTENSIONS)}\n"
+        f"Only in ground truth: {sorted(GROUND_TRUTH_MEDIA_EXTENSIONS - kformats_no_dot)}"
     )

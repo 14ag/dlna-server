@@ -1,9 +1,12 @@
 import re
 import subprocess
 import time
+import tempfile
 from pathlib import Path
 
 import pytest
+
+from tests.conftest import server_config_ini_path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -73,10 +76,12 @@ class TestSingleManifestScanCompletes:
             dlna_port = fs.getsockname()[1]
 
         binary_dir = Path(dlna_binary).parent
-        config_ini = binary_dir / "config.ini"
+        config_root = tmp_path / "config"
+        config_ini = server_config_ini_path(dlna_binary, config_root)
         old = config_ini.read_text(encoding="utf-8-sig") \
             if config_ini.exists() else None
         manifest_url = f"http://127.0.0.1:{hls_port}/playlist.m3u8"
+        config_ini.parent.mkdir(parents=True, exist_ok=True)
         config_ini.write_text(
             "[Settings]\n"
             f"Port={dlna_port}\n"
@@ -87,6 +92,9 @@ class TestSingleManifestScanCompletes:
 
         env = _os.environ.copy()
         env["DLNA_SERVER_SKIP_FIREWALL"] = "1"
+        env["XDG_CONFIG_HOME"] = str(config_root)
+        env["HOME"] = str(config_root)
+        env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="dlna-runtime-")
         proc = subprocess.Popen(
             [str(dlna_binary), "--headless"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -208,7 +216,8 @@ class TestSsdpStartStopCycleUnderRace:
         (media_dir / "placeholder.mp3").write_bytes(b"\x00" * 16)
 
         binary_dir = Path(dlna_binary).parent
-        config_ini = binary_dir / "config.ini"
+        config_root = tmp_path / "config"
+        config_ini = server_config_ini_path(dlna_binary, config_root)
         old = config_ini.read_text(encoding="utf-8-sig") \
             if config_ini.exists() else None
 
@@ -219,6 +228,7 @@ class TestSsdpStartStopCycleUnderRace:
                     fs.bind(("127.0.0.1", 0))
                     port = fs.getsockname()[1]
 
+                config_ini.parent.mkdir(parents=True, exist_ok=True)
                 config_ini.write_text(
                     "[Settings]\n"
                     f"Port={port}\n"
@@ -227,6 +237,9 @@ class TestSsdpStartStopCycleUnderRace:
                 )
                 env = os.environ.copy()
                 env["DLNA_SERVER_SKIP_FIREWALL"] = "1"
+                env["XDG_CONFIG_HOME"] = str(config_root)
+                env["HOME"] = str(config_root)
+                env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="dlna-runtime-")
                 proc = subprocess.Popen(
                     [str(dlna_binary), "--headless"],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -312,7 +325,8 @@ class TestSkipFirewallEnvVarDetection:
         (media_dir / "placeholder.mp3").write_bytes(b"\x00" * 16)
 
         binary_dir = Path(dlna_binary).parent
-        config_ini = binary_dir / "config.ini"
+        config_root = tmp_path / "config"
+        config_ini = server_config_ini_path(dlna_binary, config_root)
         old = config_ini.read_text(encoding="utf-8-sig") \
             if config_ini.exists() else None
 
@@ -320,6 +334,7 @@ class TestSkipFirewallEnvVarDetection:
             fs.bind(("127.0.0.1", 0))
             port = fs.getsockname()[1]
 
+        config_ini.parent.mkdir(parents=True, exist_ok=True)
         config_ini.write_text(
             "[Settings]\n"
             f"Port={port}\n"
@@ -328,6 +343,9 @@ class TestSkipFirewallEnvVarDetection:
         )
         env = os.environ.copy()
         env["DLNA_SERVER_SKIP_FIREWALL"] = ""  # present, empty on purpose
+        env["XDG_CONFIG_HOME"] = str(config_root)
+        env["HOME"] = str(config_root)
+        env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="dlna-runtime-")
         proc = subprocess.Popen(
             [str(dlna_binary), "--headless"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,

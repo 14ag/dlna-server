@@ -26,6 +26,30 @@ Notes:
 
 ## Linux / macOS
 
+### POSIX install
+
+WSL Ubuntu / Linux install now uses the repo script:
+
+```bash
+sudo ./build-assets.sh --install
+```
+
+This builds GUI assets by default, writes the `.deb` into `output/linux/`, and installs that package with `dpkg -i` so it shows up in the package database.
+
+For CLI-only installs:
+
+```bash
+sudo ./build-assets.sh --cli --install
+```
+
+For release artifact builds without installing:
+
+```bash
+sudo ./build-assets.sh --platform linux
+```
+
+Raw CMake install flow still exists for manual builds:
+
 ```
 cmake -B build -S .
 cmake --build build

@@ -10,6 +10,7 @@
 #include "task_group.h"
 #include "upnp_eventing.h"
 #include "scan_cancellation.h"
+#include "thread_guard.h"
 #include <shared_mutex>
 #include <thread>
 #include <algorithm>
@@ -274,15 +275,31 @@ void MediaSources::Scan() {
     sourceThreads.reserve(jobs.size());
     for (auto& job : jobs) {
         sourceThreads.emplace_back([this, &job]() {
-            LogPrint(L"Scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
-            if (IsPlaylistSourcePath(job.source.path)) {
-                ScanPlaylistTree(job.ctx, job.source.path, job.containerId);
-            } else if (IsNetworkShareUrl(job.source.path)) {
-                ScanNetworkFolder(job.ctx, job.source.path, job.containerId, 0);
-            } else {
-                ScanFolder(job.ctx, job.source.path, job.containerId, 0);
-            }
-            LogPrint(L"Finished scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
+            RunGuarded(L"source-scan", [this, &job]() {
+                LogPrint(L"Scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
+                if (IsPlaylistSourcePath(job.source.path)) {
+                    ScanPlaylistTree(job.ctx, job.source.path, job.containerId);
+                } else if (IsNetworkShareUrl(job.source.path)) {
+                    ScanNetworkFolder(job.ctx, job.source.path, job.containerId, 0);
+                } else if (!IsRemoteMediaUrl(job.source.path) && FsIsRegularFile(job.source.path)) {
+                    // A configured source that is a single local file (not
+                    // a directory) used to fall into the ScanFolder()
+                    // branch below, which calls FsListDirectory(rootPath,
+                    // ...) -- that fails outright on a file path (Win32:
+                    // FindFirstFileW on "<file>\*" returns
+                    // INVALID_HANDLE_VALUE; POSIX: directory_iterator on a
+                    // non-directory returns an error code), so ScanFolder()
+                    // logged "Skipping unreadable folder" and returned
+                    // without ever publishing the file. See F-FEAT-01.
+                    // Route straight to AddMediaFile(), the same function
+                    // ScanFolder() itself calls for every media file it
+                    // finds inside a directory.
+                    AddMediaFile(job.ctx->state, job.ctx->cfg, job.source.path, job.containerId);
+                } else {
+                    ScanFolder(job.ctx, job.source.path, job.containerId, 0);
+                }
+                LogPrint(L"Finished scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
+            });
         });
     }
     for (auto& sourceThread : sourceThreads) {
@@ -350,13 +367,7 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
         fileInfo.sizeBytes = size;
     }
 
-    if (cfg.showFileNamesInsteadOfTitles) {
-        fileInfo.title = SourceDisplayName(path);
-    } else if (!titleOverride.empty()) {
-        fileInfo.title = titleOverride;
-    } else {
-        fileInfo.title = SourceStemName(path);
-    }
+    fileInfo.title = BuildDisplayTitleForMediaFile(cfg.showFileNamesInsteadOfTitles, titleOverride, path);
 
     if (!subtitleOverride.empty()) {
         fileInfo.subtitlePath = subtitleOverride;
@@ -713,6 +724,15 @@ int MediaSources::GetSystemUpdateID() {
 void MediaSources::ResetForRescan() {
     {
         std::unique_lock<std::shared_mutex> lock(m_mutex);
+        // Capture the catalog size THIS pass is about to discard, before
+        // clearing it. Without this, every ResetForRescan() call
+        // reserve()s the same fixed kInitialCatalogReserve regardless of
+        // how large the catalog actually is, forcing the same sequence
+        // of doubling reallocations to repeat on every rescan for the
+        // life of the process. See F-MEM-01. size() is 0 before anything
+        // has ever been scanned, so first-run behavior is unchanged
+        // (falls through to the kInitialCatalogReserve floor below).
+        const size_t previousSize = m_items.size();
         m_items.clear();
         m_idToIndex.clear();
         m_childrenByParent.clear();
@@ -724,7 +744,23 @@ void MediaSources::ResetForRescan() {
         // m_items to a container that never invalidates existing element
         // storage on growth, e.g. std::deque) is a larger change that also
         // touches m_idToIndex's index scheme and is out of scope here.
-        m_items.reserve(kInitialCatalogReserve);
+        //
+        // Size the reserve off the previous pass's final size (with
+        // 12.5% slack for growth since the last scan) instead of the
+        // fixed constant, once a real size has been observed. This adds
+        // no new lock or I/O -- it is a pure allocation-policy change
+        // using data already available under the lock this function
+        // already holds. m_idToIndex gets the same hint so its bucket
+        // array does not repeatedly rehash (and scatter entries into new
+        // buckets, costing cache misses on every subsequent lookup)
+        // while it grows back to the same size it was before this
+        // reset. m_childrenByParent is deliberately NOT given this same
+        // hint: its key count is the number of distinct parent
+        // containers, not the item count, and previousSize would be a
+        // poor (large) overestimate for it.
+        const size_t reserveHint = (std::max)(kInitialCatalogReserve, previousSize + previousSize / 8);
+        m_items.reserve(reserveHint);
+        m_idToIndex.reserve(reserveHint);
 
         MediaItem root{};
         root.id = 0;

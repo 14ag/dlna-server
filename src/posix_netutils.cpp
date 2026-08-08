@@ -1,5 +1,7 @@
 #include "netutils.h"
+#include "network_interface_policy.h"
 
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cstring>
 #include <cstdio>
@@ -58,9 +60,50 @@ bool IsLikelyVirtualAdapterName(const char* ifaceName) {
     return false;
 }
 
-bool InterfaceAllowListPermits(const std::wstring& allowList, const char* ifaceName) {
+// Returns the local IPv4/IPv6 literal address the kernel would choose
+// as the source address for a UDP packet sent to a well-known public
+// destination, or an empty string if no route currently exists for
+// that family (offline host, isolated network namespace, sandboxed CI
+// runner, etc.). No packet is transmitted: UDP connect() only performs
+// a routing-table lookup and binds the socket's local endpoint. See
+// dlna-server-network-endpoint-gateway-fix-workflow-30-7-26.md, Task 3,
+// citations C5/C6. Call once per family per EnumerateNetworkEndpoints
+// invocation and reuse the result for every candidate adapter -- do
+// not call this inside the per-adapter loop.
+std::string DetectDefaultRouteSourceAddress(int family) {
+    int fd = socket(family, SOCK_DGRAM, 0);
+    if (fd < 0) return {};
+
+    bool connected = false;
+    if (family == AF_INET) {
+        sockaddr_in dest{};
+        dest.sin_family = AF_INET;
+        dest.sin_port = htons(53);
+        inet_pton(AF_INET, "8.8.8.8", &dest.sin_addr);
+        connected = connect(fd, reinterpret_cast<sockaddr*>(&dest), sizeof(dest)) == 0;
+    } else if (family == AF_INET6) {
+        sockaddr_in6 dest{};
+        dest.sin6_family = AF_INET6;
+        dest.sin6_port = htons(53);
+        inet_pton(AF_INET6, "2001:4860:4860::8888", &dest.sin6_addr);
+        connected = connect(fd, reinterpret_cast<sockaddr*>(&dest), sizeof(dest)) == 0;
+    }
+
+    std::string result;
+    if (connected) {
+        sockaddr_storage local{};
+        socklen_t localLen = sizeof(local);
+        if (getsockname(fd, reinterpret_cast<sockaddr*>(&local), &localLen) == 0) {
+            result = SockaddrToLiteral(reinterpret_cast<SOCKADDR*>(&local));
+        }
+    }
+    close(fd);
+    return result;
+}
+
+bool InterfaceAllowListPermits(const std::wstring& allowList, const char* ifaceName, bool hasDefaultGateway) {
     if (allowList.empty()) {
-        return !IsLikelyVirtualAdapterName(ifaceName);
+        return ShouldUseUnlistedInterface(IsLikelyVirtualAdapterName(ifaceName), hasDefaultGateway);
     }
     std::string name(ifaceName);
     size_t start = 0;
@@ -196,11 +239,24 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
     endpoints.clear();
     ifaddrs* list = nullptr;
     if (getifaddrs(&list) != 0) return false;
+
+    // Computed once per call, reused for every candidate adapter below.
+    // See Step 3.2 for why this must not move inside the loop.
+    const std::string defaultRouteV4 = DetectDefaultRouteSourceAddress(AF_INET);
+    const std::string defaultRouteV6 = DetectDefaultRouteSourceAddress(AF_INET6);
+
     for (ifaddrs* it = list; it; it = it->ifa_next) {
         if (!it->ifa_addr) continue;
         if (!(it->ifa_flags & IFF_UP) || !(it->ifa_flags & IFF_MULTICAST) || (it->ifa_flags & IFF_LOOPBACK)) continue;
-        if (!InterfaceAllowListPermits(interfaceAllowList, it->ifa_name)) continue;
         if (it->ifa_addr->sa_family != AF_INET && it->ifa_addr->sa_family != AF_INET6) continue;
+
+        const std::string candidateAddress = SockaddrToLiteral(it->ifa_addr);
+        const std::string& defaultRouteForFamily =
+            (it->ifa_addr->sa_family == AF_INET) ? defaultRouteV4 : defaultRouteV6;
+        const bool hasDefaultGateway = !defaultRouteForFamily.empty() && !candidateAddress.empty() &&
+            NormalizeIpLiteral(defaultRouteForFamily) == NormalizeIpLiteral(candidateAddress);
+
+        if (!InterfaceAllowListPermits(interfaceAllowList, it->ifa_name, hasDefaultGateway)) continue;
 
         NetworkEndpoint endpoint{};
         endpoint.family = it->ifa_addr->sa_family;
@@ -224,6 +280,20 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
         endpoints.push_back(endpoint);
     }
     freeifaddrs(list);
+
+    // drop link local endpoints whenever something better exists see
+    // ShouldDropLinkLocalEndpoint in netutils h for the full rationale
+    // and the same interaction note about ssdp multicast membership
+    // that the windows side of this fix documents
+    const bool anyNonLinkLocalExists = std::any_of(endpoints.begin(), endpoints.end(),
+        [](const NetworkEndpoint& ep) { return !ep.isLinkLocal; });
+    endpoints.erase(
+        std::remove_if(endpoints.begin(), endpoints.end(),
+            [anyNonLinkLocalExists](const NetworkEndpoint& ep) {
+                return ShouldDropLinkLocalEndpoint(ep.isLinkLocal, anyNonLinkLocalExists);
+            }),
+        endpoints.end());
+
     return !endpoints.empty();
 }
 
@@ -269,28 +339,43 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
     return false;
 }
 
-std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
-    // guarded because HandleClient calls this from many concurrent
-    // client threads on both platforms see the workflow document task 2
-    static std::mutex cacheMutex;
-    static std::string cachedHost;
-    static int cachedPort = 0;
-    static bool cachedValid = false;
+namespace {
+// guarded because HandleClient calls GetRoutableHostUrl from many
+// concurrent client threads on both platforms see the workflow
+// document for the full rationale
+std::mutex g_routableHostCacheMutex;
+std::string g_routableHostCached;
+int g_routableHostCachedPort = 0;
+bool g_routableHostCacheValid = false;
+long g_routableHostRecomputeCount = 0;
+}
 
-    std::lock_guard<std::mutex> lock(cacheMutex);
-    if (!cachedValid || cachedPort != port) {
-        cachedHost.clear();
+void InvalidateRoutableHostUrlCache() {
+    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+    g_routableHostCacheValid = false;
+}
+
+long GetRoutableHostUrlRecomputeCountForTest() {
+    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+    return g_routableHostRecomputeCount;
+}
+
+std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
+    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+    if (!g_routableHostCacheValid || g_routableHostCachedPort != port) {
+        ++g_routableHostRecomputeCount;
+        g_routableHostCached.clear();
         std::vector<NetworkEndpoint> endpoints;
         if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
             for (const auto& ep : endpoints) {
                 if (!ep.isLinkLocal) {
-                    cachedHost = ep.address + ":" + std::to_string(port);
+                    g_routableHostCached = ep.address + ":" + std::to_string(port);
                     break;
                 }
             }
         }
-        cachedPort = port;
-        cachedValid = true;
+        g_routableHostCachedPort = port;
+        g_routableHostCacheValid = true;
     }
-    return cachedHost;
+    return g_routableHostCached;
 }

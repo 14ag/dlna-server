@@ -24,11 +24,11 @@ public:
     bool IsInitialScanInProgress() const { return m_initialScanInProgress.load(std::memory_order_acquire); }
     std::wstring GetEndpoint() const;
     std::vector<NetworkEndpoint> GetEndpoints() const;
+    void RefreshEndpoints(const ConfigSnapshot& cfg);
 
 private:
     Server();
     ~Server();
-    void RefreshEndpoints(const ConfigSnapshot& cfg);
     bool ShouldStartScan() const;
     void StartBackgroundScan();
     void JoinBackgroundScan();
@@ -36,6 +36,12 @@ private:
     void StartWatchMode();
     void StopWatchMode();
     void WatchLoop();
+    void StartNetworkChangeWatcher();
+    void StopNetworkChangeWatcher();
+    void StartDirectoryWatcher();
+    void StopDirectoryWatcher();
+    void TriggerAutoRescanIfEnabled();
+    std::vector<std::wstring> LocalWatchFolders() const;
 
     std::atomic<bool> m_running;
     std::atomic<bool> m_stopping;
