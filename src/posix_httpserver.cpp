@@ -528,6 +528,14 @@ ScopedFd client(clientSocket);
                         << "transferMode.dlna.org: Streaming\r\n"
                         << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n";
                 SendAll(clientSocket, headers.str());
+                if (!sendBody) {
+                    // head request the headers above are the full
+                    // response never fall through past this point or a
+                    // second unrelated response gets appended on the
+                    // same connection see rfc 7230 section 4 3 2
+                    if (!keepAlive) return;
+                    continue;
+                }
                 if (method == "GET") {
                     SetSocketStreamTimeouts(clientSocket);
                     if (!TrySendFile(clientSocket, fd.get(), start, static_cast<size_t>(bodyLength))) return;

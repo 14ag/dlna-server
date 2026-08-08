@@ -720,6 +720,26 @@ int main(int argc, char** argv) {
             std::wcout << L"after-stop-running=" << (DLNAServer.IsRunning() ? L"1" : L"0") << std::endl;
             return 0;
         }
+        else if (arg == "--print-ssdp-start-latency") {
+            // regression hook for the ssdp initial burst thread fix
+            // measures how long Start takes to return with a real
+            // source configured before this fix this included the
+            // full jitter delay plus three synchronous notify rounds
+            // after this fix it should only include socket and
+            // endpoint setup work see posix_ssdp cpp SSDP Start
+            const auto startedAt = std::chrono::steady_clock::now();
+            std::wstring reason;
+            const bool startOk = DLNAServer.Start(reason);
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - startedAt).count();
+            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+            std::wcout << L"elapsed-ms=" << elapsedMs << std::endl;
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            DLNAServer.Stop();
+            return 0;
+        }
         else if (arg == "--print-single-file-source-scan") {
             std::wstring reason;
             bool startOk = DLNAServer.Start(reason);
