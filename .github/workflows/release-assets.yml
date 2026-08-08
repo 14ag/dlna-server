@@ -10,106 +10,30 @@ permissions:
   contents: write
 
 jobs:
-  notes:
-    runs-on: ubuntu-latest
-    outputs:
-      release_notes: ${{ steps.extract_notes.outputs.release_notes }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Extract Release Notes
-        id: extract_notes
-        shell: bash
-        run: |
-          # Extract first section after # Changelog or top heading
-          python3 -c "
-          import re, os
-          content = open('CHANGELOG.md', 'r', encoding='utf-8').read()
-          match = re.search(r'##\s+\[(.*?)\]\s*\n(.*?)(?=\n##\s+\[|\Z)', content, re.DOTALL)
-          if match:
-              notes = match.group(2).strip()
-          else:
-              notes = 'Release assets build.'
-          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
-              f.write('release_notes<<EOF\n' + notes + '\nEOF\n')
-          "
-
-  windows:
-    needs: notes
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build Windows release zips
-        shell: pwsh
-        run: scripts\build-release-assets.ps1 --platform winx64,winx86
-      - name: Upload Windows assets
-        uses: softprops/action-gh-release@v2
-        with:
-          body: ${{ needs.notes.outputs.release_notes }}
-          files: |
-            output/dlna-server-*-source.zip
-            output/winx64/*.zip
-            output/winx86/*.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   linux:
-    needs: notes
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake g++ git libx11-dev libxext-dev libxft-dev libxinerama-dev libxcursor-dev libxrender-dev libgl1-mesa-dev libglu1-mesa-dev libpng-dev libjpeg-dev dpkg-dev desktop-file-utils curl flatpak flatpak-builder
-          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          sudo flatpak install -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
-      - name: Build Linux desktop assets
-        env:
-          DLNA_OUTPUT_DIR: output/linux
-          DLNA_LINUX_PLATFORM_DIR: output/linux
-          DLNA_LINUX_INSTALL_DIR: output/linux/install
-          DLNA_RELEASE_TOOLS_DIR: build-release-tools/linux
-        run: bash scripts/build-linux-assets.sh
-      - name: Upload Linux assets
-        uses: softprops/action-gh-release@v2
         with:
-          body: ${{ needs.notes.outputs.release_notes }}
-          files: |
-            output/linux/*.deb
-            output/linux/*.AppImage
-            output/linux/*.flatpak
+          fetch-depth: 0
+      - name: Build Linux release assets
+        run: sudo bash build.sh
+      - name: Publish release with Linux assets
         env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash build.sh --release --notes
 
-  macos:
-    needs: notes
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-14
-            arch: arm64
-            platform: macos-arm64
-          - os: macos-13
-            arch: x86_64
-            platform: macos-x64
-    runs-on: ${{ matrix.os }}
+  windows:
+    needs: [linux]
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build macOS DMG
-        env:
-          DLNA_MACOS_ARCH: ${{ matrix.arch }}
-          DLNA_MACOS_PLATFORM_DIR: output/${{ matrix.platform }}
-          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
-          APPLE_NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
-          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: bash scripts/build-macos-dmg.sh
-      - name: Upload macOS asset
-        uses: softprops/action-gh-release@v2
-        with:
-          body: ${{ needs.notes.outputs.release_notes }}
-          files: output/${{ matrix.platform }}/*.dmg
+      - name: Build Windows release assets
+        shell: cmd
+        run: build.bat --x86 --x64
+      - name: Upload Windows assets to release
+        shell: cmd
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+        run: build.bat --release --update %GITHUB_REF_NAME%
