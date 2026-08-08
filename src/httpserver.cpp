@@ -236,6 +236,7 @@ void HttpServer::Stop() {
     if (!m_running.load() && m_listenSocketV4 == INVALID_SOCKET && m_listenSocketV6 == INVALID_SOCKET) return;
 
     m_running.store(false);
+    m_capacityCv.notify_all();
     AppEvents.ClearSubscriptions();
 
     if (m_hAcceptThread) {
@@ -286,6 +287,23 @@ DWORD WINAPI HttpServer::AcceptThreadWorker(LPVOID lpParam) {
             break;
         }
 
+        // wait here instead of accepting a new client once
+        // kMaxClientThreads are already active
+        // a client waiting to connect during this wait sits in the
+        // kernel listen backlog exactly like the posix accept loop
+        // when BoundedThreadPool Submit blocks it see http common h
+        // kMaxClientThreads and bounded_thread_pool cpp Submit
+        {
+            std::unique_lock<std::mutex> capacityLock(pThis->m_capacityMutex);
+            pThis->m_capacityCv.wait(capacityLock, [pThis]() {
+                return !pThis->m_running.load(std::memory_order_relaxed) ||
+                       pThis->m_activeClientCount.load(std::memory_order_relaxed) < kMaxClientThreads;
+            });
+        }
+        if (!pThis->m_running.load(std::memory_order_relaxed)) {
+            break;
+        }
+
         timeval tv = { 1, 0 };
         int result = select(0, &readfds, NULL, NULL, &tv);
         if (result <= 0) {
@@ -317,12 +335,6 @@ DWORD WINAPI HttpServer::AcceptThreadWorker(LPVOID lpParam) {
                 continue;
             }
 
-            if (pThis->m_activeClientCount.load(std::memory_order_relaxed) >= kMaxClientThreads) {
-                static const char* busy = "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-                send(clientSocket, busy, static_cast<int>(strlen(busy)), 0);
-                closesocket(clientSocket);
-                continue;
-            }
             pThis->m_activeClientCount.fetch_add(1, std::memory_order_relaxed);
 
             WorkData* wd = new WorkData{ pThis, clientSocket, clientIP };
@@ -361,6 +373,7 @@ void CALLBACK HttpServer::WorkerCallback(PTP_CALLBACK_INSTANCE, PVOID Context, P
     closesocket(wd->s);
     delete wd;
     server->m_activeClientCount.fetch_sub(1, std::memory_order_relaxed);
+    server->m_capacityCv.notify_one();
     CloseThreadpoolWork(Work);
 }
 
@@ -644,7 +657,8 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                         SendAll(clientSocket, headStr);
 
                         if (!sendBody) {
-                            return;
+                            if (!keepAlive) return;
+                            continue;
                         }
 
                         SetSocketStreamTimeouts(clientSocket);

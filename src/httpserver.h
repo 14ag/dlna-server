@@ -3,6 +3,8 @@
 
 #include <string>
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include "bounded_thread_pool.h"
 #ifdef _WIN32
 #include <winsock2.h>
@@ -45,6 +47,13 @@ private:
     // kMaxClientThreads already bounds them on the posix side see
     // posix_httpserver cpp AcceptLoop for the reference this mirrors
     std::atomic<size_t> m_activeClientCount{0};
+    // gates AcceptThreadWorker before it calls accept again once
+    // m_activeClientCount reaches kMaxClientThreads
+    // mirrors BoundedThreadPool Submit blocking on the posix side
+    // so a client at capacity queues in the kernel listen backlog
+    // instead of getting an immediate 503 see bounded_thread_pool cpp
+    std::mutex m_capacityMutex;
+    std::condition_variable m_capacityCv;
 #else
     void AcceptLoop(int listenSocket);
 

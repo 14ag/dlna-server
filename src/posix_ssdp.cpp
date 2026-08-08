@@ -224,8 +224,17 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     m_running.store(true);
     m_thread = std::thread(&SSDP::ThreadWorker, this);
     m_responseThread = std::thread(&SSDP::ResponseWorker, this);
-    std::this_thread::sleep_for(std::chrono::milliseconds(ComputeSsdpStartupJitterMilliseconds()));
-    SendNotifyBurst("ssdp:alive", 3, 100);
+    // fire the initial ssdp alive burst asynchronously so Start does
+    // not block the caller for the jitter delay plus three send rounds
+    // mirrors the windows implementation in ssdp cpp SSDP Start see
+    // that file for the full rationale comment
+    // this thread is joined in Stop before CloseSockets runs
+    // it must not be detached or it can read m_ipv4Socket m_ipv6Socket
+    // at the same time Stop is writing them during teardown
+    m_initialBurstThread = std::thread([this]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(ComputeSsdpStartupJitterMilliseconds()));
+        SendNotifyBurst("ssdp:alive", 3, 100);
+    });
     return true;
 }
 
@@ -238,6 +247,7 @@ void SSDP::Stop() {
     m_responseCondition.notify_all();
     if (m_thread.joinable()) m_thread.join();
     if (m_responseThread.joinable()) m_responseThread.join();
+    if (m_initialBurstThread.joinable()) m_initialBurstThread.join();
     CloseSockets();
 }
 
