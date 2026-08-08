@@ -33,6 +33,11 @@ bool ValidateHostHeader(const std::string& host) {
     return true;
 }
 
+std::string StripResourceIdExtension(const std::string& idAndSuffix) {
+    size_t dot = idAndSuffix.find('.');
+    return dot == std::string::npos ? idAndSuffix : idAndSuffix.substr(0, dot);
+}
+
 bool ReadHttpRequestHeaders(const std::function<int(char*, int)>& recvOnce, std::string& req) {
     req.clear();
     char buffer[kHttpBufSize];

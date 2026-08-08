@@ -53,6 +53,15 @@ inline constexpr const char* kHlsProtocolContentFeatures =
 
 std::string BuildSourceProtocolInfoList();
 std::string GetDlnaServerHeader();
+
+// returns dot plus the lowercase source file extension for example
+// dot mkv used as a suffix on served media resource urls so
+// renderers that infer container format from the url path can
+// recognize the file type returns an empty string when the source
+// has no recognizable extension see MiniDLNA ReadyMedia reference
+// citation in the accompanying workflow document
+std::string BuildMediaResourceUrlExtensionSuffix(const std::wstring& sourcePath);
+
 std::string SubtitleMimeForExtension(const std::wstring& ext);
 bool NaturalLessWide(const std::wstring& left, const std::wstring& right);
 std::vector<AlbumArtCandidate> BuildAlbumArtCandidateNames(const std::wstring& stem);

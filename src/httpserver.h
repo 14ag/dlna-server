@@ -40,6 +40,10 @@ private:
     PTP_POOL m_threadPool;
     PTP_CLEANUP_GROUP m_cleanupGroup;
     TP_CALLBACK_ENVIRON m_cbe;
+    // bounds accepted-but-not-yet-finished clients the same way
+    // kMaxClientThreads already bounds them on the posix side see
+    // posix_httpserver cpp AcceptLoop for the reference this mirrors
+    std::atomic<size_t> m_activeClientCount{0};
 #else
     void AcceptLoop(int listenSocket);
     void ReapFinishedClientThreads();

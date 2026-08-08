@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <deque>
 #include "ssdp.h" // DelayedSearchResponse, SSDPTarget
 
 // The 5 standard targets this device advertises: root device, device UUID,
@@ -12,7 +13,7 @@ std::vector<SSDPTarget> BuildAdvertisedTargets(const std::string& uuid);
 // If a delayed search response is already queued for the same remote
 // address carrying the same ST/USN set, replace it in place instead of
 // sending a near-duplicate response burst for one M-SEARCH.
-bool CoalesceDelayedResponse(std::vector<DelayedSearchResponse>& queue, DelayedSearchResponse&& response);
+bool CoalesceDelayedResponse(std::deque<DelayedSearchResponse>& queue, DelayedSearchResponse&& response);
 
 // UDA-required randomized M-SEARCH response delay: uniform over
 // [0, min(mxSeconds, 5)] seconds, 0 if that bound rounds to zero.

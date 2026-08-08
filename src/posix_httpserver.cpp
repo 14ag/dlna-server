@@ -25,6 +25,9 @@
 #include <vector>
 #include <sys/select.h>
 #include <sys/socket.h>
+#ifdef __linux__
+#include <sys/sendfile.h>
+#endif
 #include <sys/stat.h>
 #include <unistd.h>
 #ifdef __APPLE__
@@ -129,6 +132,29 @@ bool TrySendAll(int fd, const char* data, size_t remaining) {
     return true;
 }
 
+static bool TrySendFile(int outFd, int inFd, off_t offset, size_t count) {
+#ifdef __linux__
+    off_t off = offset;
+    while (count > 0) {
+        ssize_t sent = sendfile(outFd, inFd, &off, count);
+        if (sent <= 0) return false;
+        count -= static_cast<size_t>(sent);
+    }
+    return true;
+#else
+    if (lseek(inFd, offset, SEEK_SET) < 0) return false;
+    char buf[65536];
+    while (count > 0) {
+        size_t chunk = (std::min)(sizeof(buf), count);
+        ssize_t r = read(inFd, buf, chunk);
+        if (r <= 0) return false;
+        if (!TrySendAll(outFd, buf, static_cast<size_t>(r))) return false;
+        count -= static_cast<size_t>(r);
+    }
+    return true;
+#endif
+}
+
 std::string IconFileNameForPath(const std::string& path) {
     if (path == "/icons/server_icon_48.png") return "server_icon_48.png";
     if (path == "/icons/server_icon_120.png") return "server_icon_120.png";
@@ -145,41 +171,11 @@ bool ReadIconFile(const std::string& path, std::string& bytes) {
     return !bytes.empty();
 }
 
-std::string ExecutableDirectory() {
-#ifdef __APPLE__
-    char path[PATH_MAX];
-    uint32_t size = sizeof(path);
-    if (_NSGetExecutablePath(path, &size) == 0) {
-        std::string exe(path);
-        const size_t slash = exe.find_last_of('/');
-        if (slash != std::string::npos) return exe.substr(0, slash);
-    }
-#else
-    char path[PATH_MAX];
-    ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
-    if (len > 0) {
-        path[len] = '\0';
-        std::string exe(path);
-        const size_t slash = exe.find_last_of('/');
-        if (slash != std::string::npos) return exe.substr(0, slash);
-    }
-#endif
-    return ".";
-}
-
 bool LoadServerIconPng(const std::string& fileName, std::string& bytes) {
     if (fileName.empty()) return false;
-    const std::string exeDir = ExecutableDirectory();
-    std::vector<std::string> candidates = {
-        std::string(DLNA_RESOURCE_DIR) + "/" + fileName,
-        exeDir + "/" + fileName,
-        exeDir + "/../share/dlna-server/icons/" + fileName,
-        exeDir + "/../Resources/" + fileName,
-    };
-    for (const auto& candidate : candidates) {
-        if (ReadIconFile(candidate, bytes)) return true;
-    }
-    return false;
+    const std::string resolved = ResolveBundledResourcePath(fileName);
+    if (resolved.empty()) return false;
+    return ReadIconFile(resolved, bytes);
 }
 
 }
@@ -394,7 +390,7 @@ ScopedFd client(clientSocket);
             }
             if (path.rfind("/media/", 0) == 0) {
                 int mediaId = -1;
-                if (!TryParseIntStrict(path.substr(7), mediaId) || mediaId < 0) {
+                if (!TryParseIntStrict(StripResourceIdExtension(path.substr(7)), mediaId) || mediaId < 0) {
                     SendAll(clientSocket, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                     return;
                 }
@@ -565,18 +561,11 @@ ScopedFd client(clientSocket);
                 SendAll(clientSocket, headers.str());
                 if (method == "GET") {
                     SetSocketStreamTimeouts(clientSocket);
-                    lseek(fd.get(), start, SEEK_SET);
-                    long long remaining = bodyLength;
-                    while (remaining > 0) {
-                        ssize_t chunk = read(fd.get(), buf, (std::min)(sizeof(buf), static_cast<size_t>(remaining)));
-                        if (chunk <= 0) break;
-                        if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
-                        remaining -= chunk;
-                    }
-                    if (remaining > 0 || !keepAlive) return;
+                    if (!TrySendFile(clientSocket, fd.get(), start, static_cast<size_t>(bodyLength))) return;
+                    if (!keepAlive) return;
                     continue;
-    }
-}
+                }
+            }
 }
 
             if (path.rfind("/subtitle/", 0) == 0) {
@@ -601,9 +590,9 @@ ScopedFd client(clientSocket);
                     headers << "Accept-Ranges: none\r\nConnection: close\r\n\r\n";
                     SendAll(clientSocket, headers.str());
                     if (sendBody) {
-                        bool streamed = StreamRemoteContent(item.subtitlePath, false, 0, 0, [&](const char* data, size_t length) {
-                            return TrySendAll(clientSocket, data, length) && m_running.load();
-                        });
+                    bool streamed = StreamRemoteContent(item.subtitlePath, false, 0, 0, [&](const char* buf, size_t subRead) {
+                        return TrySendAll(clientSocket, buf, subRead) && m_running.load();
+                    });
                         if (!streamed) {
                             LogPrint(L"Remote subtitle unavailable: %ls", RedactUrlForLog(item.subtitlePath).c_str());
                         }
@@ -629,11 +618,7 @@ ScopedFd client(clientSocket);
                         << "Accept-Ranges: none\r\nConnection: close\r\n\r\n";
                 SendAll(clientSocket, headers.str());
                 if (sendBody) {
-                    while (true) {
-                        ssize_t chunk = read(fd.get(), buf, sizeof(buf));
-                        if (chunk <= 0) break;
-                        if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
-                    }
+                    TrySendFile(clientSocket, fd.get(), 0, static_cast<size_t>(st.st_size));
                 }
                 return;
             }
@@ -662,11 +647,7 @@ ScopedFd client(clientSocket);
                         << "Connection: close\r\n\r\n";
                 SendAll(clientSocket, headers.str());
                 if (sendBody) {
-                    while (true) {
-                        ssize_t chunk = read(fd.get(), buf, sizeof(buf));
-                        if (chunk <= 0) break;
-                        if (!TrySendAll(clientSocket, buf, static_cast<size_t>(chunk))) break;
-                    }
+                    TrySendFile(clientSocket, fd.get(), 0, static_cast<size_t>(st.st_size));
                 }
                 return;
             }

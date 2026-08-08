@@ -155,6 +155,16 @@ private:
     std::wstring GenerateUUID();
     void SetRunOnBoot(bool enable);
 
+    // never call LogPrint or any other AppConfig locking method while
+    // this mutex is already held by the calling thread
+    // LogPrint calls AppConfig IsDebugLogEnabled which takes a shared
+    // lock on this same mutex object
+    // on linux std shared_mutex is backed by pthread rwlock which
+    // detects same thread relock and throws system_error EDEADLK
+    // this exact bug previously crashed Config Load on a fresh install
+    // with no config file present through GenerateUUID logging a low
+    // entropy warning while Load already held a write lock
+    // see dlna-server-config-mutex-reentrancy-fix-workflow-22-7-26 md
     mutable std::shared_mutex m_mutex;
     std::vector<MediaSource> m_runtimeSourceOverride;
     bool m_hasRuntimeSourceOverride = false;
@@ -162,5 +172,12 @@ private:
 
 // Global config access
 #define AppConfig Config::Get()
+
+// POSIX bundled-resource path resolution. Searches standard locations for a
+// resource file (icon PNG, etc.) and returns the first path found, or empty.
+// Available on POSIX builds where DLNA_RESOURCE_DIR is defined.
+#ifdef DLNA_POSIX
+std::string ResolveBundledResourcePath(const std::string& fileName);
+#endif
 
 #endif // CONFIG_H

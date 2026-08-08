@@ -3,6 +3,7 @@
 #include "server.h"
 #include "logdlg.h"
 #include "dlna_utils.h"
+#include "network_sources.h"   // ADD THIS LINE — needed for SourceStemName
 #include "modal_focus.h"
 #include "netutils.h"
 #include "access_keys.h"
@@ -10,6 +11,8 @@
 #include "help_dialog.h"
 #include "ui_font.h"
 #include "dark_frame.h"
+#include "config.h"
+#include "log.h"
 #include "../resources/resource.h"
 #include <commctrl.h>
 #include <dwmapi.h>
@@ -22,6 +25,23 @@
 namespace {
 
 bool g_restartRequested = false;
+
+BOOL CALLBACK LogSettingsControlGeometryProc(HWND hwndChild, LPARAM lParamDlg) {
+    HWND hwndDlg = reinterpret_cast<HWND>(lParamDlg);
+    RECT rc = {};
+    GetWindowRect(hwndChild, &rc);
+    POINT points[2] = { { rc.left, rc.top }, { rc.right, rc.bottom } };
+    MapWindowPoints(NULL, hwndDlg, points, 2);
+    wchar_t className[64] = {};
+    GetClassNameW(hwndChild, className, 64);
+    wchar_t text[256] = {};
+    GetWindowTextW(hwndChild, text, 256);
+    LogPrint(L"[settings-geometry] class=%ls id=%d text=\"%ls\" x=%ld y=%ld w=%ld h=%ld",
+             className, GetDlgCtrlID(hwndChild), text,
+             points[0].x, points[0].y,
+             points[1].x - points[0].x, points[1].y - points[0].y);
+    return TRUE;
+}
 
 #pragma comment(lib, "dwmapi.lib")
 const int IDC_PLAYLIST_MOVIE = 6101;
@@ -63,10 +83,22 @@ std::wstring GetDlgText(HWND hwnd, int id) {
 }
 
 std::wstring MovieTitleFromPath(const std::wstring& moviePath) {
-    wchar_t fileName[MAX_PATH] = {};
-    wcscpy_s(fileName, PathFindFileNameW(moviePath.c_str()));
-    PathRemoveExtensionW(fileName);
-    return fileName[0] ? fileName : L"Media item";
+    // F-01: the previous implementation copied PathFindFileNameW's
+    // result into a fixed wchar_t[MAX_PATH] buffer with wcscpy_s.
+    // wcscpy_s's array-reference overload is bound to MAX_PATH (260) at
+    // compile time; a path of 260+ wide characters -- reachable via
+    // IFileOpenDialog on any long-path-aware Windows 10 1607+ system, or
+    // via any UNC path regardless of that setting -- makes wcscpy_s
+    // invoke the CRT invalid-parameter handler, which by default
+    // terminates the process. SourceStemName operates on std::wstring
+    // with no fixed-size intermediate buffer, so it has no length at
+    // which it can fail this way. It is the same helper
+    // fltk_gui_main.cpp::TitleFromPath already uses for the identical
+    // POSIX-side "Default playlist entry" title derivation -- this
+    // change makes the Win32 side use the same safe, already-audited
+    // logic instead of a separate hand-rolled Win32-only version.
+    std::wstring stem = SourceStemName(moviePath);
+    return stem.empty() ? L"Media item" : stem;
 }
 
 std::wstring BrowseFile(HWND owner, const wchar_t* title, const COMDLG_FILTERSPEC* filters, UINT filterCount) {
@@ -282,7 +314,7 @@ bool SettingsDialog::WasRestartRequested() { return g_restartRequested; }
 void SettingsDialog::OnInitDialog(HWND hwndDlg) {
     ApplyDialogFont(hwndDlg);
 
-    auto& cfg = AppConfig;
+    const ConfigSnapshot cfg = AppConfig.Snapshot();
     SetDlgItemTextW(hwndDlg, IDC_EDT_SERVER_NAME, cfg.serverName.c_str());
     SetDlgItemInt(hwndDlg, IDC_EDT_PORT, cfg.port, FALSE);
     SetDlgItemTextW(hwndDlg, IDC_EDT_IP_WHITELIST, cfg.ipWhiteList.c_str());
@@ -298,6 +330,13 @@ void SettingsDialog::OnInitDialog(HWND hwndDlg) {
     CheckDlgButton(hwndDlg, IDC_CHK_PROXY_STREAMS, cfg.proxyStreams ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hwndDlg, IDC_CHK_BACKGROUND_SCAN, cfg.backgroundScanEnabled ? BST_CHECKED : BST_UNCHECKED);
     UpdateDefaultPlaylistButton(hwndDlg);
+    if (AppConfig.IsDebugLogEnabled()) {
+        RECT client = {};
+        GetClientRect(hwndDlg, &client);
+        LogPrint(L"[settings-geometry] class=dialog-client id=0 text=\"\" x=0 y=0 w=%ld h=%ld",
+                 client.right, client.bottom);
+        EnumChildWindows(hwndDlg, LogSettingsControlGeometryProc, reinterpret_cast<LPARAM>(hwndDlg));
+    }
 }
 
 bool SettingsDialog::OnOK(HWND hwndDlg) {
