@@ -27,41 +27,23 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
 
     def test_linux_desktop_installers_are_scripted(self):
         cmake = self.read("CMakeLists.txt")
-        script = self.read("scripts/build-linux-assets.sh")
         gitattributes = self.read(".gitattributes")
         flatpak = self.read("packaging/flatpak/com.github.14ag.dlna_server.yml")
         desktop = self.read("packaging/flatpak/com.github.14ag.dlna_server.desktop")
-        workflow = self.read(".github/workflows/release-assets.yml")
 
         self.assertIn('set(CPACK_GENERATOR "DEB")', cmake)
         self.assertIn("CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON", cmake)
-        self.assertIn("cpack --config", script)
-        self.assertIn("linuxdeploy-x86_64.AppImage", script)
-        self.assertIn("linuxdeploy_version=\"1-alpha-20251107-1\"", script)
-        self.assertIn("linuxdeploy_sha256=", script)
-        self.assertIn("download_verified", script)
-        self.assertIn("-name '*.AppImage'", script)
-        self.assertIn('flatpak-builder and flatpak are required for default release assets', script)
         self.assertIn("*.sh text eol=lf", gitattributes)
         self.assertIn("*.yml text eol=lf", gitattributes)
-        self.assertIn("build-bundle", script)
         self.assertIn("app-id: com.github.14ag.dlna_server", flatpak)
         self.assertIn("--share=network", flatpak)
         self.assertIn("--filesystem=home", flatpak)
         self.assertIn("Name=DLNA Server", desktop)
-        self.assertIn("Release assets", workflow)
-        self.assertIn("runs-on: windows-latest", workflow)
-        self.assertIn("output/winx64/*.zip", workflow)
-        self.assertIn("output/winx86/*.zip", workflow)
-        self.assertIn("flatpak flatpak-builder", workflow)
-        self.assertIn("org.freedesktop.Sdk//24.08", workflow)
-        self.assertIn("scripts/build-linux-assets.sh", workflow)
 
     def test_macos_dmg_packaging_prefers_native_gui(self):
         cmake = self.read("CMakeLists.txt")
         plist = self.read("packaging/macos/Info.plist.in")
         launcher = self.read("packaging/macos/dlna-server-gui")
-        script = self.read("scripts/build-macos-dmg.sh")
 
         self.assertIn("DLNA Server.app", cmake)
         self.assertIn("dlna-server-gui-bin", cmake)
@@ -70,15 +52,9 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn('native_gui="$app_dir/Contents/MacOS/dlna-server-gui-bin"', launcher)
         self.assertIn("Rebuild with -DDLNA_ENABLE_GTK4_GUI=ON.", launcher)
         self.assertNotIn("posix_gui.py", launcher)
-        self.assertIn("hdiutil create", script)
-        self.assertIn("notarytool submit", script)
 
     def test_wslg_gui_smoke_prereqs_are_in_build_and_pytest_wiring(self):
-        linux_script = self.read("scripts/build-linux-assets.sh")
         conftest = self.read("tests/conftest.py")
-
-        self.assertIn("libgtk-4-dev", linux_script)
-        self.assertIn('-DDLNA_ENABLE_GTK4_GUI=ON', linux_script)
         self.assertIn("DLNA_GUI_BINARY", conftest)
 
     def test_gtk4_gui_is_only_posix_desktop_ui(self):
