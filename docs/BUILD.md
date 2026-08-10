@@ -31,7 +31,7 @@ Notes:
 WSL Ubuntu / Linux install now uses the repo script:
 
 ```bash
-sudo ./build-assets.sh --install
+sudo ./build.sh --install
 ```
 
 This builds GUI assets by default, writes the `.deb` into `output/linux/`, and installs that package with `dpkg -i` so it shows up in the package database.
@@ -39,13 +39,13 @@ This builds GUI assets by default, writes the `.deb` into `output/linux/`, and i
 For CLI-only installs:
 
 ```bash
-sudo ./build-assets.sh --cli --install
+sudo ./build.sh --cli --install
 ```
 
 For release artifact builds without installing:
 
 ```bash
-sudo ./build-assets.sh --platform linux
+sudo ./build.sh
 ```
 
 Raw CMake install flow still exists for manual builds:
