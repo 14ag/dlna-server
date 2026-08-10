@@ -27,8 +27,8 @@ dlna-server shares your videos, music, and photos with TVs, game consoles, and o
 See [`CHANGELOG.md`](CHANGELOG.md) for the full release history. Prebuilt binaries are available from the [Releases](https://github.com/14ag/dlna-server/releases) page:
 
 - **Windows** - download  the `.exe`  and run it
-- **Linux** - run `sudo ./build-assets.sh --install` from repo root
-- **Linux CLI-only** - run `sudo ./build-assets.sh --cli --install`
+- **Linux** - run `sudo ./build.sh --install` from repo root
+- **Linux CLI-only** - run `sudo ./build.sh --cli --install`
 
 `--install` builds GUI assets by default, writes the `.deb` into `output/linux/`, and installs that package with `dpkg -i` so it appears in the package database. If you want to confirm the install, run `dpkg -L dlna-server | grep desktop`.
 
@@ -82,7 +82,7 @@ sudo cmake --install build
 
 The native GTK4 GUI (`dlna-server-gui-gtk4`) builds by default on POSIX. Turn it off with `-DDLNA_ENABLE_GTK4_GUI=OFF` if you only want the headless binary.
 
-On Linux, `cmake --install` also registers desktop and AppStream metadata; `CPack` produces a `.deb` package (`libcurl4` is listed as a runtime dependency). For the repo launcher, prefer `./build-assets.sh --install` so install lands in `dpkg` in one step.
+On Linux, `cmake --install` also registers desktop and AppStream metadata; `CPack` produces a `.deb` package (`libcurl4` is listed as a runtime dependency). For the repo launcher, prefer `./build.sh --install` so install lands in `dpkg` in one step.
 
 ## Testing
 
