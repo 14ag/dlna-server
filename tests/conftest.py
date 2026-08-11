@@ -19,6 +19,39 @@ from tests.fixtures.soap_client import (
 
 if os.name == "nt":
     import ctypes
+    import ctypes.wintypes
+
+
+# Windows constants for _win_kill_by_window
+_WM_KILL_SERVER = None  # resolved lazily from the binary if needed
+# WM_APP + 22 is the value defined in mainwindow.h as WM_KILL_SERVER.
+# We hard-code it here so the test helper does not need to parse headers.
+_WM_KILL_SERVER_VALUE = 0x8016  # WM_APP (0x8000) + 22
+
+
+def _win_kill_by_window():
+    """On Windows: find every dlna-server_Main HWND and post WM_KILL_SERVER.
+
+    The server always registers class 'dlna-server_Main' even when started with
+    --headless (it uses WS_EX_TOOLWINDOW to hide from the taskbar). PostMessage
+    is fire-and-forget but that is fine: we wait for the Popen handle afterward.
+    """
+    if os.name != "nt":
+        return 0
+    user32 = ctypes.windll.user32
+    found = []
+    EnumWindowsProc = ctypes.WINFUNCTYPE(
+        ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+    buf = ctypes.create_unicode_buffer(256)
+    def _cb(h, _):
+        n = user32.GetClassNameW(h, buf, 256)
+        if n > 0 and buf.value == "dlna-server_Main":
+            found.append(int(h))
+        return True
+    user32.EnumWindows(EnumWindowsProc(_cb), 0)
+    for h in found:
+        user32.PostMessageW(ctypes.wintypes.HWND(h), _WM_KILL_SERVER_VALUE, 0, 0)
+    return len(found)
 
 
 def _pick_existing_binary(paths):
@@ -67,6 +100,10 @@ def _configure_binary_envs():
 
 
 _configure_binary_envs()
+# Ensure no test invocation of the binary ever blocks on the interactive
+# Windows firewall dialog.  Tests that specifically exercise the empty-var
+# path construct their own env dict, so this default does not interfere.
+os.environ.setdefault("DLNA_SERVER_SKIP_FIREWALL", "1")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -241,12 +278,28 @@ def server_config_ini_path(binary_path, config_root=None):
 
 
 def _teardown_server(proc, old_config, config_ini):
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=3)
+    if os.name == "nt":
+        # Ask the server to shut down gracefully via its message pump so it
+        # releases the single-instance mutex before we terminate it.
+        # PostMessage is fire-and-forget; we then wait up to 5 s for the
+        # process to exit on its own before falling back to terminate().
+        _win_kill_by_window()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=3)
+    else:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
 
     if old_config is not None:
         config_ini.write_text(old_config, encoding="utf-8-sig")
@@ -392,14 +445,18 @@ def _candidate_runtime_dirs():
 
 
 def _kill_all_runtime_instances():
-    """Send --kill-server for every runtime dir a leftover daemon may hold.
+    """Kill any leftover daemon instances before each test.
 
-    A daemonized/non-debug server survives its parent, so a stale instance from
-    a prior test or a hard-killed run can still hold the single-instance lock or
-    an SSDP port. Offload each one with the app's own --kill-server flag (once
-    per distinct candidate runtime dir) before running anything. Silently
-    no-ops when no binary is known.
+    On POSIX: send --kill-server for every candidate XDG_RUNTIME_DIR.
+    On Windows: post WM_KILL_SERVER to every dlna-server_Main window found,
+    then wait briefly for them to exit.
     """
+    if os.name == "nt":
+        count = _win_kill_by_window()
+        if count:
+            time.sleep(0.5)  # give the processes a moment to exit
+        return
+
     binary = os.environ.get("DLNA_SERVER") or os.environ.get("DLNA_CLI_BINARY")
     if not binary:
         return
@@ -421,9 +478,34 @@ def _kill_all_runtime_instances():
             pass
 
 
+def _win_clean_stale_config():
+    """Delete any config.ini left next to the Windows binary.
+
+    On Windows the server reads config.ini from the directory containing the
+    executable.  A test that calls _launch_server() writes a port-specific
+    config.ini there and restores it on teardown, but if a prior run was
+    hard-killed or crashed the file stays behind.  The stale file can carry
+    DebugLog=1 and a port that causes Server::Start() to show a blocking
+    firewall MessageBox (when DLNA_SERVER_SKIP_FIREWALL is not set by the
+    caller) and therefore hang indefinitely.
+    """
+    if os.name != "nt":
+        return
+    binary = os.environ.get("DLNA_SERVER") or os.environ.get("DLNA_CLI_BINARY")
+    if not binary:
+        return
+    config_ini = Path(binary).parent / "config.ini"
+    if config_ini.exists():
+        try:
+            config_ini.unlink()
+        except OSError:
+            pass
+
+
 @pytest.fixture(autouse=True)
 def _kill_previously_running_instance() -> None:
     _kill_all_runtime_instances()
+    _win_clean_stale_config()
 
 
 @pytest.fixture
