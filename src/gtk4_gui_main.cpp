@@ -226,6 +226,38 @@ void PromptForMediaSource();
 void ShowSettingsDialog();
 
 void MessageBoxShow(GtkWindow* parent, const std::string& text) {
+#if GTK_CHECK_VERSION(4, 10, 0)
+    if (g_dumpMsgBoxParent) {
+        GtkWindow* transientParent = parent;
+        const char* parentTag = "none";
+        if (transientParent == GTK_WINDOW(g_settingsDialog)) parentTag = "settings";
+        else if (transientParent == GTK_WINDOW(g_logDialog)) parentTag = "log";
+        else if (transientParent == GTK_WINDOW(g_playlistDialog)) parentTag = "playlist";
+        else if (transientParent == GTK_WINDOW(g_sourceDialog)) parentTag = "source";
+        else if (transientParent == GTK_WINDOW(g_mainWindow)) parentTag = "main";
+        std::printf("[gtk4-msgbox-parent] parent=%s\n", parentTag);
+        return;
+    }
+    GtkAlertDialog* dialog = gtk_alert_dialog_new("%s", "DLNA Server");
+    gtk_alert_dialog_set_detail(dialog, text.c_str());
+    gtk_alert_dialog_set_modal(dialog, TRUE);
+
+    gboolean done = FALSE;
+    gtk_alert_dialog_choose(dialog, parent, nullptr, +[](GObject* source, GAsyncResult* res, gpointer userData) {
+        gboolean* isDone = static_cast<gboolean*>(userData);
+        GError* error = nullptr;
+        gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), res, &error);
+        if (error) {
+            g_error_free(error);
+        }
+        *isDone = TRUE;
+    }, &done);
+    g_object_unref(dialog);
+
+    while (!done) {
+        g_main_context_iteration(nullptr, TRUE);
+    }
+#else
     GtkWidget* dialog = gtk_message_dialog_new(parent, GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR,
                                                GTK_BUTTONS_OK, "%s", text.c_str());
     gtk_window_set_title(GTK_WINDOW(dialog), "DLNA Server");
@@ -251,14 +283,47 @@ void MessageBoxShow(GtkWindow* parent, const std::string& text) {
         *isDone = TRUE;
         return TRUE;
     }), &done);
-    gtk_widget_show(dialog);
+    gtk_window_present(GTK_WINDOW(dialog));
     while (!done) {
         g_main_context_iteration(nullptr, TRUE);
     }
     gtk_window_destroy(GTK_WINDOW(dialog));
+#endif
 }
 
 bool MessageBoxQuestion(GtkWindow* parent, const std::string& text) {
+#if GTK_CHECK_VERSION(4, 10, 0)
+    GtkAlertDialog* dialog = gtk_alert_dialog_new("%s", "DLNA Server");
+    gtk_alert_dialog_set_detail(dialog, text.c_str());
+    gtk_alert_dialog_set_modal(dialog, TRUE);
+    const char* buttons[] = { "Yes", "No", nullptr };
+    gtk_alert_dialog_set_buttons(dialog, buttons);
+    gtk_alert_dialog_set_cancel_button(dialog, 1);
+
+    struct QuestionState {
+        int result;
+        gboolean done;
+    };
+    QuestionState state = { 1, FALSE };
+
+    gtk_alert_dialog_choose(dialog, parent, nullptr, +[](GObject* source, GAsyncResult* res, gpointer userData) {
+        QuestionState* qs = static_cast<QuestionState*>(userData);
+        GError* error = nullptr;
+        int idx = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), res, &error);
+        if (error) {
+            g_error_free(error);
+        } else {
+            qs->result = idx;
+        }
+        qs->done = TRUE;
+    }, &state);
+    g_object_unref(dialog);
+
+    while (!state.done) {
+        g_main_context_iteration(nullptr, TRUE);
+    }
+    return state.result == 0;
+#else
     struct QuestionState {
         int result;
         gboolean done;
@@ -279,12 +344,13 @@ bool MessageBoxQuestion(GtkWindow* parent, const std::string& text) {
         qs->done = TRUE;
         return TRUE;
     }), &state);
-    gtk_widget_show(dialog);
+    gtk_window_present(GTK_WINDOW(dialog));
     while (!state.done) {
         g_main_context_iteration(nullptr, TRUE);
     }
     gtk_window_destroy(GTK_WINDOW(dialog));
     return state.result == GTK_RESPONSE_YES;
+#endif
 }
 
 void ShowPlaylistEntryDialog() {
@@ -319,6 +385,29 @@ void ShowPlaylistEntryDialog() {
     gtk_fixed_put(GTK_FIXED(fixed), movieBrowse, UiTokens::kPlaylistMovieBrowseX, UiTokens::kPlaylistMovieBrowseY);
     gtk_widget_add_css_class(movieBrowse, "toolbar-button");
     g_signal_connect(movieBrowse, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+#if GTK_CHECK_VERSION(4, 10, 0)
+        GtkFileDialog* chooser = gtk_file_dialog_new();
+        gtk_file_dialog_set_title(chooser, "Choose movie file");
+        GListStore* store = g_list_store_new(GTK_TYPE_FILE_FILTER);
+        GtkFileFilter* filter = BuildMediaSourceFilter();
+        g_list_store_append(store, filter);
+        g_object_unref(filter);
+        gtk_file_dialog_set_filters(chooser, G_LIST_MODEL(store));
+        g_object_unref(store);
+
+        gtk_file_dialog_open(chooser, GTK_WINDOW(g_playlistDialog), nullptr, +[](GObject* source, GAsyncResult* res, gpointer) {
+            GFile* file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source), res, nullptr);
+            if (file != nullptr) {
+                gchar* path = g_file_get_path(file);
+                if (path != nullptr) {
+                    gtk_editable_set_text(GTK_EDITABLE(g_movieEntry), path);
+                    g_free(path);
+                }
+                g_object_unref(file);
+            }
+        }, nullptr);
+        g_object_unref(chooser);
+#else
         GtkFileChooserNative* chooser = gtk_file_chooser_native_new(
             "Choose movie file", GTK_WINDOW(g_playlistDialog), GTK_FILE_CHOOSER_ACTION_OPEN,
             "Select", "Cancel");
@@ -338,6 +427,7 @@ void ShowPlaylistEntryDialog() {
             }
             gtk_native_dialog_destroy(dialog);
         }), nullptr);
+#endif
     }), nullptr);
 
     GtkWidget* subtitleLabel = gtk_label_new("Subtitle path:");
@@ -354,6 +444,29 @@ void ShowPlaylistEntryDialog() {
     gtk_fixed_put(GTK_FIXED(fixed), subtitleBrowse, UiTokens::kPlaylistSubtitleBrowseX, UiTokens::kPlaylistSubtitleBrowseY);
     gtk_widget_add_css_class(subtitleBrowse, "toolbar-button");
     g_signal_connect(subtitleBrowse, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+#if GTK_CHECK_VERSION(4, 10, 0)
+        GtkFileDialog* chooser = gtk_file_dialog_new();
+        gtk_file_dialog_set_title(chooser, "Choose subtitle file");
+        GListStore* store = g_list_store_new(GTK_TYPE_FILE_FILTER);
+        GtkFileFilter* filter = BuildSubtitleFilter();
+        g_list_store_append(store, filter);
+        g_object_unref(filter);
+        gtk_file_dialog_set_filters(chooser, G_LIST_MODEL(store));
+        g_object_unref(store);
+
+        gtk_file_dialog_open(chooser, GTK_WINDOW(g_playlistDialog), nullptr, +[](GObject* source, GAsyncResult* res, gpointer) {
+            GFile* file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source), res, nullptr);
+            if (file != nullptr) {
+                gchar* path = g_file_get_path(file);
+                if (path != nullptr) {
+                    gtk_editable_set_text(GTK_EDITABLE(g_subtitleEntry), path);
+                    g_free(path);
+                }
+                g_object_unref(file);
+            }
+        }, nullptr);
+        g_object_unref(chooser);
+#else
         GtkFileChooserNative* chooser = gtk_file_chooser_native_new(
             "Choose subtitle file", GTK_WINDOW(g_playlistDialog), GTK_FILE_CHOOSER_ACTION_OPEN,
             "Select", "Cancel");
@@ -373,6 +486,7 @@ void ShowPlaylistEntryDialog() {
             }
             gtk_native_dialog_destroy(dialog);
         }), nullptr);
+#endif
     }), nullptr);
 
     GtkWidget* addButton = gtk_button_new_with_label("Add");
@@ -382,12 +496,12 @@ void ShowPlaylistEntryDialog() {
     gtk_widget_add_css_class(addButton, "suggested-action");
     g_signal_connect(addButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         g_playlistDone = true;
-        gtk_widget_hide(g_playlistDialog);
+        gtk_widget_set_visible(g_playlistDialog, FALSE);
     }), nullptr);
 
     g_signal_connect(g_playlistDialog, "close-request", G_CALLBACK(+[](GtkWidget*, gpointer) -> gboolean {
         g_playlistDone = true;
-        gtk_widget_hide(g_playlistDialog);
+        gtk_widget_set_visible(g_playlistDialog, FALSE);
         return TRUE;
     }), nullptr);
 
@@ -400,12 +514,12 @@ void ShowPlaylistEntryDialog() {
         DumpWindowGeometry("playlist-entry", g_playlistDialog);
         return;
     }
-    gtk_widget_show(g_playlistDialog);
+    gtk_window_present(GTK_WINDOW(g_playlistDialog));
 
     while (!g_playlistDone) {
         g_main_context_iteration(nullptr, TRUE);
     }
-    gtk_widget_hide(g_playlistDialog);
+    gtk_widget_set_visible(g_playlistDialog, FALSE);
 
     if (g_playlistDone) {
         const std::string movie = gtk_editable_get_text(GTK_EDITABLE(g_movieEntry));
@@ -429,6 +543,44 @@ void OnSourceEntryChanged(GtkEditable* editable, gpointer) {
 }
 
 void ChooseSourcePath(GtkWindow* parent, GtkFileChooserAction action, const char* title) {
+#if GTK_CHECK_VERSION(4, 10, 0)
+    GtkFileDialog* chooser = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(chooser, title);
+
+    if (action == GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER) {
+        gtk_file_dialog_select_folder(chooser, parent, nullptr, +[](GObject* source, GAsyncResult* res, gpointer) {
+            GFile* file = gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(source), res, nullptr);
+            if (file != nullptr) {
+                gchar* path = g_file_get_path(file);
+                if (path != nullptr) {
+                    gtk_editable_set_text(GTK_EDITABLE(g_sourceEntry), path);
+                    g_free(path);
+                }
+                g_object_unref(file);
+            }
+        }, nullptr);
+    } else {
+        GListStore* store = g_list_store_new(GTK_TYPE_FILE_FILTER);
+        GtkFileFilter* filter = BuildMediaSourceFilter();
+        g_list_store_append(store, filter);
+        g_object_unref(filter);
+        gtk_file_dialog_set_filters(chooser, G_LIST_MODEL(store));
+        g_object_unref(store);
+
+        gtk_file_dialog_open(chooser, parent, nullptr, +[](GObject* source, GAsyncResult* res, gpointer) {
+            GFile* file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source), res, nullptr);
+            if (file != nullptr) {
+                gchar* path = g_file_get_path(file);
+                if (path != nullptr) {
+                    gtk_editable_set_text(GTK_EDITABLE(g_sourceEntry), path);
+                    g_free(path);
+                }
+                g_object_unref(file);
+            }
+        }, nullptr);
+    }
+    g_object_unref(chooser);
+#else
     GtkFileChooserNative* chooser = gtk_file_chooser_native_new(
         title, parent, action, "Select", "Cancel");
     gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), BuildMediaSourceFilter());
@@ -447,6 +599,7 @@ void ChooseSourcePath(GtkWindow* parent, GtkFileChooserAction action, const char
         }
         gtk_native_dialog_destroy(dialog);
     }), nullptr);
+#endif
 }
 
 void PromptForMediaSource() {
@@ -517,13 +670,13 @@ void PromptForMediaSource() {
     gtk_widget_add_css_class(cancelButton, "toolbar-button");
     g_signal_connect(cancelButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         gtk_editable_set_text(GTK_EDITABLE(g_sourceEntry), "");
-        g_sourceDone = true;
-        gtk_widget_hide(g_sourceDialog);
+        g_sourceDone = false;
+        gtk_widget_set_visible(g_sourceDialog, FALSE);
     }), nullptr);
 
     g_signal_connect(g_sourceDialog, "close-request", G_CALLBACK(+[](GtkWidget*, gpointer) -> gboolean {
-        g_sourceDone = true;
-        gtk_widget_hide(g_sourceDialog);
+        g_sourceDone = false;
+        gtk_widget_set_visible(g_sourceDialog, FALSE);
         return TRUE;
     }), nullptr);
 
@@ -538,10 +691,9 @@ void PromptForMediaSource() {
     }
     gtk_widget_show(g_sourceDialog);
 
-    while (!g_sourceDone) {
+    while (gtk_widget_get_visible(g_sourceDialog)) {
         g_main_context_iteration(nullptr, TRUE);
     }
-    gtk_widget_hide(g_sourceDialog);
 
     if (g_sourceDone) {
         const gchar* text = gtk_editable_get_text(GTK_EDITABLE(g_sourceEntry));
@@ -644,7 +796,7 @@ void ShowLogDialog() {
     gtk_fixed_put(GTK_FIXED(fixed), closeButton, UiTokens::kLogCloseX, UiTokens::kLogCloseY);
     gtk_widget_add_css_class(closeButton, "toolbar-button");
     g_signal_connect(closeButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
-        gtk_widget_hide(g_logDialog);
+        gtk_widget_set_visible(g_logDialog, FALSE);
     }), nullptr);
 
     g_signal_connect(g_logDialog, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -737,7 +889,7 @@ void ShowHelpDialog() {
         DumpWindowGeometry("help", dialog);
         return;
     }
-    gtk_widget_show(dialog);
+    gtk_window_present(GTK_WINDOW(dialog));
 }
 
 void RefreshDefaultPlaylistControls() {
@@ -957,7 +1109,7 @@ void ShowSettingsDialog() {
     gtk_widget_add_css_class(cancelButton, "toolbar-button");
     g_signal_connect(cancelButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         g_settingsSaved = false;
-        gtk_widget_hide(g_settingsDialog);
+        gtk_widget_set_visible(g_settingsDialog, FALSE);
     }), nullptr);
 
     GtkWidget* okButton = gtk_button_new_with_label("OK");
@@ -968,7 +1120,7 @@ void ShowSettingsDialog() {
     g_signal_connect(okButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         if (SaveSettingsToConfig()) {
             g_settingsSaved = true;
-            gtk_widget_hide(g_settingsDialog);
+            gtk_widget_set_visible(g_settingsDialog, FALSE);
         }
     }), nullptr);
 
@@ -1001,10 +1153,9 @@ void ShowSettingsDialog() {
     }
     gtk_widget_show(g_settingsDialog);
 
-    while (gtk_widget_is_visible(g_settingsDialog)) {
+    while (gtk_widget_get_visible(g_settingsDialog)) {
         g_main_context_iteration(nullptr, TRUE);
     }
-    gtk_window_destroy(GTK_WINDOW(g_settingsDialog));
 
     if (g_settingsSaved) {
         RefreshSourceList();
@@ -1261,7 +1412,7 @@ void RequestClose() {
         return;
     }
     if (ShouldCloseNow(DLNAServer.IsRunning(), false)) {
-        gtk_widget_hide(g_mainWindow);
+        gtk_widget_set_visible(g_mainWindow, FALSE);
         return;
     }
     g_closePending.RequestCloseOnceStopped();
@@ -1653,8 +1804,9 @@ void DumpLogDialogReopenAndExit(GtkApplication* app) {
     (void)app;
     gtk_window_present(GTK_WINDOW(g_mainWindow));
     ShowLogDialog();
-    if (g_logDialog == nullptr) std::_Exit(1);
-    gtk_widget_hide(g_logDialog);
+    for (int i = 0; i < 200 && !gtk_widget_get_visible(g_logDialog); ++i)
+        g_main_context_iteration(nullptr, TRUE);
+    gtk_widget_set_visible(g_logDialog, FALSE);
     g_main_context_iteration(nullptr, TRUE);
     ShowLogDialog();
     const bool reopened = (g_logDialog != nullptr) &&
@@ -1762,7 +1914,11 @@ void OnAppStartup(GtkApplication* app, gpointer) {
         ".source-list:focus-within { outline: 1px solid rgb(96,165,250); "
         "outline-offset: 2px; }\n";
     GtkCssProvider* dialogProvider = gtk_css_provider_new();
+#if GTK_CHECK_VERSION(4, 12, 0)
+    gtk_css_provider_load_from_string(dialogProvider, dialogCss);
+#else
     gtk_css_provider_load_from_data(dialogProvider, dialogCss, -1);
+#endif
     GdkDisplay* display = gdk_display_get_default();
     gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(dialogProvider),
                                                GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
@@ -1894,8 +2050,8 @@ int main(int argc, char** argv) {
     int result = 1;
     for (int attempt = 0; attempt < kGuiStartupMaxAttempts; ++attempt) {
         // GTK requires a valid reverse-DNS/D-Bus application identifier.
-#ifdef DLNA_FLATPAK_BUILD
-        app = gtk_application_new("com.github.dlna-server-14ag", G_APPLICATION_FLAGS_NONE);
+#if GLIB_CHECK_VERSION(2, 74, 0)
+        app = gtk_application_new("com.github.dlna-server-14ag", G_APPLICATION_DEFAULT_FLAGS);
 #else
         app = gtk_application_new("com.github.dlna-server-14ag", G_APPLICATION_FLAGS_NONE);
 #endif

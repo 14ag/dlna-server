@@ -51,7 +51,7 @@ function Resolve-VcpkgRoot {
             return $c
         }
     }
-    throw "vcpkg not found. Set VCPKG_ROOT, VCPKG_INSTALLATION_ROOT, or install vcpkg at $env:USERPROFILE\vcpkg."
+    throw 'vcpkg not found. Set VCPKG_ROOT, VCPKG_INSTALLATION_ROOT, or install vcpkg at $env:USERPROFILE\vcpkg.'
 }
 
 function Build-Arch {
@@ -67,7 +67,7 @@ function Build-Arch {
     $curlConfig = Join-Path $vcpkgRoot "installed\$triplet\share\curl\CURLConfig.cmake"
 
     if (-not (Test-Path -LiteralPath $curlConfig)) {
-        Write-Host "curl:$triplet not found in vcpkg — installing..."
+        Write-Host "curl:$triplet not found in vcpkg - installing..."
         $vcpkgExe = Join-Path $vcpkgRoot "vcpkg.exe"
         Invoke-NativeChecked $vcpkgExe @("install", "curl:$triplet")
     }
@@ -91,14 +91,13 @@ function Build-Arch {
     )
 
     $cmake = Get-Content -LiteralPath (Join-Path $RepoRoot "CMakeLists.txt") -Raw
-    if ($cmake -notmatch "project\(dlna-server VERSION ([0-9.]+)\)") {
+    if ($cmake -match 'project\(dlna-server\s+VERSION\s+([0-9.]+)\)') {
+        $version = $Matches[1]
+    } else {
         throw "Could not read version"
     }
-    $version = $Matches[1]
 
-    # Zip output
-    Compress-Archive -LiteralPath (Join-Path $InstallDir "DLNA Server.exe") `
-        -DestinationPath (Join-Path $InstallDir "dlna-server-$version-windows-$Architecture.zip") -Force
+    Compress-Archive -LiteralPath (Join-Path $InstallDir "DLNA Server.exe") -DestinationPath (Join-Path $InstallDir "dlna-server-$version-windows-$Architecture.zip") -Force
 
     Write-Host "Windows $Architecture build completed and zipped in: $InstallDir"
 }
