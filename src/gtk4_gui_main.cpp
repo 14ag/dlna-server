@@ -1020,19 +1020,24 @@ void ShowSettingsDialog() {
     // menu bar row mirrors the win32 SetMenu Logs/Help bar that sits in
     // the non-client area so it is absent from the geometry dump and the
     // group boxes below start at the captured y coordinate of 21
+    const int kSettingsToolbarButtonWidth = 72;
+    const int kSettingsToolbarButtonHeight = 28;
+    const int kSettingsToolbarTop = UiTokens::kSettingsServerGroupY - 36;
+
     GtkWidget* logsButton = gtk_button_new_with_label("Logs");
-    gtk_widget_set_size_request(logsButton, 60, 20);
+    gtk_widget_set_size_request(logsButton, kSettingsToolbarButtonWidth, kSettingsToolbarButtonHeight);
     gtk_fixed_put(GTK_FIXED(fixed), logsButton, UiTokens::kSettingsServerGroupX,
-                  UiTokens::kSettingsServerGroupY - 21);
+                  kSettingsToolbarTop);
     gtk_widget_add_css_class(logsButton, "flat");
     g_signal_connect(logsButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ShowLogDialog();
     }), nullptr);
 
     GtkWidget* helpButton = gtk_button_new_with_label("Help");
-    gtk_widget_set_size_request(helpButton, 60, 20);
-    gtk_fixed_put(GTK_FIXED(fixed), helpButton, UiTokens::kSettingsServerGroupX + 64,
-                  UiTokens::kSettingsServerGroupY - 21);
+    gtk_widget_set_size_request(helpButton, kSettingsToolbarButtonWidth, kSettingsToolbarButtonHeight);
+    gtk_fixed_put(GTK_FIXED(fixed), helpButton,
+                  UiTokens::kSettingsServerGroupX + kSettingsToolbarButtonWidth + UiTokens::kButtonGap,
+                  kSettingsToolbarTop);
     gtk_widget_add_css_class(helpButton, "flat");
     g_signal_connect(helpButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ShowHelpDialog();
@@ -1581,6 +1586,16 @@ void BuildMainWindow(GtkApplication* app) {
                                 UiTokens::kWindowWidth, UiTokens::kWindowHeight);
     gtk_window_set_resizable(GTK_WINDOW(window), TRUE);
     gtk_widget_set_size_request(window, UiTokens::kWindowWidth, 460);
+    // win10 style title bar reuses the same header bar plus window
+    // controls pattern already used by the settings log and help
+    // dialogs in this same file see ShowSettingsDialog for the
+    // reference implementation this mirrors
+    GtkWidget* mainHeaderBar = gtk_header_bar_new();
+    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(mainHeaderBar), TRUE);
+    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(mainHeaderBar),
+                                    gtk_label_new("DLNA Server"));
+    gtk_widget_add_css_class(mainHeaderBar, "win10-titlebar");
+    gtk_window_set_titlebar(GTK_WINDOW(window), mainHeaderBar);
 
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokens::kWindowWidth, UiTokens::kWindowHeight);
@@ -1591,12 +1606,14 @@ void BuildMainWindow(GtkApplication* app) {
     gtk_fixed_put(GTK_FIXED(fixed), g_toolbar, 0, 0);
     gtk_widget_add_css_class(g_toolbar, "toolbar");
 
-    g_title = gtk_label_new("DLNA Server");
+    g_title = gtk_label_new("");
     gtk_widget_set_size_request(g_title, 200, UiTokens::kToolbarHeight);
     gtk_fixed_put(GTK_FIXED(fixed), g_title, UiTokens::kGutter, 0);
     gtk_widget_add_css_class(g_title, "window-title");
     gtk_label_set_xalign(GTK_LABEL(g_title), 0.0f);
     gtk_label_set_ellipsize(GTK_LABEL(g_title), PANGO_ELLIPSIZE_END);
+    // toolbar title text removed per design request row still reserved for layout stability
+    gtk_widget_set_visible(g_title, FALSE);
 
     g_addButton = gtk_button_new_with_label("Add");
     gtk_widget_set_size_request(g_addButton, UiTokens::kAddButtonWidth, UiTokens::kButtonHeight);
@@ -1891,7 +1908,9 @@ void OnAppStartup(GtkApplication* app, gpointer) {
         "textview text { background-color: rgb(31,31,31); color: rgb(255,255,255); }\n"
         "scrolledwindow { background-color: rgb(31,31,31); }\n"
         "viewport { background-color: rgb(31,31,31); }\n"
-        ".source-list { background-color: rgb(31,31,31); }\n"
+        ".source-list { background-color: rgb(31,31,31); "
+        "border: 1px solid rgb(88,88,88); border-radius: 0px; }\n"
+        ".source-list list { padding: 2px; }\n"
         ".source-list list { background-color: rgb(31,31,31); color: rgb(255,255,255); }\n"
         ".source-list row { padding: 4px 6px; background-color: rgb(31,31,31); "
         "color: rgb(255,255,255); }\n"
@@ -1911,8 +1930,18 @@ void OnAppStartup(GtkApplication* app, gpointer) {
         "background-color: rgb(51,51,51); }\n"
         ".toolbar-button:focus-visible { outline: 1px solid rgb(96,165,250); "
         "outline-offset: -4px; }\n"
+        ".toolbar-button { border-bottom: 2px solid transparent; }\n"
+        ".toolbar-button:hover { border-bottom: 2px solid rgb(96,165,250); }\n"
         ".source-list:focus-within { outline: 1px solid rgb(96,165,250); "
-        "outline-offset: 2px; }\n";
+        "outline-offset: 2px; }\n"
+        "window.csd, window.csd decoration { "
+        "border-radius: 0px; box-shadow: none; }\n"
+        "headerbar { border-radius: 0px; }\n"
+        ".win10-titlebar { background-color: rgb(37,37,37); "
+        "min-height: 32px; padding: 0 8px; border: none; "
+        "box-shadow: none; }\n"
+        ".win10-titlebar .title { color: rgb(255,255,255); "
+        "font-size: 12px; font-weight: 400; }\n";
     GtkCssProvider* dialogProvider = gtk_css_provider_new();
 #if GTK_CHECK_VERSION(4, 12, 0)
     gtk_css_provider_load_from_string(dialogProvider, dialogCss);
