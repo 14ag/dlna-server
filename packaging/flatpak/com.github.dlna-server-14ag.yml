@@ -1,7 +1,7 @@
-app-id: com.github.14ag.dlna_server
-runtime: org.freedesktop.Platform
-runtime-version: "24.08"
-sdk: org.freedesktop.Sdk
+app-id: com.github.dlna-server-14ag
+runtime: org.gnome.Platform
+runtime-version: "47"
+sdk: org.gnome.Sdk
 command: dlna-server-gui
 finish-args:
   - --share=network
@@ -20,7 +20,6 @@ modules:
       - type: dir
         path: ../..
     post-install:
-      - install -Dm644 packaging/flatpak/com.github.14ag.dlna_server.desktop /app/share/applications/com.github.14ag.dlna_server.desktop
-      - install -Dm644 packaging/flatpak/com.github.14ag.dlna_server.metainfo.xml /app/share/metainfo/com.github.14ag.dlna_server.metainfo.xml
-      - install -Dm644 resources/dlna-server.svg /app/share/icons/hicolor/scalable/apps/com.github.14ag.dlna_server.svg
+      - install -Dm644 packaging/flatpak/com.github.dlna-server-14ag.desktop /app/share/applications/com.github.dlna-server-14ag.desktop
+      - install -Dm644 resources/dlna-server.svg /app/share/icons/hicolor/scalable/apps/com.github.dlna-server-14ag.svg
       - rm -f /app/share/applications/dlna-server.desktop /app/share/metainfo/dlna-server.appdata.xml /app/share/icons/hicolor/scalable/apps/dlna-server.svg

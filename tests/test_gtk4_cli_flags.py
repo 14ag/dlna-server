@@ -3,7 +3,6 @@ import time
 import pytest
 
 @pytest.mark.posix_only
-@pytest.mark.gui_only
 def test_kill_server_noop_when_not_running(dlna_server_gui_binary, xvfb):
     result = subprocess.run(
         [dlna_server_gui_binary, "--kill-server"],
@@ -12,7 +11,6 @@ def test_kill_server_noop_when_not_running(dlna_server_gui_binary, xvfb):
     assert result.returncode == 0
 
 @pytest.mark.posix_only
-@pytest.mark.gui_only
 def test_source_override_hotswaps_running_instance(tmp_path, dlna_server_gui_binary, xvfb):
     src_a = tmp_path / "a"; src_a.mkdir()
     src_b = tmp_path / "b"; src_b.mkdir()

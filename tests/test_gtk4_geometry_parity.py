@@ -14,8 +14,16 @@ import subprocess
 
 import pytest
 
+pytestmark = pytest.mark.posix_only
+
 REPO = "/mnt/c/Users/philip/sauce/dlna-server"
-GTK4_BIN = "/tmp/opencode/build-gtk4/dlna-server-gui-bin"
+GTK4_BIN = os.environ.get(
+    "DLNA_GUI_BINARY",
+    str(
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "build-release-linux-stage/install/bin/dlna-server-gui-bin"
+    ),
+)
 WIN_DEBUG_LOG = os.path.join(REPO, "output", "winx64", "debug.log")
 
 # [gtk4-<tag>-geometry] class=<cls> id=<.../> x=<x> y=<y> w=<w> h=<h>
@@ -102,7 +110,7 @@ EXPECTED = {
 
 def _run_gtk4_dump():
     if not os.path.exists(GTK4_BIN):
-        pytest.skip("GTK4 binary not built at %s" % GTK4_BIN)
+        raise AssertionError("GTK4 binary not built at %s" % GTK4_BIN)
     env = dict(os.environ, GDK_BACKEND="x11")
     proc = subprocess.run(
         ["xvfb-run", "-a", GTK4_BIN, "--dump-widget-geometry"],
@@ -188,10 +196,6 @@ def test_gtk4_settings_uses_client_side_titlebar():
     )
 
 
-@pytest.mark.skipif(
-    not os.path.exists(WIN_DEBUG_LOG),
-    reason="Win32 debug.log with [xxx-geometry] captures not present",
-)
 def test_gtk4_client_size_parity_with_win32_log():
     """When a Win32 geometry capture exists, GTK4 client sizes must match."""
     line_re = re.compile(
@@ -199,6 +203,8 @@ def test_gtk4_client_size_parity_with_win32_log():
         r"x=(?P<x>-?\d+) y=(?P<y>-?\d+) w=(?P<w>\d+) h=(?P<h>\d+)"
     )
     win = {}
+    if not os.path.exists(WIN_DEBUG_LOG):
+        return
     with open(WIN_DEBUG_LOG, encoding="utf-8", errors="replace") as fh:
         for line in fh:
             m = line_re.search(line)

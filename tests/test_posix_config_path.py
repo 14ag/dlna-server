@@ -12,6 +12,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+pytestmark = pytest.mark.posix_only
+
 
 def _source(name: str) -> str:
     return (ROOT / "src" / name).read_text(encoding="utf-8")

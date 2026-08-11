@@ -1,5 +1,8 @@
 import re
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.posix_only
 
 GTK4_SOURCE = Path(__file__).parent.parent / "src" / "gtk4_gui_main.cpp"
 

@@ -41,4 +41,14 @@ for i in $(seq 1 20); do
     sleep 0.25
 done
 
+# Direct WSLg shortcuts have no XDG activation token. Re-enter through the
+# desktop entry when the compositor is actually available, so WSLg can
+# associate, focus, and iconize the native window.
+if [ -z "${DLNA_SERVER_GTK_LAUNCHED:-}" ] && [ -n "${WSL_INTEROP:-}" ] && \
+   [ -S "${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}/${WAYLAND_DISPLAY:-wayland-0}" ] && \
+   command -v gtk-launch >/dev/null 2>&1; then
+    export DLNA_SERVER_GTK_LAUNCHED=1
+    exec gtk-launch dlna-server "$@"
+fi
+
 exec "$native_gui" "$@"

@@ -1,5 +1,5 @@
 set(applications_dir "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_DATADIR@/applications")
-set(exec_path "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@/dlna-server-gui")
+set(exec_path "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@/dlna-server-gui-bin")
 
 file(MAKE_DIRECTORY "${applications_dir}")
 file(WRITE "${applications_dir}/dlna-server.desktop"
@@ -13,7 +13,7 @@ Icon=dlna-server
 Terminal=false
 Categories=AudioVideo;Network;FileTransfer;
 Keywords=DLNA;UPnP;media;server;streaming;
-StartupWMClass=dlna-server
+StartupWMClass=com.github.dlna-server-14ag
 StartupNotify=true
 ")
 

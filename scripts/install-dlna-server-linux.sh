@@ -24,6 +24,16 @@ sudo_run() {
     sudo -n "$@"
 }
 
+stop_running_instances() {
+    local name
+    for name in dlna-server dlna-server-gui dlna-server-gui-bin; do
+        if pgrep -x "$name" >/dev/null 2>&1; then
+            sudo_run pkill -TERM -x "$name" || true
+        fi
+    done
+}
+
+stop_running_instances
 sudo_run rm -f /usr/bin/dlna-server
 sudo_run rm -f /usr/bin/dlna-server-gui
 sudo_run rm -f /usr/bin/dlna-server-gui-bin
@@ -69,6 +79,6 @@ sudo_run rm -f /usr/local/bin/dlna-server
 sudo_run rm -f /usr/local/bin/dlna-server-gui
 sudo_run rm -f /usr/local/bin/dlna-server-gui-bin
 sudo_run rm -rf /usr/local/share/dlna-server
-sudo_run dpkg -P dlna-server
+sudo_run dpkg -P dlna-server || true
 sudo_run dpkg -i "$package_path"
 echo "Installed: $package_path"

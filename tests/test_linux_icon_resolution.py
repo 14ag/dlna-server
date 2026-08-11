@@ -12,6 +12,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+pytestmark = pytest.mark.posix_only
+
 
 def _source(name: str) -> str:
     return (ROOT / "src" / name).read_text(encoding="utf-8")
@@ -49,11 +51,9 @@ class TestGtk4WindowIdentity:
     def test_app_id_set(self):
         """The GTK4 application must use the flatpak app ID under
         DLNA_FLATPAK_BUILD so WM_CLASS matches the flatpak StartupWMClass.
-        Non-flatpak builds fall back to 'dlna-server', matching the
-        install_desktop.cmake.in .desktop (Icon=dlna-server)."""
+        Native and Flatpak builds use the same valid reverse-DNS identity."""
         src = _source("gtk4_gui_main.cpp")
-        assert 'gtk_application_new("com.github.14ag.dlna_server"' in src
-        assert 'gtk_application_new("dlna-server"' in src
+        assert 'gtk_application_new("com.github.dlna-server-14ag"' in src
 
     def test_css_loaded_via_resolver(self):
         """The GTK4 startup must load style.css via ResolveBundledResourcePath."""
@@ -108,10 +108,10 @@ class TestDesktopIntegration:
     def test_startup_wm_class(self):
         """Each .desktop file must declare StartupWMClass matching its own
         app id: the appimage ships the non-flatpak 'com.github.dlna-server-14ag'
-        id, the flatpak ships 'com.github.14ag.dlna_server'."""
+        id, the flatpak ships 'com.github.dlna-server-14ag'."""
         texts = {
             "packaging/linux/dlna-server.appimage.desktop": "StartupWMClass=com.github.dlna-server-14ag",
-            "packaging/flatpak/com.github.14ag.dlna_server.desktop": "StartupWMClass=com.github.14ag.dlna_server",
+            "packaging/flatpak/com.github.dlna-server-14ag.desktop": "StartupWMClass=com.github.dlna-server-14ag",
         }
         for desktop, expected in texts.items():
             text = (ROOT / desktop).read_text(encoding="utf-8")

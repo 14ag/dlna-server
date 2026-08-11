@@ -1893,15 +1893,11 @@ int main(int argc, char** argv) {
     GtkApplication* app = nullptr;
     int result = 1;
     for (int attempt = 0; attempt < kGuiStartupMaxAttempts; ++attempt) {
-        // must equal the basename of the installed desktop file minus the
-        // extension see packaging linux install desktop cmake in which
-        // installs dlna dash server dot desktop with icon equals dlna dash server
-        // a mismatched id here is why a native wayland shell such as wslg
-        // falls back to a generic icon for this window see the workflow doc
+        // GTK requires a valid reverse-DNS/D-Bus application identifier.
 #ifdef DLNA_FLATPAK_BUILD
-        app = gtk_application_new("com.github.14ag.dlna_server", G_APPLICATION_FLAGS_NONE);
+        app = gtk_application_new("com.github.dlna-server-14ag", G_APPLICATION_FLAGS_NONE);
 #else
-        app = gtk_application_new("dlna-server", G_APPLICATION_FLAGS_NONE);
+        app = gtk_application_new("com.github.dlna-server-14ag", G_APPLICATION_FLAGS_NONE);
 #endif
         // connect before register so the startup signal emitted during
         // registration reaches OnAppStartup instead of firing into the void

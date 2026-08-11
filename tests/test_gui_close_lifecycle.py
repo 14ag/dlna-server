@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.posix_only, pytest.mark.gui_only]
+pytestmark = pytest.mark.posix_only
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
