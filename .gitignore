@@ -92,3 +92,5 @@ pre_existing_fails.txt
 !*.sh
 !*.bat
 !*.ps1
+posix-full-suite-log.txt
+.flatpak-builder/*

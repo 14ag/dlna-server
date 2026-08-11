@@ -1,4 +1,7 @@
 import pathlib
+import pytest
+
+pytestmark = pytest.mark.posix_only
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "gtk4_gui_main.cpp"
 

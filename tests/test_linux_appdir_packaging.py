@@ -1,5 +1,8 @@
 import unittest
 from pathlib import Path
+import pytest
+
+pytestmark = pytest.mark.posix_only
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,14 +31,14 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
     def test_linux_desktop_installers_are_scripted(self):
         cmake = self.read("CMakeLists.txt")
         gitattributes = self.read(".gitattributes")
-        flatpak = self.read("packaging/flatpak/com.github.14ag.dlna_server.yml")
-        desktop = self.read("packaging/flatpak/com.github.14ag.dlna_server.desktop")
+        flatpak = self.read("packaging/flatpak/com.github.dlna-server-14ag.yml")
+        desktop = self.read("packaging/flatpak/com.github.dlna-server-14ag.desktop")
 
         self.assertIn('set(CPACK_GENERATOR "DEB")', cmake)
         self.assertIn("CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON", cmake)
         self.assertIn("*.sh text eol=lf", gitattributes)
         self.assertIn("*.yml text eol=lf", gitattributes)
-        self.assertIn("app-id: com.github.14ag.dlna_server", flatpak)
+        self.assertIn("app-id: com.github.dlna-server-14ag", flatpak)
         self.assertIn("--share=network", flatpak)
         self.assertIn("--filesystem=home", flatpak)
         self.assertIn("Name=DLNA Server", desktop)

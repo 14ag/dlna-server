@@ -4,7 +4,6 @@ import pytest
 SOURCE = "src/gtk4_gui_main.cpp"
 
 @pytest.mark.posix_only
-@pytest.mark.gui_only
 def test_build_main_window_ends_with_present(repo_root):
     text = (repo_root / SOURCE).read_text()
     match = re.search(r"void BuildMainWindow\(GtkApplication\* app\) \{(.*?)\n\}", text, re.S)
@@ -15,7 +14,6 @@ def test_build_main_window_ends_with_present(repo_root):
     assert "gtk_widget_set_visible(window, FALSE)" not in body
 
 @pytest.mark.posix_only
-@pytest.mark.gui_only
 def test_gapplication_id_matches_desktop_file(repo_root):
     code = (repo_root / SOURCE).read_text()
     desktop_cmake = (repo_root / "packaging/linux/install_desktop.cmake.in").read_text()

@@ -48,16 +48,16 @@
 - Run `python -m pytest -q --tb=no` for new tests that have just been added 
 - Run 
 ```powershell
-python -m pytest -v --tb=no 2>&1 | Select-String -Pattern "FAILED|ERROR|SKIP" 
+python -m pytest -v --tb=no 2>&1 | Select-String -Pattern " FAILED | ERROR | SKIP " 
 
 ```
 or
 
 ```bash
-python -m pytest -v --tb=no 2>&1 | grep -E "FAILED|ERROR|SKIP"
+python -m pytest -v --tb=no 2>&1 | grep -E " FAILED | ERROR | SKIP "
 
 ```
-when executing the full test suite so as to filter out failed tests.
+when executing the full test suite so as to filter out passed tests and see failed tests only.
 - there should never be skipped tests. all tests should be marked with platform so that they are deselected when they can not run in the curent platform. if a test is skipped, it should be fixed or removed
 - Run Windows CMake configure/build for `dlna-server` when Windows build files changed.
 - Run POSIX CMake configure/build with `-DDLNA_ENABLE_GTK4_GUI=OFF` when POSIX/shared code changed.

@@ -40,7 +40,8 @@ if [ "$RELEASE" = "1" ]; then
 fi
 
 if [ "$INSTALL" = "1" ]; then
-    echo "Installing Linux application..."
+    echo "Building and installing Linux application..."
+    bash "$script_dir/scripts/build-linux.sh"
     bash "$script_dir/scripts/install-dlna-server-linux.sh"
     exit 0
 fi
