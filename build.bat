@@ -77,13 +77,13 @@ if "%RELEASE%"=="1" (
 
 if "%INSTALL_LINUX%"=="1" (
     echo Installing Linux app via WSL...
-    wsl.exe -d Ubuntu -- bash -lc "cd /mnt/c/Users/philip/sauce/dlna-server && bash scripts/install-dlna-server-linux.sh"
+    wsl.exe -d Ubuntu -- bash -lc "cd $(wslpath "$PWD") && bash scripts/install-dlna-server-linux.sh"
     exit /b %ERRORLEVEL%
 )
 
 if "%BUILD_LINUX%"=="1" (
     echo Building Linux assets via WSL...
-    wsl.exe -d Ubuntu -- bash -lc "cd /mnt/c/Users/philip/sauce/dlna-server && DLNA_SUDO_PASSWORD=' ' bash scripts/build-linux.sh"
+    wsl.exe -d Ubuntu -- bash -lc "cd $(wslpath "$PWD") && DLNA_SUDO_PASSWORD=' ' bash scripts/build-linux.sh"
     exit /b %ERRORLEVEL%
 )
 

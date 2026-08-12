@@ -1,7 +1,6 @@
 import http.client
 import os
 import re
-import shutil
 import socket
 import subprocess
 import time
@@ -36,7 +35,12 @@ class ServerSession:
     @property
     def log_dir(self):
         if os.name == "nt":
-            return self.config_dir
+            # On Windows _launch_server forces the config.ini next to the
+            # binary, and debug.log is derived from the config path, so the
+            # log ends up beside the executable. Reading config_dir (the temp
+            # media-source parent the fixture passes for symmetry) would see
+            # nothing.
+            return self.binary_dir
         return self.config_dir / "dlna-server"
 
     @property
@@ -87,64 +91,39 @@ def _log_has_search_ignored_st(log_text, st):
     return bool(re.search(rf"SSDP search ignored: unsupported ST={re.escape(st)}", log_text))
 
 
-def _vlm_path():
-    if os.name == "nt":
-        p = r"C:\Program Files\VideoLAN\VLC\vlc.exe"
-        return p if Path(p).exists() else shutil.which("vlc")
-    return shutil.which("vlc") or shutil.which("cvlc")
+def _server_bind_ip(session):
+    log_text = _read_ssdp_log(session)
+    m = re.search(r"Starting server on ([\d.]+):\d+", log_text)
+    return m.group(1) if m else None
 
 
-def _trigger_vlc_msearch(timeout_s: float = 8.0):
-    """Launch VLC in dummy mode to generate real M-SEARCH multicast traffic.
-
-    On Windows, localhost-bound sockets cannot receive their own multicast
-    packets, so a Python send_msearch() cannot verify SSDP response behavior.
-    VLC runs in a separate process and uses the OS multicast stack, which the
-    server DOES receive. We then read the server's debug.log for evidence that
-    the server received the M-SEARCH and sent a response.
+def _probe_msearch(session, st, count=3):
+    """Send real M-SEARCH datagrams on the SSDP group from the interface the
+    server bound. The server joins the multicast group on that interface, so
+    it receives and logs the search, then logs its response. IP_MULTICAST_IF
+    is required on Windows where a loopback socket never delivers its own
+    multicast -- the same trick the flood test in this file already uses.
     """
-    vlc = _vlm_path()
-    if not vlc:
-        return None
+    from tests.fixtures.ssdp_listener import SSDP_ADDR, SSDP_PORT
+    server_ip = _server_bind_ip(session)
+    if not server_ip:
+        return False
+    msearch = (
+        "M-SEARCH * HTTP/1.1\r\n"
+        f"HOST: {SSDP_ADDR}:{SSDP_PORT}\r\n"
+        'MAN: "ssdp:discover"\r\n'
+        "MX: 3\r\n"
+        f"ST: {st}\r\n\r\n"
+    ).encode()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        proc = subprocess.Popen(
-            [vlc, "-I", "dummy", "upnp://"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        time.sleep(timeout_s)
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        return True
-    except (OSError, subprocess.SubprocessError):
-        return None
-
-
-def _trigger_vlc_msearch_alt(timeout_s: float = 8.0):
-    """Alternate VLC invocation using --services-discovery upnp."""
-    vlc = _vlm_path()
-    if not vlc:
-        return None
-    try:
-        proc = subprocess.Popen(
-            [vlc, "-I", "dummy", "--services-discovery", "upnp"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        time.sleep(timeout_s)
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        return True
-    except (OSError, subprocess.SubprocessError):
-        return None
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF,
+                        socket.inet_aton(server_ip))
+        for _ in range(count):
+            sock.sendto(msearch, (SSDP_ADDR, SSDP_PORT))
+    finally:
+        sock.close()
+    return True
 
 
 @pytest.fixture
@@ -250,20 +229,20 @@ def _new_log_text(session, prev_len):
 
 
 def _ensure_vlc_msearch_evidence(session, st, max_attempts=2):
-    """Trigger VLC M-SEARCH and confirm server log shows evidence of response.
+    """Probe M-SEARCH and confirm server log shows evidence of a response.
 
     Only considers log entries written AFTER this function starts, so prior
     tests sharing the same binary_dir do not pollute the result.
 
     Returns location_url from log if response sent. Raises AssertionError if
-    no log evidence can be found after max_attempts VLC invocations.
+    no log evidence can be found after max_attempts probes.
     """
     prev_len = len(_read_ssdp_log(session))
 
-    for attempt in range(max_attempts):
-        trigger_fn = _trigger_vlc_msearch if attempt == 0 \
-            else _trigger_vlc_msearch_alt
-        trigger_fn()
+    for _ in range(max_attempts):
+        if not _probe_msearch(session, st):
+            break
+        time.sleep(1.5)  # let the server log the match and send response
         new_text = _new_log_text(session, prev_len)
         if _log_has_response_for_st(new_text, st):
             return _log_get_location_for_st(new_text, st)
@@ -277,9 +256,9 @@ def _ensure_vlc_msearch_evidence(session, st, max_attempts=2):
                 "entry; cannot verify response was sent"
             )
 
-    pytest.skip(
-        "could not trigger M-SEARCH evidence via VLC; install VLC or run on "
-        "Linux where loopback multicast works"
+    raise AssertionError(
+        f"could not obtain M-SEARCH response evidence for {st}; "
+        "multicast probe failed"
     )
 
 
@@ -313,8 +292,7 @@ def test_urlbase_matches_location_host(dlna_server_process):
     assert location
     root, ns_uri = fetch_description(location)
     url_base = find_text(root, "URLBase", ns_uri)
-    if url_base is None:
-        pytest.skip("no URLBase element; nothing to check")
+    assert url_base is not None, "URLBase element missing from description.xml"
     loc_parsed = urlparse(location)
     base_parsed = urlparse(url_base)
     assert base_parsed.hostname == loc_parsed.hostname, (
@@ -447,8 +425,7 @@ def test_ssdp_search_flood_does_not_degrade_or_hang(
     pre_len = len(pre_log)
 
     m = re.search(r"Starting server on ([\d.]+):(\d+)", pre_log)
-    if not m:
-        pytest.skip("could not parse server bind address from debug.log")
+    assert m, "could not parse server bind address from debug.log"
     server_ip = m.group(1)
 
     msearch = (
