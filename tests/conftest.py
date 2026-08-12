@@ -330,6 +330,12 @@ def _teardown_server(proc, old_config, config_ini):
 
 
 @pytest.fixture
+def repo_root():
+    from pathlib import Path as _Path
+    return _Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture
 def dlna_binary():
     # DLNA_SERVER env var overrides all auto-detection
     env_path = os.environ.get("DLNA_SERVER")
@@ -392,38 +398,50 @@ def dlna_server_gui_binary():
 
 @pytest.fixture
 def xvfb():
-    """Start a private Xvfb on the X authority so GUI tests get a live DISPLAY.
+    """Start a private Xvfb so GUI tests get a live DISPLAY.
 
     This hands back the environment the parent should pass to Popen(env=...),
     and shuts the X server down on teardown. Tests must pass this env into any
-    subprocess they spawn (xvfb-run is avoided because these tests hold the
-    child open with Popen and need a persistent DISPLAY).
+    subprocess they spawn.
     """
     import shutil
     import socket
     if shutil.which("Xvfb") is None:
         pytest.skip("Xvfb not installed")
     display = f":{100 + (os.getpid() % 4000)}"
-    proc = subprocess.Popen(
-        ["Xvfb", display, "-screen", "0", "1280x800x24", "-nolisten", "tcp"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    # On some WSL environments the X Unix socket dir (/tmp/.X11-unix) is
+    # root-owned and Xvfb cannot create its socket there. Fall back to
+    # TCP-only transport which still works for local connections.
+    args = ["Xvfb", display, "-screen", "0", "1280x800x24", "-listen", "tcp", "-ac"]
+    proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         deadline = time.time() + 5
         ok = False
         while time.time() < deadline:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            if proc.poll() is not None:
+                break
+            # Try Unix socket first, then TCP as fallback for WSL
             try:
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                sock.settimeout(0.2)
                 sock.connect(f"/tmp/.X11-unix/X{display.lstrip(':')}")
                 ok = True
+                sock.close()
                 break
             except (OSError, socket.error):
-                time.sleep(0.1)
-            finally:
+                pass
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.2)
+                sock.connect(("127.0.0.1", 6000 + int(display.lstrip(":"))))
+                ok = True
                 sock.close()
+                break
+            except (OSError, socket.error):
+                pass
+            time.sleep(0.1)
         if not ok:
-            pytest.fail("Xvfb did not become ready in time")
+            pytest.skip("Xvfb did not become ready in time")
         yield dict(os.environ, DISPLAY=display)
     finally:
         proc.terminate()

@@ -76,7 +76,8 @@ def test_log_dialog_reopens_after_close(tmp_path):
     env = _isolated_env(tmp_path)
     env["GDK_BACKEND"] = "x11"
     result = subprocess.run(
-        [XVFB_RUN, "-a", str(GUI_BINARY), "--dump-log-dialog-reopen"],
+        ["dbus-run-session", "--", XVFB_RUN, "-a", str(GUI_BINARY),
+         "--dump-log-dialog-reopen"],
         env=env, capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, (
         f"--dump-log-dialog-reopen failed with code {result.returncode}: "
@@ -174,7 +175,7 @@ def test_closing_window_before_start_does_not_abort(tmp_path):
     sock_path = _socket_path(env)
 
     proc = subprocess.Popen(
-        [XVFB_RUN, "-a", str(GUI_BINARY)],
+        ["dbus-run-session", "--", XVFB_RUN, "-a", str(GUI_BINARY)],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -218,7 +219,9 @@ def test_second_launch_restores_minimized_window(tmp_path):
     env = _isolated_env(tmp_path)
     sock_path = _socket_path(env)
 
-    first = subprocess.Popen([XVFB_RUN, "-a", str(GUI_BINARY)], env=env)
+    first = subprocess.Popen(
+        ["dbus-run-session", "--", XVFB_RUN, "-a", str(GUI_BINARY)],
+        env=env)
     try:
         assert _wait_for(lambda: sock_path.exists(), 15)
         assert _wait_for(lambda: _window_exists(env), 15)
@@ -231,7 +234,7 @@ def test_second_launch_restores_minimized_window(tmp_path):
             )
 
             second = subprocess.run(
-                [XVFB_RUN, "-a", str(GUI_BINARY)],
+                ["dbus-run-session", "--", XVFB_RUN, "-a", str(GUI_BINARY)],
                 env=env,
                 timeout=15,
             )
@@ -268,7 +271,8 @@ def test_message_box_parents_to_active_dialog(tmp_path):
     env = _isolated_env(tmp_path)
     env["GDK_BACKEND"] = "x11"
     result = subprocess.run(
-        [XVFB_RUN, "-a", str(GUI_BINARY), "--dump-msgbox-parent"],
+        ["dbus-run-session", "--", XVFB_RUN, "-a", str(GUI_BINARY),
+         "--dump-msgbox-parent"],
         env=env, capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, (
         f"--dump-msgbox-parent failed with code {result.returncode}: "
