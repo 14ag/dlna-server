@@ -52,6 +52,9 @@ out/
 output/
 bin/
 
+# pytest basetemp (repo-local temporary files, wiped by conftest session finish)
+tmp/
+
 # Visual Studio
 .vs/
 *.user

@@ -512,6 +512,7 @@ class TestSingleInstanceLifecycle:
         assert lines[0] == "lock-acquired"
         assert "released" in lines
 
+    @pytest.mark.posix_only
     def test_single_instance_retry_timing(self, dlna_binary):
         """SendShowWithRetry(3, 50) against a not-yet-listening socket must
         sleep 2*50=100ms between attempts, retry, then give up (no hang)."""

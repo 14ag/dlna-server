@@ -2,6 +2,7 @@ import os
 import socket
 import subprocess
 import time
+import shutil
 import tempfile
 import urllib.error
 import urllib.request
@@ -106,6 +107,27 @@ _configure_binary_envs()
 os.environ.setdefault("DLNA_SERVER_SKIP_FIREWALL", "1")
 
 
+def _repo_tmp_root():
+    root = Path(__file__).resolve().parent.parent
+    d = root / "tmp"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _repo_tmp_dir(prefix):
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=str(_repo_tmp_root())))
+
+
+# Redirect every bare tempfile call site (mkdtemp, TemporaryDirectory, ...) so
+# tests never write outside the repository folder.  pytest_sessionfinish wipes
+# the whole tmp/ tree when the session ends.
+tempfile.tempdir = str(_repo_tmp_root())
+
+
+def pytest_sessionfinish(session, exitstatus):
+    shutil.rmtree(str(_repo_tmp_root()), ignore_errors=True)
+
+
 def pytest_collection_modifyitems(config, items):
     deselected = []
     remaining = []
@@ -190,7 +212,7 @@ def _launch_server(binary_path, port, media_source_dir, config_dir=None):
         if os.name == "nt":
             config_dir = binary_path.parent
         else:
-            config_dir = Path(tempfile.mkdtemp(prefix="dlna-config-"))
+            config_dir = _repo_tmp_dir("dlna-config-")
     else:
         config_dir = Path(config_dir)
 
@@ -224,7 +246,7 @@ def _launch_server(binary_path, port, media_source_dir, config_dir=None):
     if os.name != "nt":
         env["XDG_CONFIG_HOME"] = str(config_dir)
         env["HOME"] = str(config_dir)
-        env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="dlna-runtime-")
+        env["XDG_RUNTIME_DIR"] = str(_repo_tmp_dir("dlna-runtime-"))
         # Clean up any instance left over from a previous launch that shared
         # this runtime dir before starting a fresh one. Best-effort: exits
         # non-zero when no instance is listening (fresh dir), which is fine.
@@ -266,7 +288,7 @@ def server_config_root(binary_path, config_root=None):
     if os.name == "nt":
         return binary_path.parent
     if config_root is None:
-        return Path(tempfile.mkdtemp(prefix="dlna-config-"))
+        return _repo_tmp_dir("dlna-config-")
     return Path(config_root)
 
 
@@ -434,6 +456,7 @@ def _candidate_runtime_dirs():
         dirs.add(uid_fallback)
 
     scan_roots = [Path("/tmp")] if os.name != "nt" else []
+    scan_roots.append(_repo_tmp_root())
     for root in scan_roots:
         if root.is_dir():
             for child in root.iterdir():
