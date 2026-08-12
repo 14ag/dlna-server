@@ -81,4 +81,9 @@ sudo_run rm -f /usr/local/bin/dlna-server-gui-bin
 sudo_run rm -rf /usr/local/share/dlna-server
 sudo_run dpkg -P dlna-server || true
 sudo_run dpkg -i "$package_path"
+# Keep the documented WSLg/Windows shortcut target stable.  Debian installs
+# binaries below /usr/bin, while existing WSL shortcuts invoke /usr/local/bin.
+sudo_run ln -sfn /usr/bin/dlna-server-gui /usr/local/bin/dlna-server-gui
+sudo_run ln -sfn /usr/bin/dlna-server-gui-bin /usr/local/bin/dlna-server-gui-bin
+sudo_run ln -sfn /usr/bin/dlna-server /usr/local/bin/dlna-server
 echo "Installed: $package_path"
