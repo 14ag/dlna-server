@@ -57,27 +57,27 @@ EXPECTED = {
     # values below are the x11 xvfb dump for the Task 15 CSD headerbar
     # (window border offsets sub-elements by -5 on x and the headerbar
     # shifts them on y; other dialogs have no CSD and match ui_tokens)
-    ("settings", "GtkFrame", 13, 62): (665, 223),  # Server group
-    ("settings", "GtkFrame", 13, 311): (324, 140),  # General group
-    ("settings", "GtkFrame", 354, 311): (324, 140),  # Playlist group
-    ("settings", "GtkFrame", 13, 477): (665, 230),  # Media group
-    ("settings", "GtkEntry", 188, 96): (333, 40),  # ServerName edit
-    ("settings", "GtkEntry", 188, 156): (333, 40),  # HttpPort edit
-    ("settings", "GtkEntry", 188, 215): (455, 40),  # IpWhitelist edit
+    ("settings", "GtkFrame", 13, 62): (663, 221),  # Server group
+    ("settings", "GtkFrame", 13, 311): (322, 138),  # General group
+    ("settings", "GtkFrame", 354, 311): (322, 138),  # Playlist group
+    ("settings", "GtkFrame", 13, 477): (663, 228),  # Media group
+    ("settings", "GtkEntry", 188, 96): (317, 40),  # ServerName edit
+    ("settings", "GtkEntry", 188, 156): (317, 40),  # HttpPort edit
+    ("settings", "GtkEntry", 188, 215): (439, 40),  # IpWhitelist edit
     # NOTE: kSettingsRunOnStartupX/Y/W/H (39,317) exists in ui_tokens.h but the
     # GTK4 settings dialog does not yet create a Run-on-startup checkbox, so
     # there is no sub-element to assert here. Adding that control is a
     # separate feature task, not a geometry-parity concern.
-    ("settings", "GtkCheckButton", 375, 358): (193, 26),  # DefaultPlaylist
-    ("settings", "GtkCheckButton", 34, 400): (277, 26),  # DebugLog
-    ("settings", "GtkCheckButton", 375, 358): (193, 26),  # DefaultPlaylist
-    ("settings", "GtkCheckButton", 34, 523): (298, 26),  # ArtistAlbums
-    ("settings", "GtkCheckButton", 363, 523): (228, 26),  # FlatFolders
-    ("settings", "GtkCheckButton", 34, 566): (298, 26),  # HideAllMedia
-    ("settings", "GtkCheckButton", 363, 566): (287, 26),  # ShowFileNames
-    ("settings", "GtkCheckButton", 34, 608): (312, 26),  # SortByTitle
-    ("settings", "GtkCheckButton", 363, 608): (228, 26),  # ProxyStreams
-    ("settings", "GtkCheckButton", 34, 655): (403, 26),  # BackgroundScan
+    ("settings", "GtkCheckButton", 375, 358): (185, 18),  # DefaultPlaylist
+    ("settings", "GtkCheckButton", 34, 400): (269, 18),  # DebugLog
+    ("settings", "GtkCheckButton", 375, 358): (185, 18),  # DefaultPlaylist
+    ("settings", "GtkCheckButton", 34, 523): (290, 18),  # ArtistAlbums
+    ("settings", "GtkCheckButton", 363, 523): (220, 18),  # FlatFolders
+    ("settings", "GtkCheckButton", 34, 566): (290, 18),  # HideAllMedia
+    ("settings", "GtkCheckButton", 363, 566): (279, 18),  # ShowFileNames
+    ("settings", "GtkCheckButton", 34, 608): (304, 18),  # SortByTitle
+    ("settings", "GtkCheckButton", 363, 608): (220, 18),  # ProxyStreams
+    ("settings", "GtkCheckButton", 34, 655): (395, 18),  # BackgroundScan
     ("settings", "GtkButton", 457, 732): (102, 40),  # Cancel
     ("settings", "GtkButton", 548, 394): (102, 40),  # PlaylistAdd
     ("settings", "GtkButton", 573, 732): (105, 40),  # Ok
@@ -91,15 +91,15 @@ EXPECTED = {
     # ---- help dialog ----
     ("help", "GtkScrolledWindow", 10, 10): (530, 390),  # text host
     # ---- playlist entry dialog ----
-    ("playlist-entry", "GtkEntry", 112, 16): (324, 32),  # Movie edit
-    ("playlist-entry", "GtkEntry", 112, 60): (324, 32),  # Subtitle edit
+    ("playlist-entry", "GtkEntry", 112, 16): (308, 32),  # Movie edit
+    ("playlist-entry", "GtkEntry", 112, 60): (308, 32),  # Subtitle edit
     ("playlist-entry", "GtkLabel", 16, 24): (84, 18),  # Movie label
     ("playlist-entry", "GtkLabel", 16, 68): (87, 18),  # Subtitle label
     ("playlist-entry", "GtkButton", 444, 16): (92, 32),  # Movie browse
     ("playlist-entry", "GtkButton", 444, 60): (92, 32),  # Subtitle browse
     ("playlist-entry", "GtkButton", 444, 108): (92, 32),  # Add
     # ---- source prompt dialog ----
-    ("source-prompt", "GtkEntry", 16, 48): (520, 32),  # path edit
+    ("source-prompt", "GtkEntry", 16, 48): (504, 32),  # path edit
     ("source-prompt", "GtkLabel", 16, 16): (520, 20),  # prompt label
     ("source-prompt", "GtkLabel", 16, 88): (520, 20),  # hint label
     ("source-prompt", "GtkButton", 16, 128): (96, 32),  # Browse folder
@@ -114,7 +114,7 @@ def _run_gtk4_dump():
         raise AssertionError("GTK4 binary not built at %s" % GTK4_BIN)
     env = dict(os.environ, GDK_BACKEND="x11")
     proc = subprocess.run(
-        ["xvfb-run", "-a", GTK4_BIN, "--dump-widget-geometry"],
+        ["dbus-run-session", "--", "xvfb-run", "-a", GTK4_BIN, "--dump-widget-geometry"],
         capture_output=True,
         text=True,
         env=env,

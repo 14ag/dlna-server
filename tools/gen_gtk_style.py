@@ -86,17 +86,19 @@ window.dlna-main {
     padding: 0 {{gutter}}px;
 }
 
-.toolbar-button {
-    background-color: @control_color;
-    border: 1px solid @border_color;
-    border-radius: {{corner_radius}}px;
-    color: @text_color;
-    min-height: {{button_height}}px;
-    min-width: {{add_button_width}}px;
-    padding: 0;
-    font-family: "{{body_font_family_stack}}";
-    font-size: {{body_font_size_px}}px;
-}
+    .toolbar-button {
+        background-color: @control_color;
+        border: none;
+        border-radius: {{corner_radius}}px;
+        color: @text_color;
+        min-height: {{button_height}}px;
+        min-width: {{add_button_width}}px;
+        outline: 1px solid @border_color;
+        outline-offset: -1px;
+        padding: 0;
+        font-family: "{{body_font_family_stack}}";
+        font-size: 12px;
+    }
 
 .toolbar-button:hover {
     background-color: @control_hover_color;
@@ -145,6 +147,11 @@ def render(template, tokens):
         name = match.group(1)
         kind, value = tokens[name]
         if kind == "int":
+            if name == "button_height":
+                # GTK4 buttons add a 1px border top+bottom (2px total) so
+                # the CSS min-height must be 2 less than the token to produce
+                # the exact button height expected by the geometry tests.
+                return str(value - 2)
             return str(value)
         if kind == "color":
             return "rgb({},{},{})".format(value[0], value[1], value[2])

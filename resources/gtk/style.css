@@ -37,17 +37,19 @@ window.dlna-main {
     padding: 0 16px;
 }
 
-.toolbar-button {
-    background-color: @control_color;
-    border: 1px solid @border_color;
-    border-radius: 8px;
-    color: @text_color;
-    min-height: 32px;
-    min-width: 56px;
-    padding: 0;
-    font-family: "Segoe UI Variable Text, Segoe UI, Cantarell, Noto Sans, sans-serif";
-    font-size: 14px;
-}
+    .toolbar-button {
+        background-color: @control_color;
+        border: none;
+        border-radius: 8px;
+        color: @text_color;
+        min-height: 30px;
+        min-width: 56px;
+        outline: 1px solid @border_color;
+        outline-offset: -1px;
+        padding: 0;
+        font-family: "Segoe UI Variable Text, Segoe UI, Cantarell, Noto Sans, sans-serif";
+        font-size: 12px;
+    }
 
 .toolbar-button:hover {
     background-color: @control_hover_color;
