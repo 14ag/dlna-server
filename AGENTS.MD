@@ -54,7 +54,7 @@ python -m pytest -v --tb=no 2>&1 | Select-String -Pattern " FAILED | ERROR | SKI
 or
 
 ```bash
-python -m pytest -v --tb=no 2>&1 | grep -E " FAILED | ERROR | SKIP "
+python3 -m pytest -v --tb=no 2>&1 | grep -E '(^|[[:space:]])(FAILED|ERROR|SKIP)([[:space:]]|$)'
 
 ```
 when executing the full test suite so as to filter out passed tests and see failed tests only.
