@@ -1,6 +1,14 @@
 #!/bin/sh
 set -eu
 
+# on wslg a direct wslg exe -- usr bin dlna dash server dash gui invocation
+# carries no wayland xdg activation token so the compositor is not required
+# to raise or focus the new window per the xdg activation v1 protocol
+# prefer launching through the installed desktop entry for example
+# wslg exe -d ubuntu -- gtk-launch dlna-server
+# which does carry a token the raw command still works it may just open
+# without focus the first time
+
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 server_bin=${DLNA_SERVER_BIN:-"$script_dir/dlna-server"}
 native_gui=${DLNA_SERVER_GUI_BIN:-"$script_dir/dlna-server-gui-bin"}
@@ -15,6 +23,32 @@ fi
 
 if [ -z "${GDK_BACKEND:-}" ] && [ -n "${DISPLAY:-}" ] && [ -r /proc/version ] && grep -qi microsoft /proc/version; then
     export GDK_BACKEND=x11
+fi
+
+# WSLg shortcuts run in a non login shell so the distro profile may not
+# inject these variables yet fall back to the documented WSLg default paths
+if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -S "/mnt/wslg/runtime-dir/wayland-0" ]; then
+    export WAYLAND_DISPLAY=wayland-0
+    export XDG_RUNTIME_DIR="/mnt/wslg/runtime-dir"
+fi
+if [ -z "${DISPLAY:-}" ]; then
+    export DISPLAY=:0
+fi
+
+# wait for the compositor socket before starting the GTK process
+for i in $(seq 1 20); do
+    [ -S "${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}/${WAYLAND_DISPLAY:-wayland-0}" ] && break
+    sleep 0.25
+done
+
+# Direct WSLg shortcuts have no XDG activation token. Re-enter through the
+# desktop entry when the compositor is actually available, so WSLg can
+# associate, focus, and iconize the native window.
+if [ -z "${DLNA_SERVER_GTK_LAUNCHED:-}" ] && [ -n "${WSL_INTEROP:-}" ] && \
+   [ -S "${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}/${WAYLAND_DISPLAY:-wayland-0}" ] && \
+   command -v gtk-launch >/dev/null 2>&1; then
+    export DLNA_SERVER_GTK_LAUNCHED=1
+    exec gtk-launch dlna-server "$@"
 fi
 
 exec "$native_gui" "$@"
