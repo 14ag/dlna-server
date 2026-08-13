@@ -149,9 +149,8 @@ tr -d '\r' < "$repo_root/packaging/linux/dlna-server.appimage.desktop" > "$appdi
 tr -d '\r' < "$repo_root/packaging/linux/dlna-server.appimage.desktop" > "$appdir/usr/share/applications/dlna-server.desktop"
 cp "$repo_root/resources/dlna-server.svg" "$appdir/dlna-server.svg"
 chmod +x "$appdir/AppRun" "$appdir/usr/bin/dlna-server" "$appdir/usr/bin/dlna-server-gui" "$appdir/usr/bin/dlna-server-gui-bin"
-# linuxdeploy treats AppStream warnings as fatal; Flatpak packages the full
-# metadata separately, so omit the legacy AppImage copy.
-rm -f "$appdir/usr/share/metainfo/dlna-server.appdata.xml"
+# Keep AppStream metadata in AppImage so appimagetool can validate the bundle
+# without warning about missing application metadata.
 
 linuxdeploy="$tools_dir/linuxdeploy-x86_64.AppImage"
 if [ ! -s "$linuxdeploy" ]; then
@@ -175,10 +174,17 @@ rm -rf "$flatpak_build" "$flatpak_repo" "$flatpak_bundle"
 # pytest runtime fixtures are generated files, not application sources.  They
 # can be mode 0500 after a privileged test run, which Flatpak's sandbox cannot
 # traverse even when the outer build is run with sudo.
+tmp_quarantine=""
 if [ -d "$repo_root/tmp" ]; then
-    find "$repo_root/tmp" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+    tmp_quarantine=$(mktemp -d /tmp/dlna-server-pytest.XXXXXX)
+    mv "$repo_root/tmp" "$tmp_quarantine/pytest-tmp"
+    mkdir -m 700 "$repo_root/tmp"
 fi
 flatpak-builder --force-clean --repo="$flatpak_repo" "$flatpak_build" "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.yml"
+rm -rf "$repo_root/tmp"
+# Do not recursively delete quarantine contents: pytest may leave runtime
+# mount points there, which reject unlink/rmdir even for root. The temporary
+# parent is harmless and is reclaimed by the host's normal /tmp cleanup.
 install -Dm644 "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.metainfo.xml" \
     "$flatpak_build/app/share/metainfo/com.github.dlna-server-14ag.metainfo.xml"
 flatpak build-export "$flatpak_repo" "$flatpak_build" stable
