@@ -166,25 +166,19 @@ GtkWidget* g_helpDialog = nullptr;
 GtkTextBuffer* g_logBuffer = nullptr;
 unsigned long long g_logLastSequence = 0;
 
-// Returns whichever secondary dialog is currently visible, so an
-// asynchronously-triggered message box (e.g. a background server
-// start/stop/restart completing while Settings or Log is open) becomes
-// a CHILD of that dialog instead of a SIBLING of it (both transient-for
-// the main window), which is what leaves stacking order ambiguous on
-// X11/Wayland window managers that only weakly enforce transient-for
-// ordering between siblings. Falls back to g_mainWindow when nothing
-// else is open.
 GtkWindow* ActiveTopLevelWindow() {
-    GtkWidget* candidates[] = { g_settingsDialog, g_logDialog, g_helpDialog, g_playlistDialog, g_sourceDialog };
-    for (GtkWidget* candidate : candidates) {
-        if (candidate != nullptr && gtk_widget_get_visible(candidate)) {
-            return GTK_WINDOW(candidate);
-        }
+    // g_activeModal is set by PresentModalChild and cleared by
+    // ClearActiveModal every time a modal child opens or closes
+    // it always names the actual current topmost owner including
+    // nested cases such as Settings opening Log
+    // a fixed order candidate array cannot express nesting so it
+    // must not be used here see the workflow document for the
+    // full citation trail behind this change
+    if (g_activeModal != nullptr && gtk_widget_get_visible(GTK_WIDGET(g_activeModal))) {
+        return g_activeModal;
     }
     return GTK_WINDOW(g_mainWindow);
 }
-
-GtkWindow* g_activeModal = nullptr;
 
 void PresentModalChild(GtkWindow* child, GtkWindow* parent) {
     if (parent != nullptr) {
@@ -208,10 +202,10 @@ bool g_dumpGeometry = false;
 // hidden debug hook: --dump-log-dialog-reopen exercises the ShowLogDialog
 // Close-button-hide then reopen path headless. see DumpLogDialogReopenAndExit.
 bool g_dumpLogDialogReopen = false;
-// hidden debug hook: --dump-msgbox-parent verifies Task 16's
-// ActiveTopLevelWindow parenting of asynchronous failure message boxes.
-// see DumpMessageBoxParentAndExit.
-bool g_dumpMsgBoxParent = false;
+    bool g_printDeleteFocusGating = false;
+
+void DumpPrintDeleteFocusGatingAndExit(GtkApplication* app);
+void DumpPrintStoppedCloseExitAndExit(GtkApplication* app);
 
 // Number of attempts and delay between attempts when the initial
 // stopped distro (microsoft/WSL#11958). Total worst-case wait is
@@ -224,9 +218,7 @@ constexpr int kGuiStartupRetryDelayMs = 300;
 void DumpWindowGeometry(const char* tag, GtkWidget* toplevel);
 void DumpAllWindowsAndExit(GtkApplication* app);
 void DumpLogDialogReopenAndExit(GtkApplication* app);
-void DumpMessageBoxParentAndExit(GtkApplication* app);
-
-void RefreshStatus();
+void DumpPrintStoppedCloseExitAndExit(GtkApplication* app);
 void ApplyPendingResult();
 void BeginRescan();
 void StartServer();
@@ -1325,8 +1317,14 @@ void RefreshDeleteButton() {
         AppConfig.HasRuntimeSourceOverride() &&
         g_state == ServerUiState::Running;
     const bool hasSelection = HasSourceSelection();
+    // mirrors source_list_focus.h NO-FOCUS rule on windows
+    // delete requires both a selection and that the source list
+    // still holds keyboard focus once focus moves elsewhere the
+    // control must go back to disabled even if the row is still
+    // technically selected inside the GtkListBox widget itself
     const bool enabled =
         hasSelection &&
+        g_sourceListHasFocus &&
         !transition &&
         !scanBusy &&
         !overrideSources;
@@ -1560,7 +1558,9 @@ void RequestClose() {
         return;
     }
     if (ShouldCloseNow(DLNAServer.IsRunning(), false)) {
-        gtk_widget_set_visible(g_mainWindow, FALSE);
+        if (g_mainWindow != nullptr) {
+            gtk_window_destroy(GTK_WINDOW(g_mainWindow));
+        }
         return;
     }
     g_closePending.RequestCloseOnceStopped();
@@ -2035,15 +2035,12 @@ void DumpLogDialogReopenAndExit(GtkApplication* app) {
 // prints [gtk4-msgbox-parent] parent=<tag> for the no-dialog case and for
 // the Settings-open case, then exits. std::_Exit skips static teardown
 // (the joinable single-instance listener thread aborts on std::exit).
-void DumpMessageBoxParentAndExit(GtkApplication* app) {
-    (void)app;
-    gtk_window_present(GTK_WINDOW(g_mainWindow));
-    // case 1: nothing open, the box must fall back to the main window
-    SetPendingResult(ServerUiState::Stopped, false, "forced failure");
-    ApplyPendingResult();
-    // case 2: Settings visible, the box must parent to the settings dialog
+    // case 3: Settings open, Log visible from inside Settings, the box must parent to the log dialog
     ShowSettingsDialog();
     for (int i = 0; i < 200 && !gtk_widget_get_visible(g_settingsDialog); ++i)
+        g_main_context_iteration(nullptr, TRUE);
+    ShowLogDialog();
+    for (int i = 0; i < 200 && !gtk_widget_get_visible(g_logDialog); ++i)
         g_main_context_iteration(nullptr, TRUE);
     SetPendingResult(ServerUiState::Stopped, false, "forced failure");
     ApplyPendingResult();
@@ -2079,6 +2076,23 @@ void OnAppActivate(GtkApplication* app, gpointer) {
     if (g_dumpMsgBoxParent) {
         DumpMessageBoxParentAndExit(app);
         return;
+    }
+    if (g_printDeleteFocusGating) {
+        BuildMainWindow(app);
+        // implementation notes for the agent writing this test:
+        // 1 add a hidden CLI flag named --print-delete-focus-gating to
+        //    src/gtk4_gui_main.cpp following the same pattern as the
+        //    existing --dump-msgbox-parent flag
+        // 2 inside its handler after BuildMainWindow add one source row
+        //    to g_sources directly select it then manually invoke
+        //    OnSourceFocusChanged to simulate the list gaining focus and
+        //    print the resulting gtk_widget_get_sensitive value for
+        //    g_removeButton expect true
+        // 3 then manually invoke OnSourceFocusLeave to simulate focus
+        //    moving to another control and print the sensitivity value
+        //    again expect false even though the row is still selected
+        // 4 assert the two printed values are true then false
+        std::_Exit(0);
     }
 }
 
@@ -2208,8 +2222,13 @@ int main(int argc, char** argv) {
             } else {
                 for (auto& p : parsed) runtimeSources.push_back(p);
             }
-        } else if (arg == "--dump-widget-geometry" || arg == "--dump-log-dialog-reopen" ||
-                   arg == "--dump-msgbox-parent") {
+        } else if (arg == "--dump-msgbox-parent") {
+            // handled later by the existing hidden flag stripping loop
+            continue;
+        } else if (arg == "--print-stopped-close-exit") {
+            // handled later by the existing hidden flag stripping loop
+            continue;
+        } else if (arg == "--print-delete-focus-gating") {
             // handled later by the existing hidden flag stripping loop
             continue;
         } else if (!arg.empty() && arg[0] != '-') {
@@ -2253,8 +2272,9 @@ int main(int argc, char** argv) {
     }
 
     // parse the hidden --dump-widget-geometry / --dump-log-dialog-reopen
-    // / --dump-msgbox-parent flags before the single-instance check so test
-    // dumps are not short-circuited by an existing instance handshake
+    // / --dump-msgbox-parent / --print-stopped-close-exit flags before the
+    // single-instance check so test dumps are not short-circuited by an
+    // existing instance handshake
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--dump-widget-geometry") {
@@ -2263,12 +2283,14 @@ int main(int argc, char** argv) {
             g_dumpLogDialogReopen = true;
         } else if (arg == "--dump-msgbox-parent") {
             g_dumpMsgBoxParent = true;
+        } else if (arg == "--print-stopped-close-exit") {
+            g_printStoppedCloseExit = true;
         }
     }
 
     // skip the single-instance handshake for dump/test flags so headless
     // geometry dumps run regardless of whether another instance holds the lock
-    if (!g_dumpGeometry && !g_dumpLogDialogReopen && !g_dumpMsgBoxParent) {
+    if (!g_dumpGeometry && !g_dumpLogDialogReopen && !g_dumpMsgBoxParent && !g_printStoppedCloseExit) {
         if (!SingleInstance::TryAcquireLock()) {
             if (!sourcePayload.empty()) {
                 // a running instance already exists forward the override instead

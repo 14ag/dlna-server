@@ -267,7 +267,8 @@ def test_message_box_parents_to_active_dialog(tmp_path):
     to whichever secondary dialog is currently visible (Settings here) instead
     of always to the main window. The hook prints the transient parent tag for
     both the nothing-open case (expect main) and the Settings-open case
-    (expect settings), then exits 0."""
+    (expect settings), and the nested Settings-then-Log case (expect log),
+    then exits 0."""
     env = _isolated_env(tmp_path)
     env["GDK_BACKEND"] = "x11"
     result = subprocess.run(
@@ -280,7 +281,8 @@ def test_message_box_parents_to_active_dialog(tmp_path):
     )
     lines = [ln for ln in result.stdout.splitlines() if "msgbox-parent" in ln]
     parents = {ln.split("parent=", 1)[1] for ln in lines}
-    assert parents == {"main", "settings"}, (
-        f"expected transient parents {{main, settings}} got {parents!r}; "
+    # Updated to expect three parents: main (nothing open), settings (Settings open), and log (Settings+Log nested)
+    assert parents == {"main", "settings", "log"}, (
+        f"expected transient parents {{main, settings, log}} got {parents!r}; "
         f"stdout={result.stdout!r}"
     )
