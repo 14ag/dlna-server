@@ -18,9 +18,12 @@ def test_sharp_corner_css_present():
     assert "border-radius: 0px" in text
 
 
-def test_main_window_titlebar_set():
+def test_main_window_has_no_custom_titlebar():
+    """The main window has no custom header bar (Task 15: show_title_buttons(FALSE)
+    caused 3 extra window control buttons, so the header bar was removed)."""
     text = read_source()
-    assert "gtk_window_set_titlebar(GTK_WINDOW(window), mainHeaderBar)" in text
+    assert "gtk_window_set_titlebar(GTK_WINDOW(window), mainHeaderBar)" not in text
+    # win10-titlebar class is used only on the Settings dialog CSD header bar
     assert "win10-titlebar" in text
 
 
