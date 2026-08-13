@@ -372,6 +372,11 @@ def dlna_binary():
     pytest.skip("DLNA Server executable not found" +
                 (" (set DLNA_SERVER env var to path)" if os.name != "nt" else ""))
 
+@pytest.fixture
+def dlna_server_binary(dlna_binary):
+    """Alias for dlna_binary — provided for tests that use that name."""
+    return dlna_binary
+
 
 @pytest.fixture
 def dlna_server_gui_binary():
