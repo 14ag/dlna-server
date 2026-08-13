@@ -61,6 +61,7 @@ CSS_TEMPLATE = """/* auto generated from src/ui_tokens.h by tools/gen_gtk_style.
 @define-color text_color {{text_color}};
 @define-color disabled_text_color {{disabled_text_color}};
 @define-color secondary_text_color {{secondary_text_color}};
+@define-color win10_inactive_titlebar_color {{win10_inactive_titlebar_color}};
 
 window.dlna-main {
     background-color: @page_color;
@@ -123,6 +124,55 @@ window.dlna-main {
 
 .empty-state {
     color: @secondary_text_color;
+}
+
+.win10-titlebar {
+    min-height: {{win10_titlebar_height}}px;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.win10-titlebar.win10-active {
+    background-color: @toolbar_color;
+}
+
+.win10-titlebar.win10-inactive {
+    background-color: @win10_inactive_titlebar_color;
+}
+
+.win10-titlebar .title {
+    color: @text_color;
+    font-size: 12px;
+    font-weight: 400;
+}
+
+headerbar button {
+    background-image: none;
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    color: @text_color;
+    min-height: {{win10_titlebar_height}}px;
+    min-width: 46px;
+    padding: 0;
+}
+
+headerbar button:hover {
+    background-color: @control_hover_color;
+}
+
+headerbar button:active {
+    background-color: @control_pressed_color;
+}
+
+headerbar button.close:hover {
+    background-color: rgb(196,43,28);
+}
+
+headerbar button.close:active {
+    background-color: rgb(180,30,20);
 }
 """
 

@@ -1,0 +1,37 @@
+set(applications_dir "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/share/applications")
+set(exec_path "${CMAKE_INSTALL_PREFIX}/bin/dlna-server-gui-bin")
+
+file(MAKE_DIRECTORY "${applications_dir}")
+file(WRITE "${applications_dir}/dlna-server.desktop"
+"[Desktop Entry]
+Type=Application
+Name=DLNA Server
+GenericName=DLNA media server
+Comment=Share local media with DLNA and UPnP clients
+Exec=${exec_path}
+Icon=dlna-server
+Terminal=false
+Categories=AudioVideo;Network;FileTransfer;
+Keywords=DLNA;UPnP;media;server;streaming;
+StartupWMClass=com.github.dlna-server-14ag
+StartupNotify=true
+")
+
+# Invalidate the hicolor icon cache so the new icons are picked up
+# immediately. Non-fatal -- the cache will eventually be refreshed by
+# the DE even if this command is not available.
+set(hicolor_dir "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/share/icons/hicolor")
+if(EXISTS "${hicolor_dir}")
+    find_program(GTK_UPDATE_ICON_CACHE gtk-update-icon-cache)
+    if(GTK_UPDATE_ICON_CACHE)
+        execute_process(COMMAND "${GTK_UPDATE_ICON_CACHE}" -f -t "${hicolor_dir}"
+                        RESULT_VARIABLE _ic)
+        unset(_ic)
+    endif()
+    find_program(UPDATE_DESKTOP_DATABASE update-desktop-database)
+    if(UPDATE_DESKTOP_DATABASE)
+        execute_process(COMMAND "${UPDATE_DESKTOP_DATABASE}" "${applications_dir}"
+                        RESULT_VARIABLE _udd)
+        unset(_udd)
+    endif()
+endif()
