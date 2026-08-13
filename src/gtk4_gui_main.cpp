@@ -166,6 +166,8 @@ GtkWidget* g_helpDialog = nullptr;
 GtkTextBuffer* g_logBuffer = nullptr;
 unsigned long long g_logLastSequence = 0;
 
+GtkWindow* g_activeModal = nullptr;
+
 GtkWindow* ActiveTopLevelWindow() {
     // g_activeModal is set by PresentModalChild and cleared by
     // ClearActiveModal every time a modal child opens or closes
@@ -202,10 +204,9 @@ bool g_dumpGeometry = false;
 // hidden debug hook: --dump-log-dialog-reopen exercises the ShowLogDialog
 // Close-button-hide then reopen path headless. see DumpLogDialogReopenAndExit.
 bool g_dumpLogDialogReopen = false;
-    bool g_printDeleteFocusGating = false;
-
-void DumpPrintDeleteFocusGatingAndExit(GtkApplication* app);
-void DumpPrintStoppedCloseExitAndExit(GtkApplication* app);
+bool g_dumpMsgBoxParent = false;
+bool g_printDeleteFocusGating = false;
+bool g_printStoppedCloseExit = false;
 
 // Number of attempts and delay between attempts when the initial
 // stopped distro (microsoft/WSL#11958). Total worst-case wait is
@@ -218,7 +219,8 @@ constexpr int kGuiStartupRetryDelayMs = 300;
 void DumpWindowGeometry(const char* tag, GtkWidget* toplevel);
 void DumpAllWindowsAndExit(GtkApplication* app);
 void DumpLogDialogReopenAndExit(GtkApplication* app);
-void DumpPrintStoppedCloseExitAndExit(GtkApplication* app);
+void DumpMessageBoxParentAndExit(GtkApplication* app);
+void RefreshStatus();
 void ApplyPendingResult();
 void BeginRescan();
 void StartServer();
@@ -2035,12 +2037,13 @@ void DumpLogDialogReopenAndExit(GtkApplication* app) {
 // prints [gtk4-msgbox-parent] parent=<tag> for the no-dialog case and for
 // the Settings-open case, then exits. std::_Exit skips static teardown
 // (the joinable single-instance listener thread aborts on std::exit).
-    // case 3: Settings open, Log visible from inside Settings, the box must parent to the log dialog
+void DumpMessageBoxParentAndExit(GtkApplication* app) {
+    (void)app;
+    gtk_window_present(GTK_WINDOW(g_mainWindow));
+    SetPendingResult(ServerUiState::Stopped, false, "forced failure");
+    ApplyPendingResult();
     ShowSettingsDialog();
     for (int i = 0; i < 200 && !gtk_widget_get_visible(g_settingsDialog); ++i)
-        g_main_context_iteration(nullptr, TRUE);
-    ShowLogDialog();
-    for (int i = 0; i < 200 && !gtk_widget_get_visible(g_logDialog); ++i)
         g_main_context_iteration(nullptr, TRUE);
     SetPendingResult(ServerUiState::Stopped, false, "forced failure");
     ApplyPendingResult();
