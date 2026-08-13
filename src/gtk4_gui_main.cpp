@@ -225,10 +225,84 @@ void ShowPlaylistEntryDialog();
 void PromptForMediaSource();
 void ShowSettingsDialog();
 
+enum class WindowChrome {
+    Main,
+    Dialog
+};
+
+struct TitlebarState {
+    GtkWindow* window;
+    GtkWidget* titlebar;
+};
+
+static void UpdateTitlebarActiveState(TitlebarState* state) {
+    const bool active = gtk_window_is_active(state->window);
+    if (active) {
+        gtk_widget_add_css_class(state->titlebar, "win10-active");
+        gtk_widget_remove_css_class(state->titlebar, "win10-inactive");
+    } else {
+        gtk_widget_add_css_class(state->titlebar, "win10-inactive");
+        gtk_widget_remove_css_class(state->titlebar, "win10-active");
+    }
+}
+
+static void OnTitlebarActiveNotify(GObject*, GParamSpec*, gpointer userData) {
+    UpdateTitlebarActiveState(static_cast<TitlebarState*>(userData));
+}
+
+GtkWidget* CreateWin10Titlebar(GtkWindow* window,
+                               const char* title,
+                               WindowChrome chrome) {
+    gtk_window_set_title(window, title);
+
+    GtkWidget* titlebar = gtk_header_bar_new();
+    gtk_widget_add_css_class(titlebar, "win10-titlebar");
+
+    GtkWidget* titleLabel = gtk_label_new(title);
+    gtk_widget_add_css_class(titleLabel, "title");
+    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(titlebar), titleLabel);
+
+    GtkWidget* controls = gtk_window_controls_new(GTK_PACK_END);
+    if (chrome == WindowChrome::Main) {
+        gtk_window_controls_set_decoration_layout(
+            GTK_WINDOW_CONTROLS(controls), ":minimize,close");
+    } else {
+        gtk_window_controls_set_decoration_layout(
+            GTK_WINDOW_CONTROLS(controls), ":close");
+    }
+    gtk_header_bar_pack_end(GTK_HEADER_BAR(titlebar), controls);
+
+    TitlebarState* state = g_new0(TitlebarState, 1);
+    state->window = window;
+    state->titlebar = titlebar;
+    g_object_set_data_full(G_OBJECT(titlebar), "win10-titlebar-state", state,
+                           reinterpret_cast<GDestroyNotify>(g_free));
+
+    UpdateTitlebarActiveState(state);
+    g_signal_connect(window, "notify::is-active",
+                     G_CALLBACK(OnTitlebarActiveNotify), state);
+
+    return titlebar;
+}
+
+GtkWindow* CreateMessageWindow(GtkWindow* parent,
+                               const char* title,
+                               WindowChrome chrome) {
+    GtkWindow* window = GTK_WINDOW(gtk_window_new());
+    gtk_window_set_modal(window, TRUE);
+    gtk_window_set_resizable(window, FALSE);
+    gtk_window_set_transient_for(window, parent);
+    gtk_window_set_titlebar(
+        window,
+        CreateWin10Titlebar(window, title, chrome));
+    return window;
+}
+
 void MessageBoxShow(GtkWindow* parent, const std::string& text) {
-#if GTK_CHECK_VERSION(4, 10, 0)
+    GtkWindow* msgWin = CreateMessageWindow(parent, "DLNA Server", WindowChrome::Dialog);
+
     if (g_dumpMsgBoxParent) {
-        GtkWindow* transientParent = parent;
+        GtkWindow* transientParent = gtk_window_get_transient_for(msgWin);
         const char* parentTag = "none";
         if (transientParent == GTK_WINDOW(g_settingsDialog)) parentTag = "settings";
         else if (transientParent == GTK_WINDOW(g_logDialog)) parentTag = "log";
@@ -236,121 +310,99 @@ void MessageBoxShow(GtkWindow* parent, const std::string& text) {
         else if (transientParent == GTK_WINDOW(g_sourceDialog)) parentTag = "source";
         else if (transientParent == GTK_WINDOW(g_mainWindow)) parentTag = "main";
         std::printf("[gtk4-msgbox-parent] parent=%s\n", parentTag);
+        gtk_window_destroy(msgWin);
         return;
     }
-    GtkAlertDialog* dialog = gtk_alert_dialog_new("%s", "DLNA Server");
-    gtk_alert_dialog_set_detail(dialog, text.c_str());
-    gtk_alert_dialog_set_modal(dialog, TRUE);
+
+    GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(vbox, 16);
+    gtk_widget_set_margin_end(vbox, 16);
+    gtk_widget_set_margin_top(vbox, 12);
+    gtk_widget_set_margin_bottom(vbox, 12);
+    gtk_window_set_child(msgWin, vbox);
+
+    GtkWidget* label = gtk_label_new(text.c_str());
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(vbox), label);
+
+    GtkWidget* buttonBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(buttonBox, GTK_ALIGN_END);
+    gtk_box_append(GTK_BOX(vbox), buttonBox);
 
     gboolean done = FALSE;
-    gtk_alert_dialog_choose(dialog, parent, nullptr, +[](GObject* source, GAsyncResult* res, gpointer userData) {
-        gboolean* isDone = static_cast<gboolean*>(userData);
-        GError* error = nullptr;
-        gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), res, &error);
-        if (error) {
-            g_error_free(error);
-        }
-        *isDone = TRUE;
-    }, &done);
-    g_object_unref(dialog);
-
-    while (!done) {
-        g_main_context_iteration(nullptr, TRUE);
-    }
-#else
-    GtkWidget* dialog = gtk_message_dialog_new(parent, GTK_DIALOG_MODAL, GTK_MESSAGE_ERROR,
-                                               GTK_BUTTONS_OK, "%s", text.c_str());
-    gtk_window_set_title(GTK_WINDOW(dialog), "DLNA Server");
-    if (g_dumpMsgBoxParent) {
-        GtkWindow* transientParent = gtk_window_get_transient_for(GTK_WINDOW(dialog));
-        const char* parentTag = "none";
-        if (transientParent == GTK_WINDOW(g_settingsDialog)) parentTag = "settings";
-        else if (transientParent == GTK_WINDOW(g_logDialog)) parentTag = "log";
-        else if (transientParent == GTK_WINDOW(g_playlistDialog)) parentTag = "playlist";
-        else if (transientParent == GTK_WINDOW(g_sourceDialog)) parentTag = "source";
-        else if (transientParent == GTK_WINDOW(g_mainWindow)) parentTag = "main";
-        std::printf("[gtk4-msgbox-parent] parent=%s\n", parentTag);
-        gtk_window_destroy(GTK_WINDOW(dialog));
-        return;
-    }
-    gboolean done = FALSE;
-    g_signal_connect(dialog, "response", G_CALLBACK(+[](GtkDialog*, int, gpointer userData) {
-        gboolean* isDone = static_cast<gboolean*>(userData);
-        *isDone = TRUE;
+    GtkWidget* okButton = gtk_button_new_with_label("OK");
+    g_signal_connect(okButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer userData) {
+        *static_cast<gboolean*>(userData) = TRUE;
     }), &done);
-    g_signal_connect(dialog, "close-request", G_CALLBACK(+[](GtkWidget*, gpointer userData) -> gboolean {
-        gboolean* isDone = static_cast<gboolean*>(userData);
-        *isDone = TRUE;
+    gtk_box_append(GTK_BOX(buttonBox), okButton);
+
+    g_signal_connect(msgWin, "close-request", G_CALLBACK(+[](GtkWidget*, gpointer userData) -> gboolean {
+        *static_cast<gboolean*>(userData) = TRUE;
         return TRUE;
     }), &done);
-    gtk_window_present(GTK_WINDOW(dialog));
+
+    gtk_window_present(msgWin);
     while (!done) {
         g_main_context_iteration(nullptr, TRUE);
     }
-    gtk_window_destroy(GTK_WINDOW(dialog));
-#endif
+    gtk_window_destroy(msgWin);
 }
 
 bool MessageBoxQuestion(GtkWindow* parent, const std::string& text) {
-#if GTK_CHECK_VERSION(4, 10, 0)
-    GtkAlertDialog* dialog = gtk_alert_dialog_new("%s", "DLNA Server");
-    gtk_alert_dialog_set_detail(dialog, text.c_str());
-    gtk_alert_dialog_set_modal(dialog, TRUE);
-    const char* buttons[] = { "Yes", "No", nullptr };
-    gtk_alert_dialog_set_buttons(dialog, buttons);
-    gtk_alert_dialog_set_cancel_button(dialog, 1);
+    GtkWindow* msgWin = CreateMessageWindow(parent, "DLNA Server", WindowChrome::Dialog);
 
-    struct QuestionState {
-        int result;
-        gboolean done;
-    };
-    QuestionState state = { 1, FALSE };
+    GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+    gtk_widget_set_margin_start(vbox, 16);
+    gtk_widget_set_margin_end(vbox, 16);
+    gtk_widget_set_margin_top(vbox, 12);
+    gtk_widget_set_margin_bottom(vbox, 12);
+    gtk_window_set_child(msgWin, vbox);
 
-    gtk_alert_dialog_choose(dialog, parent, nullptr, +[](GObject* source, GAsyncResult* res, gpointer userData) {
-        QuestionState* qs = static_cast<QuestionState*>(userData);
-        GError* error = nullptr;
-        int idx = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(source), res, &error);
-        if (error) {
-            g_error_free(error);
-        } else {
-            qs->result = idx;
-        }
-        qs->done = TRUE;
-    }, &state);
-    g_object_unref(dialog);
+    GtkWidget* label = gtk_label_new(text.c_str());
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(vbox), label);
 
-    while (!state.done) {
-        g_main_context_iteration(nullptr, TRUE);
-    }
-    return state.result == 0;
-#else
+    GtkWidget* buttonBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_set_halign(buttonBox, GTK_ALIGN_END);
+    gtk_box_append(GTK_BOX(vbox), buttonBox);
+
     struct QuestionState {
         int result;
         gboolean done;
     };
     QuestionState state = { GTK_RESPONSE_NONE, FALSE };
 
-    GtkWidget* dialog = gtk_message_dialog_new(parent, GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION,
-                                               GTK_BUTTONS_YES_NO, "%s", text.c_str());
-    gtk_window_set_title(GTK_WINDOW(dialog), "DLNA Server");
-    g_signal_connect(dialog, "response", G_CALLBACK(+[](GtkDialog*, int response, gpointer userData) {
+    GtkWidget* yesButton = gtk_button_new_with_label("Yes");
+    g_signal_connect(yesButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer userData) {
         QuestionState* qs = static_cast<QuestionState*>(userData);
-        qs->result = response;
+        qs->result = GTK_RESPONSE_YES;
         qs->done = TRUE;
     }), &state);
-    g_signal_connect(dialog, "close-request", G_CALLBACK(+[](GtkWidget*, gpointer userData) -> gboolean {
+    gtk_box_append(GTK_BOX(buttonBox), yesButton);
+
+    GtkWidget* noButton = gtk_button_new_with_label("No");
+    g_signal_connect(noButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer userData) {
+        QuestionState* qs = static_cast<QuestionState*>(userData);
+        qs->result = GTK_RESPONSE_NO;
+        qs->done = TRUE;
+    }), &state);
+    gtk_box_append(GTK_BOX(buttonBox), noButton);
+
+    g_signal_connect(msgWin, "close-request", G_CALLBACK(+[](GtkWidget*, gpointer userData) -> gboolean {
         QuestionState* qs = static_cast<QuestionState*>(userData);
         qs->result = GTK_RESPONSE_NO;
         qs->done = TRUE;
         return TRUE;
     }), &state);
-    gtk_window_present(GTK_WINDOW(dialog));
+
+    gtk_window_present(msgWin);
     while (!state.done) {
         g_main_context_iteration(nullptr, TRUE);
     }
-    gtk_window_destroy(GTK_WINDOW(dialog));
+    gtk_window_destroy(msgWin);
     return state.result == GTK_RESPONSE_YES;
-#endif
 }
 
 void ShowPlaylistEntryDialog() {
@@ -366,6 +418,12 @@ void ShowPlaylistEntryDialog() {
         gtk_window_set_transient_for(GTK_WINDOW(g_playlistDialog), GTK_WINDOW(g_mainWindow));
     }
     gtk_window_set_modal(GTK_WINDOW(g_playlistDialog), TRUE);
+
+    gtk_window_set_titlebar(
+        GTK_WINDOW(g_playlistDialog),
+        CreateWin10Titlebar(GTK_WINDOW(g_playlistDialog),
+                            "Default playlist entry",
+                            WindowChrome::Dialog));
 
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokens::kPlaylistWindowWidth, UiTokens::kPlaylistWindowHeight);
@@ -616,6 +674,12 @@ void PromptForMediaSource() {
     }
     gtk_window_set_modal(GTK_WINDOW(g_sourceDialog), TRUE);
 
+    gtk_window_set_titlebar(
+        GTK_WINDOW(g_sourceDialog),
+        CreateWin10Titlebar(GTK_WINDOW(g_sourceDialog),
+                            "Add media source",
+                            WindowChrome::Dialog));
+
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokens::kSourcePromptWindowWidth, UiTokens::kSourcePromptWindowHeight);
     gtk_window_set_child(GTK_WINDOW(g_sourceDialog), fixed);
@@ -766,6 +830,12 @@ void ShowLogDialog() {
     }
     gtk_window_set_modal(GTK_WINDOW(g_logDialog), TRUE);
 
+    gtk_window_set_titlebar(
+        GTK_WINDOW(g_logDialog),
+        CreateWin10Titlebar(GTK_WINDOW(g_logDialog),
+                            "DLNA Server Log",
+                            WindowChrome::Dialog));
+
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokens::kLogWindowWidth, UiTokens::kLogWindowHeight);
     gtk_window_set_child(GTK_WINDOW(g_logDialog), fixed);
@@ -822,6 +892,12 @@ void ShowHelpDialog() {
         gtk_window_set_transient_for(GTK_WINDOW(dialog), GTK_WINDOW(g_mainWindow));
     }
     gtk_window_set_modal(GTK_WINDOW(dialog), TRUE);
+
+    gtk_window_set_titlebar(
+        GTK_WINDOW(dialog),
+        CreateWin10Titlebar(GTK_WINDOW(dialog),
+                            "DLNA Server Help",
+                            WindowChrome::Dialog));
 
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokens::kHelpWindowWidth, UiTokens::kHelpWindowHeight);
@@ -1133,16 +1209,11 @@ void ShowSettingsDialog() {
         g_settingsDialog = nullptr;
     }), nullptr);
 
-    // client-side decoration so only a close button is exposed
-    // independent of window manager policy
-    GtkWidget* settingsHeaderBar = gtk_header_bar_new();
-    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(settingsHeaderBar), FALSE);
-    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(settingsHeaderBar),
-                                    gtk_label_new("DLNA Server Settings"));
-    GtkWidget* settingsCloseControls = gtk_window_controls_new(GTK_PACK_END);
-    gtk_window_controls_set_decoration_layout(GTK_WINDOW_CONTROLS(settingsCloseControls), "close");
-    gtk_header_bar_pack_end(GTK_HEADER_BAR(settingsHeaderBar), settingsCloseControls);
-    gtk_window_set_titlebar(GTK_WINDOW(g_settingsDialog), settingsHeaderBar);
+    gtk_window_set_titlebar(
+        GTK_WINDOW(g_settingsDialog),
+        CreateWin10Titlebar(GTK_WINDOW(g_settingsDialog),
+                            "DLNA Server Settings",
+                            WindowChrome::Dialog));
 
     LoadSettingsFromConfig();
     if (g_dumpGeometry) {
@@ -1586,16 +1657,12 @@ void BuildMainWindow(GtkApplication* app) {
                                 UiTokens::kWindowWidth, UiTokens::kWindowHeight);
     gtk_window_set_resizable(GTK_WINDOW(window), TRUE);
     gtk_widget_set_size_request(window, UiTokens::kWindowWidth, 460);
-    // win10 style title bar reuses the same header bar plus window
-    // controls pattern already used by the settings log and help
-    // dialogs in this same file see ShowSettingsDialog for the
-    // reference implementation this mirrors
-    GtkWidget* mainHeaderBar = gtk_header_bar_new();
-    gtk_header_bar_set_show_title_buttons(GTK_HEADER_BAR(mainHeaderBar), TRUE);
-    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(mainHeaderBar),
-                                    gtk_label_new("DLNA Server"));
-    gtk_widget_add_css_class(mainHeaderBar, "win10-titlebar");
-    gtk_window_set_titlebar(GTK_WINDOW(window), mainHeaderBar);
+    // win10 style title bar via the shared CreateWin10Titlebar helper
+    gtk_window_set_titlebar(
+        GTK_WINDOW(window),
+        CreateWin10Titlebar(GTK_WINDOW(window),
+                            "DLNA Server",
+                            WindowChrome::Main));
 
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokens::kWindowWidth, UiTokens::kWindowHeight);
@@ -1725,6 +1792,7 @@ void BuildMainWindow(GtkApplication* app) {
 
     g_timeout_add(250, OnPollTick, nullptr);
 
+    gtk_window_unmaximize(GTK_WINDOW(window));
     gtk_window_present(GTK_WINDOW(window));
 }
 
@@ -1759,8 +1827,17 @@ static bool ComputeBoundsTo(GtkWidget* widget, GtkWidget* origin,
 void DumpWidgetTree(const char* tag, GtkWidget* widget, GtkWidget* origin) {
     if (!gtk_widget_is_visible(widget)) return;
     if (GTK_IS_WINDOW(widget)) {
-        std::printf("[gtk4-%s-geometry] titlebar=%s\n",
-                    tag, gtk_window_get_titlebar(GTK_WINDOW(widget)) != nullptr ? "csd" : "none");
+        GtkWindow* win = GTK_WINDOW(widget);
+        GtkWidget* tb = gtk_window_get_titlebar(win);
+        std::printf("[gtk4-%s-geometry] titlebar=%s",
+                    tag, tb != nullptr ? "csd" : "none");
+        if (tb != nullptr) {
+            std::printf(" titlebar-height=%d", UiTokens::kWin10TitlebarHeight);
+        }
+        std::printf(" window-active=%s resizable=%s maximized=%s\n",
+                    gtk_window_is_active(win) ? "true" : "false",
+                    gtk_window_get_resizable(win) ? "true" : "false",
+                    gtk_window_is_maximized(win) ? "true" : "false");
     }
     graphene_rect_t bounds;
     if (ComputeBoundsTo(widget, origin, &bounds)) {
@@ -1936,12 +2013,7 @@ void OnAppStartup(GtkApplication* app, gpointer) {
         "outline-offset: 2px; }\n"
         "window.csd, window.csd decoration { "
         "border-radius: 0px; box-shadow: none; }\n"
-        "headerbar { border-radius: 0px; }\n"
-        ".win10-titlebar { background-color: rgb(37,37,37); "
-        "min-height: 32px; padding: 0 8px; border: none; "
-        "box-shadow: none; }\n"
-        ".win10-titlebar .title { color: rgb(255,255,255); "
-        "font-size: 12px; font-weight: 400; }\n";
+        "headerbar { border-radius: 0px; }\n";
     GtkCssProvider* dialogProvider = gtk_css_provider_new();
 #if GTK_CHECK_VERSION(4, 12, 0)
     gtk_css_provider_load_from_string(dialogProvider, dialogCss);

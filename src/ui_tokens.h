@@ -27,6 +27,7 @@ constexpr int kDeleteButtonWidth = 72;
 constexpr int kStartStopButtonWidth = 72;
 constexpr int kSettingsButtonWidth = 82;
 constexpr int kCornerRadius = 8;
+constexpr int kWin10TitlebarHeight = 32;
 constexpr int kFocusRingThickness = 1;
 constexpr int kFocusRingGap = 2;
 
@@ -40,6 +41,8 @@ constexpr RgbColor kFocusColor = { 96, 165, 250 };
 constexpr RgbColor kTextColor = { 255, 255, 255 };
 constexpr RgbColor kDisabledTextColor = { 132, 132, 132 };
 constexpr RgbColor kSecondaryTextColor = { 200, 200, 200 };
+
+constexpr RgbColor kWin10InactiveTitlebarColor = { 50, 50, 50 };
 
 constexpr int kTitleFontSizePx = 20;
 constexpr int kBodyFontSizePx = 14;
