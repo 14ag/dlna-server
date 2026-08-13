@@ -18,6 +18,6 @@ def test_gapplication_id_matches_desktop_file(repo_root):
     code = (repo_root / SOURCE).read_text()
     desktop_cmake = (repo_root / "packaging/linux/install_desktop.cmake.in").read_text()
     code_match = re.search(r'gtk_application_new\("([^"]+)"', code)
-    icon_match = re.search(r"Icon=([A-Za-z0-9_.-]+)", desktop_cmake)
-    assert code_match and icon_match
-    assert code_match.group(1) == icon_match.group(1)
+    wmclass_match = re.search(r"StartupWMClass=([A-Za-z0-9_.-]+)", desktop_cmake)
+    assert code_match and wmclass_match
+    assert code_match.group(1) == wmclass_match.group(1)

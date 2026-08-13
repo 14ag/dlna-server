@@ -1,0 +1,3 @@
+
+#opencode web
+opencode --continue
