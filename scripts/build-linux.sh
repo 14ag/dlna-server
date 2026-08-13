@@ -172,6 +172,12 @@ flatpak_repo="$release_stage_dir/flatpak-repo"
 flatpak_build="$release_stage_dir/flatpak-build"
 flatpak_bundle="$output_dir/dlna-server-${version}-linux-x86_64.flatpak"
 rm -rf "$flatpak_build" "$flatpak_repo" "$flatpak_bundle"
+# pytest runtime fixtures are generated files, not application sources.  They
+# can be mode 0500 after a privileged test run, which Flatpak's sandbox cannot
+# traverse even when the outer build is run with sudo.
+if [ -d "$repo_root/tmp" ]; then
+    find "$repo_root/tmp" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+fi
 flatpak-builder --force-clean --repo="$flatpak_repo" "$flatpak_build" "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.yml"
 install -Dm644 "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.metainfo.xml" \
     "$flatpak_build/app/share/metainfo/com.github.dlna-server-14ag.metainfo.xml"

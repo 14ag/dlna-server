@@ -41,9 +41,9 @@ for i in $(seq 1 20); do
     sleep 0.25
 done
 
-# Direct WSLg shortcuts have no XDG activation token. Re-enter through the
-# desktop entry when the compositor is actually available, so WSLg can
-# associate, focus, and iconize the native window.
+# Direct WSLg shortcuts bypass the desktop entry, so WSLg cannot associate the
+# window with its icon. Re-enter through the installed desktop entry; this
+# supplies WSLg's launch metadata and startup notification.
 if [ -z "${DLNA_SERVER_GTK_LAUNCHED:-}" ] && [ -n "${WSL_INTEROP:-}" ] && \
    [ -S "${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}/${WAYLAND_DISPLAY:-wayland-0}" ] && \
    command -v gtk-launch >/dev/null 2>&1; then
