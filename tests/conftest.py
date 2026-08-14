@@ -1,6 +1,8 @@
 import os
+import signal
 import socket
 import subprocess
+import sys
 import time
 import shutil
 import tempfile
@@ -132,7 +134,10 @@ def pytest_collection_modifyitems(config, items):
     deselected = []
     remaining = []
     for item in items:
-        if os.name == "nt" and item.get_closest_marker("posix_only"):
+        if os.name == "nt" and (
+            item.get_closest_marker("posix_only")
+            or item.get_closest_marker("gui_only")
+        ):
             deselected.append(item)
             continue
         if os.name != "nt" and item.get_closest_marker("windows_only"):
@@ -493,7 +498,12 @@ def _candidate_runtime_dirs():
 def _kill_all_runtime_instances():
     """Kill any leftover daemon instances before each test.
 
-    On POSIX: send --kill-server for every candidate XDG_RUNTIME_DIR.
+    The POSIX single-instance lock + socket live at a fixed
+    /tmp/dlna-server-<uid> location (independent of XDG_RUNTIME_DIR), so one
+    --kill-server call always reaches whatever instance is running. A
+    process-level backstop then hard-stops any daemonized child that ignored
+    the IPC kill, guaranteeing no more than one instance can carry over into
+    the next test.
     On Windows: post WM_KILL_SERVER to every dlna-server_Main window found,
     then wait briefly for them to exit.
     """
@@ -503,24 +513,54 @@ def _kill_all_runtime_instances():
             time.sleep(0.5)  # give the processes a moment to exit
         return
 
-    binary = os.environ.get("DLNA_SERVER") or os.environ.get("DLNA_CLI_BINARY")
-    if not binary:
-        return
+    binaries = []
+    for key in ("DLNA_SERVER", "DLNA_CLI_BINARY", "DLNA_GUI_BINARY"):
+        value = os.environ.get(key)
+        if value:
+            binaries.append(value)
 
     base_env = os.environ.copy()
-    for runtime_dir in _candidate_runtime_dirs():
-        env = dict(base_env)
-        env["XDG_RUNTIME_DIR"] = runtime_dir
+    for binary in binaries:
         try:
             subprocess.run(
                 [binary, "--kill-server"],
-                env=env,
+                env=base_env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 timeout=10,
                 check=False,
             )
         except (OSError, subprocess.SubprocessError):
+            pass
+    time.sleep(0.5)  # give a just-killed instance time to release its lock
+    _hard_kill_leftover_processes()
+
+
+def _hard_kill_leftover_processes():
+    """Hard-stop any dlna-server / dlna-server-gui-bin process still alive.
+
+    Covers daemonized children that detach and never drain the IPC kill, or
+    instances stuck in a state where the socket no longer exists. Scans
+    /proc comm names so it is independent of stale socket/lock files.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    targets = {"dlna-server", "dlna-server-gui-bin"}
+    proc_root = Path("/proc")
+    if not proc_root.is_dir():
+        return
+    for entry in proc_root.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            comm = (entry / "comm").read_text().strip()
+        except OSError:
+            continue
+        if comm not in targets:
+            continue
+        try:
+            os.kill(int(entry.name), signal.SIGKILL)
+        except OSError:
             pass
 
 

@@ -122,8 +122,12 @@ def test_task9_source_jobs_not_submitted_to_pool():
     fn_start = src.index("void MediaSources::Scan()")
     fn_end = src.index("void MediaSources::AddMediaFile")
     body = src[fn_start:fn_end]
-    assert "TaskGroup sourceGroup" not in body
-    assert "sourceThreads" in body
+    # Source jobs go through the bounded SourceScanPool (never PlaylistScanPool,
+    # which would starve the leaf tasks being waited on) with a TaskGroup guard
+    # so a nested playlist deadlock is impossible. See Task 9.
+    assert "TaskGroup sourceGroup" in body
+    assert "sourceThreads" not in body
+    assert "SourceScanPool::Get().Submit([this, &job, &sourceGroup]" in body
     assert "PlaylistScanPool::Get().Submit([this, &job, &sourceGroup]" not in body
 
 

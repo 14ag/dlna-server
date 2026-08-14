@@ -1,6 +1,8 @@
 import os
+import shutil
 import socket
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -16,8 +18,7 @@ def test_wrapper_waits_promptly_when_compositor_socket_present(tmp_path):
     if not WRAPPER.is_file():
         pytest.skip("wrapper script not found")
 
-    runtime = tmp_path / "runtime"
-    runtime.mkdir(parents=True, exist_ok=True)
+    runtime = Path(tempfile.mkdtemp(prefix="dlna-wrapper-", dir="/tmp"))
     sock_path = runtime / "wayland-0"
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.bind(str(sock_path))
@@ -41,6 +42,7 @@ def test_wrapper_waits_promptly_when_compositor_socket_present(tmp_path):
         elapsed = time.monotonic() - start
     finally:
         sock.close()
+        shutil.rmtree(runtime, ignore_errors=True)
 
     assert proc.returncode == 0, proc.stderr
     # the full wait loop would be 20 * 0.25s = 5s
