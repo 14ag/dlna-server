@@ -5,8 +5,10 @@ import pytest
 @pytest.mark.posix_only
 def test_debug_off_prints_ready_and_frees_terminal(tmp_path, dlna_server_binary):
     src = tmp_path / "media"; src.mkdir()
+    # --no-debug overrides any DebugLog=1 persisted in the config file so the
+    # launch daemonizes and prints "server is up" deterministically.
     result = subprocess.run(
-        [dlna_server_binary, "--port", "18221", "--source", f'"{src}"'],
+        [dlna_server_binary, "--no-debug", "--port", "18221", "--source", f'"{src}"'],
         capture_output=True, text=True, timeout=10,
     )
     assert result.returncode == 0

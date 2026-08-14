@@ -11,6 +11,7 @@ They skip entirely on Windows where these APIs do not exist.
 """
 
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -25,6 +26,16 @@ pytestmark = pytest.mark.posix_only
 
 
 # ---- Helpers matching the C++ implementation ----
+
+def _global_instance_dir() -> str:
+    """The fixed per-user instance dir used by the C++ single-instance code
+    (posix_single_instance.cpp GetInstanceDir): /tmp/dlna-server-<uid>.
+
+    Uses /tmp directly -- NOT tempfile.gettempdir() -- because conftest.py
+    redirects tempfile.tempdir to the repo's tmp/ tree, which may live on a
+    drvfs/9p mount where the C++ instance dir is /tmp regardless."""
+    return os.path.join("/tmp", "dlna-server-" + str(os.getuid()))
+
 
 def _lock_file_path(rundir: str) -> str:
     return os.path.join(rundir, "dlna-server.lock")
@@ -213,6 +224,8 @@ class TestUnixSocketProtocol:
         deadline = time.time() + 5
         while not os.path.exists(sock_path):
             time.sleep(0.01)
+            if time.time() > deadline:
+                pytest.fail("Server socket not created in time")
 
         for msg in (b"show\n", b"sources:/media/video\n"):
             cli = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -257,52 +270,63 @@ class TestUnixSocketProtocol:
 
 @pytest.fixture
 def rundir(tmp_path: Path) -> str:
-    """A writable directory for lock / socket files."""
-    return str(tmp_path)
+    """A writable directory for lock / socket files.
+
+    Lives under /tmp rather than the repo tmp/ (which in WSL sits on the
+    drvfs-backed C: mount) because AF_UNIX bind() is unsupported on drvfs
+    (errno 95 EOPNOTSUPP). flock() works on both, but the socket protocol
+    tests require a real Unix filesystem.
+    """
+    d = tempfile.mkdtemp(prefix="dlna-si-", dir="/tmp")
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
 
 
-class TestSecondLaunchDeliversShow:
-    """Task 5: a second launch must deliver the show command to the running
-    instance and exit quickly instead of silently doing nothing."""
+class TestSecondLaunchSupersedesFirst:
+    """A POSIX second launch never forwards "show" (that is GUI-only). It
+    always kills and replaces the running instance with its own args, exits
+    quickly, and the follow-up print hook reads the NEW instance's sources.
+    """
 
-    def test_second_launch_delivers_show(self, dlna_binary, tmp_path):
+    def test_second_launch_replaces_first(self, dlna_binary, tmp_path):
         import subprocess
-        runtime_dir = tmp_path / "runtime"
         config_dir = tmp_path / "config"
         media_dir = tmp_path / "media"
-        runtime_dir.mkdir()
         config_dir.mkdir()
         media_dir.mkdir()
 
         env = os.environ.copy()
-        env["XDG_RUNTIME_DIR"] = str(runtime_dir)
         env["XDG_CONFIG_HOME"] = str(config_dir)
         env["HOME"] = str(config_dir)
         env["DLNA_SERVER_SKIP_FIREWALL"] = "1"
 
+        # First instance runs in the foreground with --debug so we can wait
+        # on its exit to prove the second launch supersedes it.
         proc_a = subprocess.Popen(
-            [dlna_binary, "--source", str(media_dir), "--debug"],
+            [dlna_binary, "--debug", "--source", str(media_dir)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
         )
         try:
-            # Wait for A to hold the lock (lock file exists) before
-            # launching B, so B reliably detects an existing instance.
-            lock_path = runtime_dir / "dlna-server.lock"
+            # A acquires the fixed global lock before StartListening() binds
+            # its socket; wait for the socket so B reliably finds A.
+            sock_path = Path(_global_instance_dir()) / "dlna-server.sock"
             deadline = time.time() + 10
-            while not lock_path.exists():
+            while not sock_path.exists():
                 if proc_a.poll() is not None:
-                    pytest.fail("Instance A exited before taking the lock")
+                    pytest.fail("Instance A exited before binding its socket")
                 if time.time() > deadline:
-                    pytest.fail("Instance A never created its lock file")
+                    pytest.fail("Instance A never bound its socket")
                 time.sleep(0.05)
 
-            # Launch B immediately: A may not have bound its domain socket
-            # yet, which exercises SendShowWithRetry's startup-race path.
+            # Launch B immediately after A's socket appears, exercising the
+            # kill-and-reacquire race. --no-debug keeps B's launch
+            # deterministic even if a config DebugLog=1 is persisted
+            # somewhere in the inherited environment.
             start = time.time()
             result_b = subprocess.run(
-                [dlna_binary, "--source", str(media_dir)],
+                [dlna_binary, "--no-debug", "--source", str(media_dir)],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -310,26 +334,31 @@ class TestSecondLaunchDeliversShow:
             )
             elapsed = time.time() - start
             assert elapsed < 2.0, (
-                f"Second instance took {elapsed:.2f}s to exit: "
+                f"Second instance took {elapsed:.2f}s to take over: "
                 f"{result_b.stdout} {result_b.stderr}"
             )
             assert result_b.returncode == 0, result_b.stderr
 
-            # A's debug.log must contain the show-request line.
-            log_path = config_dir / "dlna-server" / "debug.log"
-            deadline = time.time() + 5
-            content = ""
-            while time.time() < deadline:
-                if log_path.exists():
-                    content = log_path.read_text(
-                        encoding="utf-8", errors="replace")
-                    if "Received single-instance show request" in content:
-                        break
-                time.sleep(0.1)
-            assert "Received single-instance show request" in content, (
-                f"debug.log missing show line; content={content!r}"
+            # A must be stopped by B's kill, proving replacement.
+            proc_a.wait(timeout=10)
+            assert proc_a.returncode == 0
+
+            # The running instance is B's server, which serves the same media
+            # dir; the follow-up print hook must reflect the RUNNING
+            # instance's sources, not an empty standalone config.
+            query = subprocess.run(
+                [dlna_binary, "--print-effective-media-sources"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=env,
             )
+            assert str(media_dir) in query.stdout
         finally:
+            subprocess.run(
+                [dlna_binary, "--kill-server"],
+                capture_output=True, text=True, timeout=10, env=env,
+            )
             proc_a.terminate()
             try:
                 proc_a.wait(timeout=5)

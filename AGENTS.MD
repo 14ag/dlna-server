@@ -1,12 +1,14 @@
 # DLNA Server Agent Rules
 
 - never compress this file
+- never use absolute paths in this repo. always use relative paths
 - Always use caveman skill in this repo.
 - Use `git` for git tasks. Use `gh` for GitHub tasks. that the user explicitly approves. never create a branch, never commit
 - When user names a skill, follow that skill to the latter.
 - No fallbacks when user states a requirement. Ask a yes/no question if requirement conflict exists.
 - sudo password for wsl is in the .env file
 - Do not make proactive decisions outside user scope. Ask first.
+- no such thing as a pre-existing failiure. those must be fixed at the very end after imolementing user's requirements
 
 ## Automation
 
@@ -20,8 +22,8 @@
 ## Build And Dependencies
 
 - never build manually. always use the build scripts. never edit the build scripts unless it has bugs
-- build windows assets using command `& .\build-assets.bat --platform winx64 2>&1 | Select-Object -Last 30`
-- build linux assets using command `wsl.exe -d Ubuntu -- bash -lc 'cd $(wslpath "$PWD") && DLNA_SUDO_PASSWORD=" " ./build-assets.sh'` with no extra parameters.this script will handle everything (copying assets, building and installing)
+- build windows assets using command `& .\build.bat --platform winx64 2>&1 | Select-Object -Last 30`
+- build linux assets using command `wsl.exe -d Ubuntu -- bash -lc 'cd $(wslpath "$PWD") && DLNA_SUDO_PASSWORD=" " ./build.sh'` with no extra parameters.this script will handle everything (copying assets, building and installing)
 - CMake requires libcurl. Do not add curl CLI or legacy IO fallback.
 - Windows build deps use vcpkg. Expected root is `$env:VCPKG_ROOT` or `$env:USERPROFILE\vcpkg`.
 - Windows curl packages: `curl:x64-windows-static` and `curl:x86-windows-static`.
@@ -61,7 +63,7 @@ when executing the full test suite so as to filter out passed tests and see fail
 - there should never be skipped tests. all tests should be marked with platform so that they are deselected when they can not run in the curent platform. if a test is skipped, it should be fixed or removed
 - Run Windows CMake configure/build for `dlna-server` when Windows build files changed.
 - Run POSIX CMake configure/build with `-DDLNA_ENABLE_GTK4_GUI=OFF` when POSIX/shared code changed.
-- Run smoke scripts in the tests folder.
+- tests dependent on the linux(and there is proof that they completetly can not run on windows) environment must be tagged as posix only and tests dependent on the windows(and there is proof that they completetly can not run on linux) environment must be tagged as windows only so that tests only run in appropriate environments
 
 
 ## Code Constraints
