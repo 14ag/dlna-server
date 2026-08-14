@@ -64,8 +64,18 @@ void OnSingleInstanceCommand(const std::string& cmd) {
     }
 }
 
+std::string EffectiveSourcesResponse() {
+    std::string out;
+    auto snap = AppConfig.Snapshot();
+    for (const auto& src : snap.effectiveMediaSources) {
+        out += WideToUtf8(src.path);
+        out += "\n";
+    }
+    return out;
+}
+
 void PrintUsage(const char* exe) {
-    std::cerr << "Usage: " << exe << " [--port 8200] [--name NAME] [--uuid UUID] [--debug] --source \"pathA\",\"pathB\"\n";
+    std::cerr << "Usage: " << exe << " [--port 8200] [--name NAME] [--uuid UUID] [--debug] [--no-debug] --source \"pathA\",\"pathB\"\n";
     std::cerr << "Sources can be folders, playlist files (.m3u, .m3u8, .pls), smb:// URLs, or ftp:// URLs.\n";
 }
 }
@@ -676,11 +686,21 @@ int main(int argc, char** argv) {
             return 0;
         }
         else if (arg == "--print-effective-media-sources") {
-            // Reflects effectiveMediaSources, i.e. what Scan() will actually
-            // publish for this process's current state. Differs from
-            // --print-media-sources whenever --source appeared earlier in
-            // argv than this flag (argument order matters: --source must be
-            // parsed first to install the override before this flag runs).
+            // Reflect the RUNNING instance's effectiveMediaSources when one
+            // is up (a follow-up print hook after a relaunch), otherwise this
+            // process's own state. First see whether another instance holds
+            // the single-instance lock; if so, ask it directly over the IPC
+            // socket. When we are the only instance, just print our own
+            // config as this hook has always done.
+            if (!SingleInstance::TryAcquireLock()) {
+                std::string resp;
+                if (SingleInstance::SendEffectiveSourcesRequest(&resp)) {
+                    std::cout << resp;
+                    return 0;
+                }
+            } else {
+                SingleInstance::ReleaseLock();
+            }
             auto snap = AppConfig.Snapshot();
             for (const auto& src : snap.effectiveMediaSources) {
                 std::wcout << src.path << std::endl;
@@ -903,6 +923,13 @@ int main(int argc, char** argv) {
             std::cout << "picked-interface-index=" << (picked ? picked->interfaceIndex : 0) << std::endl;
             return 0;
         }
+        else if (arg == "--no-debug") {
+            // Override a DebugLog=1 read from the config file so daemonize
+            // behavior is deterministic for scripted/test launches. Unlike
+            // --port/--name/--uuid it deliberately does NOT set
+            // wroteConfigOverride, so it never rewrites the user's config.
+            AppConfig.debugLog = false;
+        }
         else if (arg == "--debug") {
             AppConfig.debugLog = true;
             wroteConfigOverride = true;
@@ -960,10 +987,6 @@ int main(int argc, char** argv) {
         // fall through to the normal startup path below using THIS
         // process's own already parsed args and overrides
     }
-    // Listen for IPC commands from short-lived --kill-server/--print-*
-    // second instances (a second instance requests a graceful stop via
-    // the "kill" command; see OnSingleInstanceCommand).
-    SingleInstance::StartListening(OnSingleInstanceCommand);
 
     // does not use DetachToBackgroundOrPrintReady from posix daemonize h
     // that helper signals ready immediately after detaching this path must
@@ -1000,6 +1023,21 @@ int main(int argc, char** argv) {
             }
         }
     }
+
+    // Listen for IPC commands from short-lived --kill-server/--print-*
+    // second instances (a second instance requests a graceful stop via
+    // the "kill" command; see OnSingleInstanceCommand).
+    //
+    // IMPORTANT: StartListening() must happen AFTER the fork above, never
+    // before it. g_listenerThread is a std::thread; forking a process that
+    // already owns a running thread leaves the child with a joinable handle
+    // to a thread that only exists in the parent. The parent would then
+    // std::terminate when its global g_listenerThread destructor runs at
+    // exit, and the daemon child's ReleaseLock() would terminate on
+    // g_listenerThread.join(). Starting the listener in the child (and in
+    // the non-detached foreground process) keeps exactly one live listener
+    // thread per running instance.
+    SingleInstance::StartListening(OnSingleInstanceCommand, EffectiveSourcesResponse);
 
     std::wstring outReason;
     const bool startOk = DLNAServer.Start(outReason);

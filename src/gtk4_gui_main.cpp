@@ -861,9 +861,10 @@ void ShowLogDialog() {
         DumpWindowGeometry("log", g_logDialog);
         return;
     }
-    if (g_dumpLogDialogReopen) {
+    if (g_dumpLogDialogReopen || g_dumpMsgBoxParent) {
         // headless reopen test: present without the modal loop so
         // DumpLogDialogReopenAndExit can drive the hide/reopen sequence
+        // (and DumpMessageBoxParentAndExit can parent a message box to it)
         PresentModalChild(GTK_WINDOW(g_logDialog), GTK_WINDOW(g_mainWindow));
         return;
     }
@@ -1375,6 +1376,9 @@ void RefreshStatus() {
     gtk_button_set_label(
         GTK_BUTTON(g_startStopButton),
         g_state == ServerUiState::Running ? "Stop" : "Start");
+    gtk_widget_set_tooltip_text(
+        g_startStopButton,
+        g_state == ServerUiState::Running ? "Stop server" : "Start server");
 
     gtk_widget_set_sensitive(
         g_addButton,
@@ -1561,7 +1565,23 @@ void RequestClose() {
     }
     if (ShouldCloseNow(DLNAServer.IsRunning(), false)) {
         if (g_mainWindow != nullptr) {
-            gtk_window_destroy(GTK_WINDOW(g_mainWindow));
+            // Defer the teardown to idle time. Destroying the toplevel
+            // synchronously inside the close-request handler leaves GDK's
+            // frame clock with a pending render against a dying surface,
+            // which X11 reports as BadDrawable / X_GetGeometry and aborts
+            // the process. GtkApplication then quits once the last window
+            // closes, so the idle callback runs before the main loop exits.
+            g_idle_add(+[](gpointer) -> gboolean {
+                if (g_mainWindow != nullptr) {
+                    gtk_window_destroy(GTK_WINDOW(g_mainWindow));
+                    // The pointer must go null now: OnPollTick and other
+                    // callbacks keep running until the app exits and would
+                    // otherwise query the freed surface (gdk_toplevel_get_state)
+                    // → X11 BadDrawable / X_GetGeometry → process abort.
+                    g_mainWindow = nullptr;
+                }
+                return G_SOURCE_REMOVE;
+            }, nullptr);
         }
         return;
     }
@@ -2034,9 +2054,10 @@ void DumpLogDialogReopenAndExit(GtkApplication* app) {
 // exercises the Task 16 fix: an asynchronously-triggered failure message box
 // (here forced through SetPendingResult + ApplyPendingResult) must parent to
 // whichever secondary dialog is visible, falling back to the main window.
-// prints [gtk4-msgbox-parent] parent=<tag> for the no-dialog case and for
-// the Settings-open case, then exits. std::_Exit skips static teardown
-// (the joinable single-instance listener thread aborts on std::exit).
+// prints [gtk4-msgbox-parent] parent=<tag> for the no-dialog case, for the
+// Settings-open case and for the nested Settings+Log case, then exits.
+// std::_Exit skips static teardown (the joinable single-instance listener
+// thread aborts on std::exit).
 void DumpMessageBoxParentAndExit(GtkApplication* app) {
     (void)app;
     gtk_window_present(GTK_WINDOW(g_mainWindow));
@@ -2048,6 +2069,14 @@ void DumpMessageBoxParentAndExit(GtkApplication* app) {
     SetPendingResult(ServerUiState::Stopped, false, "forced failure");
     ApplyPendingResult();
     RefreshStatus();
+    MessageBoxShow(ActiveTopLevelWindow(), "parent test");
+    // nested case: with Settings still open, also open the Log dialog; the
+    // failure box must then parent to Log (topmost of the two dialogs).
+    ShowLogDialog();
+    for (int i = 0; i < 200 && !gtk_widget_get_visible(g_logDialog); ++i)
+        g_main_context_iteration(nullptr, TRUE);
+    SetPendingResult(ServerUiState::Stopped, false, "forced failure");
+    ApplyPendingResult();
     MessageBoxShow(ActiveTopLevelWindow(), "parent test");
     std::fflush(stdout);
     std::_Exit(0);
@@ -2095,6 +2124,19 @@ void OnAppActivate(GtkApplication* app, gpointer) {
         //    moving to another control and print the sensitivity value
         //    again expect false even though the row is still selected
         // 4 assert the two printed values are true then false
+        std::_Exit(0);
+    }
+    if (g_printStoppedCloseExit) {
+        // Task 1: Close in the Stopped state must destroy the window and
+        // exit the process cleanly instead of hiding it.
+        BuildMainWindow(app);
+        gtk_window_present(GTK_WINDOW(g_mainWindow));
+        for (int i = 0; i < 200 && g_state != ServerUiState::Stopped; ++i)
+            g_main_context_iteration(nullptr, TRUE);
+        RequestClose();
+        for (int i = 0; i < 300 && gtk_widget_get_realized(g_mainWindow); ++i)
+            g_main_context_iteration(nullptr, TRUE);
+        std::fflush(stdout);
         std::_Exit(0);
     }
 }
@@ -2288,6 +2330,8 @@ int main(int argc, char** argv) {
             g_dumpMsgBoxParent = true;
         } else if (arg == "--print-stopped-close-exit") {
             g_printStoppedCloseExit = true;
+        } else if (arg == "--print-delete-focus-gating") {
+            g_printDeleteFocusGating = true;
         }
     }
 
@@ -2377,7 +2421,9 @@ int main(int argc, char** argv) {
         std::string arg = argv[i];
         if (arg == "--dump-widget-geometry" ||
             arg == "--dump-log-dialog-reopen" ||
-            arg == "--dump-msgbox-parent") {
+            arg == "--dump-msgbox-parent" ||
+            arg == "--print-stopped-close-exit" ||
+            arg == "--print-delete-focus-gating") {
             continue;
         }
         if (arg == "--source" && i + 1 < argc) {
