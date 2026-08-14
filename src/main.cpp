@@ -128,6 +128,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             killServer = true;
         } else if (wcscmp(argv[i], L"--debug") == 0) {
             debugFlag = true;
+        } else if (wcscmp(argv[i], L"--no-debug") == 0) {
+            debugFlag = false;
+            AppConfig.debugLog = false;
         } else if (wcscmp(argv[i], L"--print-scan-cancellation-lifecycle") == 0) {
             AppScanCancel.BeginScan();
             std::wcout << (AppScanCancel.IsCancelled() ? L"1" : L"0") << std::endl;
@@ -584,6 +587,31 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-effective-media-sources") == 0) {
+            // If another instance is already running, query ITS effective
+            // sources over COPYDATA instead of printing this process's own
+            // config (which would be empty for a print-only invocation).
+            // Mirrors the POSIX effective-sources IPC query.
+            HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
+            if (hwndExisting) {
+                wchar_t tempPath[MAX_PATH] = {0};
+                wchar_t tempFile[MAX_PATH] = {0};
+                if (GetTempPathW(MAX_PATH, tempPath) &&
+                    GetTempFileNameW(tempPath, L"dlnasrc", 0, tempFile)) {
+                    COPYDATASTRUCT cds{};
+                    cds.dwData = MainWindow::kCopyDataQueryEffectiveSources;
+                    cds.cbData = static_cast<DWORD>((wcslen(tempFile) + 1) * sizeof(wchar_t));
+                    cds.lpData = tempFile;
+                    SendMessageW(hwndExisting, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds));
+                    std::ifstream in(tempFile);
+                    std::string line;
+                    while (std::getline(in, line)) {
+                        if (!line.empty()) std::wcout << Utf8ToWide(line) << std::endl;
+                    }
+                    DeleteFileW(tempFile);
+                    LocalFree(argv);
+                    return 0;
+                }
+            }
             auto snap = AppConfig.Snapshot();
             for (const auto& src : snap.effectiveMediaSources) {
                 std::wcout << src.path << std::endl;

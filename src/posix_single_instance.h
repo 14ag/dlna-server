@@ -7,9 +7,11 @@
 
 namespace SingleInstance {
 
-// Try to acquire the single-instance file lock (flock on XDG_RUNTIME_DIR or
-// fallback /tmp). Returns true if we own the lock (first instance). Returns
-// false if another instance is already running.
+// Try to acquire the single-instance file lock (flock on the fixed
+// /tmp/dlna-server-<uid> instance dir, independent of XDG_RUNTIME_DIR, so the
+// whole system never runs more than one instance per user). Returns true if
+// we own the lock (first instance). Returns false if another instance is
+// already running.
 bool TryAcquireLock();
 
 // Connect to the running instance's domain socket and send "show" command.
@@ -33,6 +35,13 @@ bool SendShowWithRetry(int maxAttempts = 5, int delayMs = 200);
 // ParseQuotedCommaList itself this mirrors WM COPYDATA on the windows build
 bool SendSourceOverride(const std::string& payload);
 
+// Sends an "effective-sources" query to the running instance and stores the
+// reply (one media source path per line) in outResponse. Returns true when a
+// running instance answered, false when no instance is listening. Used by
+// --print-effective-media-sources so a follow-up print hook reflects the
+// RUNNING instance's sources instead of an empty standalone config.
+bool SendEffectiveSourcesRequest(std::string* outResponse);
+
 // sends kill to whatever instance currently holds the lock then polls
 // TryAcquireLock until it succeeds or maxAttempts is exhausted returns
 // true once this process owns the lock false if the previous instance
@@ -47,8 +56,11 @@ bool SendKill();
 
 // Start a background thread listening on the domain socket for IPC commands
 // (e.g. "show"). The callback is invoked from the listener thread with the
-// received command text (trailing newline stripped)
-void StartListening(void (*onCommand)(const std::string&));
+// received command text (trailing newline stripped). onQuery, when non-null,
+// answers an "effective-sources" query from the listening thread with the
+// string returned by the provider (one source path per line).
+void StartListening(void (*onCommand)(const std::string&),
+                    std::string (*onQuery)() = nullptr);
 
 // Stop the listener, release the file lock, and clean up socket/lock files.
 void ReleaseLock();
