@@ -259,7 +259,7 @@ void MediaSources::Scan() {
         jobs.push_back({ctx, MediaSource{cfg.defaultPlaylistPath}, containerId});
     }
 
-    // Each top-level source job runs on its own dedicated thread, never on
+    // Each top-level source job runs on its own SourceScanPool task, never on
     // PlaylistScanPool. RunPlaylistDispatcher (reached via ScanPlaylistTree,
     // called directly here or indirectly from ScanFolder/ScanNetworkFolder
     // when they discover a nested playlist) submits leaf ScanOnePlaylistNode
@@ -271,10 +271,11 @@ void MediaSources::Scan() {
     // tasks being waited on -- a permanent deadlock. See Task 9 of
     // dlna-server-concurrency-memory-fix-workflow-17-7-26.md and SEI CERT
     // TPS01-J. Do not change this back to PlaylistScanPool::Get().Submit(...).
-    std::vector<std::thread> sourceThreads;
-    sourceThreads.reserve(jobs.size());
+    TaskGroup sourceGroup;
     for (auto& job : jobs) {
-        sourceThreads.emplace_back([this, &job]() {
+        sourceGroup.Enter();
+        SourceScanPool::Get().Submit([this, &job, &sourceGroup]() {
+            TaskGroupLeaveGuard leave(sourceGroup);
             RunGuarded(L"source-scan", [this, &job]() {
                 LogPrint(L"Scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
                 if (IsPlaylistSourcePath(job.source.path)) {
@@ -302,9 +303,7 @@ void MediaSources::Scan() {
             });
         });
     }
-    for (auto& sourceThread : sourceThreads) {
-        sourceThread.join();
-    }
+    sourceGroup.Wait();
 
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
     AppEvents.NotifySystemUpdateId(newUpdateId);

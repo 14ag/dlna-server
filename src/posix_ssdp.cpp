@@ -233,7 +233,9 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     // at the same time Stop is writing them during teardown
     m_initialBurstThread = std::thread([this]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(ComputeSsdpStartupJitterMilliseconds()));
-        SendNotifyBurst("ssdp:alive", 3, 100);
+        // mirrors the windows side change in ssdp cpp see that file for
+        // the full rationale comment
+        SendNotifyBurst("ssdp:alive", 5, 150);
     });
     return true;
 }

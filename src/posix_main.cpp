@@ -32,11 +32,14 @@
 #include "copydata_validation.h"
 #include "media_database.h"
 #include "browse_page_cap.h"
+#include "httpserver.h"
 
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <fstream>
 #include <future>
@@ -593,6 +596,43 @@ int main(int argc, char** argv) {
             std::wcout << AppConfig.GetDefaultPlaylistPath() << std::endl;
             return 0;
         }
+        else if (arg == "--print-ssdp-alive-interval-bounds") {
+            // Regression test for the Phase 2 timing change. Samples the
+            // interval generator many times and asserts every sample
+            // falls inside [4min, 6min] and never inside the previous
+            // [12min, 14.5min] window, catching an accidental partial
+            // revert.
+            unsigned int minSeen = UINT32_MAX;
+            unsigned int maxSeen = 0;
+            for (int i = 0; i < 2000; ++i) {
+                unsigned int sample = ComputeSsdpNextAliveIntervalMilliseconds();
+                if (sample < minSeen) minSeen = sample;
+                if (sample > maxSeen) maxSeen = sample;
+            }
+            std::cout << "min-ms=" << minSeen << std::endl;
+            std::cout << "max-ms=" << maxSeen << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-source-scan-pool-worker-count") {
+            std::cout << SourceScanPool::Get().WorkerCount() << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-icon-cache-lifecycle") {
+            std::string bytesFirst;
+            std::string bytesSecond;
+            long before = GetIconLoadRecomputeCountForTest();
+            bool okFirst = LoadServerIconPngForTest("server_icon_48.png", bytesFirst);
+            long afterFirst = GetIconLoadRecomputeCountForTest();
+            bool okSecond = LoadServerIconPngForTest("server_icon_48.png", bytesSecond);
+            long afterSecond = GetIconLoadRecomputeCountForTest();
+            std::cout << "ok-first=" << (okFirst ? 1 : 0) << std::endl;
+            std::cout << "ok-second=" << (okSecond ? 1 : 0) << std::endl;
+            std::cout << "before=" << before << std::endl;
+            std::cout << "after-first-load=" << afterFirst << std::endl;
+            std::cout << "after-second-load=" << afterSecond << std::endl;
+            std::cout << "bytes-equal=" << (bytesFirst == bytesSecond ? 1 : 0) << std::endl;
+            return 0;
+        }
         else if (arg == "--print-resolve-bundled-resource" && i + 1 < argc) {
             std::cout << ResolveBundledResourcePath(argv[++i]) << std::endl;
             return 0;
@@ -796,8 +836,10 @@ int main(int argc, char** argv) {
                 "</s:Envelope>\n";
             AppContent.HandleContentDirectoryControl(searchSoap, "http://127.0.0.1:0");
             std::wcout << L"before-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
+            std::wcout << L"before-rescan-total-items=" << AppContent.GetSearchCacheTotalItemsForTest() << std::endl;
             DLNAServer.Rescan();
             std::wcout << L"after-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
+            std::wcout << L"after-rescan-total-items=" << AppContent.GetSearchCacheTotalItemsForTest() << std::endl;
             DLNAServer.Stop();
             return 0;
         }
@@ -821,6 +863,44 @@ int main(int argc, char** argv) {
             bool ok = survivedFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready
                        && survivedFuture.get();
             std::cout << "pool-survived-exception=" << (ok ? 1 : 0) << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-select-best-endpoint-scope-match") {
+            // Regression test for F-DISCOVERY-01. Builds two synthetic
+            // link-local IPv6 endpoints on different interfaces (index 2
+            // and index 5) and a synthetic remote address scoped to
+            // interface 5, then asserts SelectBestEndpoint picks the
+            // interface-5 endpoint rather than simply whichever endpoint
+            // happens to be first in the vector.
+            auto makeLinkLocalEndpoint = [](unsigned long ifIndex, unsigned char lastByte) {
+                NetworkEndpoint ep{};
+                ep.family = AF_INET6;
+                ep.interfaceIndex = ifIndex;
+                ep.prefixLength = 64;
+                ep.isLinkLocal = true;
+                sockaddr_in6 addr{};
+                addr.sin6_family = AF_INET6;
+                addr.sin6_addr.s6_addr[0] = 0xfe;
+                addr.sin6_addr.s6_addr[1] = 0x80;
+                addr.sin6_addr.s6_addr[15] = lastByte;
+                addr.sin6_scope_id = ifIndex;
+                std::memcpy(&ep.sockaddr, &addr, sizeof(addr));
+                ep.sockaddrLen = sizeof(addr);
+                return ep;
+            };
+            std::vector<NetworkEndpoint> endpoints;
+            endpoints.push_back(makeLinkLocalEndpoint(2, 0x02));
+            endpoints.push_back(makeLinkLocalEndpoint(5, 0x05));
+
+            sockaddr_in6 remote{};
+            remote.sin6_family = AF_INET6;
+            remote.sin6_addr.s6_addr[0] = 0xfe;
+            remote.sin6_addr.s6_addr[1] = 0x80;
+            remote.sin6_addr.s6_addr[15] = 0x99;
+            remote.sin6_scope_id = 5;
+
+            const NetworkEndpoint* picked = SelectBestEndpoint(endpoints, reinterpret_cast<SOCKADDR*>(&remote));
+            std::cout << "picked-interface-index=" << (picked ? picked->interfaceIndex : 0) << std::endl;
             return 0;
         }
         else if (arg == "--debug") {

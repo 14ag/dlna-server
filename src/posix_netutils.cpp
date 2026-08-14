@@ -312,14 +312,41 @@ const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& en
         } else if (remoteAddr && endpoint.family == AF_INET6) {
             auto* local = reinterpret_cast<const sockaddr_in6*>(&endpoint.sockaddr);
             auto* remote = reinterpret_cast<const sockaddr_in6*>(remoteAddr);
-            if (PrefixMatchBits(local->sin6_addr.s6_addr, remote->sin6_addr.s6_addr, endpoint.prefixLength)) score += 100;
+            if (PrefixMatchBits(local->sin6_addr.s6_addr, remote->sin6_addr.s6_addr, endpoint.prefixLength)) {
+                score += 100;
+            }
+            // a link local ipv6 prefix fe80 colon colon slash 10 rfc 4291
+            // section 2 5 6 is identical on every interface of this host
+            // so the prefix match above alone cannot tell which physical
+            // interface a link local remote address belongs to
+            // rfc 4007 ipv6 scoped address architecture section 5
+            // requires the zone scope id to disambiguate a link local
+            // address without this check every link local endpoint on a
+            // multi homed host scores identically and whichever one is
+            // first in the vector always wins even if it is on the wrong
+            // interface see F-DISCOVERY-01 mirrors the same scope id
+            // check netutils cpp SelectBestEndpoint already performs on
+            // windows
+            if (endpoint.isLinkLocal && remote->sin6_scope_id != 0 &&
+                remote->sin6_scope_id == endpoint.interfaceIndex) {
+                score += 50;
+            }
         }
         if (score > bestScore) {
             best = &endpoint;
             bestScore = score;
         }
     }
-    return best ? best : (endpoints.empty() ? nullptr : &endpoints.front());
+    if (best != nullptr) return best;
+    // fall back to any endpoint of the same address family before ever
+    // returning an endpoint of the wrong family the previous fallback
+    // ignored family entirely which the caller happened to catch with
+    // its own separate family check but that made this function's
+    // return value misleading on its own see F-DISCOVERY-01
+    for (const auto& endpoint : endpoints) {
+        if (endpoint.family == remoteAddr->sa_family) return &endpoint;
+    }
+    return endpoints.empty() ? nullptr : &endpoints.front();
 }
 
 bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Content) {
