@@ -1,6 +1,8 @@
 #include "playlist_scan_concurrency.h"
 #include <algorithm>
 #include <cmath>
+#include <thread>
+#include "http_common.h"
 
 namespace {
 constexpr size_t kMinConcurrency = 1;
@@ -50,5 +52,26 @@ size_t AdaptiveConcurrencyLimiter::CurrentLimit() const {
 
 BoundedThreadPool& PlaylistScanPool::Get() {
     static BoundedThreadPool instance(kPlaylistScanPoolSize, kPlaylistScanPoolMaxQueueDepth);
+    return instance;
+}
+
+namespace {
+size_t ComputeSourceScanPoolWorkerCount() {
+    const unsigned int hw = std::thread::hardware_concurrency();
+    const size_t base = hw == 0 ? 4 : static_cast<size_t>(hw);
+    // per source scan jobs are i o bound disk stat listdir or ftp http
+    // network calls more than cpu bound so oversubscribing relative to
+    // core count lets more sources overlap while their i o is in flight
+    // the same reasoning civetweb documents for its own num_threads
+    // default and that this project's own httpserver cpp already cites
+    // for its windows threadpool sizing capped at kMaxClientThreads so a
+    // machine with an unusually high core count still gets a bounded
+    // pool rather than one that scales without limit see F-PERF-04
+    return (std::min)(base * 2, kMaxClientThreads);
+}
+}
+
+BoundedThreadPool& SourceScanPool::Get() {
+    static BoundedThreadPool instance(ComputeSourceScanPoolWorkerCount());
     return instance;
 }

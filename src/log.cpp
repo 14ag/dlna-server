@@ -43,15 +43,26 @@ FILE* OpenOrReuseDebugLogFile(const std::wstring& path) {
 }
 
 FILE* GetDebugLogFile() {
-    std::wstring configPath = AppConfig.GetConfigPath();
-    wchar_t szPath[MAX_PATH] = {};
-    if (configPath.empty() || configPath.size() >= MAX_PATH) {
-        return NULL;
-    }
-    wcscpy_s(szPath, configPath.c_str());
-    PathRemoveFileSpecW(szPath);
-    PathAppendW(szPath, L"debug.log");
-    return OpenOrReuseDebugLogFile(std::wstring(szPath));
+    // computed once per process the executable module path cannot change
+    // after process start so recomputing it on every LogPrint call is a
+    // needless GetModuleFileNameW syscall on the debug log hot path
+    // function local static initialization is guaranteed thread safe by
+    // the c plus plus standard stmt dcl paragraph 4 magic statics so no
+    // extra locking is needed here even though every current caller of
+    // this function also happens to already hold g_logMutex
+    static const std::wstring cachedDebugLogPath = []() -> std::wstring {
+        std::wstring configPath = AppConfig.GetConfigPath();
+        wchar_t szPath[MAX_PATH] = {};
+        if (configPath.empty() || configPath.size() >= MAX_PATH) {
+            return L"";
+        }
+        wcscpy_s(szPath, configPath.c_str());
+        PathRemoveFileSpecW(szPath);
+        PathAppendW(szPath, L"debug.log");
+        return std::wstring(szPath);
+    }();
+    if (cachedDebugLogPath.empty()) return NULL;
+    return OpenOrReuseDebugLogFile(cachedDebugLogPath);
 }
 
 void LogPrint(const wchar_t* fmt, ...) {

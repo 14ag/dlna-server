@@ -75,4 +75,14 @@ private:
 #endif
 };
 
+#ifndef _WIN32
+// test only forwards to the file local LoadServerIconPng in
+// posix_httpserver cpp so a pytest can exercise the icon cache without
+// driving a live socket see GetRemoteProbeRecomputeCountForTest in
+// network_sources h for the same test hook pattern already used in
+// this codebase
+bool LoadServerIconPngForTest(const std::string& fileName, std::string& bytes);
+long GetIconLoadRecomputeCountForTest();
+#endif
+
 #endif // HTTPSERVER_H

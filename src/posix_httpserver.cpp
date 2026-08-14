@@ -23,6 +23,7 @@
 #include <mutex>
 #include <sstream>
 #include <vector>
+#include <unordered_map>
 #include <sys/select.h>
 #include <sys/socket.h>
 #ifdef __linux__
@@ -170,13 +171,57 @@ bool ReadIconFile(const std::string& path, std::string& bytes) {
     return !bytes.empty();
 }
 
-bool LoadServerIconPng(const std::string& fileName, std::string& bytes) {
-    if (fileName.empty()) return false;
-    const std::string resolved = ResolveBundledResourcePath(fileName);
-    if (resolved.empty()) return false;
-    return ReadIconFile(resolved, bytes);
+namespace {
+// exactly 3 possible keys server icon 48 120 and 256 png so this cache
+// is inherently bounded no eviction policy is needed
+std::mutex g_iconCacheMutex;
+std::unordered_map<std::string, std::string> g_iconCache;
+long g_iconLoadRecomputeCount = 0;
 }
 
+bool LoadServerIconPng(const std::string& fileName, std::string& bytes) {
+    if (fileName.empty()) return false;
+
+    {
+        std::lock_guard<std::mutex> lock(g_iconCacheMutex);
+        auto found = g_iconCache.find(fileName);
+        if (found != g_iconCache.end()) {
+            bytes = found->second;
+            return true;
+        }
+    }
+
+    // resolves the path on disk possibly checking multiple candidate
+    // directories and reads the full file every icon http request used
+    // to pay this cost previously bytes are small and static for the
+    // life of the process so cache them once per fileName see F-PERF-03
+    const std::string resolved = ResolveBundledResourcePath(fileName);
+    if (resolved.empty()) return false;
+    std::string loaded;
+    if (!ReadIconFile(resolved, loaded)) return false;
+
+    {
+        std::lock_guard<std::mutex> lock(g_iconCacheMutex);
+        g_iconCache[fileName] = loaded;
+        ++g_iconLoadRecomputeCount;
+    }
+    bytes = loaded;
+    return true;
+}
+
+long GetIconLoadRecomputeCountInternal() {
+    std::lock_guard<std::mutex> lock(g_iconCacheMutex);
+    return g_iconLoadRecomputeCount;
+}
+
+}
+
+long GetIconLoadRecomputeCountForTest() {
+    return GetIconLoadRecomputeCountInternal();
+}
+
+bool LoadServerIconPngForTest(const std::string& fileName, std::string& bytes) {
+    return LoadServerIconPng(fileName, bytes);
 }
 
 HttpServer& HttpServer::Get() {

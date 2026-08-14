@@ -214,7 +214,11 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     // at the same time Stop is writing them during teardown
     m_initialBurstThread = std::thread([this]() {
         Sleep(ComputeSsdpStartupJitterMilliseconds());
-        SendNotifyBurst("ssdp:alive", 3, 100);
+        // 5 rounds at 150ms instead of 3 rounds at 100ms still completes
+        // within under a second of Start returning does not meaningfully
+        // delay startup but gives a freshly listening control point two
+        // more independent chances to catch the burst see F-DISCOVERY-02
+        SendNotifyBurst("ssdp:alive", 5, 150);
     });
     return true;
 }

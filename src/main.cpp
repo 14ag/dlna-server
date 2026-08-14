@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <fstream>
 #include <future>
 #include <iostream>
@@ -523,6 +524,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::wcout << AppConfig.GetDefaultPlaylistPath() << std::endl;
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-ssdp-alive-interval-bounds") == 0) {
+            // Regression test for the Phase 2 timing change. Samples the
+            // interval generator many times and asserts every sample
+            // falls inside [4min, 6min] and never inside the previous
+            // [12min, 14.5min] window, catching an accidental partial
+            // revert.
+            unsigned int minSeen = UINT32_MAX;
+            unsigned int maxSeen = 0;
+            for (int i = 0; i < 2000; ++i) {
+                unsigned int sample = ComputeSsdpNextAliveIntervalMilliseconds();
+                if (sample < minSeen) minSeen = sample;
+                if (sample > maxSeen) maxSeen = sample;
+            }
+            std::cout << "min-ms=" << minSeen << std::endl;
+            std::cout << "max-ms=" << maxSeen << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-source-scan-pool-worker-count") == 0) {
+            std::cout << SourceScanPool::Get().WorkerCount() << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-media-source-file-extensions") == 0) {
             for (const auto& ext : GetMediaSourceFileExtensions()) {
                 std::wcout << ext << std::endl;
@@ -755,8 +777,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 "</s:Envelope>\n";
             AppContent.HandleContentDirectoryControl(searchSoap, "http://127.0.0.1:0");
             std::wcout << L"before-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
+            std::wcout << L"before-rescan-total-items=" << AppContent.GetSearchCacheTotalItemsForTest() << std::endl;
             DLNAServer.Rescan();
             std::wcout << L"after-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
+            std::wcout << L"after-rescan-total-items=" << AppContent.GetSearchCacheTotalItemsForTest() << std::endl;
             DLNAServer.Stop();
             LocalFree(argv);
             return 0;
