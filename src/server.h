@@ -20,6 +20,11 @@ public:
     bool Rescan();
     
     bool IsRunning() const { return m_running.load(std::memory_order_acquire); }
+    // false only when the server claims to be running but one of the
+    // two components that actually make it reachable has silently
+    // stopped executing true whenever the server is not running at all
+    // since nothing unexpected can be observed in that state
+    bool IsHealthy() const;
     bool IsInitialScanComplete() const { return m_initialScanComplete.load(std::memory_order_acquire); }
     bool IsInitialScanInProgress() const { return m_initialScanInProgress.load(std::memory_order_acquire); }
     std::wstring GetEndpoint() const;

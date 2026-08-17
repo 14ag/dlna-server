@@ -1486,6 +1486,13 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
                 SetControlsForState();
                 InvalidateRect(m_hwnd, NULL, TRUE);
             }
+            if (IsRunning() && !IsBusy() && !DLNAServer.IsHealthy()) {
+                LogPrint(L"Server reported running but an internal worker thread has stopped unexpectedly stopping cleanly");
+                BeginStopServer();
+                MessageBoxW(m_hwnd,
+                    L"The server stopped unexpectedly and has been shut down\n\nPress Start to resume",
+                    L"DLNA Server", MB_ICONWARNING | MB_OK);
+            }
         }
         return 0;
     }

@@ -245,8 +245,22 @@ bool HttpServer::Start(int port) {
     if (m_listenSocketV4 < 0 && m_listenSocketV6 < 0) return false;
     m_clientPool = std::make_unique<BoundedThreadPool>(kMaxClientThreads, kMaxClientThreads);
     m_running = true;
-    if (m_listenSocketV4 >= 0) m_threads.emplace_back(&HttpServer::AcceptLoop, this, m_listenSocketV4);
-    if (m_listenSocketV6 >= 0) m_threads.emplace_back(&HttpServer::AcceptLoop, this, m_listenSocketV6);
+    m_expectedAcceptLoops.store(0, std::memory_order_release);
+    m_aliveAcceptLoops.store(0, std::memory_order_release);
+    if (m_listenSocketV4 >= 0) {
+        m_expectedAcceptLoops.fetch_add(1, std::memory_order_acq_rel);
+        m_threads.emplace_back(&HttpServer::AcceptLoop, this, m_listenSocketV4);
+    }
+    if (m_listenSocketV6 >= 0) {
+        m_expectedAcceptLoops.fetch_add(1, std::memory_order_acq_rel);
+        m_threads.emplace_back(&HttpServer::AcceptLoop, this, m_listenSocketV6);
+    }
+    // The accept-loop threads have not necessarily begun running yet (the
+    // entry-side alive increment happens in the new thread). Seed the alive
+    // counter to `expected` now so a health poll immediately after Start()
+    // does not misread the scheduling window as a dead worker. Only the
+    // exit-side decrement later detects an accept loop that actually died.
+    m_aliveAcceptLoops.store(m_expectedAcceptLoops.load(), std::memory_order_release);
     return true;
 }
 
@@ -269,6 +283,9 @@ void HttpServer::Stop() {
 }
 
 void HttpServer::AcceptLoop(int listenSocket) {
+    // No entry-side alive increment: m_aliveAcceptLoops is seeded to equal
+    // m_expectedAcceptLoops in Start(), and only the exit path decrements,
+    // so a poll can never observe a transient "worker not started yet" dip.
     while (m_running) {
         struct pollfd fds[2];
         fds[0].fd = listenSocket;
@@ -307,6 +324,7 @@ void HttpServer::AcceptLoop(int listenSocket) {
             HandleClient(client, clientIp);
         });
     }
+    m_aliveAcceptLoops.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {

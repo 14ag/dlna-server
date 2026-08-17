@@ -81,11 +81,16 @@ void LogPrint(const wchar_t* fmt, ...) {
     std::wstring line = std::wstring(timeBuf) + msg + L"\r\n";
     const bool writeDebugLog = AppConfig.IsDebugLogEnabled();
 
-    std::lock_guard<std::mutex> lock(g_logMutex);
-    g_logLines.emplace_back(g_nextSeq++, line);
-    if (g_logLines.size() > MAX_LOG_LINES) {
-        g_logLines.pop_front();
+    {
+        std::lock_guard<std::mutex> lock(g_logMutex);
+        g_logLines.emplace_back(g_nextSeq++, line);
+        if (g_logLines.size() > MAX_LOG_LINES) {
+            g_logLines.pop_front();
+        }
     }
+    // File and console I/O happen outside g_logMutex so a blocked write
+    // (e.g. a captured pipe) can never pin the log mutex and stall every
+    // other logging thread.
     if (writeDebugLog) {
         FILE* fp = GetDebugLogFile();
         if (fp) {

@@ -83,11 +83,19 @@ void LogPrint(const wchar_t* fmt, ...) {
     std::wstring line = TimestampPrefix() + buffer;
     const bool writeDebugLog = AppConfig.IsDebugLogEnabled();
 
-std::lock_guard<std::mutex> lock(g_logMutex);
-    g_lines.emplace_back(g_nextSeq++, line);
-    if (g_lines.size() > kMaxLogLines) {
-        g_lines.pop_front();
+    {
+        std::lock_guard<std::mutex> lock(g_logMutex);
+        g_lines.emplace_back(g_nextSeq++, line);
+        if (g_lines.size() > kMaxLogLines) {
+            g_lines.pop_front();
+        }
     }
+    // File and stderr I/O deliberately happen outside g_logMutex: a
+    // blocked write on a full pipe (test harnesses capture stderr through
+    // an undrained PIPE) must never pin the log mutex and stall every
+    // other logging thread. See the concurrency deadlock where 8 HTTP
+    // workers stalled in LogPrint while the echo thread was blocked in
+    // fflush(stderr).
     if (g_consoleEchoEnabled.load(std::memory_order_relaxed)) {
         std::fwprintf(stderr, L"%ls\n", line.c_str());
         std::fflush(stderr);

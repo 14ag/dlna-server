@@ -197,8 +197,10 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     }
 
     m_running.store(true);
+    m_workerThreadAlive.store(true, std::memory_order_release);
     m_hThread = CreateThread(NULL, 0, ThreadWorker, this, 0, NULL);
     if (!m_hThread) {
+        m_workerThreadAlive.store(false, std::memory_order_release);
         m_running.store(false);
         CloseSockets();
         return false;
@@ -567,5 +569,6 @@ DWORD WINAPI SSDP::ThreadWorker(LPVOID lpParam) {
         }
     }
 
+    pThis->m_workerThreadAlive.store(false, std::memory_order_release);
     return 0;
 }

@@ -222,6 +222,7 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     m_ipv6Socket = CreateIPv6Socket(m_endpoints);
     if (m_ipv4Socket < 0 && m_ipv6Socket < 0) return false;
     m_running.store(true);
+    m_workerThreadAlive.store(true, std::memory_order_release);
     m_thread = std::thread(&SSDP::ThreadWorker, this);
     m_responseThread = std::thread(&SSDP::ResponseWorker, this);
     // fire the initial ssdp alive burst asynchronously so Start does
@@ -503,4 +504,5 @@ void SSDP::ThreadWorker() {
             HandleSearchRequest(socketFd, reinterpret_cast<SOCKADDR*>(&remote), remoteLen, std::string(buffer, static_cast<size_t>(bytes)));
         }
     }
+    m_workerThreadAlive.store(false, std::memory_order_release);
 }

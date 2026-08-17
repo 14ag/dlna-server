@@ -573,6 +573,55 @@ int main(int argc, char** argv) {
             std::cout << (first == second ? "same-handle-reused=1" : "same-handle-reused=0") << std::endl;
             return 0;
         }
+        else if (arg == "--print-media-item-stays-resolvable-during-rescan") {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            int targetId = -1;
+            for (const auto& item : AppMedia.GetDescendants(0)) {
+                if (!item.isFolder) { targetId = item.id; break; }
+            }
+            std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
+            std::cout << "target-id=" << targetId << std::endl;
+            if (targetId == -1) {
+                DLNAServer.Stop();
+                return 1;
+            }
+            std::atomic<bool> rescanDone(false);
+            std::thread rescanThread([&rescanDone]() {
+                DLNAServer.Rescan();
+                rescanDone.store(true);
+            });
+            bool everMissing = false;
+            while (!rescanDone.load()) {
+                if (AppMedia.GetItem(targetId).id == -1) {
+                    everMissing = true;
+                }
+            }
+            if (AppMedia.GetItem(targetId).id == -1) {
+                everMissing = true;
+            }
+            rescanThread.join();
+            std::cout << "ever-missing=" << (everMissing ? "1" : "0") << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
+        else if (arg == "--print-server-health-detects-http-death") {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
+            std::cout << "healthy-before=" << (DLNAServer.IsHealthy() ? "1" : "0") << std::endl;
+            HttpServer::Get().Stop();
+            std::cout << "running-after-http-death=" << (DLNAServer.IsRunning() ? "1" : "0") << std::endl;
+            std::cout << "healthy-after-http-death=" << (DLNAServer.IsHealthy() ? "1" : "0") << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
         else if (arg == "--print-close-pending-lifecycle") {
             ClosePendingState state;
             std::wcout << L"initial-pending=" << (state.IsPending() ? 1 : 0) << std::endl;
@@ -1051,7 +1100,17 @@ int main(int argc, char** argv) {
         std::wcerr << L"Failed to start server: " << outReason << std::endl;
         return 1;
     }
-    while (!g_stop) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    bool loggedUnhealthy = false;
+    while (!g_stop) {
+        if (DLNAServer.IsRunning() && !DLNAServer.IsHealthy()) {
+            if (!loggedUnhealthy) {
+                LogPrint(L"Server reported running but an internal worker thread has stopped unexpectedly stopping cleanly");
+                loggedUnhealthy = true;
+            }
+            DLNAServer.Stop();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
     DLNAServer.Stop();
     SingleInstance::ReleaseLock();
     return 0;

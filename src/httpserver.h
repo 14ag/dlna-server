@@ -22,6 +22,18 @@ public:
 
     bool Start(int port);
     void Stop();
+    // true only while the accept loop that Start launched is still
+    // executing false the instant that loop returns for any reason
+    // this is independent of Server IsRunning by design see the
+    // workflow document that added this method for the full reason
+    #ifdef _WIN32
+    bool IsHealthy() const { return m_acceptThreadAlive.load(std::memory_order_acquire); }
+#else
+    bool IsHealthy() const {
+        return m_aliveAcceptLoops.load(std::memory_order_acquire) ==
+               m_expectedAcceptLoops.load(std::memory_order_acquire);
+    }
+#endif
 
 #ifdef _WIN32
     void HandleClient(SOCKET clientSocket, const std::string& clientIP);
@@ -47,6 +59,7 @@ private:
     // kMaxClientThreads already bounds them on the posix side see
     // posix_httpserver cpp AcceptLoop for the reference this mirrors
     std::atomic<size_t> m_activeClientCount{0};
+    std::atomic<bool> m_acceptThreadAlive{false};
     // gates AcceptThreadWorker before it calls accept again once
     // m_activeClientCount reaches kMaxClientThreads
     // mirrors BoundedThreadPool Submit blocking on the posix side
@@ -61,6 +74,8 @@ private:
     int m_listenSocketV4;
     int m_listenSocketV6;
     std::vector<std::thread> m_threads;
+    std::atomic<int> m_expectedAcceptLoops{0};
+    std::atomic<int> m_aliveAcceptLoops{0};
     // Bounded, pre-spawned worker pool for connection handling, replacing
     // a std::thread spawned per accepted connection. Sized to
     // kMaxClientThreads for both worker count and queue depth, mirroring
