@@ -226,6 +226,7 @@ void BeginRescan();
 void StartServer();
 void StopServer();
 void RestartServer();
+void DestroyMainWindowSafely();
 void RequestClose();
 void LayoutMainWindow(int width, int height);
 void RefreshSourceList();
@@ -1554,6 +1555,23 @@ void RestartServer() {
     });
 }
 
+// wm initiated close can leave x11 events and requests still queued
+// drain the main context then force a sync before destroying the surface
+// this closes the same race GDK_SYNCHRONIZE fixes for the whole process
+void DestroyMainWindowSafely() {
+    if (g_mainWindow == nullptr) return;
+    GtkWidget* toDestroy = g_mainWindow;
+    g_mainWindow = nullptr;
+    while (g_main_context_pending(nullptr)) {
+        g_main_context_iteration(nullptr, FALSE);
+    }
+    GdkDisplay* display = gtk_widget_get_display(toDestroy);
+    if (display != nullptr) {
+        gdk_display_sync(display);
+    }
+    gtk_window_destroy(GTK_WINDOW(toDestroy));
+}
+
 void RequestClose() {
     if (g_closePending.IsPending()) return;
     if (IsBusy()) {
@@ -1565,21 +1583,8 @@ void RequestClose() {
     }
     if (ShouldCloseNow(DLNAServer.IsRunning(), false)) {
         if (g_mainWindow != nullptr) {
-            // Defer the teardown to idle time. Destroying the toplevel
-            // synchronously inside the close-request handler leaves GDK's
-            // frame clock with a pending render against a dying surface,
-            // which X11 reports as BadDrawable / X_GetGeometry and aborts
-            // the process. GtkApplication then quits once the last window
-            // closes, so the idle callback runs before the main loop exits.
             g_idle_add(+[](gpointer) -> gboolean {
-                if (g_mainWindow != nullptr) {
-                    gtk_window_destroy(GTK_WINDOW(g_mainWindow));
-                    // The pointer must go null now: OnPollTick and other
-                    // callbacks keep running until the app exits and would
-                    // otherwise query the freed surface (gdk_toplevel_get_state)
-                    // → X11 BadDrawable / X_GetGeometry → process abort.
-                    g_mainWindow = nullptr;
-                }
+                DestroyMainWindowSafely();
                 return G_SOURCE_REMOVE;
             }, nullptr);
         }
@@ -1621,9 +1626,7 @@ void ApplyPendingResult() {
     RefreshStatus();
     if (!success && !message.empty()) MessageBoxShow(ActiveTopLevelWindow(), message);
     if (g_closePending.ShouldCloseNowAfterOperation(state == ServerUiState::Stopped)) {
-        if (g_mainWindow != nullptr) {
-            gtk_window_destroy(GTK_WINDOW(g_mainWindow));
-        }
+        DestroyMainWindowSafely();
         return;
     }
     if (g_closePending.ShouldStopAgainAfterOperation(state == ServerUiState::Running)) {
