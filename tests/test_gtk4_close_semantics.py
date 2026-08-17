@@ -4,7 +4,7 @@ import tempfile
 import os
 import time
 
-pytestmark = pytest.mark.gui_only
+pytestmark = [pytest.mark.gui_only, pytest.mark.needs_xvfb]
 
 
 def _isolated_env(tmp_path):

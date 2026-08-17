@@ -15,6 +15,7 @@
 #include "network_interface_policy.h"
 #include "dlna_utils.h"
 #include "http_common.h"
+#include "httpserver.h"
 #include "media_scan_common.h"
 #include "firewall_access.h"
 #include "log.h"
@@ -868,6 +869,56 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 fflush(second);
             }
             std::wcout << (first == second ? L"same-handle-reused=1" : L"same-handle-reused=0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-media-item-stays-resolvable-during-rescan") == 0) {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            int targetId = -1;
+            for (const auto& item : AppMedia.GetDescendants(0)) {
+                if (!item.isFolder) { targetId = item.id; break; }
+            }
+            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+            std::wcout << L"target-id=" << targetId << std::endl;
+            if (targetId == -1) {
+                DLNAServer.Stop();
+                LocalFree(argv);
+                return 1;
+            }
+            std::atomic<bool> rescanDone(false);
+            std::thread rescanThread([&rescanDone]() {
+                DLNAServer.Rescan();
+                rescanDone.store(true);
+            });
+            bool everMissing = false;
+            while (!rescanDone.load()) {
+                if (AppMedia.GetItem(targetId).id == -1) {
+                    everMissing = true;
+                }
+            }
+            if (AppMedia.GetItem(targetId).id == -1) {
+                everMissing = true;
+            }
+            rescanThread.join();
+            std::wcout << L"ever-missing=" << (everMissing ? L"1" : L"0") << std::endl;
+            DLNAServer.Stop();
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-server-health-detects-http-death") == 0) {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+            std::wcout << L"healthy-before=" << (DLNAServer.IsHealthy() ? L"1" : L"0") << std::endl;
+            HttpServer::Get().Stop();
+            std::wcout << L"running-after-http-death=" << (DLNAServer.IsRunning() ? L"1" : L"0") << std::endl;
+            std::wcout << L"healthy-after-http-death=" << (DLNAServer.IsHealthy() ? L"1" : L"0") << std::endl;
+            DLNAServer.Stop();
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-close-pending-lifecycle") == 0) {

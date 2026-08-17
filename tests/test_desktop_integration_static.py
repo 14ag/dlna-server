@@ -20,7 +20,7 @@ def _find_desktop_template():
 
 DESKTOP_TEMPLATE = _find_desktop_template()
 BUILT_DESKTOP_FILE = (
-    REPO_ROOT / "build-release-linux-stage" / "install" / "share" / "applications" / "dlna-server.desktop"
+    REPO_ROOT / "output" / "linux" / "share" / "applications" / "dlna-server.desktop"
 )
 
 

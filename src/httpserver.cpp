@@ -223,8 +223,10 @@ bool HttpServer::Start(int port) {
     SetThreadpoolCallbackCleanupGroup(&m_cbe, m_cleanupGroup, NULL);
 
     m_running.store(true);
+    m_acceptThreadAlive.store(true, std::memory_order_release);
     m_hAcceptThread = CreateThread(NULL, 0, AcceptThreadWorker, this, 0, NULL);
     if (!m_hAcceptThread) {
+        m_acceptThreadAlive.store(false, std::memory_order_release);
         Stop();
         return false;
     }
@@ -350,6 +352,7 @@ DWORD WINAPI HttpServer::AcceptThreadWorker(LPVOID lpParam) {
         }
     }
 
+    pThis->m_acceptThreadAlive.store(false, std::memory_order_release);
     return 0;
 }
 

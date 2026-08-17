@@ -15,8 +15,7 @@ def _find_cli_binary():
     if server_path and Path(server_path).is_file():
         return Path(server_path)
     for candidate in (
-        REPO_ROOT / "build" / "dlna-server",
-        REPO_ROOT / "build-linux" / "dlna-server",
+        REPO_ROOT / "output" / "linux" / "dlna-server",
     ):
         if candidate.is_file():
             return candidate

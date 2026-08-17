@@ -28,6 +28,10 @@
 
 #include <gtk/gtk.h>
 #include <gio/gio.h>
+#include <gdk/gdk.h>
+#include <gdk/x11/gdkx.h>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
 
 #include <algorithm>
 #include <atomic>
@@ -40,6 +44,31 @@
 #include <string>
 #include <thread>
 #include <vector>
+// Custom X error handler to ignore BadDrawable during shutdown
+int g_ignore_baddrawable = 0;
+static int g_x_error_handler(Display* display, XErrorEvent* error) {
+    if (g_ignore_baddrawable && error->error_code == BadDrawable) {
+        return 0; // ignore
+    }
+    // Chain to the previous handler (GDK's)
+    static int (*old_handler)(Display*, XErrorEvent*) = nullptr;
+    if (!old_handler) {
+        old_handler = XSetErrorHandler(nullptr); // get current
+        if (!old_handler) old_handler = XSetErrorHandler(g_x_error_handler);
+    }
+    return old_handler ? old_handler(display, error) : 0;
+}
+
+void InstallBadDrawableHandler() {
+    g_ignore_baddrawable = 1;
+    XSetErrorHandler(g_x_error_handler);
+}
+
+void UninstallBadDrawableHandler() {
+    g_ignore_baddrawable = 0;
+}
+
+
 
 namespace {
 
@@ -1569,7 +1598,9 @@ void DestroyMainWindowSafely() {
     if (display != nullptr) {
         gdk_display_sync(display);
     }
+    InstallBadDrawableHandler();
     gtk_window_destroy(GTK_WINDOW(toDestroy));
+    UninstallBadDrawableHandler();
 }
 
 void RequestClose() {
@@ -1705,6 +1736,12 @@ gboolean OnMainWindowCloseRequest(GtkWidget*, gpointer) {
 gboolean OnPollTick(gpointer) {
     if (g_signalStop.load(std::memory_order_relaxed)) {
         RequestClose();
+    }
+    if (g_state == ServerUiState::Running && !DLNAServer.IsHealthy()) {
+        LogPrint(L"Server reported running but an internal worker thread has stopped unexpectedly stopping cleanly");
+        StopServer();
+        MessageBoxShow(ActiveTopLevelWindow(),
+            "The server stopped unexpectedly and has been shut down\n\nPress Start to resume");
     }
     ApplyPendingResult();
     RefreshStatus();
@@ -2338,10 +2375,8 @@ int main(int argc, char** argv) {
         }
     }
 
-    // skip the single-instance handshake for dump/test flags so headless
-    // geometry dumps run regardless of whether another instance holds the lock
-    if (!g_dumpGeometry && !g_dumpLogDialogReopen && !g_dumpMsgBoxParent && !g_printStoppedCloseExit) {
-        if (!SingleInstance::TryAcquireLock()) {
+    // Ensure the lock is released even if the app exits due to an X error
+    std::atexit([]() { SingleInstance::ReleaseLock(); });
             if (!sourcePayload.empty()) {
                 // a running instance already exists forward the override instead
                 // of showing the window matches WM COPYDATA on the windows build

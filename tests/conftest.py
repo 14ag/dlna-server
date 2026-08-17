@@ -78,16 +78,13 @@ def _configure_binary_envs():
             os.environ.setdefault("DLNA_GUI_BINARY", server_path)
         return
 
-    build_root = Path(os.environ.get("DLNA_BUILD_ROOT", Path.home() / "dlna-server-build"))
     server = _pick_existing_binary([
-        repo_root / "build-release-linux-stage" / "install" / "bin" / "dlna-server",
-        build_root / "build-release-linux-stage" / "install" / "bin" / "dlna-server",
+        repo_root / "output" / "linux" / "dlna-server",
         Path("/usr/bin/dlna-server"),
         Path("/usr/local/bin/dlna-server"),
     ])
     gui = _pick_existing_binary([
-        repo_root / "build-release-linux-stage" / "install" / "bin" / "dlna-server-gui-bin",
-        build_root / "build-release-linux-stage" / "install" / "bin" / "dlna-server-gui-bin",
+        repo_root / "output" / "linux" / "dlna-server-gui-bin",
         Path("/usr/bin/dlna-server-gui-bin"),
         Path("/usr/local/bin/dlna-server-gui-bin"),
     ])
@@ -356,19 +353,12 @@ def dlna_binary():
     if os.name == "nt":
         candidates = [
             root.parent / "output" / "winx64" / "DLNA Server.exe",
-            root.parent / "build_winx64" / "Release" / "DLNA Server.exe",
-            root.parent / "build_winx64" / "Debug" / "DLNA Server.exe",
-            root / "build_winx64" / "Release" / "DLNA Server.exe",
-            root / "build_winx64" / "Debug" / "DLNA Server.exe",
-            root.parent / "output" / "winx64" / "build" / "Release" / "DLNA Server.exe",
+            root.parent / "output" / "winx86" / "DLNA Server.exe",
         ]
     else:
-        # POSIX (Linux/macOS) fallback paths
+        # POSIX (Linux/macOS) release assets
         candidates = [
             root.parent / "output" / "linux" / "dlna-server",
-            root.parent / "build" / "dlna-server",
-            root.parent / "build-test" / "dlna-server",
-            root.parent / "build-release-linux-stage" / "usr" / "bin" / "dlna-server",
         ]
 
     for path in candidates:
@@ -396,9 +386,6 @@ def dlna_server_gui_binary():
     root = Path(__file__).resolve().parent
     candidates = [
         root.parent / "output" / "linux" / "dlna-server-gui-bin",
-        root.parent / "build" / "dlna-server-gui-bin",
-        root.parent / "build-test" / "dlna-server-gui-bin",
-        root.parent / "build-release-linux-stage" / "usr" / "bin" / "dlna-server-gui-bin",
     ]
     for path in candidates:
         if path.exists():
