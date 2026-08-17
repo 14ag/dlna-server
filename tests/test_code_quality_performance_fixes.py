@@ -118,6 +118,14 @@ class TestMaxClientThreadsParity:
         return int(result.stdout.strip())
 
     @staticmethod
+    def _source_scan_pool_workers(dlna_binary):
+        result = subprocess.run(
+            [dlna_binary, "--print-source-scan-pool-worker-count"],
+            capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0
+        return int(result.stdout.strip())
+
+    @staticmethod
     def _proc_thread_count(pid):
         status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
         for line in status.splitlines():
@@ -133,6 +141,14 @@ class TestMaxClientThreadsParity:
         size (pre-fix threads lingered unreaped between bursts)."""
         import urllib.request
         kMax = self._kmax_client_threads(dlna_binary)
+        sourceScan = self._source_scan_pool_workers(dlna_binary)
+        # Fixed background threads (2 accept loops + SSDP worker + watch loop
+        # + main thread) sit on top of the client pool and the source-scan
+        # pool; the pre-spawned SourceScanPool is machine-dependent
+        # (min(hardware_concurrency*2, kMaxClientThreads)), so the absolute
+        # bound must include it or the check fails on low-core hosts before
+        # any request is served.
+        absBound = kMax + sourceScan + 16
         port = _free_port()
         proc, connected, old_config, config_ini = _launch_server(
             dlna_binary, port, media_source_dir)
@@ -147,14 +163,14 @@ class TestMaxClientThreadsParity:
                         timeout=10):
                     pass
             after = self._proc_thread_count(proc.pid)
-            assert after <= kMax + 16, (
+            assert after <= absBound, (
                 f"thread count {after} exceeded kMaxClientThreads({kMax}) "
-                f"plus 16 margin")
+                f"plus source-scan pool ({sourceScan}) plus 16 margin")
             assert after <= before + 4, (
                 f"thread count grew across request burst: {before} -> {after}")
             time.sleep(10)  # idle
             idle = self._proc_thread_count(proc.pid)
-            assert idle <= kMax + 16, (
+            assert idle <= absBound, (
                 f"thread count {idle} still unbounded after 10s idle")
         finally:
             _teardown_server(proc, old_config, config_ini)

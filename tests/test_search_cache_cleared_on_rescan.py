@@ -12,3 +12,6 @@ def test_search_cache_cleared_on_rescan(dlna_binary, media_source_dir):
     )
     assert "before-rescan-cache-size=" in result.stdout, result.stdout
     assert "after-rescan-cache-size=0" in result.stdout, result.stdout
+    lines = dict(line.split("=", 1) for line in result.stdout.splitlines())
+    assert int(lines["before-rescan-total-items"]) > 0
+    assert int(lines["after-rescan-total-items"]) == 0

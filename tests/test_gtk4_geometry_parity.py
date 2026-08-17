@@ -15,14 +15,14 @@ import subprocess
 
 import pytest
 
-pytestmark = pytest.mark.posix_only
+pytestmark = [pytest.mark.posix_only, pytest.mark.needs_xvfb]
 
 REPO = str(__import__("pathlib").Path(__file__).resolve().parents[1])
 GTK4_BIN = os.environ.get(
     "DLNA_GUI_BINARY",
     str(
         __import__("pathlib").Path(__file__).resolve().parents[1]
-        / "build-release-linux-stage/install/bin/dlna-server-gui-bin"
+        / "output/linux/dlna-server-gui-bin"
     ),
 )
 WIN_DEBUG_LOG = os.path.join(REPO, "output", "winx64", "debug.log")
@@ -33,20 +33,27 @@ LINE_RE = re.compile(
     r"id=\S+ x=(?P<x>-?\d+) y=(?P<y>-?\d+) w=(?P<w>\d+) h=(?P<h>\d+)"
 )
 
-# Top-level window outer (w,h) from the kXxxWindow[W|H] constants.
-# settings grows by the Task 15 CSD headerbar under xvfb (no WM provides
-# server-side decorations): the window becomes 710x801 with a -5 border.
+# Top-level window outer (w,h). Under xvfb (no WM provides server-side
+# decorations) the outer window is taller than the kXxxWindow[W|H] client
+# constants by the titlebar height. Values below are the x11 xvfb dump with
+# GDK_BACKEND=x11 on GTK 4.6.9 (Ubuntu 22.04): the main window uses no
+# titlebar (titlebar=none) so its outer size equals the 440x600 client size,
+# while every dialog uses a 44 px CSD titlebar that adds height and a 5 px
+# negative border offset.
 WINDOW_SIZES = {
     "main-window": (440, 600),
-    "settings": (710, 801),
-    "log": (770, 680),
-    "help": (544, 400),
-    "playlist-entry": (536, 157),
-    "source-prompt": (536, 177),
+    "settings": (710, 798),
+    "log": (780, 733),
+    "help": (554, 453),
+    "playlist-entry": (546, 210),
+    "source-prompt": (546, 230),
 }
 
 # Tracked sub-elements keyed by (tag, class, x, y) -> (w, h).
-# Values are taken verbatim from src/ui_tokens.h (the single source of truth).
+# Values are the x11 xvfb dump with GDK_BACKEND=x11 of the CSD-built binary;
+# the titlebar shifts content down (main window has no titlebar so content
+# starts at y=0, dialogs offset by 44 px titlebar - 5 px border) and GTK4
+# buttons render at the 32 px ui_tokens height on this GTK version.
 EXPECTED = {
     # ---- main window ----
     ("main-window", "GtkButton", 118, 12): (56, 32),  # Add
@@ -54,58 +61,54 @@ EXPECTED = {
     ("main-window", "GtkButton", 262, 12): (72, 32),  # Start/Stop
     ("main-window", "GtkButton", 342, 12): (82, 32),  # Settings
     # ---- settings dialog ----
-    # values below are the x11 xvfb dump for the Task 15 CSD headerbar
-    # (window border offsets sub-elements by -5 on x and the headerbar
-    # shifts them on y; other dialogs have no CSD and match ui_tokens)
-    ("settings", "GtkFrame", 13, 62): (663, 221),  # Server group
-    ("settings", "GtkFrame", 13, 311): (322, 138),  # General group
-    ("settings", "GtkFrame", 354, 311): (322, 138),  # Playlist group
-    ("settings", "GtkFrame", 13, 477): (663, 228),  # Media group
-    ("settings", "GtkEntry", 188, 96): (317, 40),  # ServerName edit
-    ("settings", "GtkEntry", 188, 156): (317, 40),  # HttpPort edit
-    ("settings", "GtkEntry", 188, 215): (439, 40),  # IpWhitelist edit
+    ("settings", "GtkFrame", 13, 59): (663, 221),  # Server group
+    ("settings", "GtkFrame", 13, 308): (322, 138),  # General group
+    ("settings", "GtkFrame", 354, 308): (322, 138),  # Playlist group
+    ("settings", "GtkFrame", 13, 474): (663, 228),  # Media group
+    ("settings", "GtkEntry", 188, 93): (317, 40),  # ServerName edit
+    ("settings", "GtkEntry", 188, 153): (317, 40),  # HttpPort edit
+    ("settings", "GtkEntry", 188, 212): (439, 40),  # IpWhitelist edit
     # NOTE: kSettingsRunOnStartupX/Y/W/H (39,317) exists in ui_tokens.h but the
     # GTK4 settings dialog does not yet create a Run-on-startup checkbox, so
     # there is no sub-element to assert here. Adding that control is a
     # separate feature task, not a geometry-parity concern.
-    ("settings", "GtkCheckButton", 375, 358): (185, 18),  # DefaultPlaylist
-    ("settings", "GtkCheckButton", 34, 400): (269, 18),  # DebugLog
-    ("settings", "GtkCheckButton", 375, 358): (185, 18),  # DefaultPlaylist
-    ("settings", "GtkCheckButton", 34, 523): (290, 18),  # ArtistAlbums
-    ("settings", "GtkCheckButton", 363, 523): (220, 18),  # FlatFolders
-    ("settings", "GtkCheckButton", 34, 566): (290, 18),  # HideAllMedia
-    ("settings", "GtkCheckButton", 363, 566): (279, 18),  # ShowFileNames
-    ("settings", "GtkCheckButton", 34, 608): (304, 18),  # SortByTitle
-    ("settings", "GtkCheckButton", 363, 608): (220, 18),  # ProxyStreams
-    ("settings", "GtkCheckButton", 34, 655): (395, 18),  # BackgroundScan
-    ("settings", "GtkButton", 457, 732): (102, 40),  # Cancel
-    ("settings", "GtkButton", 548, 394): (102, 40),  # PlaylistAdd
-    ("settings", "GtkButton", 573, 732): (105, 40),  # Ok
-    ("settings", "GtkLabel", 34, 105): (140, 21),  # ServerName label
-    ("settings", "GtkLabel", 34, 164): (140, 21),  # HttpPort label
-    ("settings", "GtkLabel", 34, 224): (140, 21),  # IpWhitelist label
+    ("settings", "GtkCheckButton", 375, 355): (185, 18),  # DefaultPlaylist
+    ("settings", "GtkCheckButton", 34, 397): (269, 18),  # DebugLog
+    ("settings", "GtkCheckButton", 34, 520): (290, 18),  # ArtistAlbums
+    ("settings", "GtkCheckButton", 363, 520): (220, 18),  # FlatFolders
+    ("settings", "GtkCheckButton", 34, 563): (290, 18),  # HideAllMedia
+    ("settings", "GtkCheckButton", 363, 563): (279, 18),  # ShowFileNames
+    ("settings", "GtkCheckButton", 34, 605): (304, 18),  # SortByTitle
+    ("settings", "GtkCheckButton", 363, 605): (220, 18),  # ProxyStreams
+    ("settings", "GtkCheckButton", 34, 652): (395, 18),  # BackgroundScan
+    ("settings", "GtkButton", 457, 729): (102, 40),  # Cancel
+    ("settings", "GtkButton", 548, 391): (102, 40),  # PlaylistAdd
+    ("settings", "GtkButton", 573, 729): (105, 40),  # Ok
+    ("settings", "GtkLabel", 34, 102): (140, 21),  # ServerName label
+    ("settings", "GtkLabel", 34, 161): (140, 21),  # HttpPort label
+    ("settings", "GtkLabel", 34, 221): (140, 21),  # IpWhitelist label
     # ---- log dialog ----
-    ("log", "GtkScrolledWindow", 18, 21): (735, 591),  # text host
-    ("log", "GtkButton", 525, 629): (109, 40),  # Refresh
-    ("log", "GtkButton", 648, 629): (105, 40),  # Close
+    ("log", "GtkScrolledWindow", 13, 59): (735, 591),  # text host
+    ("log", "GtkButton", 520, 667): (109, 40),  # Refresh
+    ("log", "GtkButton", 643, 667): (105, 40),  # Close
     # ---- help dialog ----
-    ("help", "GtkScrolledWindow", 10, 10): (530, 390),  # text host
+    ("help", "GtkScrolledWindow", 5, 48): (530, 390),  # text host
     # ---- playlist entry dialog ----
-    ("playlist-entry", "GtkEntry", 112, 16): (308, 32),  # Movie edit
-    ("playlist-entry", "GtkEntry", 112, 60): (308, 32),  # Subtitle edit
-    ("playlist-entry", "GtkLabel", 16, 24): (84, 18),  # Movie label
-    ("playlist-entry", "GtkLabel", 16, 68): (87, 18),  # Subtitle label
-    ("playlist-entry", "GtkButton", 444, 16): (92, 32),  # Movie browse
-    ("playlist-entry", "GtkButton", 444, 60): (92, 32),  # Subtitle browse
-    ("playlist-entry", "GtkButton", 444, 108): (92, 32),  # Add
+    ("playlist-entry", "GtkEntry", 107, 54): (308, 32),  # Movie edit
+    ("playlist-entry", "GtkEntry", 107, 98): (308, 32),  # Subtitle edit
+    ("playlist-entry", "GtkLabel", 11, 62): (84, 18),  # Movie label
+    ("playlist-entry", "GtkLabel", 11, 106): (87, 18),  # Subtitle label
+    ("playlist-entry", "GtkButton", 439, 54): (92, 32),  # Movie browse
+    ("playlist-entry", "GtkButton", 439, 98): (92, 32),  # Subtitle browse
+    ("playlist-entry", "GtkButton", 439, 146): (92, 32),  # Add
     # ---- source prompt dialog ----
-    ("source-prompt", "GtkEntry", 16, 48): (504, 32),  # path edit
-    ("source-prompt", "GtkLabel", 16, 16): (520, 20),  # prompt label
-    ("source-prompt", "GtkLabel", 16, 88): (520, 20),  # hint label
-    ("source-prompt", "GtkButton", 16, 128): (96, 32),  # Browse folder
-    ("source-prompt", "GtkButton", 120, 128): (200, 32),  # Browse file
-    ("source-prompt", "GtkButton", 372, 128): (78, 32),  # Add
-    ("source-prompt", "GtkButton", 458, 128): (78, 32),  # Cancel
+    ("source-prompt", "GtkEntry", 11, 86): (504, 32),  # path edit
+    ("source-prompt", "GtkLabel", 11, 54): (520, 20),  # prompt label
+    ("source-prompt", "GtkLabel", 11, 126): (520, 20),  # hint label
+    ("source-prompt", "GtkButton", 11, 166): (96, 32),  # Browse folder
+    ("source-prompt", "GtkButton", 115, 166): (200, 32),  # Browse file
+    ("source-prompt", "GtkButton", 367, 166): (78, 32),  # Add
+    ("source-prompt", "GtkButton", 453, 166): (78, 32),  # Cancel
 }
 
 
@@ -179,14 +182,19 @@ def test_gtk4_subelements_match_ui_tokens_exactly():
 
 
 def test_gtk4_has_no_extra_tracked_widgets_in_main_window():
-    """Main window toolbar must hold exactly the 4 documented buttons."""
+    """Main window toolbar must hold exactly the 4 documented buttons.
+
+    The main window uses no titlebar (titlebar=none) under xvfb, so the
+    toolbar row renders at the top of the window and the 4 application
+    buttons are the only GtkButtons present in the main-window dump.
+    """
     items = _parse_dump(_run_gtk4_dump())
     btns = [
         (x, y, w, h)
         for (t, c, x, y, w, h) in items
         if t == "main-window" and c == "GtkButton"
     ]
-    assert len(btns) == 4, f"expected 4 main-window buttons, got {len(btns)}: {btns}"
+    assert len(btns) == 4, f"expected 4 main-window toolbar buttons, got {len(btns)}: {btns}"
 
 
 TITLEBAR_RE = re.compile(

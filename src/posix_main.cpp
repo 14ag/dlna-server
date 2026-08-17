@@ -32,11 +32,14 @@
 #include "copydata_validation.h"
 #include "media_database.h"
 #include "browse_page_cap.h"
+#include "httpserver.h"
 
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <fstream>
 #include <future>
@@ -61,8 +64,18 @@ void OnSingleInstanceCommand(const std::string& cmd) {
     }
 }
 
+std::string EffectiveSourcesResponse() {
+    std::string out;
+    auto snap = AppConfig.Snapshot();
+    for (const auto& src : snap.effectiveMediaSources) {
+        out += WideToUtf8(src.path);
+        out += "\n";
+    }
+    return out;
+}
+
 void PrintUsage(const char* exe) {
-    std::cerr << "Usage: " << exe << " [--port 8200] [--name NAME] [--uuid UUID] [--debug] --source \"pathA\",\"pathB\"\n";
+    std::cerr << "Usage: " << exe << " [--port 8200] [--name NAME] [--uuid UUID] [--debug] [--no-debug] --source \"pathA\",\"pathB\"\n";
     std::cerr << "Sources can be folders, playlist files (.m3u, .m3u8, .pls), smb:// URLs, or ftp:// URLs.\n";
 }
 }
@@ -560,6 +573,55 @@ int main(int argc, char** argv) {
             std::cout << (first == second ? "same-handle-reused=1" : "same-handle-reused=0") << std::endl;
             return 0;
         }
+        else if (arg == "--print-media-item-stays-resolvable-during-rescan") {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            int targetId = -1;
+            for (const auto& item : AppMedia.GetDescendants(0)) {
+                if (!item.isFolder) { targetId = item.id; break; }
+            }
+            std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
+            std::cout << "target-id=" << targetId << std::endl;
+            if (targetId == -1) {
+                DLNAServer.Stop();
+                return 1;
+            }
+            std::atomic<bool> rescanDone(false);
+            std::thread rescanThread([&rescanDone]() {
+                DLNAServer.Rescan();
+                rescanDone.store(true);
+            });
+            bool everMissing = false;
+            while (!rescanDone.load()) {
+                if (AppMedia.GetItem(targetId).id == -1) {
+                    everMissing = true;
+                }
+            }
+            if (AppMedia.GetItem(targetId).id == -1) {
+                everMissing = true;
+            }
+            rescanThread.join();
+            std::cout << "ever-missing=" << (everMissing ? "1" : "0") << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
+        else if (arg == "--print-server-health-detects-http-death") {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
+            std::cout << "healthy-before=" << (DLNAServer.IsHealthy() ? "1" : "0") << std::endl;
+            HttpServer::Get().Stop();
+            std::cout << "running-after-http-death=" << (DLNAServer.IsRunning() ? "1" : "0") << std::endl;
+            std::cout << "healthy-after-http-death=" << (DLNAServer.IsHealthy() ? "1" : "0") << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
         else if (arg == "--print-close-pending-lifecycle") {
             ClosePendingState state;
             std::wcout << L"initial-pending=" << (state.IsPending() ? 1 : 0) << std::endl;
@@ -591,6 +653,43 @@ int main(int argc, char** argv) {
             // mirrors the windows F-02 regression hook in main cpp
             // confirms GetDefaultPlaylistPath still resolves next to the config file
             std::wcout << AppConfig.GetDefaultPlaylistPath() << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-ssdp-alive-interval-bounds") {
+            // Regression test for the Phase 2 timing change. Samples the
+            // interval generator many times and asserts every sample
+            // falls inside [4min, 6min] and never inside the previous
+            // [12min, 14.5min] window, catching an accidental partial
+            // revert.
+            unsigned int minSeen = UINT32_MAX;
+            unsigned int maxSeen = 0;
+            for (int i = 0; i < 2000; ++i) {
+                unsigned int sample = ComputeSsdpNextAliveIntervalMilliseconds();
+                if (sample < minSeen) minSeen = sample;
+                if (sample > maxSeen) maxSeen = sample;
+            }
+            std::cout << "min-ms=" << minSeen << std::endl;
+            std::cout << "max-ms=" << maxSeen << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-source-scan-pool-worker-count") {
+            std::cout << SourceScanPool::Get().WorkerCount() << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-icon-cache-lifecycle") {
+            std::string bytesFirst;
+            std::string bytesSecond;
+            long before = GetIconLoadRecomputeCountForTest();
+            bool okFirst = LoadServerIconPngForTest("server_icon_48.png", bytesFirst);
+            long afterFirst = GetIconLoadRecomputeCountForTest();
+            bool okSecond = LoadServerIconPngForTest("server_icon_48.png", bytesSecond);
+            long afterSecond = GetIconLoadRecomputeCountForTest();
+            std::cout << "ok-first=" << (okFirst ? 1 : 0) << std::endl;
+            std::cout << "ok-second=" << (okSecond ? 1 : 0) << std::endl;
+            std::cout << "before=" << before << std::endl;
+            std::cout << "after-first-load=" << afterFirst << std::endl;
+            std::cout << "after-second-load=" << afterSecond << std::endl;
+            std::cout << "bytes-equal=" << (bytesFirst == bytesSecond ? 1 : 0) << std::endl;
             return 0;
         }
         else if (arg == "--print-resolve-bundled-resource" && i + 1 < argc) {
@@ -636,11 +735,21 @@ int main(int argc, char** argv) {
             return 0;
         }
         else if (arg == "--print-effective-media-sources") {
-            // Reflects effectiveMediaSources, i.e. what Scan() will actually
-            // publish for this process's current state. Differs from
-            // --print-media-sources whenever --source appeared earlier in
-            // argv than this flag (argument order matters: --source must be
-            // parsed first to install the override before this flag runs).
+            // Reflect the RUNNING instance's effectiveMediaSources when one
+            // is up (a follow-up print hook after a relaunch), otherwise this
+            // process's own state. First see whether another instance holds
+            // the single-instance lock; if so, ask it directly over the IPC
+            // socket. When we are the only instance, just print our own
+            // config as this hook has always done.
+            if (!SingleInstance::TryAcquireLock()) {
+                std::string resp;
+                if (SingleInstance::SendEffectiveSourcesRequest(&resp)) {
+                    std::cout << resp;
+                    return 0;
+                }
+            } else {
+                SingleInstance::ReleaseLock();
+            }
             auto snap = AppConfig.Snapshot();
             for (const auto& src : snap.effectiveMediaSources) {
                 std::wcout << src.path << std::endl;
@@ -796,8 +905,10 @@ int main(int argc, char** argv) {
                 "</s:Envelope>\n";
             AppContent.HandleContentDirectoryControl(searchSoap, "http://127.0.0.1:0");
             std::wcout << L"before-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
+            std::wcout << L"before-rescan-total-items=" << AppContent.GetSearchCacheTotalItemsForTest() << std::endl;
             DLNAServer.Rescan();
             std::wcout << L"after-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
+            std::wcout << L"after-rescan-total-items=" << AppContent.GetSearchCacheTotalItemsForTest() << std::endl;
             DLNAServer.Stop();
             return 0;
         }
@@ -822,6 +933,51 @@ int main(int argc, char** argv) {
                        && survivedFuture.get();
             std::cout << "pool-survived-exception=" << (ok ? 1 : 0) << std::endl;
             return 0;
+        }
+        else if (arg == "--print-select-best-endpoint-scope-match") {
+            // Regression test for F-DISCOVERY-01. Builds two synthetic
+            // link-local IPv6 endpoints on different interfaces (index 2
+            // and index 5) and a synthetic remote address scoped to
+            // interface 5, then asserts SelectBestEndpoint picks the
+            // interface-5 endpoint rather than simply whichever endpoint
+            // happens to be first in the vector.
+            auto makeLinkLocalEndpoint = [](unsigned long ifIndex, unsigned char lastByte) {
+                NetworkEndpoint ep{};
+                ep.family = AF_INET6;
+                ep.interfaceIndex = ifIndex;
+                ep.prefixLength = 64;
+                ep.isLinkLocal = true;
+                sockaddr_in6 addr{};
+                addr.sin6_family = AF_INET6;
+                addr.sin6_addr.s6_addr[0] = 0xfe;
+                addr.sin6_addr.s6_addr[1] = 0x80;
+                addr.sin6_addr.s6_addr[15] = lastByte;
+                addr.sin6_scope_id = ifIndex;
+                std::memcpy(&ep.sockaddr, &addr, sizeof(addr));
+                ep.sockaddrLen = sizeof(addr);
+                return ep;
+            };
+            std::vector<NetworkEndpoint> endpoints;
+            endpoints.push_back(makeLinkLocalEndpoint(2, 0x02));
+            endpoints.push_back(makeLinkLocalEndpoint(5, 0x05));
+
+            sockaddr_in6 remote{};
+            remote.sin6_family = AF_INET6;
+            remote.sin6_addr.s6_addr[0] = 0xfe;
+            remote.sin6_addr.s6_addr[1] = 0x80;
+            remote.sin6_addr.s6_addr[15] = 0x99;
+            remote.sin6_scope_id = 5;
+
+            const NetworkEndpoint* picked = SelectBestEndpoint(endpoints, reinterpret_cast<SOCKADDR*>(&remote));
+            std::cout << "picked-interface-index=" << (picked ? picked->interfaceIndex : 0) << std::endl;
+            return 0;
+        }
+        else if (arg == "--no-debug") {
+            // Override a DebugLog=1 read from the config file so daemonize
+            // behavior is deterministic for scripted/test launches. Unlike
+            // --port/--name/--uuid it deliberately does NOT set
+            // wroteConfigOverride, so it never rewrites the user's config.
+            AppConfig.debugLog = false;
         }
         else if (arg == "--debug") {
             AppConfig.debugLog = true;
@@ -880,10 +1036,6 @@ int main(int argc, char** argv) {
         // fall through to the normal startup path below using THIS
         // process's own already parsed args and overrides
     }
-    // Listen for IPC commands from short-lived --kill-server/--print-*
-    // second instances (a second instance requests a graceful stop via
-    // the "kill" command; see OnSingleInstanceCommand).
-    SingleInstance::StartListening(OnSingleInstanceCommand);
 
     // does not use DetachToBackgroundOrPrintReady from posix daemonize h
     // that helper signals ready immediately after detaching this path must
@@ -921,6 +1073,21 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Listen for IPC commands from short-lived --kill-server/--print-*
+    // second instances (a second instance requests a graceful stop via
+    // the "kill" command; see OnSingleInstanceCommand).
+    //
+    // IMPORTANT: StartListening() must happen AFTER the fork above, never
+    // before it. g_listenerThread is a std::thread; forking a process that
+    // already owns a running thread leaves the child with a joinable handle
+    // to a thread that only exists in the parent. The parent would then
+    // std::terminate when its global g_listenerThread destructor runs at
+    // exit, and the daemon child's ReleaseLock() would terminate on
+    // g_listenerThread.join(). Starting the listener in the child (and in
+    // the non-detached foreground process) keeps exactly one live listener
+    // thread per running instance.
+    SingleInstance::StartListening(OnSingleInstanceCommand, EffectiveSourcesResponse);
+
     std::wstring outReason;
     const bool startOk = DLNAServer.Start(outReason);
     if (isDetachedChild) {
@@ -933,7 +1100,17 @@ int main(int argc, char** argv) {
         std::wcerr << L"Failed to start server: " << outReason << std::endl;
         return 1;
     }
-    while (!g_stop) std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    bool loggedUnhealthy = false;
+    while (!g_stop) {
+        if (DLNAServer.IsRunning() && !DLNAServer.IsHealthy()) {
+            if (!loggedUnhealthy) {
+                LogPrint(L"Server reported running but an internal worker thread has stopped unexpectedly stopping cleanly");
+                loggedUnhealthy = true;
+            }
+            DLNAServer.Stop();
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
     DLNAServer.Stop();
     SingleInstance::ReleaseLock();
     return 0;

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <fstream>
 #include <future>
 #include <iostream>
@@ -14,6 +15,7 @@
 #include "network_interface_policy.h"
 #include "dlna_utils.h"
 #include "http_common.h"
+#include "httpserver.h"
 #include "media_scan_common.h"
 #include "firewall_access.h"
 #include "log.h"
@@ -127,6 +129,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             killServer = true;
         } else if (wcscmp(argv[i], L"--debug") == 0) {
             debugFlag = true;
+        } else if (wcscmp(argv[i], L"--no-debug") == 0) {
+            debugFlag = false;
+            AppConfig.debugLog = false;
         } else if (wcscmp(argv[i], L"--print-scan-cancellation-lifecycle") == 0) {
             AppScanCancel.BeginScan();
             std::wcout << (AppScanCancel.IsCancelled() ? L"1" : L"0") << std::endl;
@@ -523,6 +528,27 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::wcout << AppConfig.GetDefaultPlaylistPath() << std::endl;
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-ssdp-alive-interval-bounds") == 0) {
+            // Regression test for the Phase 2 timing change. Samples the
+            // interval generator many times and asserts every sample
+            // falls inside [4min, 6min] and never inside the previous
+            // [12min, 14.5min] window, catching an accidental partial
+            // revert.
+            unsigned int minSeen = UINT32_MAX;
+            unsigned int maxSeen = 0;
+            for (int i = 0; i < 2000; ++i) {
+                unsigned int sample = ComputeSsdpNextAliveIntervalMilliseconds();
+                if (sample < minSeen) minSeen = sample;
+                if (sample > maxSeen) maxSeen = sample;
+            }
+            std::cout << "min-ms=" << minSeen << std::endl;
+            std::cout << "max-ms=" << maxSeen << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-source-scan-pool-worker-count") == 0) {
+            std::cout << SourceScanPool::Get().WorkerCount() << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-media-source-file-extensions") == 0) {
             for (const auto& ext : GetMediaSourceFileExtensions()) {
                 std::wcout << ext << std::endl;
@@ -562,6 +588,31 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-effective-media-sources") == 0) {
+            // If another instance is already running, query ITS effective
+            // sources over COPYDATA instead of printing this process's own
+            // config (which would be empty for a print-only invocation).
+            // Mirrors the POSIX effective-sources IPC query.
+            HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
+            if (hwndExisting) {
+                wchar_t tempPath[MAX_PATH] = {0};
+                wchar_t tempFile[MAX_PATH] = {0};
+                if (GetTempPathW(MAX_PATH, tempPath) &&
+                    GetTempFileNameW(tempPath, L"dlnasrc", 0, tempFile)) {
+                    COPYDATASTRUCT cds{};
+                    cds.dwData = MainWindow::kCopyDataQueryEffectiveSources;
+                    cds.cbData = static_cast<DWORD>((wcslen(tempFile) + 1) * sizeof(wchar_t));
+                    cds.lpData = tempFile;
+                    SendMessageW(hwndExisting, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds));
+                    std::ifstream in(tempFile);
+                    std::string line;
+                    while (std::getline(in, line)) {
+                        if (!line.empty()) std::wcout << Utf8ToWide(line) << std::endl;
+                    }
+                    DeleteFileW(tempFile);
+                    LocalFree(argv);
+                    return 0;
+                }
+            }
             auto snap = AppConfig.Snapshot();
             for (const auto& src : snap.effectiveMediaSources) {
                 std::wcout << src.path << std::endl;
@@ -755,8 +806,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 "</s:Envelope>\n";
             AppContent.HandleContentDirectoryControl(searchSoap, "http://127.0.0.1:0");
             std::wcout << L"before-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
+            std::wcout << L"before-rescan-total-items=" << AppContent.GetSearchCacheTotalItemsForTest() << std::endl;
             DLNAServer.Rescan();
             std::wcout << L"after-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
+            std::wcout << L"after-rescan-total-items=" << AppContent.GetSearchCacheTotalItemsForTest() << std::endl;
             DLNAServer.Stop();
             LocalFree(argv);
             return 0;
@@ -816,6 +869,56 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 fflush(second);
             }
             std::wcout << (first == second ? L"same-handle-reused=1" : L"same-handle-reused=0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-media-item-stays-resolvable-during-rescan") == 0) {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            int targetId = -1;
+            for (const auto& item : AppMedia.GetDescendants(0)) {
+                if (!item.isFolder) { targetId = item.id; break; }
+            }
+            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+            std::wcout << L"target-id=" << targetId << std::endl;
+            if (targetId == -1) {
+                DLNAServer.Stop();
+                LocalFree(argv);
+                return 1;
+            }
+            std::atomic<bool> rescanDone(false);
+            std::thread rescanThread([&rescanDone]() {
+                DLNAServer.Rescan();
+                rescanDone.store(true);
+            });
+            bool everMissing = false;
+            while (!rescanDone.load()) {
+                if (AppMedia.GetItem(targetId).id == -1) {
+                    everMissing = true;
+                }
+            }
+            if (AppMedia.GetItem(targetId).id == -1) {
+                everMissing = true;
+            }
+            rescanThread.join();
+            std::wcout << L"ever-missing=" << (everMissing ? L"1" : L"0") << std::endl;
+            DLNAServer.Stop();
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-server-health-detects-http-death") == 0) {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+            std::wcout << L"healthy-before=" << (DLNAServer.IsHealthy() ? L"1" : L"0") << std::endl;
+            HttpServer::Get().Stop();
+            std::wcout << L"running-after-http-death=" << (DLNAServer.IsRunning() ? L"1" : L"0") << std::endl;
+            std::wcout << L"healthy-after-http-death=" << (DLNAServer.IsHealthy() ? L"1" : L"0") << std::endl;
+            DLNAServer.Stop();
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-close-pending-lifecycle") == 0) {

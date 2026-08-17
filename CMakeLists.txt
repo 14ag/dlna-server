@@ -118,6 +118,7 @@ set(HEADERS
          src/transmitfile_chunking.h
          src/http_common.h
          src/contentdirectory.h
+         src/search_cache_budget.h
          src/upnp_eventing.h
          src/ssdp.h
          src/ssdp_common.h

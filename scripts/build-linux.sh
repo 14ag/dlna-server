@@ -139,6 +139,19 @@ rm -rf "$output_dir/_CPack_Packages"
 
 cmake --install "$build_dir"
 
+# Copy the raw build assets into output/linux so tests and consumers use
+# release artifacts instead of reaching into build-machinery folders. Drop
+# stale copies first so a failed run never leaves an old binary behind.
+rm -f "$output_dir/dlna-server" \
+      "$output_dir/dlna-server-gui" \
+      "$output_dir/dlna-server-gui-bin"
+rm -rf "$output_dir/share"
+cp -p "$install_dir/bin/dlna-server" "$output_dir/dlna-server"
+cp -p "$install_dir/bin/dlna-server-gui-bin" "$output_dir/dlna-server-gui-bin"
+cp -p "$install_dir/bin/dlna-server-gui" "$output_dir/dlna-server-gui"
+mkdir -p "$output_dir/share"
+cp -a "$install_dir/share/." "$output_dir/share/"
+
 # AppImage build
 rm -rf "$appdir"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/share"

@@ -93,7 +93,9 @@ def _log_has_search_ignored_st(log_text, st):
 
 def _server_bind_ip(session):
     log_text = _read_ssdp_log(session)
-    m = re.search(r"Starting server on ([\d.]+):\d+", log_text)
+    # Windows logs "Starting server on <ip>:<port>"; POSIX logs
+    # "DLNA server running on <ip>:<port>". Accept both wordings.
+    m = re.search(r"(?:Starting server|DLNA server running) on ([\d.]+):\d+", log_text)
     return m.group(1) if m else None
 
 

@@ -46,6 +46,9 @@ constexpr const char* kBodyFontFamilyStack = "Segoe UI Variable Text";
 
 constexpr int kAddButtonWidth = 56;
 
+constexpr int kWin10TitlebarHeight = 32;
+constexpr RgbColor kWin10InactiveTitlebarColor = { 50, 50, 50 };
+
 }  // namespace UiTokens
 
 #endif  // UI_TOKENS_H

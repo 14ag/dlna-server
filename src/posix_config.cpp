@@ -92,20 +92,25 @@ std::string ResolveXdgConfigBase() {
 }
 
 std::string AppRootConfigPath() {
-    const std::string configDir = ResolveXdgConfigBase() + "/dlna-server";
-    std::error_code ec;
-    std::filesystem::create_directories(configDir, ec);
-    // create_directories() is a documented no-op (returns false, ec clear)
-    // when the directory already exists -- safe to call on every launch,
-    // no separate "first run" bootstrap step is needed.
-    if (ec) {
-        // Directory could not be created (e.g. degraded /tmp fallback on a
-        // read-only root). Fall through and let the subsequent
-        // WriteFileAtomicUtf8() failure produce the existing, already
-        // logged "Config save failed" message rather than silently
-        // guessing at another location.
-    }
-    return configDir + "/config.ini";
+    // computed once per process resolved xdg config base and the mkdir
+    // side effect below only need to happen once every LogPrint call with
+    // debug logging on previously re ran create_directories which is a
+    // filesystem syscall per log line function local static
+    // initialization is thread safe by the c plus plus standard so this
+    // needs no manual locking see F-PERF-02
+    static const std::string cachedPath = []() -> std::string {
+        const std::string configDir = ResolveXdgConfigBase() + "/dlna-server";
+        std::error_code ec;
+        std::filesystem::create_directories(configDir, ec);
+        // create_directories() is a documented no-op (returns false, ec
+        // clear) when the directory already exists. If ec is set here
+        // (e.g. a degraded /tmp fallback on a read-only root), fall
+        // through and let the subsequent WriteFileAtomicUtf8() failure
+        // produce the existing, already logged "Config save failed"
+        // message rather than silently guessing at another location.
+        return configDir + "/config.ini";
+    }();
+    return cachedPath;
 }
 
 void MigrateLegacyConfigIfPresent(const std::wstring& newConfigPath) {

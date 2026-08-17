@@ -197,8 +197,10 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     }
 
     m_running.store(true);
+    m_workerThreadAlive.store(true, std::memory_order_release);
     m_hThread = CreateThread(NULL, 0, ThreadWorker, this, 0, NULL);
     if (!m_hThread) {
+        m_workerThreadAlive.store(false, std::memory_order_release);
         m_running.store(false);
         CloseSockets();
         return false;
@@ -214,7 +216,11 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     // at the same time Stop is writing them during teardown
     m_initialBurstThread = std::thread([this]() {
         Sleep(ComputeSsdpStartupJitterMilliseconds());
-        SendNotifyBurst("ssdp:alive", 3, 100);
+        // 5 rounds at 150ms instead of 3 rounds at 100ms still completes
+        // within under a second of Start returning does not meaningfully
+        // delay startup but gives a freshly listening control point two
+        // more independent chances to catch the burst see F-DISCOVERY-02
+        SendNotifyBurst("ssdp:alive", 5, 150);
     });
     return true;
 }
@@ -563,5 +569,6 @@ DWORD WINAPI SSDP::ThreadWorker(LPVOID lpParam) {
         }
     }
 
+    pThis->m_workerThreadAlive.store(false, std::memory_order_release);
     return 0;
 }

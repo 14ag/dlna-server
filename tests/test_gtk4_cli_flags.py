@@ -2,6 +2,8 @@ import subprocess
 import time
 import pytest
 
+pytestmark = pytest.mark.needs_xvfb
+
 @pytest.mark.posix_only
 def test_kill_server_noop_when_not_running(dlna_server_gui_binary, xvfb):
     result = subprocess.run(
