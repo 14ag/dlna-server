@@ -21,10 +21,6 @@ if [ ! -x "$native_gui" ]; then
     exit 1
 fi
 
-if [ -z "${GDK_BACKEND:-}" ] && [ -n "${DISPLAY:-}" ] && [ -r /proc/version ] && grep -qi microsoft /proc/version; then
-    export GDK_BACKEND=x11
-fi
-
 # WSLg shortcuts run in a non login shell so the distro profile may not
 # inject these variables yet fall back to the documented WSLg default paths
 if [ -z "${WAYLAND_DISPLAY:-}" ] && [ -S "/mnt/wslg/runtime-dir/wayland-0" ]; then
@@ -44,7 +40,7 @@ done
 # Direct WSLg shortcuts bypass the desktop entry, so WSLg cannot associate the
 # window with its icon. Re-enter through the installed desktop entry; this
 # supplies WSLg's launch metadata and startup notification.
-if [ -z "${DLNA_SERVER_GTK_LAUNCHED:-}" ] && [ -n "${WSL_INTEROP:-}" ] && \
+if [ -z "${DLNA_SERVER_GTK_LAUNCHED:-}" ] && \
    [ -S "${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}/${WAYLAND_DISPLAY:-wayland-0}" ] && \
    command -v gtk-launch >/dev/null 2>&1; then
     export DLNA_SERVER_GTK_LAUNCHED=1
