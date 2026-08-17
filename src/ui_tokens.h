@@ -43,6 +43,7 @@ constexpr RgbColor kDisabledTextColor = { 132, 132, 132 };
 constexpr RgbColor kSecondaryTextColor = { 200, 200, 200 };
 
 constexpr RgbColor kWin10InactiveTitlebarColor = { 50, 50, 50 };
+constexpr RgbColor kWin10ActiveTitlebarColor = { 49, 49, 49 };
 
 constexpr int kTitleFontSizePx = 20;
 constexpr int kBodyFontSizePx = 14;

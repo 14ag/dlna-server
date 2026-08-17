@@ -141,7 +141,6 @@ GtkFileFilter* BuildSubtitleFilter() {
 
 GtkWidget* g_mainWindow = nullptr;
 GtkWidget* g_toolbar = nullptr;
-GtkWidget* g_title = nullptr;
 GtkWidget* g_addButton = nullptr;
 GtkWidget* g_removeButton = nullptr;
 GtkWidget* g_startStopButton = nullptr;
@@ -306,9 +305,13 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
                                const char* title,
                                WindowChrome chrome) {
     gtk_window_set_title(window, title);
+    gtk_window_set_icon_name(window, "dlna-server");
 
     GtkWidget* titlebar = gtk_header_bar_new();
     gtk_widget_add_css_class(titlebar, "win10-titlebar");
+    // HeaderBar otherwise adds its own automatic decoration buttons in
+    // addition to the explicit GtkWindowControls below.
+    g_object_set(titlebar, "show-title-buttons", FALSE, nullptr);
 
     GtkWidget* titleLabel = gtk_label_new(title);
     gtk_widget_add_css_class(titleLabel, "title");
@@ -608,7 +611,7 @@ void ShowPlaylistEntryDialog() {
     }), nullptr);
 
     GtkWidget* addButton = gtk_button_new_with_label("Add");
-    gtk_widget_set_size_request(addButton, UiTokens::kPlaylistAddW, UiTokens::kPlaylistAddH + 2);
+    gtk_widget_set_size_request(addButton, UiTokens::kPlaylistAddW, UiTokens::kPlaylistAddH);
     gtk_fixed_put(GTK_FIXED(fixed), addButton, UiTokens::kPlaylistAddX, UiTokens::kPlaylistAddY);
     gtk_widget_add_css_class(addButton, "toolbar-button");
     gtk_widget_add_css_class(addButton, "suggested-action");
@@ -706,7 +709,7 @@ void PromptForMediaSource() {
     gtk_label_set_xalign(GTK_LABEL(hintLabel), 0.0f);
 
     GtkWidget* folderButton = gtk_button_new_with_label("Folder...");
-    gtk_widget_set_size_request(folderButton, UiTokens::kSourcePromptFolderW, UiTokens::kSourcePromptFolderH + 2);
+    gtk_widget_set_size_request(folderButton, UiTokens::kSourcePromptFolderW, UiTokens::kSourcePromptFolderH);
     gtk_fixed_put(GTK_FIXED(fixed), folderButton, UiTokens::kSourcePromptFolderX, UiTokens::kSourcePromptFolderY);
     gtk_widget_add_css_class(folderButton, "toolbar-button");
     g_signal_connect(folderButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -715,7 +718,7 @@ void PromptForMediaSource() {
     }), nullptr);
 
     GtkWidget* fileButton = gtk_button_new_with_label("File...");
-    gtk_widget_set_size_request(fileButton, UiTokens::kSourcePromptFileW, UiTokens::kSourcePromptFileH + 2);
+    gtk_widget_set_size_request(fileButton, UiTokens::kSourcePromptFileW, UiTokens::kSourcePromptFileH);
     gtk_fixed_put(GTK_FIXED(fixed), fileButton, UiTokens::kSourcePromptFileX, UiTokens::kSourcePromptFileY);
     gtk_widget_add_css_class(fileButton, "toolbar-button");
     g_signal_connect(fileButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -724,7 +727,7 @@ void PromptForMediaSource() {
     }), nullptr);
 
     g_sourceAddButton = gtk_button_new_with_label("Add");
-    gtk_widget_set_size_request(g_sourceAddButton, UiTokens::kSourcePromptAddW, UiTokens::kSourcePromptAddH + 2);
+    gtk_widget_set_size_request(g_sourceAddButton, UiTokens::kSourcePromptAddW, UiTokens::kSourcePromptAddH);
     gtk_fixed_put(GTK_FIXED(fixed), g_sourceAddButton, UiTokens::kSourcePromptAddX, UiTokens::kSourcePromptAddY);
     gtk_widget_add_css_class(g_sourceAddButton, "toolbar-button");
     gtk_widget_add_css_class(g_sourceAddButton, "suggested-action");
@@ -735,7 +738,7 @@ void PromptForMediaSource() {
     }), nullptr);
 
     GtkWidget* cancelButton = gtk_button_new_with_label("Cancel");
-    gtk_widget_set_size_request(cancelButton, UiTokens::kSourcePromptCancelW, UiTokens::kSourcePromptCancelH + 2);
+    gtk_widget_set_size_request(cancelButton, UiTokens::kSourcePromptCancelW, UiTokens::kSourcePromptCancelH);
     gtk_fixed_put(GTK_FIXED(fixed), cancelButton, UiTokens::kSourcePromptCancelX, UiTokens::kSourcePromptCancelY);
     gtk_widget_add_css_class(cancelButton, "toolbar-button");
     g_signal_connect(cancelButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -859,7 +862,7 @@ void ShowLogDialog() {
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), textView);
 
     GtkWidget* refreshButton = gtk_button_new_with_label("Refresh");
-    gtk_widget_set_size_request(refreshButton, UiTokens::kLogRefreshW, UiTokens::kLogRefreshH + 2);
+    gtk_widget_set_size_request(refreshButton, UiTokens::kLogRefreshW, UiTokens::kLogRefreshH);
     gtk_fixed_put(GTK_FIXED(fixed), refreshButton, UiTokens::kLogRefreshX, UiTokens::kLogRefreshY);
     gtk_widget_add_css_class(refreshButton, "toolbar-button");
     g_signal_connect(refreshButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -867,7 +870,7 @@ void ShowLogDialog() {
     }), nullptr);
 
     GtkWidget* closeButton = gtk_button_new_with_label("Close");
-    gtk_widget_set_size_request(closeButton, UiTokens::kLogCloseW, UiTokens::kLogCloseH + 2);
+    gtk_widget_set_size_request(closeButton, UiTokens::kLogCloseW, UiTokens::kLogCloseH);
     gtk_fixed_put(GTK_FIXED(fixed), closeButton, UiTokens::kLogCloseX, UiTokens::kLogCloseY);
     gtk_widget_add_css_class(closeButton, "toolbar-button");
     g_signal_connect(closeButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -1142,7 +1145,7 @@ bool ShowSettingsDialog() {
     gtk_widget_set_size_request(logsButton, kSettingsToolbarButtonWidth, kSettingsToolbarButtonHeight);
     gtk_fixed_put(GTK_FIXED(fixed), logsButton, UiTokens::kSettingsServerGroupX,
                   kSettingsToolbarTop);
-    gtk_widget_add_css_class(logsButton, "flat");
+    gtk_widget_add_css_class(logsButton, "settings-toolbar-button");
     g_signal_connect(logsButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ShowLogDialog();
     }), nullptr);
@@ -1152,7 +1155,7 @@ bool ShowSettingsDialog() {
     gtk_fixed_put(GTK_FIXED(fixed), helpButton,
                   UiTokens::kSettingsServerGroupX + kSettingsToolbarButtonWidth + UiTokens::kButtonGap,
                   kSettingsToolbarTop);
-    gtk_widget_add_css_class(helpButton, "flat");
+    gtk_widget_add_css_class(helpButton, "settings-toolbar-button");
     g_signal_connect(helpButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ShowHelpDialog(GTK_WINDOW(g_settingsDialog));
     }), nullptr);
@@ -1185,7 +1188,7 @@ bool ShowSettingsDialog() {
                                        UiTokens::kSettingsDefaultPlaylistW, UiTokens::kSettingsDefaultPlaylistH);
     g_defaultPlaylistAddButton = gtk_button_new_with_label("Add...");
     gtk_widget_set_size_request(g_defaultPlaylistAddButton,
-                                  UiTokens::kSettingsPlaylistAddW, UiTokens::kSettingsPlaylistAddH + 2);
+                                  UiTokens::kSettingsPlaylistAddW, UiTokens::kSettingsPlaylistAddH);
     gtk_fixed_put(GTK_FIXED(fixed), g_defaultPlaylistAddButton,
                   UiTokens::kSettingsPlaylistAddX, UiTokens::kSettingsPlaylistAddY);
     gtk_widget_add_css_class(g_defaultPlaylistAddButton, "toolbar-button");
@@ -1223,7 +1226,7 @@ bool ShowSettingsDialog() {
                                       UiTokens::kSettingsBackgroundScanW, UiTokens::kSettingsBackgroundScanH);
 
     GtkWidget* cancelButton = gtk_button_new_with_label("Cancel");
-    gtk_widget_set_size_request(cancelButton, UiTokens::kSettingsCancelW, UiTokens::kSettingsCancelH + 2);
+    gtk_widget_set_size_request(cancelButton, UiTokens::kSettingsCancelW, UiTokens::kSettingsCancelH);
     gtk_fixed_put(GTK_FIXED(fixed), cancelButton, UiTokens::kSettingsCancelX, UiTokens::kSettingsCancelY);
     gtk_widget_add_css_class(cancelButton, "toolbar-button");
     g_signal_connect(cancelButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -1234,7 +1237,7 @@ bool ShowSettingsDialog() {
     }), nullptr);
 
     GtkWidget* okButton = gtk_button_new_with_label("OK");
-    gtk_widget_set_size_request(okButton, UiTokens::kSettingsOkW, UiTokens::kSettingsOkH + 2);
+    gtk_widget_set_size_request(okButton, UiTokens::kSettingsOkW, UiTokens::kSettingsOkH);
     gtk_fixed_put(GTK_FIXED(fixed), okButton, UiTokens::kSettingsOkX, UiTokens::kSettingsOkY);
     gtk_widget_add_css_class(okButton, "toolbar-button");
     gtk_widget_add_css_class(okButton, "suggested-action");
@@ -1300,12 +1303,7 @@ void LayoutMainWindow(int width, int height) {
     const int deleteLeft = startLeft - UiTokens::kButtonGap - UiTokens::kDeleteButtonWidth;
     const int addLeft = deleteLeft - UiTokens::kButtonGap - UiTokens::kAddButtonWidth;
 
-    const int titleRight = width - (UiTokens::kAddButtonWidth + UiTokens::kDeleteButtonWidth +
-                                    UiTokens::kStartStopButtonWidth + UiTokens::kSettingsButtonWidth +
-                                    UiTokens::kButtonGap * 4 + UiTokens::kGutter);
-    gtk_widget_set_size_request(g_title, titleRight - UiTokens::kGutter, UiTokens::kToolbarHeight);
     GtkWidget* fixed = gtk_widget_get_parent(g_toolbar);
-    gtk_fixed_move(GTK_FIXED(fixed), g_title, UiTokens::kGutter, 0);
 
     gtk_fixed_move(GTK_FIXED(fixed), g_addButton, addLeft, buttonTop);
     gtk_fixed_move(GTK_FIXED(fixed), g_removeButton, deleteLeft, buttonTop);
@@ -1833,6 +1831,9 @@ void BuildMainWindow(GtkApplication* app) {
                                 UiTokens::kWindowWidth, UiTokens::kWindowHeight);
     gtk_window_set_resizable(GTK_WINDOW(window), TRUE);
     gtk_widget_set_size_request(window, UiTokens::kWindowWidth, 460);
+    gtk_window_set_titlebar(
+        GTK_WINDOW(window),
+        CreateWin10Titlebar(GTK_WINDOW(window), "DLNA Server", WindowChrome::Main));
 
     // Task 8: prevent main window from stealing focus while a modal
     // child is active — main cannot become active / receive focus /
@@ -1847,13 +1848,6 @@ void BuildMainWindow(GtkApplication* app) {
         }
         return TRUE;
     }), nullptr);
-    // win10 style title bar reuses the same header bar plus window
-    // controls pattern already used by the settings log and help
-    // dialogs in this same file see ShowSettingsDialog for the
-    // reference implementation this mirrors.
-    // The main window uses a toolbar as its title bar (matching Win32)
-    // so no separate GtkHeaderBar is installed here.
-
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokens::kWindowWidth, UiTokens::kWindowHeight);
     gtk_window_set_child(GTK_WINDOW(window), fixed);
@@ -1862,15 +1856,6 @@ void BuildMainWindow(GtkApplication* app) {
     gtk_widget_set_size_request(g_toolbar, UiTokens::kWindowWidth, UiTokens::kToolbarHeight);
     gtk_fixed_put(GTK_FIXED(fixed), g_toolbar, 0, 0);
     gtk_widget_add_css_class(g_toolbar, "toolbar");
-
-    g_title = gtk_label_new("");
-    gtk_widget_set_size_request(g_title, 200, UiTokens::kToolbarHeight);
-    gtk_fixed_put(GTK_FIXED(fixed), g_title, UiTokens::kGutter, 0);
-    gtk_widget_add_css_class(g_title, "window-title");
-    gtk_label_set_xalign(GTK_LABEL(g_title), 0.0f);
-    gtk_label_set_ellipsize(GTK_LABEL(g_title), PANGO_ELLIPSIZE_END);
-    // toolbar title text removed per design request row still reserved for layout stability
-    gtk_widget_set_visible(g_title, FALSE);
 
     g_addButton = gtk_button_new_with_label("Add");
     gtk_widget_set_size_request(g_addButton, UiTokens::kAddButtonWidth, -1);
@@ -2040,6 +2025,15 @@ void DumpWidgetTree(const char* tag, GtkWidget* widget, GtkWidget* origin) {
                     static_cast<int>(bounds.origin.y),
                     static_cast<int>(bounds.size.width),
                     static_cast<int>(bounds.size.height));
+        if (GTK_IS_BUTTON(widget)) {
+            int srw = -2, srh = -2;
+            gtk_widget_get_size_request(widget, &srw, &srh);
+            int mw = 0, nw = 0, mh = 0, nh = 0;
+            gtk_widget_measure(widget, GTK_ORIENTATION_HORIZONTAL, -1, &mw, &nw, nullptr, nullptr);
+            gtk_widget_measure(widget, GTK_ORIENTATION_VERTICAL, -1, &mh, &nh, nullptr, nullptr);
+            std::printf("[gtk4-%s-geometry]   sr=%dx%d measure_w min=%d nat=%d measure_h min=%d nat=%d\n",
+                        tag, srw, srh, mw, nw, mh, nh);
+        }
     }
     GtkWidget* child = gtk_widget_get_first_child(widget);
     while (child != nullptr) {
@@ -2199,61 +2193,6 @@ void OnAppStartup(GtkApplication* app, gpointer) {
         g_object_unref(provider);
     }
 
-    // desktop dark-theme free window chrome for the dialogs
-    // never depends on the system theme or AdwStyleManager
-    // note: @define-color tokens from the generated style.css may not resolve
-    // in a separate GtkCssProvider so these use explicit rgb() values
-    const char* dialogCss =
-        "window { background-color: rgb(31,31,31); color: rgb(255,255,255); }\n"
-        "label { color: rgb(255,255,255); }\n"
-        "frame { color: rgb(200,200,200); }\n"
-         "entry { background-color: rgb(31,31,31); color: rgb(255,255,255); "
-         "border: none; box-shadow: inset 0 0 0 1px rgb(88,88,88); border-radius: 8px; }\n"
-        "checkbutton { color: rgb(255,255,255); }\n"
-        "textview { background-color: rgb(31,31,31); color: rgb(255,255,255); }\n"
-        "textview text { background-color: rgb(31,31,31); color: rgb(255,255,255); }\n"
-        "scrolledwindow { background-color: rgb(31,31,31); }\n"
-        "viewport { background-color: rgb(31,31,31); }\n"
-        ".source-list { background-color: rgb(31,31,31); "
-        "border: 1px solid rgb(88,88,88); border-radius: 0px; }\n"
-        ".source-list list { padding: 2px; }\n"
-        ".source-list list { background-color: rgb(31,31,31); color: rgb(255,255,255); }\n"
-        ".source-list row { padding: 4px 6px; background-color: rgb(31,31,31); "
-        "color: rgb(255,255,255); }\n"
-        ".source-list row:selected { background-color: rgb(70,90,120); "
-        "color: rgb(255,255,255); }\n"
-        ".toolbar-button { background-image: none; "
-        "background-color: rgb(51,51,51); "
-        "border: none; "
-        "box-shadow: inset 0 0 0 1px rgb(88,88,88); "
-        "border-radius: 8px; color: rgb(255,255,255); "
-        "min-height: 32px; }\n"
-        ".toolbar-button:hover { background-image: none; "
-        "background-color: rgb(62,62,62); }\n"
-        ".toolbar-button:active { background-image: none; "
-        "background-color: rgb(74,74,74); }\n"
-        ".toolbar-button:disabled { color: rgb(132,132,132); background-image: none; "
-        "background-color: rgb(51,51,51); }\n"
-        ".toolbar-button:focus-visible { outline: 1px solid rgb(96,165,250); "
-        "outline-offset: -4px; }\n"
-        ".toolbar-button { border-bottom: 2px solid transparent; }\n"
-        ".toolbar-button:hover { border-bottom: 2px solid rgb(96,165,250); }\n"
-        ".source-list:focus-within { outline: 1px solid rgb(96,165,250); "
-        "outline-offset: 2px; }\n"
-        "window.csd, window.csd decoration { "
-        "border-radius: 0px; box-shadow: none; }\n"
-        "headerbar { border-radius: 0px; }\n";
-    GtkCssProvider* dialogProvider = gtk_css_provider_new();
-#if GTK_CHECK_VERSION(4, 12, 0)
-    gtk_css_provider_load_from_string(dialogProvider, dialogCss);
-#else
-    gtk_css_provider_load_from_data(dialogProvider, dialogCss, -1);
-#endif
-    GdkDisplay* display = gdk_display_get_default();
-    gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(dialogProvider),
-                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-    g_object_unref(dialogProvider);
-
     // tray icon registers with org.kde.StatusNotifierWatcher when present
     // the GUI binary is the only build that creates the tray
     GDBusConnection* connection = g_application_get_dbus_connection(G_APPLICATION(app));
@@ -2384,6 +2323,12 @@ int main(int argc, char** argv) {
 
     // Ensure the lock is released even if the app exits due to an X error
     std::atexit([]() { SingleInstance::ReleaseLock(); });
+
+    // skip the single-instance handshake for dump/test flags so headless
+    // geometry dumps run regardless of whether another instance holds the lock
+    if (!g_dumpGeometry && !g_dumpLogDialogReopen && !g_dumpMsgBoxParent &&
+        !g_printStoppedCloseExit && !g_printDeleteFocusGating) {
+        if (!SingleInstance::TryAcquireLock()) {
             if (!sourcePayload.empty()) {
                 // a running instance already exists forward the override instead
                 // of showing the window matches WM COPYDATA on the windows build
