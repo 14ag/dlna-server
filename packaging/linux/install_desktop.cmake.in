@@ -1,5 +1,5 @@
 set(applications_dir "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_DATADIR@/applications")
-set(exec_path "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@/dlna-server-gui-bin")
+set(exec_path "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@/dlna-server-gui")
 
 file(MAKE_DIRECTORY "${applications_dir}")
 file(WRITE "${applications_dir}/dlna-server.desktop"

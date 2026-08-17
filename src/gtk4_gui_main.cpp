@@ -133,6 +133,9 @@ ServerUiState g_pendingState = ServerUiState::Stopped;
 std::string g_pendingMessage;
 bool g_sourceListHasFocus = false;
 std::atomic<bool> g_scanInProgress{false};
+// WSLg can report a freshly mapped window as minimized before it has been
+// presented. Only treat minimization as a user action after one normal map.
+bool g_mainWindowWasUnminimized = false;
 
 GtkWidget* g_sourceDialog = nullptr;
 GtkWidget* g_sourceEntry = nullptr;
@@ -1688,13 +1691,17 @@ gboolean OnPollTick(gpointer) {
     if (g_logDialog != nullptr) {
         AppendLogSinceLast();
     }
-    // detect minimize to replicate Win32 SW_MINIMIZE hide behavior
-    if (g_mainWindow != nullptr && gtk_widget_get_visible(GTK_WIDGET(g_mainWindow))) {
-        if (GDK_IS_TOPLEVEL(g_mainWindow)) {
-            GdkToplevelState state = gdk_toplevel_get_state(GDK_TOPLEVEL(g_mainWindow));
-            if (state & GDK_TOPLEVEL_STATE_MINIMIZED) {
-                gtk_widget_set_visible(GTK_WIDGET(g_mainWindow), FALSE);
-            }
+    if (g_mainWindow != nullptr && gtk_widget_get_visible(GTK_WIDGET(g_mainWindow)) &&
+        GDK_IS_TOPLEVEL(g_mainWindow)) {
+        const GdkToplevelState state = gdk_toplevel_get_state(GDK_TOPLEVEL(g_mainWindow));
+        if ((state & GDK_TOPLEVEL_STATE_MINIMIZED) == 0) {
+            g_mainWindowWasUnminimized = true;
+        } else if (g_mainWindowWasUnminimized) {
+            gtk_widget_set_visible(GTK_WIDGET(g_mainWindow), FALSE);
+        } else {
+            // Initial WSLg launch: keep requesting presentation until Weston
+            // has completed the first map instead of permanently hiding it.
+            gtk_window_present(GTK_WINDOW(g_mainWindow));
         }
     }
     return G_SOURCE_CONTINUE;
