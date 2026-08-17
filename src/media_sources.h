@@ -30,6 +30,10 @@ struct MediaItem {
     std::wstring mimeType;
     std::wstring upnpClass;
     long long sizeBytes;
+    // scan generation this item was last published under
+    // used by SweepStaleEntries to remove items no longer present
+    // without ever making the item unresolvable during a rescan
+    int scanGeneration = 0;
     // full path to companion subtitle file if one exists in the same folder
     // empty string means no subtitle was found
     std::wstring subtitlePath;
@@ -92,6 +96,11 @@ public:
     GetChildrenResult TryGetChildren(int objId, std::vector<MediaItem>& out);
 
     void ResetForRescan();
+    // removes every item whose scanGeneration does not match the
+    // generation set by the most recent ResetForRescan call
+    // call this only after every publisher for the current scan has
+    // finished never call this while a scan is still in flight
+    void SweepStaleEntries();
     int PublishContainer(MediaDatabase* database, int parentId,
                           const std::wstring& title, const std::wstring& path,
                           std::function<std::wstring(const std::wstring&)> canonicalize);
@@ -124,6 +133,8 @@ std::shared_mutex m_mutex;   // was: std::mutex m_mutex;
     std::unordered_map<int, size_t> m_idToIndex;
     std::unordered_map<int, std::vector<size_t>> m_childrenByParent;
     std::atomic<int> m_systemUpdateId;
+    // bumped once per ResetForRescan call never reset never decremented
+    int m_currentGeneration = 0;
 };
 
 // Owns everything needed to scan one top-level media source's playlist/HLS

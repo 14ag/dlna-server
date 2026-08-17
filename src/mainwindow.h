@@ -42,6 +42,10 @@ public:
     // dwData discriminator used on the wm copydata messages this app sends
     // to itself from a second process see main cpp for the sender side
     static constexpr ULONG_PTR kCopyDataSourceReplace = 1;
+    // query discriminator: the second process sends a temp-file path in
+    // lpData and the running instance writes its effective media sources
+    // (one per line, UTF-8) into that file before returning.
+    static constexpr ULONG_PTR kCopyDataQueryEffectiveSources = 2;
 
     bool TryHandleAccessKeyChar(wchar_t ch);
     bool TryHandleFunctionKey(WPARAM vkCode);

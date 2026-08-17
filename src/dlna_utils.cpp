@@ -490,7 +490,14 @@ unsigned int ComputeSsdpNextAliveIntervalMilliseconds() {
     // strictly under 900000ms). Jitter also avoids multiple restarted
     // instances refreshing in lockstep.
     static thread_local std::mt19937 generator(std::random_device{}());
-    std::uniform_int_distribution<unsigned int> distribution(12u * 60u * 1000u, 14u * 60u * 1000u + 30u * 1000u);
+    // shortened from the previous 12 to 14 point 5 minute window to 4 to 6
+    // minutes still comfortably under the 15 minute uda ceiling this
+    // trades modestly more network chatter for roughly 3x more
+    // independently jittered alive announcements per hour which directly
+    // raises the odds that a client with only an intermittent discovery
+    // window such as an android app that briefly holds a wifi multicast
+    // lock actually overlaps with one see F-DISCOVERY-02
+    std::uniform_int_distribution<unsigned int> distribution(4u * 60u * 1000u, 6u * 60u * 1000u);
     return distribution(generator);
 }
 

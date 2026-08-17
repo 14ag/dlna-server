@@ -55,6 +55,11 @@ std::wstring Server::GetEndpoint() const {
     return m_endpoint;
 }
 
+bool Server::IsHealthy() const {
+    if (!m_running.load(std::memory_order_acquire)) return true;
+    return HttpServer::Get().IsHealthy() && SSDP::Get().IsHealthy();
+}
+
 std::vector<NetworkEndpoint> Server::GetEndpoints() const {
     std::lock_guard<std::mutex> lock(m_endpointMutex);
     return m_endpoints;

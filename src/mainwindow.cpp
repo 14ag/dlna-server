@@ -1420,6 +1420,37 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
                 AppConfig.SetRuntimeSourceOverride(overrideSources);
                 RefreshSourceList();
             }
+        } else if (cds && cds->dwData == kCopyDataQueryEffectiveSources &&
+                   cds->lpData && IsPlausibleWideStringCopyDataSize(cds->cbData)) {
+            // A second process asked for the effective media sources of THIS
+            // running instance. lpData names a temp file we should write the
+            // sources into (one per line, UTF-8); the sender blocks on
+            // SendMessageW until we return, so it can read the file right
+            // after. Mirrors the POSIX effective-sources IPC query.
+            const size_t charCount = cds->cbData / sizeof(wchar_t);
+            std::wstring tempFilePath(
+                reinterpret_cast<const wchar_t*>(cds->lpData), charCount);
+            while (!tempFilePath.empty() && tempFilePath.back() == L'\0') {
+                tempFilePath.pop_back();
+            }
+            if (!tempFilePath.empty()) {
+                const ConfigSnapshot snap = AppConfig.Snapshot();
+                std::string content;
+                for (const auto& src : snap.effectiveMediaSources) {
+                    content += WideToUtf8(src.path);
+                    content += "\n";
+                }
+                HANDLE hFile = CreateFileW(
+                    tempFilePath.c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+                    NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, NULL);
+                if (hFile != INVALID_HANDLE_VALUE) {
+                    DWORD written = 0;
+                    WriteFile(hFile, content.data(),
+                              static_cast<DWORD>(content.size()), &written, NULL);
+                    CloseHandle(hFile);
+                }
+            }
+            return TRUE;
         }
         return TRUE;
     }
@@ -1454,6 +1485,13 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
                 m_lastPolledScanInProgress = scanInProgress;
                 SetControlsForState();
                 InvalidateRect(m_hwnd, NULL, TRUE);
+            }
+            if (IsRunning() && !IsBusy() && !DLNAServer.IsHealthy()) {
+                LogPrint(L"Server reported running but an internal worker thread has stopped unexpectedly stopping cleanly");
+                BeginStopServer();
+                MessageBoxW(m_hwnd,
+                    L"The server stopped unexpectedly and has been shut down\n\nPress Start to resume",
+                    L"DLNA Server", MB_ICONWARNING | MB_OK);
             }
         }
         return 0;

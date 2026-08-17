@@ -41,6 +41,9 @@ public:
 
     bool Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid);
     void Stop();
+    // true only while the search and notify worker thread that Start
+    // launched is still executing mirrors HttpServer IsHealthy exactly
+    bool IsHealthy() const { return m_workerThreadAlive.load(std::memory_order_acquire); }
 
 private:
     SSDP();
@@ -88,6 +91,7 @@ private:
     std::vector<SSDPTarget> m_targets;
     unsigned int m_bootId;
     unsigned int m_configId;
+    std::atomic<bool> m_workerThreadAlive{false};
 };
 
 #endif // SSDP_H

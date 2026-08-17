@@ -259,7 +259,7 @@ void MediaSources::Scan() {
         jobs.push_back({ctx, MediaSource{cfg.defaultPlaylistPath}, containerId});
     }
 
-    // Each top-level source job runs on its own dedicated thread, never on
+    // Each top-level source job runs on its own SourceScanPool task, never on
     // PlaylistScanPool. RunPlaylistDispatcher (reached via ScanPlaylistTree,
     // called directly here or indirectly from ScanFolder/ScanNetworkFolder
     // when they discover a nested playlist) submits leaf ScanOnePlaylistNode
@@ -271,10 +271,11 @@ void MediaSources::Scan() {
     // tasks being waited on -- a permanent deadlock. See Task 9 of
     // dlna-server-concurrency-memory-fix-workflow-17-7-26.md and SEI CERT
     // TPS01-J. Do not change this back to PlaylistScanPool::Get().Submit(...).
-    std::vector<std::thread> sourceThreads;
-    sourceThreads.reserve(jobs.size());
+    TaskGroup sourceGroup;
     for (auto& job : jobs) {
-        sourceThreads.emplace_back([this, &job]() {
+        sourceGroup.Enter();
+        SourceScanPool::Get().Submit([this, &job, &sourceGroup]() {
+            TaskGroupLeaveGuard leave(sourceGroup);
             RunGuarded(L"source-scan", [this, &job]() {
                 LogPrint(L"Scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
                 if (IsPlaylistSourcePath(job.source.path)) {
@@ -302,9 +303,7 @@ void MediaSources::Scan() {
             });
         });
     }
-    for (auto& sourceThread : sourceThreads) {
-        sourceThread.join();
-    }
+    sourceGroup.Wait();
 
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
     AppEvents.NotifySystemUpdateId(newUpdateId);
@@ -313,6 +312,8 @@ void MediaSources::Scan() {
         LogPrint(L"Scan cancelled before completion; media-cache.tsv left unmodified.");
         return;
     }
+
+    SweepStaleEntries();
 
     const size_t prunedRecordCount = database->PruneUntouched();
     if (prunedRecordCount > 0) {
@@ -724,52 +725,27 @@ int MediaSources::GetSystemUpdateID() {
 void MediaSources::ResetForRescan() {
     {
         std::unique_lock<std::shared_mutex> lock(m_mutex);
-        // Capture the catalog size THIS pass is about to discard, before
-        // clearing it. Without this, every ResetForRescan() call
-        // reserve()s the same fixed kInitialCatalogReserve regardless of
-        // how large the catalog actually is, forcing the same sequence
-        // of doubling reallocations to repeat on every rescan for the
-        // life of the process. See F-MEM-01. size() is 0 before anything
-        // has ever been scanned, so first-run behavior is unchanged
-        // (falls through to the kInitialCatalogReserve floor below).
-        const size_t previousSize = m_items.size();
-        m_items.clear();
-        m_idToIndex.clear();
-        m_childrenByParent.clear();
-        // Reserving up front does not remove the possibility of a
-        // reallocation-while-locked stall for a library larger than this
-        // capacity (std::vector growth is only amortized O(1), a single
-        // triggering push is not O(1)), it only pushes the first
-        // reallocation past the common case. A structural fix (switching
-        // m_items to a container that never invalidates existing element
-        // storage on growth, e.g. std::deque) is a larger change that also
-        // touches m_idToIndex's index scheme and is out of scope here.
-        //
-        // Size the reserve off the previous pass's final size (with
-        // 12.5% slack for growth since the last scan) instead of the
-        // fixed constant, once a real size has been observed. This adds
-        // no new lock or I/O -- it is a pure allocation-policy change
-        // using data already available under the lock this function
-        // already holds. m_idToIndex gets the same hint so its bucket
-        // array does not repeatedly rehash (and scatter entries into new
-        // buckets, costing cache misses on every subsequent lookup)
-        // while it grows back to the same size it was before this
-        // reset. m_childrenByParent is deliberately NOT given this same
-        // hint: its key count is the number of distinct parent
-        // containers, not the item count, and previousSize would be a
-        // poor (large) overestimate for it.
-        const size_t reserveHint = (std::max)(kInitialCatalogReserve, previousSize + previousSize / 8);
-        m_items.reserve(reserveHint);
-        m_idToIndex.reserve(reserveHint);
-
-        MediaItem root{};
-        root.id = 0;
-        root.parentId = -1;
-        root.title = L"Root";
-        root.isFolder = true;
-        root.upnpClass = L"object.container.storageFolder";
-        m_items.push_back(root);
-        m_idToIndex[0] = 0;
+        // the catalog is never cleared here on purpose
+        // clearing here made every existing item unresolvable to a
+        // concurrent HTTP reader for the entire duration of the scan
+        // publishing during the scan tags each item with the new
+        // generation and SweepStaleEntries removes only items that
+        // truly were not republished after the scan fully completes
+        ++m_currentGeneration;
+        auto rootIndexEntry = m_idToIndex.find(0);
+        if (rootIndexEntry == m_idToIndex.end()) {
+            MediaItem root{};
+            root.id = 0;
+            root.parentId = -1;
+            root.title = L"Root";
+            root.isFolder = true;
+            root.upnpClass = L"object.container.storageFolder";
+            root.scanGeneration = m_currentGeneration;
+            m_items.push_back(root);
+            m_idToIndex[0] = m_items.size() - 1;
+        } else if (rootIndexEntry->second < m_items.size()) {
+            m_items[rootIndexEntry->second].scanGeneration = m_currentGeneration;
+        }
     }
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
     AppEvents.NotifySystemUpdateId(newUpdateId);
@@ -790,6 +766,7 @@ int MediaSources::PublishContainer(MediaDatabase* database, int parentId,
             ? database->GetOrCreateStableContainerId(
                   BuildStableContainerKey(parentId, title, path, canonicalize))
             : NextScratchId();
+        container.scanGeneration = m_currentGeneration;
         m_items.push_back(container);
         const size_t index = m_items.size() - 1;
         m_idToIndex[container.id] = index;
@@ -817,6 +794,7 @@ int MediaSources::PublishContainer(MediaDatabase* database, int parentId,
 void MediaSources::PublishItem(MediaItem item) {
     {
         std::unique_lock<std::shared_mutex> lock(m_mutex);
+        item.scanGeneration = m_currentGeneration;
         m_items.push_back(std::move(item));
         const size_t index = m_items.size() - 1;
         const MediaItem& stored = m_items.back();
@@ -825,4 +803,22 @@ void MediaSources::PublishItem(MediaItem item) {
     }
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
     AppEvents.NotifySystemUpdateId(newUpdateId);
+}
+
+void MediaSources::SweepStaleEntries() {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+    std::vector<MediaItem> survivors;
+    survivors.reserve(m_items.size());
+    for (auto& item : m_items) {
+        if (item.scanGeneration == m_currentGeneration) {
+            survivors.push_back(std::move(item));
+        }
+    }
+    m_items = std::move(survivors);
+    m_idToIndex.clear();
+    m_childrenByParent.clear();
+    for (size_t i = 0; i < m_items.size(); ++i) {
+        m_idToIndex[m_items[i].id] = i;
+        m_childrenByParent[m_items[i].parentId].push_back(i);
+    }
 }

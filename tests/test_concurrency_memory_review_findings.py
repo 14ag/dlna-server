@@ -92,20 +92,16 @@ def test_task7_catalog_reserve_present():
     fn_start = src.index("void MediaSources::ResetForRescan")
     fn_end = src.index("\n}\n", fn_start)
     body = src[fn_start:fn_end]
-    # Task 5.1 evolved this from the fixed baseline reserve
-    # (m_items.reserve(kInitialCatalogReserve)) to an ADAPTIVE reserve:
-    # size off the previous pass's catalog size with 12.5% slack, floored
-    # by kInitialCatalogReserve, applied to both m_items and m_idToIndex so
-    # neither repeatedly rehashes/reallocates for the same large catalog on
-    # every rescan. This contract test pins the NEW shape -- the computed
-    # reserveHint derived from previousSize -- not the old fixed reserve.
-    assert "previousSize" in body
-    assert "reserveHint" in body
-    assert "(std::max)" in body
-    assert "m_items.reserve(reserveHint)" in body
-    assert "m_idToIndex.reserve(reserveHint)" in body
-    # the old fixed-reserve shape is gone
-    assert "m_items.reserve(kInitialCatalogReserve)" not in body
+    # Workflow 17-08-26 Task 1 3 replaced the adaptive reserve with a
+    # generation based sweep so a concurrent HTTP reader never observes
+    # an empty catalog mid rescan This contract test pins the new shape
+    # ResetForRescan must never clear the catalog or the id index maps
+    assert "m_items.clear()" not in body
+    assert "m_idToIndex.clear()" not in body
+    assert "m_childrenByParent.clear()" not in body
+    assert "++m_currentGeneration" in body
+    assert "scanGeneration = m_currentGeneration" in body
+    assert "SweepStaleEntries" in src
 
 
 def test_task8_album_art_stat_calls_not_locked_for_whole_function():
@@ -122,8 +118,12 @@ def test_task9_source_jobs_not_submitted_to_pool():
     fn_start = src.index("void MediaSources::Scan()")
     fn_end = src.index("void MediaSources::AddMediaFile")
     body = src[fn_start:fn_end]
-    assert "TaskGroup sourceGroup" not in body
-    assert "sourceThreads" in body
+    # Source jobs go through the bounded SourceScanPool (never PlaylistScanPool,
+    # which would starve the leaf tasks being waited on) with a TaskGroup guard
+    # so a nested playlist deadlock is impossible. See Task 9.
+    assert "TaskGroup sourceGroup" in body
+    assert "sourceThreads" not in body
+    assert "SourceScanPool::Get().Submit([this, &job, &sourceGroup]" in body
     assert "PlaylistScanPool::Get().Submit([this, &job, &sourceGroup]" not in body
 
 

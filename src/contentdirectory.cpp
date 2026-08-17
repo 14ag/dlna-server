@@ -578,6 +578,12 @@ long ContentDirectory::GetSearchRecomputeCountForTest() {
 void ContentDirectory::ClearSearchCache() {
     std::lock_guard<std::mutex> lock(m_searchCacheMutex);
     m_searchCacheByContainer.clear();
+    m_searchCacheTotalItems = 0;
+}
+
+long ContentDirectory::GetSearchCacheTotalItemsForTest() {
+    std::lock_guard<std::mutex> lock(m_searchCacheMutex);
+    return static_cast<long>(m_searchCacheTotalItems);
 }
 
 long ContentDirectory::GetSearchCacheSizeForTest() {
@@ -666,22 +672,37 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         SortItems(results, sortCriteria);
         {
             std::lock_guard<std::mutex> lock(m_searchCacheMutex);
-            if (m_searchCacheByContainer.find(containerId) == m_searchCacheByContainer.end() &&
-                m_searchCacheByContainer.size() >= kMaxSearchCacheContainers) {
-                // evict the entry with the oldest systemUpdateId so
-                // this cache never grows past
-                // kMaxSearchCacheContainers no matter how many
-                // distinct containers get Searched over this
-                // process lifetime
-                auto oldest = std::min_element(m_searchCacheByContainer.begin(), m_searchCacheByContainer.end(),
-                    [](const auto& a, const auto& b) { return a.second.systemUpdateId < b.second.systemUpdateId; });
-                if (oldest != m_searchCacheByContainer.end()) {
-                    m_searchCacheByContainer.erase(oldest);
+            auto existingEntry = m_searchCacheByContainer.find(containerId);
+            const bool containerAlreadyCached = existingEntry != m_searchCacheByContainer.end();
+            const size_t previousItemCount = containerAlreadyCached ? existingEntry->second.results.size() : 0;
+            const size_t incomingItemCount = results.size();
+
+            // evict oldest by systemUpdateId entries never the slot this
+            // Search is about to overwrite until both the container
+            // count cap and the total cached item budget are satisfied
+            // container count alone does not bound memory each cached
+            // results vector is a full descendant subtree with no size
+            // limit of its own see F-CACHE-01
+            while (!m_searchCacheByContainer.empty() &&
+                   SearchCacheNeedsEviction(m_searchCacheByContainer.size(), m_searchCacheTotalItems,
+                                            previousItemCount, incomingItemCount, containerAlreadyCached,
+                                            kMaxSearchCacheContainers, kMaxSearchCacheTotalItems)) {
+                auto oldest = m_searchCacheByContainer.end();
+                for (auto it = m_searchCacheByContainer.begin(); it != m_searchCacheByContainer.end(); ++it) {
+                    if (it->first == containerId) continue;
+                    if (oldest == m_searchCacheByContainer.end() || it->second.systemUpdateId < oldest->second.systemUpdateId) {
+                        oldest = it;
+                    }
                 }
+                if (oldest == m_searchCacheByContainer.end()) break;
+                m_searchCacheTotalItems -= oldest->second.results.size();
+                m_searchCacheByContainer.erase(oldest);
             }
+
+            m_searchCacheTotalItems = m_searchCacheTotalItems - previousItemCount + incomingItemCount;
             m_searchCacheByContainer[containerId] = SearchCacheEntry{ currentUpdateId, cacheKey, results };
             ++g_searchRecomputeCount;
-            LogPrint(L"[search-cache] recompute count now %ld", g_searchRecomputeCount.load());
+            LogPrint(L"[search-cache] recompute count now %ld total-items=%zu", g_searchRecomputeCount.load(), m_searchCacheTotalItems);
         }
         return BrowseSearchResponse("Search", results, startingIndex, requestedCount, hostUrl, filter, static_cast<int>(results.size()));
     }

@@ -23,6 +23,7 @@
 #include <mutex>
 #include <sstream>
 #include <vector>
+#include <unordered_map>
 #include <sys/select.h>
 #include <sys/socket.h>
 #ifdef __linux__
@@ -170,13 +171,57 @@ bool ReadIconFile(const std::string& path, std::string& bytes) {
     return !bytes.empty();
 }
 
-bool LoadServerIconPng(const std::string& fileName, std::string& bytes) {
-    if (fileName.empty()) return false;
-    const std::string resolved = ResolveBundledResourcePath(fileName);
-    if (resolved.empty()) return false;
-    return ReadIconFile(resolved, bytes);
+namespace {
+// exactly 3 possible keys server icon 48 120 and 256 png so this cache
+// is inherently bounded no eviction policy is needed
+std::mutex g_iconCacheMutex;
+std::unordered_map<std::string, std::string> g_iconCache;
+long g_iconLoadRecomputeCount = 0;
 }
 
+bool LoadServerIconPng(const std::string& fileName, std::string& bytes) {
+    if (fileName.empty()) return false;
+
+    {
+        std::lock_guard<std::mutex> lock(g_iconCacheMutex);
+        auto found = g_iconCache.find(fileName);
+        if (found != g_iconCache.end()) {
+            bytes = found->second;
+            return true;
+        }
+    }
+
+    // resolves the path on disk possibly checking multiple candidate
+    // directories and reads the full file every icon http request used
+    // to pay this cost previously bytes are small and static for the
+    // life of the process so cache them once per fileName see F-PERF-03
+    const std::string resolved = ResolveBundledResourcePath(fileName);
+    if (resolved.empty()) return false;
+    std::string loaded;
+    if (!ReadIconFile(resolved, loaded)) return false;
+
+    {
+        std::lock_guard<std::mutex> lock(g_iconCacheMutex);
+        g_iconCache[fileName] = loaded;
+        ++g_iconLoadRecomputeCount;
+    }
+    bytes = loaded;
+    return true;
+}
+
+long GetIconLoadRecomputeCountInternal() {
+    std::lock_guard<std::mutex> lock(g_iconCacheMutex);
+    return g_iconLoadRecomputeCount;
+}
+
+}
+
+long GetIconLoadRecomputeCountForTest() {
+    return GetIconLoadRecomputeCountInternal();
+}
+
+bool LoadServerIconPngForTest(const std::string& fileName, std::string& bytes) {
+    return LoadServerIconPng(fileName, bytes);
 }
 
 HttpServer& HttpServer::Get() {
@@ -200,8 +245,22 @@ bool HttpServer::Start(int port) {
     if (m_listenSocketV4 < 0 && m_listenSocketV6 < 0) return false;
     m_clientPool = std::make_unique<BoundedThreadPool>(kMaxClientThreads, kMaxClientThreads);
     m_running = true;
-    if (m_listenSocketV4 >= 0) m_threads.emplace_back(&HttpServer::AcceptLoop, this, m_listenSocketV4);
-    if (m_listenSocketV6 >= 0) m_threads.emplace_back(&HttpServer::AcceptLoop, this, m_listenSocketV6);
+    m_expectedAcceptLoops.store(0, std::memory_order_release);
+    m_aliveAcceptLoops.store(0, std::memory_order_release);
+    if (m_listenSocketV4 >= 0) {
+        m_expectedAcceptLoops.fetch_add(1, std::memory_order_acq_rel);
+        m_threads.emplace_back(&HttpServer::AcceptLoop, this, m_listenSocketV4);
+    }
+    if (m_listenSocketV6 >= 0) {
+        m_expectedAcceptLoops.fetch_add(1, std::memory_order_acq_rel);
+        m_threads.emplace_back(&HttpServer::AcceptLoop, this, m_listenSocketV6);
+    }
+    // The accept-loop threads have not necessarily begun running yet (the
+    // entry-side alive increment happens in the new thread). Seed the alive
+    // counter to `expected` now so a health poll immediately after Start()
+    // does not misread the scheduling window as a dead worker. Only the
+    // exit-side decrement later detects an accept loop that actually died.
+    m_aliveAcceptLoops.store(m_expectedAcceptLoops.load(), std::memory_order_release);
     return true;
 }
 
@@ -224,6 +283,9 @@ void HttpServer::Stop() {
 }
 
 void HttpServer::AcceptLoop(int listenSocket) {
+    // No entry-side alive increment: m_aliveAcceptLoops is seeded to equal
+    // m_expectedAcceptLoops in Start(), and only the exit path decrements,
+    // so a poll can never observe a transient "worker not started yet" dip.
     while (m_running) {
         struct pollfd fds[2];
         fds[0].fd = listenSocket;
@@ -262,6 +324,7 @@ void HttpServer::AcceptLoop(int listenSocket) {
             HandleClient(client, clientIp);
         });
     }
+    m_aliveAcceptLoops.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 void HttpServer::HandleClient(int clientSocket, const std::string& clientIp) {
