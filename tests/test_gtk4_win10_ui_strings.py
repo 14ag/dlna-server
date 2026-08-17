@@ -1,35 +1,36 @@
 import pathlib
 
 SOURCE_PATH = pathlib.Path(__file__).resolve().parent.parent / "src" / "gtk4_gui_main.cpp"
+CSS_PATH = pathlib.Path(__file__).resolve().parent.parent / "resources" / "gtk" / "style.css"
 
 
 def read_source():
     return SOURCE_PATH.read_text(encoding="utf-8")
 
 
-def test_title_label_text_removed():
+def test_main_window_uses_shared_win10_titlebar():
     text = read_source()
-    assert 'g_title = gtk_label_new("")' in text
-    assert "gtk_widget_set_visible(g_title, FALSE)" in text
+    assert 'CreateWin10Titlebar(GTK_WINDOW(window), "DLNA Server", WindowChrome::Main)' in text
+    assert "g_title =" not in text
 
 
 def test_sharp_corner_css_present():
-    text = read_source()
+    text = CSS_PATH.read_text(encoding="utf-8")
     assert "border-radius: 0px" in text
 
 
-def test_main_window_has_no_custom_titlebar():
-    """The main window has no custom header bar (Task 15: show_title_buttons(FALSE)
-    caused 3 extra window control buttons, so the header bar was removed)."""
+def test_shared_titlebar_owns_the_only_window_controls():
     text = read_source()
-    assert "gtk_window_set_titlebar(GTK_WINDOW(window), mainHeaderBar)" not in text
-    # win10-titlebar class is used only on the Settings dialog CSD header bar
-    assert "win10-titlebar" in text
+    helper = text[text.index("GtkWidget* CreateWin10Titlebar"):text.index("GtkWindow* CreateMessageWindow")]
+    assert 'g_object_set(titlebar, "show-title-buttons", FALSE, nullptr)' in helper
+    assert '":minimize,close"' in helper
+    assert '":close"' in helper
+    assert helper.count("gtk_window_controls_new") == 1
 
 
 def test_blue_accent_hover_rule_present():
-    text = read_source()
-    assert "border-bottom: 2px solid rgb(96,165,250)" in text
+    text = CSS_PATH.read_text(encoding="utf-8")
+    assert "outline: 1px solid @focus_color" in text
 
 
 def test_settings_toolbar_spacing_constant_present():
@@ -39,5 +40,5 @@ def test_settings_toolbar_spacing_constant_present():
 
 
 def test_source_list_border_present():
-    text = read_source()
-    assert "border: 1px solid rgb(88,88,88)" in text
+    text = CSS_PATH.read_text(encoding="utf-8")
+    assert ".source-list { background-color: @page_color; border: 1px solid @border_color; border-radius: 0; }" in text

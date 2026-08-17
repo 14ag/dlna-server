@@ -12,23 +12,23 @@
 @define-color text_color rgb(255,255,255);
 @define-color disabled_text_color rgb(132,132,132);
 @define-color secondary_text_color rgb(200,200,200);
+@define-color win10_active_titlebar_color rgb(49,49,49);
 @define-color win10_inactive_titlebar_color rgb(50,50,50);
 
+window,
 window.dlna-main {
     background-color: @page_color;
     color: @text_color;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 .toolbar {
     background-color: @toolbar_color;
     min-height: 56px;
-}
-
-.window-title {
-    font-family: "Segoe UI Variable Display, Segoe UI, Cantarell, Noto Sans, sans-serif";
-    font-size: 20px;
-    font-weight: 600;
-    color: @text_color;
 }
 
 .status-band {
@@ -38,19 +38,24 @@ window.dlna-main {
     padding: 0 16px;
 }
 
-    .toolbar-button {
-        background-color: @control_color;
-        border: none;
-        border-radius: 8px;
-        color: @text_color;
-        min-height: 30px;
-        min-width: 56px;
-        outline: 1px solid @border_color;
-        outline-offset: -1px;
-        padding: 0;
-        font-family: "Segoe UI Variable Text, Segoe UI, Cantarell, Noto Sans, sans-serif";
-        font-size: 12px;
-    }
+.toolbar-button {
+    background-color: @control_color;
+    border: none;
+    border-radius: 8px;
+    color: @text_color;
+    min-height: 32px;
+    min-width: 56px;
+    outline: 1px solid @border_color;
+    outline-offset: -1px;
+    padding: 0;
+    font-family: "Segoe UI Variable Text, Segoe UI, Cantarell, Noto Sans, sans-serif";
+    font-size: 12px;
+}
+
+.settings-toolbar-button {
+    min-height: 28px;
+    min-width: 72px;
+}
 
 .toolbar-button:hover {
     background-color: @control_hover_color;
@@ -79,16 +84,33 @@ window.dlna-main {
     color: @secondary_text_color;
 }
 
+frame { color: @secondary_text_color; border-radius: 0; }
+entry {
+    background-color: @page_color;
+    color: @text_color;
+    border: none;
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 1px @border_color;
+}
+checkbutton, textview, textview text { color: @text_color; background-color: @page_color; }
+scrolledwindow, viewport { background-color: @page_color; }
+.source-list { background-color: @page_color; border: 1px solid @border_color; border-radius: 0; }
+.source-list list { padding: 2px; background-color: @page_color; color: @text_color; }
+.source-list row { padding: 4px 6px; background-color: @page_color; color: @text_color; }
+.source-list row:selected { background-color: rgb(70,90,120); color: @text_color; }
+window.csd, window.csd decoration { border-radius: 0; box-shadow: none; }
+
 .win10-titlebar {
     min-height: 32px;
     padding: 0;
+    margin: 0;
     border: none;
     border-radius: 0;
     box-shadow: none;
 }
 
 .win10-titlebar.win10-active {
-    background-color: @toolbar_color;
+    background-color: @win10_active_titlebar_color;
 }
 
 .win10-titlebar.win10-inactive {
@@ -109,6 +131,7 @@ headerbar button {
     color: @text_color;
     min-height: 32px;
     min-width: 46px;
+    margin: 0;
     padding: 0;
 }
 

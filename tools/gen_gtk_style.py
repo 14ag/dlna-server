@@ -61,23 +61,23 @@ CSS_TEMPLATE = """/* auto generated from src/ui_tokens.h by tools/gen_gtk_style.
 @define-color text_color {{text_color}};
 @define-color disabled_text_color {{disabled_text_color}};
 @define-color secondary_text_color {{secondary_text_color}};
+@define-color win10_active_titlebar_color {{win10_active_titlebar_color}};
 @define-color win10_inactive_titlebar_color {{win10_inactive_titlebar_color}};
 
+window,
 window.dlna-main {
     background-color: @page_color;
     color: @text_color;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 .toolbar {
     background-color: @toolbar_color;
     min-height: {{toolbar_height}}px;
-}
-
-.window-title {
-    font-family: "{{title_font_family_stack}}";
-    font-size: {{title_font_size_px}}px;
-    font-weight: 600;
-    color: @text_color;
 }
 
 .status-band {
@@ -87,19 +87,19 @@ window.dlna-main {
     padding: 0 {{gutter}}px;
 }
 
-    .toolbar-button {
-        background-color: @control_color;
-        border: none;
-        border-radius: {{corner_radius}}px;
-        color: @text_color;
-        min-height: {{button_height}}px;
-        min-width: {{add_button_width}}px;
-        outline: 1px solid @border_color;
-        outline-offset: -1px;
-        padding: 0;
-        font-family: "{{body_font_family_stack}}";
-        font-size: 12px;
-    }
+.toolbar-button {
+    background-color: @control_color;
+    border: none;
+    border-radius: {{corner_radius}}px;
+    color: @text_color;
+    min-height: {{button_height}}px;
+    min-width: {{add_button_width}}px;
+    outline: 1px solid @border_color;
+    outline-offset: -1px;
+    padding: 0;
+    font-family: "{{body_font_family_stack}}";
+    font-size: 12px;
+}
 
 .toolbar-button:hover {
     background-color: @control_hover_color;
@@ -128,16 +128,33 @@ window.dlna-main {
     color: @secondary_text_color;
 }
 
+frame { color: @secondary_text_color; border-radius: 0; }
+entry {
+    background-color: @page_color;
+    color: @text_color;
+    border: none;
+    border-radius: {{corner_radius}}px;
+    box-shadow: inset 0 0 0 1px @border_color;
+}
+checkbutton, textview, textview text { color: @text_color; background-color: @page_color; }
+scrolledwindow, viewport { background-color: @page_color; }
+.source-list { background-color: @page_color; border: 1px solid @border_color; border-radius: 0; }
+.source-list list { padding: 2px; background-color: @page_color; color: @text_color; }
+.source-list row { padding: 4px 6px; background-color: @page_color; color: @text_color; }
+.source-list row:selected { background-color: rgb(70,90,120); color: @text_color; }
+window.csd, window.csd decoration { border-radius: 0; box-shadow: none; }
+
 .win10-titlebar {
     min-height: {{win10_titlebar_height}}px;
     padding: 0;
+    margin: 0;
     border: none;
     border-radius: 0;
     box-shadow: none;
 }
 
 .win10-titlebar.win10-active {
-    background-color: @toolbar_color;
+    background-color: @win10_active_titlebar_color;
 }
 
 .win10-titlebar.win10-inactive {
@@ -158,6 +175,7 @@ headerbar button {
     color: @text_color;
     min-height: {{win10_titlebar_height}}px;
     min-width: 46px;
+    margin: 0;
     padding: 0;
 }
 
@@ -197,11 +215,6 @@ def render(template, tokens):
         name = match.group(1)
         kind, value = tokens[name]
         if kind == "int":
-            if name == "button_height":
-                # GTK4 buttons add a 1px border top+bottom (2px total) so
-                # the CSS min-height must be 2 less than the token to produce
-                # the exact button height expected by the geometry tests.
-                return str(value - 2)
             return str(value)
         if kind == "color":
             return "rgb({},{},{})".format(value[0], value[1], value[2])

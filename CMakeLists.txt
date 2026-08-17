@@ -233,6 +233,7 @@ add_library(dlna_core STATIC
         configure_file(packaging/linux/dlna-server-gui "${CMAKE_BINARY_DIR}/dlna-server-gui" @ONLY NEWLINE_STYLE UNIX)
         find_package(PkgConfig REQUIRED)
         pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
+        pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
 
         add_custom_command(
             OUTPUT "${CMAKE_SOURCE_DIR}/resources/gtk/style.css"
@@ -250,7 +251,7 @@ add_library(dlna_core STATIC
         if(DLNA_FLATPAK_BUILD)
             target_compile_definitions(dlna-server-gui-gtk4 PRIVATE DLNA_FLATPAK_BUILD=1)
         endif()
-        target_link_libraries(dlna-server-gui-gtk4 PRIVATE dlna_core PkgConfig::GTK4 Threads::Threads)
+        target_link_libraries(dlna-server-gui-gtk4 PRIVATE dlna_core PkgConfig::GTK4 PkgConfig::X11 Threads::Threads)
         install(TARGETS dlna-server-gui-gtk4 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/style.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
