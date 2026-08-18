@@ -232,7 +232,8 @@ class TestSsdpStartStopCycleUnderRace:
                 config_ini.write_text(
                     "[Settings]\n"
                     f"Port={port}\n"
-                    f"MediaSources={media_dir}\n",
+                    f"MediaSources={media_dir}\n"
+                    "DebugLog=1\n",
                     encoding="utf-8-sig",
                 )
                 env = os.environ.copy()
@@ -242,7 +243,7 @@ class TestSsdpStartStopCycleUnderRace:
                 env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="dlna-runtime-")
                 proc = subprocess.Popen(
                     [str(dlna_binary), "--headless"],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     env=env, cwd=str(binary_dir))
                 deadline = time.time() + 15
                 connected = False

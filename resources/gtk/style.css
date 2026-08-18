@@ -52,11 +52,6 @@ window.dlna-main {
     font-size: 12px;
 }
 
-.settings-toolbar-button {
-    min-height: 28px;
-    min-width: 72px;
-}
-
 .toolbar-button:hover {
     background-color: @control_hover_color;
 }

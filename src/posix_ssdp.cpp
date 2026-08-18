@@ -212,11 +212,30 @@ SSDP::SSDP() : m_running(false), m_ipv4Socket(-1), m_ipv6Socket(-1) {
 bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid) {
     (void)port;
     (void)serverName;
+    bool expectedIdle = false;
+    if (!m_lifecycleBusy.compare_exchange_strong(expectedIdle, true, std::memory_order_acq_rel)) {
+        LogPrint(L"SSDP Start rejected: a Start or Stop call is already in progress.");
+        return false;
+    }
+    struct LifecycleGuard {
+        std::atomic<bool>& flag;
+        ~LifecycleGuard() { flag.store(false, std::memory_order_release); }
+    } lifecycleGuard{ m_lifecycleBusy };
+
     if (m_running.load()) return true;
     m_endpoints = endpoints;
     m_uuidStr = WideToUtf8(uuid);
     m_targets = BuildAdvertisedTargets(m_uuidStr);
-    m_bootId = static_cast<unsigned int>(time(nullptr));
+    if (!m_bootIdAssigned) {
+        m_bootId = static_cast<unsigned int>(time(nullptr));
+        m_bootIdAssigned = true;
+    }
+    // CONFIGID.UPNP.ORG stays fixed across every restart in this
+    // process this server's description.xml and SCPD documents never
+    // change at runtime so there is nothing for a bumped CONFIGID to
+    // signal and bumping it would force every control point to
+    // needlessly re fetch and re cache those documents on every
+    // transient network triggered restart see UDA 1 1 section 1 2
     m_configId = 1;
     m_ipv4Socket = CreateIPv4Socket(m_endpoints);
     m_ipv6Socket = CreateIPv6Socket(m_endpoints);
@@ -242,6 +261,16 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
 }
 
 void SSDP::Stop() {
+    bool expectedIdle = false;
+    if (!m_lifecycleBusy.compare_exchange_strong(expectedIdle, true, std::memory_order_acq_rel)) {
+        LogPrint(L"SSDP Stop rejected: a Start or Stop call is already in progress.");
+        return;
+    }
+    struct LifecycleGuard {
+        std::atomic<bool>& flag;
+        ~LifecycleGuard() { flag.store(false, std::memory_order_release); }
+    } lifecycleGuard{ m_lifecycleBusy };
+
     if (!m_running.load()) return;
     m_running.store(false);
     SendNotifyBurst("ssdp:byebye", 1, 0);
@@ -271,7 +300,8 @@ void SSDP::SendNotifyRound(const char* nts) {
         int socketFd = endpoint.family == AF_INET ? m_ipv4Socket : m_ipv6Socket;
         if (socketFd < 0) continue;
 
-        std::lock_guard<std::mutex> socketLock(m_socketMutex);
+        std::mutex& sendMutex = (endpoint.family == AF_INET) ? m_ipv4SendMutex : m_ipv6SendMutex;
+        std::lock_guard<std::mutex> socketLock(sendMutex);
         sockaddr_storage dest{};
         socklen_t destLen = 0;
         std::string hostHeader;
@@ -333,7 +363,8 @@ void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
 
 void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
     if (!m_running.load()) return;
-    std::lock_guard<std::mutex> socketLock(m_socketMutex);
+    std::mutex& sendMutex = (response.endpoint.family == AF_INET) ? m_ipv4SendMutex : m_ipv6SendMutex;
+    std::lock_guard<std::mutex> socketLock(sendMutex);
     if (!SetUnicastOutboundInterface(response.socket, response.endpoint)) return;
     for (size_t i = 0; i < response.messages.size(); ++i) {
         const std::string& message = response.messages[i];

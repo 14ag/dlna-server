@@ -3,6 +3,7 @@
 #include "settingsdlg.h"
 #include "media_source_file_types.h"
 #include "server_close_policy.h"
+#include "health_check_policy.h"
 #include "ui_font.h"
 #include "dark_frame.h"
 #include "win_geometry_dump.h"
@@ -27,7 +28,6 @@
 #include "function_key_action.h"
 #include "help_dialog.h"
 #include "server.h"
-#include "ssdp.h"
 #include "log.h"
 #include "tray_notify.h"
 
@@ -1486,12 +1486,16 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
                 SetControlsForState();
                 InvalidateRect(m_hwnd, NULL, TRUE);
             }
-            if (IsRunning() && !IsBusy() && !DLNAServer.IsHealthy()) {
-                LogPrint(L"Server reported running but an internal worker thread has stopped unexpectedly stopping cleanly");
-                BeginStopServer();
-                MessageBoxW(m_hwnd,
-                    L"The server stopped unexpectedly and has been shut down\n\nPress Start to resume",
-                    L"DLNA Server", MB_ICONWARNING | MB_OK);
+            if (IsRunning() && !IsBusy()) {
+                const bool healthyNow = DLNAServer.IsHealthy();
+                m_consecutiveUnhealthyPolls = healthyNow ? 0 : (m_consecutiveUnhealthyPolls + 1);
+                if (ShouldTreatServerAsUnhealthy(IsRunning(), healthyNow, m_consecutiveUnhealthyPolls)) {
+                    LogPrint(L"Server reported running but an internal worker thread has stopped unexpectedly stopping cleanly");
+                    BeginStopServer();
+                    MessageBoxW(m_hwnd,
+                        L"The server stopped unexpectedly and has been shut down\n\nPress Start to resume",
+                        L"DLNA Server", MB_ICONWARNING | MB_OK);
+                }
             }
         }
         return 0;
@@ -1500,10 +1504,11 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         if (wParam == PBT_APMRESUMESUSPEND || wParam == PBT_APMRESUMEAUTOMATIC) {
             if (DLNAServer.IsRunning()) {
                 LogPrint(L"System resumed from suspend; re-registering SSDP");
-                const ConfigSnapshot cfg = AppConfig.Snapshot();
-                DLNAServer.RefreshEndpoints(cfg);
-                SSDP::Get().Stop();
-                SSDP::Get().Start(DLNAServer.GetEndpoints(), cfg.port, cfg.serverName, cfg.deviceUUID);
+                // routed through Server RestartSsdpForNetworkChange so
+                // this cannot race the network change watcher thread
+                // calling the same underlying SSDP Stop Start pair
+                // see server.h/.cpp for the shared guard
+                DLNAServer.RestartSsdpForNetworkChange();
             }
             return TRUE;
         }

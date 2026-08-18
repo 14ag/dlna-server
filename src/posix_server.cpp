@@ -15,6 +15,7 @@
 #include "dirwatch.h"
 
 #include <chrono>
+#include <curl/curl.h>
 
 Server& Server::Get() {
     static Server instance;
@@ -22,10 +23,13 @@ Server& Server::Get() {
 }
 
 Server::Server() : m_running(false), m_stopping(false), m_starting(false), m_initialScanComplete(false), m_initialScanInProgress(false), m_stopWatch(false) {
+    // see the same fix and citation in src/server.cpp Server::Server
+    curl_global_init(CURL_GLOBAL_DEFAULT);
 }
 
 Server::~Server() {
     Stop();
+    curl_global_cleanup();
 }
 
 std::wstring Server::GetEndpoint() const {
@@ -109,14 +113,36 @@ std::vector<std::wstring> Server::LocalWatchFolders() const {
 
 void Server::StartNetworkChangeWatcher() {
     StartNetworkChangeWatch([this]() {
-        if (!m_running.load(std::memory_order_acquire)) return;
-        LogPrint(L"Network topology change detected; refreshing endpoints");
-        InvalidateRoutableHostUrlCache();
-        const ConfigSnapshot cfg = AppConfig.Snapshot();
-        RefreshEndpoints(cfg);
-        SSDP::Get().Stop();
-        SSDP::Get().Start(GetEndpoints(), cfg.port, cfg.serverName, cfg.deviceUUID);
+        RestartSsdpForNetworkChange();
     });
+}
+
+void Server::RestartSsdpForNetworkChange() {
+    std::lock_guard<std::mutex> lock(m_ssdpRestartMutex);
+    if (!m_running.load(std::memory_order_acquire)) return;
+    // NotifyIpInterfaceChange and NotifyUnicastIpAddressChange each
+    // serialize their own callback invocations but carry no guarantee
+    // against each other and WM_POWERBROADCAST resume is a third
+    // independent trigger a single adapter reconfiguration or sleep
+    // resume cycle can fire more than one of these within a few
+    // hundred milliseconds of each other this mutex plus the short
+    // circuit below make repeated near simultaneous callers a safe
+    // cheap no op instead of a second concurrent SSDP Stop Start pair
+    // racing the first see
+    // https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-notifyunicastipaddresschange
+    const auto now = std::chrono::steady_clock::now();
+    if (m_hasSsdpRestartCompletedAt && (now - m_lastSsdpRestartCompletedAt) < std::chrono::seconds(2)) {
+        LogPrint(L"SSDP restart skipped: already restarted less than 2s ago.");
+        return;
+    }
+    LogPrint(L"Network topology change detected; refreshing endpoints");
+    InvalidateRoutableHostUrlCache();
+    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    RefreshEndpoints(cfg);
+    SSDP::Get().Stop();
+    SSDP::Get().Start(GetEndpoints(), cfg.port, cfg.serverName, cfg.deviceUUID);
+    m_lastSsdpRestartCompletedAt = std::chrono::steady_clock::now();
+    m_hasSsdpRestartCompletedAt = true;
 }
 
 void Server::StopNetworkChangeWatcher() {

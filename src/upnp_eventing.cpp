@@ -106,10 +106,6 @@ std::string MakeSid(unsigned long long counter) {
     return ss.str();
 }
 
-struct CurlGlobalInit {
-    CurlGlobalInit() { curl_global_init(CURL_GLOBAL_DEFAULT); }
-    ~CurlGlobalInit() { curl_global_cleanup(); }
-};
 }
 
 UpnpEventManager& UpnpEventManager::Get() {
@@ -359,9 +355,6 @@ void UpnpEventManager::WorkerLoop() {
 }
 
 void UpnpEventManager::SendNotifyJob(const NotifyJob& job) {
-    static CurlGlobalInit init;
-    (void)init;
-
     CURL* curl = curl_easy_init();
     if (!curl) {
         LogPrint(L"GENA notify failed: libcurl handle creation failed.");

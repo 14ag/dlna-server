@@ -2,8 +2,21 @@
 #define WIN_GEOMETRY_DUMP_H
 
 #include <windows.h>
-#include "config.h"
 #include "log.h"
+#include "geometry_dump_policy.h"
+
+// set once during argv parsing in wWinMain before any window is
+// created never mutated again after that see main cpp for the call
+// site lives outside any anonymous namespace on purpose an inline
+// function at namespace scope in a header shares one instance across
+// every translation unit that includes this header per the c plus
+// plus standard inline function local static rule the same mechanism
+// this codebase already relies on for Config Get and HttpServer Get
+// style singletons
+inline bool& DumpWidgetGeometryFlag() {
+    static bool value = false;
+    return value;
+}
 
 // single shared geometry dump used by every win32 dialog so the
 // gtk4 port has ground truth pixel values to transcribe
@@ -42,7 +55,7 @@ BOOL CALLBACK DumpGeometryChildProc(HWND hwndChild, LPARAM lParam) {
 }
 
 void DumpDialogGeometry(HWND hwndDlg, const wchar_t* tag) {
-    if (!AppConfig.IsDebugLogEnabled()) return;
+    if (!ShouldDumpDialogGeometry(DumpWidgetGeometryFlag())) return;
     RECT client = {};
     GetClientRect(hwndDlg, &client);
     LogPrint(L"[%ls] class=dialog-client id=0 text=\"\" x=0 y=0 w=%ld h=%ld",

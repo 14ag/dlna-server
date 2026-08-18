@@ -22,7 +22,7 @@
 ## Build And Dependencies
 
 - never build manually. always use the build scripts. never edit the build scripts unless it has bugs
-- build windows assets using command `& .\build.bat --platform winx64 2>&1 | Select-Object -Last 30`
+- build windows assets using command `& .\build.bat --platform --x64 2>&1 | Select-Object -Last 30`
 - build linux assets using command `wsl.exe -d Ubuntu -- bash -lc 'cd $(wslpath "$PWD") && DLNA_SUDO_PASSWORD=" " ./build.sh --install'` with no extra parameters.this script will handle everything (copying assets, building and installing)
 - CMake requires libcurl. Do not add curl CLI or legacy IO fallback.
 - Windows build deps use vcpkg. Expected root is `$env:VCPKG_ROOT` or `$env:USERPROFILE\vcpkg`.

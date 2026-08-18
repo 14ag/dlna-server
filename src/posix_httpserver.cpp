@@ -239,6 +239,16 @@ HttpServer::HttpServer() : m_running(false), m_listenSocketV4(-1), m_listenSocke
 }
 
 bool HttpServer::Start(int port) {
+    bool expectedIdle = false;
+    if (!m_lifecycleBusy.compare_exchange_strong(expectedIdle, true, std::memory_order_acq_rel)) {
+        LogPrint(L"HTTP server Start rejected: a Start or Stop call is already in progress.");
+        return false;
+    }
+    struct LifecycleGuard {
+        std::atomic<bool>& flag;
+        ~LifecycleGuard() { flag.store(false, std::memory_order_release); }
+    } lifecycleGuard{ m_lifecycleBusy };
+
     if (m_running) return true;
     m_listenSocketV4 = CreateListenSocket(AF_INET, port);
     m_listenSocketV6 = CreateListenSocket(AF_INET6, port);
@@ -265,6 +275,16 @@ bool HttpServer::Start(int port) {
 }
 
 void HttpServer::Stop() {
+    bool expectedIdle = false;
+    if (!m_lifecycleBusy.compare_exchange_strong(expectedIdle, true, std::memory_order_acq_rel)) {
+        LogPrint(L"HTTP server Stop rejected: a Start or Stop call is already in progress.");
+        return;
+    }
+    struct LifecycleGuard {
+        std::atomic<bool>& flag;
+        ~LifecycleGuard() { flag.store(false, std::memory_order_release); }
+    } lifecycleGuard{ m_lifecycleBusy };
+
     m_running = false;
     AppEvents.ClearSubscriptions();
     if (m_wakeupWriteFd >= 0) {

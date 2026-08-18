@@ -44,6 +44,9 @@ public:
     // true only while the search and notify worker thread that Start
     // launched is still executing mirrors HttpServer IsHealthy exactly
     bool IsHealthy() const { return m_workerThreadAlive.load(std::memory_order_acquire); }
+    // test only accessor for the bootid persistence regression hook
+    // cheap and harmless in production so it is not ifdef guarded
+    unsigned int GetBootIdForTest() const { return m_bootId; }
 
 private:
     SSDP();
@@ -84,14 +87,31 @@ private:
     // queue sits at the cap and every arrival evicts one, making the
     // steady-state cost O(n) per incoming search. See F-PERF-01.
     std::deque<DelayedSearchResponse> m_delayedResponses;
-    std::mutex m_socketMutex;
+    // split so an ipv4 send and an ipv6 send never block each other
+    // only sends on the same address family need to serialize against
+    // each other and against a Stop closing that family's socket
+    std::mutex m_ipv4SendMutex;
+    std::mutex m_ipv6SendMutex;
 
     std::vector<NetworkEndpoint> m_endpoints;
     std::string m_uuidStr;
     std::vector<SSDPTarget> m_targets;
     unsigned int m_bootId;
     unsigned int m_configId;
+    // true once m_bootId has been assigned for this process lifetime
+    // BOOTID.UPNP.ORG must not change on a restart that is not a
+    // genuine device reboot per UPnP Device Architecture 1 1 section
+    // 1 2 Advertisement see the workflow document citation
+    bool m_bootIdAssigned = false;
     std::atomic<bool> m_workerThreadAlive{false};
+    // guards Start and Stop against re-entrant concurrent calls from a
+    // second thread the same class of check-then-act race CWE-367
+    // that Server::m_starting in server.cpp already guards against
+    // for Server::Start a second caller fails fast and logs instead
+    // of racing socket creation destruction or the m_endpoints
+    // m_targets m_bootId m_configId members against the in progress
+    // caller see the workflow document for the full trace
+    std::atomic<bool> m_lifecycleBusy{false};
 };
 
 #endif // SSDP_H

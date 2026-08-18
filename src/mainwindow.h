@@ -127,6 +127,7 @@ private:
     RECT m_statusRect = {0, 0, 0, 0};
     std::atomic<bool> m_scanInProgress;
     std::atomic<bool> m_scanningStatusActive;
+    int m_consecutiveUnhealthyPolls = 0;
     SourceListFocusState m_focusState;
     HoverFocusState m_hoverFocusState;
     RECT m_listRingRect = {0, 0, 0, 0};

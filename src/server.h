@@ -2,6 +2,7 @@
 #define SERVER_H
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <string>
@@ -18,6 +19,13 @@ public:
     bool Start(std::wstring& outReason);
     void Stop();
     bool Rescan();
+    // re registers SSDP after a detected network topology change
+    // adapter added removed IP change or a resume from suspend
+    // serializes against itself and coalesces near simultaneous
+    // callers see the workflow document Task 5 for the two
+    // independent windows ip helper api registrations plus
+    // WM_POWERBROADCAST this guards against
+    void RestartSsdpForNetworkChange();
     
     bool IsRunning() const { return m_running.load(std::memory_order_acquire); }
     // false only when the server claims to be running but one of the
@@ -65,6 +73,9 @@ private:
     std::mutex m_scanMutex;
     std::mutex m_rescanMutex;
     mutable std::mutex m_endpointMutex;
+    std::mutex m_ssdpRestartMutex;
+    std::chrono::steady_clock::time_point m_lastSsdpRestartCompletedAt{};
+    bool m_hasSsdpRestartCompletedAt = false;
     std::mutex m_watchThreadMutex;
     std::mutex m_watchMutex;
     std::condition_variable m_watchCv;
