@@ -17,6 +17,7 @@
 #include "settings_restart.h"
 #include "close_pending_state.h"
 #include "server_close_policy.h"
+#include "health_check_policy.h"
 #include "input_gate.h"
 #include "settings_help.h"
 #include "cli_flags.h"
@@ -161,6 +162,7 @@ ServerUiState g_pendingState = ServerUiState::Stopped;
 std::string g_pendingMessage;
 bool g_sourceListHasFocus = false;
 std::atomic<bool> g_scanInProgress{false};
+int g_consecutiveUnhealthyPolls = 0;
 // WSLg can report a freshly mapped window as minimized before it has been
 // presented. Only treat minimization as a user action after one normal map.
 bool g_mainWindowWasUnminimized = false;
@@ -1738,11 +1740,17 @@ gboolean OnPollTick(gpointer) {
     if (g_signalStop.load(std::memory_order_relaxed)) {
         RequestClose();
     }
-    if (g_state == ServerUiState::Running && !DLNAServer.IsHealthy()) {
-        LogPrint(L"Server reported running but an internal worker thread has stopped unexpectedly stopping cleanly");
-        StopServer();
-        MessageBoxShow(ActiveTopLevelWindow(),
-            "The server stopped unexpectedly and has been shut down\n\nPress Start to resume");
+    if (g_state == ServerUiState::Running) {
+        const bool healthyNow = DLNAServer.IsHealthy();
+        g_consecutiveUnhealthyPolls = healthyNow ? 0 : (g_consecutiveUnhealthyPolls + 1);
+        if (ShouldTreatServerAsUnhealthy(true, healthyNow, g_consecutiveUnhealthyPolls)) {
+            LogPrint(L"Server reported running but an internal worker thread has stopped unexpectedly stopping cleanly");
+            StopServer();
+            MessageBoxShow(ActiveTopLevelWindow(),
+                "The server stopped unexpectedly and has been shut down\n\nPress Start to resume");
+        }
+    } else {
+        g_consecutiveUnhealthyPolls = 0;
     }
     ApplyPendingResult();
     RefreshStatus();

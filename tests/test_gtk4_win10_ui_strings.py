@@ -16,7 +16,9 @@ def test_main_window_uses_shared_win10_titlebar():
 
 def test_sharp_corner_css_present():
     text = CSS_PATH.read_text(encoding="utf-8")
-    assert "border-radius: 0px" in text
+    # the generated template emits border-radius: 0 (unitless zero is
+    # valid CSS); accept either spelling so the assertion stays robust
+    assert "border-radius: 0" in text
 
 
 def test_shared_titlebar_owns_the_only_window_controls():

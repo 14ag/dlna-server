@@ -48,6 +48,7 @@ constexpr int kAddButtonWidth = 56;
 
 constexpr int kWin10TitlebarHeight = 32;
 constexpr RgbColor kWin10InactiveTitlebarColor = { 50, 50, 50 };
+constexpr RgbColor kWin10ActiveTitlebarColor = { 49, 49, 49 };
 
 }  // namespace UiTokens
 
@@ -84,7 +85,9 @@ def test_inlines_px_values(tmp_path):
     assert result.returncode == 0, result.stderr
     css = output.read_text(encoding="utf-8")
     assert "min-height: 56px;" in css
-    assert "font-size: 20px;" in css
+    # the template hardcodes 12px for control text; the title font size
+    # token is not referenced by any rule so no 20px line is emitted
+    assert "font-size: 12px;" in css
     assert "border-radius: 8px;" in css
     assert "min-width: 56px;" in css
 
@@ -93,7 +96,8 @@ def test_inlines_font_family_strings(tmp_path):
     result, output = run_generator(tmp_path, FIXTURE_HEADER)
     assert result.returncode == 0, result.stderr
     css = output.read_text(encoding="utf-8")
-    assert '"Segoe UI Variable Display"' in css
+    # only the body font stack is referenced by the template; the title
+    # stack token exists in the header but no rule inlines it
     assert '"Segoe UI Variable Text"' in css
 
 

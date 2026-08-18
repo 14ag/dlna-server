@@ -40,8 +40,11 @@
 #include "media_source_file_types.h"
 #include "contentdirectory.h"
 #include "ssdp_common.h"
+#include "ssdp.h"
 #include "upnp_eventing.h"
 #include "server_close_policy.h"
+#include "health_check_policy.h"
+#include "win_geometry_dump.h"
 #include "close_pending_state.h"
 #include "function_key_action.h"
 #include "tray_notify.h"
@@ -132,6 +135,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         } else if (wcscmp(argv[i], L"--no-debug") == 0) {
             debugFlag = false;
             AppConfig.debugLog = false;
+        } else if (wcscmp(argv[i], L"--dump-widget-geometry") == 0) {
+            DumpWidgetGeometryFlag() = true;
+        } else if (wcscmp(argv[i], L"--print-should-dump-dialog-geometry") == 0 && i + 1 < argc) {
+            bool flagEnabled = wcscmp(argv[++i], L"1") == 0;
+            std::wcout << (ShouldDumpDialogGeometry(flagEnabled) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-scan-cancellation-lifecycle") == 0) {
             AppScanCancel.BeginScan();
             std::wcout << (AppScanCancel.IsCancelled() ? L"1" : L"0") << std::endl;
@@ -322,6 +332,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             bool isRunning = wcscmp(argv[++i], L"1") == 0;
             bool isBusy = wcscmp(argv[++i], L"1") == 0;
             std::wcout << (ShouldCloseNow(isRunning, isBusy) ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-should-treat-server-unhealthy") == 0 && i + 3 < argc) {
+            bool isRunning = wcscmp(argv[++i], L"1") == 0;
+            bool isHealthy = wcscmp(argv[++i], L"1") == 0;
+            int consecutiveUnhealthyPolls = _wtoi(argv[++i]);
+            std::wcout << (ShouldTreatServerAsUnhealthy(isRunning, isHealthy, consecutiveUnhealthyPolls) ? L"1" : L"0") << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-is-plausible-copydata-size") == 0 && i + 1 < argc) {
@@ -744,6 +761,89 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             (void)exactlyOneSucceeded;
             DLNAServer.Stop();
             std::wcout << L"after-stop-running=" << (DLNAServer.IsRunning() ? L"1" : L"0") << std::endl;
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-ssdp-concurrent-start-stop-safety") == 0) {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::atomic<int> rejectedCount(0);
+            auto restartOnce = [&]() {
+                SSDP::Get().Stop();
+                const ConfigSnapshot cfg = AppConfig.Snapshot();
+                const bool ok = SSDP::Get().Start(DLNAServer.GetEndpoints(), cfg.port, cfg.serverName, cfg.deviceUUID);
+                if (!ok) rejectedCount.fetch_add(1);
+            };
+            std::thread threadA(restartOnce);
+            std::thread threadB([&]() {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                restartOnce();
+            });
+            threadA.join();
+            threadB.join();
+            std::wcout << L"rejected-count=" << rejectedCount.load() << std::endl;
+            std::wcout << L"final-running=" << (DLNAServer.IsRunning() ? L"1" : L"0") << std::endl;
+            DLNAServer.Stop();
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-httpserver-concurrent-start-stop-safety") == 0) {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            const ConfigSnapshot cfg = AppConfig.Snapshot();
+            std::atomic<int> rejectedCount(0);
+            auto cycleOnce = [&]() {
+                HttpServer::Get().Stop();
+                const bool ok = HttpServer::Get().Start(cfg.port);
+                if (!ok) rejectedCount.fetch_add(1);
+            };
+            std::thread threadA(cycleOnce);
+            std::thread threadB([&]() {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                cycleOnce();
+            });
+            threadA.join();
+            threadB.join();
+            HttpServer::Get().Start(cfg.port);
+            std::wcout << L"rejected-count=" << rejectedCount.load() << std::endl;
+            std::wcout << L"is-healthy=" << (HttpServer::Get().IsHealthy() ? L"1" : L"0") << std::endl;
+            DLNAServer.Stop();
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-ssdp-bootid-persistence") == 0) {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            const unsigned int firstBootId = SSDP::Get().GetBootIdForTest();
+            DLNAServer.Stop();
+            bool startOk2 = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            const unsigned int secondBootId = SSDP::Get().GetBootIdForTest();
+            std::wcout << L"first=" << firstBootId << L" second=" << secondBootId << std::endl;
+            DLNAServer.Stop();
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-network-change-restart-coalescing") == 0) {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::thread threadA([&]() { DLNAServer.RestartSsdpForNetworkChange(); });
+            std::thread threadB([&]() { DLNAServer.RestartSsdpForNetworkChange(); });
+            threadA.join();
+            threadB.join();
+            std::wcout << L"is-running=" << (DLNAServer.IsRunning() ? L"1" : L"0") << std::endl;
+            std::wcout << L"is-healthy=" << (DLNAServer.IsHealthy() ? L"1" : L"0") << std::endl;
+            DLNAServer.Stop();
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-single-file-source-scan") == 0) {

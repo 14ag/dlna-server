@@ -104,15 +104,6 @@ struct RemoteFetchResult {
     std::string body;
 };
 
-struct CurlGlobalInit {
-    CurlGlobalInit() {
-        curl_global_init(CURL_GLOBAL_DEFAULT);
-    }
-    ~CurlGlobalInit() {
-        curl_global_cleanup();
-    }
-};
-
 class CurlShareHandle {
 public:
     CurlShareHandle() {
@@ -149,8 +140,6 @@ private:
 };
 
 CURLSH* GetSharedCurlHandle() {
-    static CurlGlobalInit init;
-    (void)init;
     static CurlShareHandle share;
     return share.Get();
 }
@@ -198,8 +187,6 @@ int ScanCancelXferInfo(void* /*clientp*/, curl_off_t /*dltotal*/, curl_off_t /*d
 }
 
 CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutSeconds) {
-    static CurlGlobalInit init;
-    (void)init;
     CURL* curl = curl_easy_init();
     if (!curl) return nullptr;
     std::string urlText = WideToUtf8(url);

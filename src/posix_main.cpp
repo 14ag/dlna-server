@@ -23,6 +23,8 @@
 #include "transmitfile_chunking.h"
 #include "close_pending_state.h"
 #include "server_close_policy.h"
+#include "health_check_policy.h"
+#include "geometry_dump_policy.h"
 #include "tray_notify.h"
 #include "settings_restart.h"
 #include "startup_mode.h"
@@ -33,6 +35,7 @@
 #include "media_database.h"
 #include "browse_page_cap.h"
 #include "httpserver.h"
+#include "ssdp.h"
 
 #include <atomic>
 #include <chrono>
@@ -342,6 +345,18 @@ int main(int argc, char** argv) {
             bool isRunning = std::string(argv[++i]) == "1";
             bool isBusy = std::string(argv[++i]) == "1";
             std::wcout << (ShouldCloseNow(isRunning, isBusy) ? L"1" : L"0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-should-dump-dialog-geometry" && i + 1 < argc) {
+            bool flagEnabled = std::string(argv[++i]) == "1";
+            std::cout << (ShouldDumpDialogGeometry(flagEnabled) ? "1" : "0") << std::endl;
+            return 0;
+        }
+        else if (arg == "--print-should-treat-server-unhealthy" && i + 3 < argc) {
+            bool isRunning = std::string(argv[++i]) == "1";
+            bool isHealthy = std::string(argv[++i]) == "1";
+            int consecutiveUnhealthyPolls = std::atoi(argv[++i]);
+            std::cout << (ShouldTreatServerAsUnhealthy(isRunning, isHealthy, consecutiveUnhealthyPolls) ? "1" : "0") << std::endl;
             return 0;
         }
         else if (arg == "--print-is-plausible-copydata-size" && i + 1 < argc) {
@@ -829,6 +844,89 @@ int main(int argc, char** argv) {
             std::wcout << L"after-stop-running=" << (DLNAServer.IsRunning() ? L"1" : L"0") << std::endl;
             return 0;
         }
+        else if (arg == "--print-ssdp-concurrent-start-stop-safety") {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::atomic<int> rejectedCount(0);
+            auto restartOnce = [&]() {
+                SSDP::Get().Stop();
+                const ConfigSnapshot cfg = AppConfig.Snapshot();
+                const bool ok = SSDP::Get().Start(DLNAServer.GetEndpoints(), cfg.port, cfg.serverName, cfg.deviceUUID);
+                if (!ok) rejectedCount.fetch_add(1);
+            };
+            std::thread threadA(restartOnce);
+            std::thread threadB([&]() {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                restartOnce();
+            });
+            threadA.join();
+            threadB.join();
+            std::cout << "rejected-count=" << rejectedCount.load() << std::endl;
+            std::cout << "final-running=" << (DLNAServer.IsRunning() ? "1" : "0") << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
+        else if (arg == "--print-httpserver-concurrent-start-stop-safety") {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            const ConfigSnapshot cfg = AppConfig.Snapshot();
+            std::atomic<int> rejectedCount(0);
+            auto cycleOnce = [&]() {
+                HttpServer::Get().Stop();
+                const bool ok = HttpServer::Get().Start(cfg.port);
+                if (!ok) rejectedCount.fetch_add(1);
+            };
+            std::thread threadA(cycleOnce);
+            std::thread threadB([&]() {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                cycleOnce();
+            });
+            threadA.join();
+            threadB.join();
+            HttpServer::Get().Start(cfg.port);
+            std::cout << "rejected-count=" << rejectedCount.load() << std::endl;
+            std::cout << "is-healthy=" << (HttpServer::Get().IsHealthy() ? "1" : "0") << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
+        else if (arg == "--print-ssdp-bootid-persistence") {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            const unsigned int firstBootId = SSDP::Get().GetBootIdForTest();
+            DLNAServer.Stop();
+            bool startOk2 = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            const unsigned int secondBootId = SSDP::Get().GetBootIdForTest();
+            std::cout << "first=" << firstBootId << " second=" << secondBootId << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
+        else if (arg == "--print-network-change-restart-coalescing") {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::thread threadA([&]() { DLNAServer.RestartSsdpForNetworkChange(); });
+            std::thread threadB([&]() { DLNAServer.RestartSsdpForNetworkChange(); });
+            threadA.join();
+            threadB.join();
+            std::cout << "is-running=" << (DLNAServer.IsRunning() ? "1" : "0") << std::endl;
+            std::cout << "is-healthy=" << (DLNAServer.IsHealthy() ? "1" : "0") << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
         else if (arg == "--print-ssdp-start-latency") {
             // regression hook for the ssdp initial burst thread fix
             // measures how long Start takes to return with a real
@@ -1101,8 +1199,12 @@ int main(int argc, char** argv) {
         return 1;
     }
     bool loggedUnhealthy = false;
+    int consecutiveUnhealthyPolls = 0;
     while (!g_stop) {
-        if (DLNAServer.IsRunning() && !DLNAServer.IsHealthy()) {
+        const bool runningNow = DLNAServer.IsRunning();
+        const bool healthyNow = runningNow ? DLNAServer.IsHealthy() : true;
+        consecutiveUnhealthyPolls = healthyNow ? 0 : (consecutiveUnhealthyPolls + 1);
+        if (ShouldTreatServerAsUnhealthy(runningNow, healthyNow, consecutiveUnhealthyPolls)) {
             if (!loggedUnhealthy) {
                 LogPrint(L"Server reported running but an internal worker thread has stopped unexpectedly stopping cleanly");
                 loggedUnhealthy = true;

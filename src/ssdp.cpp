@@ -91,12 +91,31 @@ SSDP::SSDP()
 }
 
 bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid) {
+    bool expectedIdle = false;
+    if (!m_lifecycleBusy.compare_exchange_strong(expectedIdle, true, std::memory_order_acq_rel)) {
+        LogPrint(L"SSDP Start rejected: a Start or Stop call is already in progress.");
+        return false;
+    }
+    struct LifecycleGuard {
+        std::atomic<bool>& flag;
+        ~LifecycleGuard() { flag.store(false, std::memory_order_release); }
+    } lifecycleGuard{ m_lifecycleBusy };
+
     if (m_running.load()) return true;
 
     m_endpoints = endpoints;
     m_uuidStr = WideToUtf8(uuid);
     m_targets = BuildAdvertisedTargets(m_uuidStr);
-    m_bootId = static_cast<unsigned int>(time(nullptr));
+    if (!m_bootIdAssigned) {
+        m_bootId = static_cast<unsigned int>(time(nullptr));
+        m_bootIdAssigned = true;
+    }
+    // CONFIGID.UPNP.ORG stays fixed across every restart in this
+    // process this server's description.xml and SCPD documents never
+    // change at runtime so there is nothing for a bumped CONFIGID to
+    // signal and bumping it would force every control point to
+    // needlessly re fetch and re cache those documents on every
+    // transient network triggered restart see UDA 1 1 section 1 2
     m_configId = 1;
 
     int ipv4EndpointCount = 0;
@@ -226,6 +245,16 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
 }
 
 void SSDP::Stop() {
+    bool expectedIdle = false;
+    if (!m_lifecycleBusy.compare_exchange_strong(expectedIdle, true, std::memory_order_acq_rel)) {
+        LogPrint(L"SSDP Stop rejected: a Start or Stop call is already in progress.");
+        return;
+    }
+    struct LifecycleGuard {
+        std::atomic<bool>& flag;
+        ~LifecycleGuard() { flag.store(false, std::memory_order_release); }
+    } lifecycleGuard{ m_lifecycleBusy };
+
     if (!m_running.load()) return;
 
     m_running.store(false);
@@ -270,7 +299,8 @@ void SSDP::SendNotifyRound(const char* nts) {
             continue;
         }
 
-        std::lock_guard<std::mutex> socketLock(m_socketMutex);
+        std::mutex& sendMutex = (endpoint.family == AF_INET) ? m_ipv4SendMutex : m_ipv6SendMutex;
+        std::lock_guard<std::mutex> socketLock(sendMutex);
         if (!SetOutboundInterface(socket, endpoint, true)) {
             LogPrint(L"SSDP notify interface select failed: family=%d if=%lu err=%d", endpoint.family, endpoint.interfaceIndex, WSAGetLastError());
             continue;
@@ -368,7 +398,8 @@ void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
     if (!m_running.load()) {
         return;
     }
-    std::lock_guard<std::mutex> socketLock(m_socketMutex);
+    std::mutex& sendMutex = (response.endpoint.family == AF_INET) ? m_ipv4SendMutex : m_ipv6SendMutex;
+    std::lock_guard<std::mutex> socketLock(sendMutex);
     if (!SetOutboundInterface(response.socket, response.endpoint, false)) {
         LogPrint(L"SSDP response interface select failed: if=%lu err=%d", response.endpoint.interfaceIndex, WSAGetLastError());
         return;
@@ -454,7 +485,11 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
     }
 
     const NetworkEndpoint* endpoint = SelectBestEndpoint(m_endpoints, remoteAddr);
-    if (!endpoint) {
+    if (!endpoint || endpoint->family != remoteAddr->sa_family) {
+        // SelectBestEndpoint's final fallback can return an endpoint of
+        // the wrong address family when no same family endpoint exists
+        // mirrors the same re check already present in
+        // posix_ssdp cpp HandleSearchRequest see F-DISCOVERY-01
         DiscoveryLog(L"SSDP search ignored: no endpoint match for %hs", source.c_str());
         return;
     }

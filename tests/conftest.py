@@ -264,10 +264,16 @@ def _launch_server(binary_path, port, media_source_dir, config_dir=None):
         except (OSError, subprocess.SubprocessError):
             pass
 
+    # stdout/stderr are DEVNULL (not PIPE) because the server logs SSDP
+    # notifications continuously while running; a captured pipe that is never
+    # drained deadlocks the server once the 64 KiB buffer fills, which makes
+    # concurrent SOAP/HTTP requests hang. No fixture consumer reads this
+    # process's stdout, so discarding it is safe and matches the other
+    # long-running launch sites in this file.
     proc = subprocess.Popen(
         [str(binary_path), "--headless"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         env=env,
     )
 

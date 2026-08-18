@@ -60,6 +60,9 @@ private:
     // posix_httpserver cpp AcceptLoop for the reference this mirrors
     std::atomic<size_t> m_activeClientCount{0};
     std::atomic<bool> m_acceptThreadAlive{false};
+    // see the identical SSDP m_lifecycleBusy fix and citation in
+    // ssdp.h for the rationale this guards Start and Stop the same way
+    std::atomic<bool> m_lifecycleBusy{false};
     // gates AcceptThreadWorker before it calls accept again once
     // m_activeClientCount reaches kMaxClientThreads
     // mirrors BoundedThreadPool Submit blocking on the posix side
@@ -87,6 +90,7 @@ private:
     std::unique_ptr<BoundedThreadPool> m_clientPool;
     int m_wakeupReadFd;
     int m_wakeupWriteFd;
+    std::atomic<bool> m_lifecycleBusy{false};
 #endif
 };
 

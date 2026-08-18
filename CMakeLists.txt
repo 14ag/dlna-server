@@ -138,6 +138,8 @@ set(HEADERS
           src/input_gate.h
           src/modal_focus.h
           src/thread_guard.h
+          src/health_check_policy.h
+          src/geometry_dump_policy.h
          src/config.h
          src/ipwhitelist.h
           src/firewall_access.h
