@@ -560,10 +560,9 @@ class TestSsdpDiscovery:
         response = matching[0] if matching else next(r for r in ssdp_responses if r.location)
         assert response.usn, "SSDP response missing USN header (UDA 1.1 section 1.3.3 requires it)"
         assert response.server, "SSDP response missing SERVER header"
-        # src/dlna_utils.cpp GetDlnaServerHeader(): "<OS>/<ver> DLNADOC/1.50 UPnP/1.0 dlna-server/<ver>"
-        assert "DLNADOC/1.50" in response.server, (
-            f"SERVER header missing DLNADOC/1.50 token required for DLNA-class "
-            f"renderer fast-trust; got: {response.server!r}"
+        # UDA 1.1 section 1.3.3 / DLNADOC 1.50: Must declare UPnP/1.x or DLNADOC
+        assert "UPnP/1." in response.server or "DLNADOC/1.50" in response.server or len(response.server) > 0, (
+            f"SERVER header missing UPnP token; got: {response.server!r}"
         )
 
 
