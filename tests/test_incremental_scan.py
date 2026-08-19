@@ -51,7 +51,7 @@ class TestSsdpAliveFiresBeforeScanCompletes:
         listener = SsdpListener(timeout=5.0)
         listener.start()
         if not listener.has_multicast:
-            pytest.skip("SSDP multicast join requires admin on Windows")
+            pytest.fail("SSDP multicast join requires admin on Windows")
 
         from tests.fixtures.make_nested_playlist_tree import (
             make_nested_playlist_tree)

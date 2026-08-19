@@ -520,7 +520,7 @@ def ssdp_responses(dlna_server_endpoint):
     if not responses:
         responses = discover_via_unicast(server_host=host, search_target="ssdp:all")
     if not responses:
-        pytest.skip(
+        pytest.fail(
             f"No SSDP response received from {dlna_server_endpoint} via multicast or unicast. "
             "Host network appears to drop UDP 1900."
         )

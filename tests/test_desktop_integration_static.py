@@ -93,7 +93,7 @@ def test_desktop_file_startup_wm_class_matches_gtk4_app_id():
 def test_desktop_file_validate_reports_no_errors():
     validator = _ensure_desktop_file_validate()
     if validator is None:
-        pytest.skip("desktop-file-validate unavailable and sudo not usable")
+        pytest.fail("desktop-file-validate unavailable and sudo not usable")
     if not BUILT_DESKTOP_FILE.is_file():
         pytest.fail(
             f"built desktop file missing: {BUILT_DESKTOP_FILE} run Linux build before validation"

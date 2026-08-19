@@ -62,7 +62,7 @@ def test_cli_help_repeated_runs_stay_stable():
 def test_gui_binary_does_not_deadlock_on_fresh_install():
     binary_path = _first_existing(GUI_CANDIDATES)
     if binary_path is None:
-        pytest.skip("gui binary not built or not installed on this machine")
+        pytest.fail("gui binary not built or not installed on this machine")
 
     process = subprocess.Popen(
         [binary_path],
