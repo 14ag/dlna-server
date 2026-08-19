@@ -349,6 +349,24 @@ const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& en
     return endpoints.empty() ? nullptr : &endpoints.front();
 }
 
+bool NetworkEndpointSetsEqual(const std::vector<NetworkEndpoint>& a,
+                              const std::vector<NetworkEndpoint>& b) {
+    if (a.size() != b.size()) return false;
+    auto keyOf = [](const NetworkEndpoint& endpoint) {
+        return std::to_string(endpoint.family) + "|" + endpoint.address +
+               "|" + std::to_string(endpoint.interfaceIndex);
+    };
+    std::vector<std::string> keysA;
+    std::vector<std::string> keysB;
+    keysA.reserve(a.size());
+    keysB.reserve(b.size());
+    for (const auto& endpoint : a) keysA.push_back(keyOf(endpoint));
+    for (const auto& endpoint : b) keysB.push_back(keyOf(endpoint));
+    std::sort(keysA.begin(), keysA.end());
+    std::sort(keysB.begin(), keysB.end());
+    return keysA == keysB;
+}
+
 bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Content) {
     const std::wstring tempPath = path + L".tmp";
     FILE* fp = std::fopen(WideToUtf8(tempPath).c_str(), "wb");

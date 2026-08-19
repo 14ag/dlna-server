@@ -272,6 +272,30 @@ void SSDP::Stop() {
     } lifecycleGuard{ m_lifecycleBusy };
 
     if (!m_running.load()) return;
+
+    // send any delayed search response that is already due or due
+    // within the next quarter second before this restart closes the
+    // socket it would have gone out on rather than silently dropping
+    // it see task 3 of the ssdp restart storm fix workflow document
+    {
+        std::vector<DelayedSearchResponse> dueSoon;
+        const auto flushDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+        {
+            std::lock_guard<std::mutex> responseLock(m_responseMutex);
+            for (auto it = m_delayedResponses.begin(); it != m_delayedResponses.end();) {
+                if (it->dueAt <= flushDeadline) {
+                    dueSoon.push_back(std::move(*it));
+                    it = m_delayedResponses.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        for (const auto& response : dueSoon) {
+            SendDelayedSearchResponse(response);
+        }
+    }
+
     m_running.store(false);
     SendNotifyBurst("ssdp:byebye", 1, 0);
     if (m_ipv4Socket >= 0) shutdown(m_ipv4Socket, SHUT_RDWR);
@@ -359,6 +383,41 @@ void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
         m_delayedResponses.push_back(std::move(response));
     }
     m_responseCondition.notify_one();
+}
+
+void SSDP::QueueTestResponseDueNow() {
+    if (m_endpoints.empty()) return;
+    const NetworkEndpoint* endpoint = nullptr;
+    if (m_ipv4Socket >= 0) {
+        for (const auto& candidate : m_endpoints) {
+            if (candidate.family == AF_INET) { endpoint = &candidate; break; }
+        }
+    } else if (m_ipv6Socket >= 0) {
+        for (const auto& candidate : m_endpoints) {
+            if (candidate.family == AF_INET6) { endpoint = &candidate; break; }
+        }
+    }
+    if (!endpoint) return;
+    DelayedSearchResponse response{};
+    response.socket = (endpoint->family == AF_INET) ? m_ipv4Socket : m_ipv6Socket;
+    response.endpoint = *endpoint;
+    response.dueAt = std::chrono::steady_clock::now();
+    if (endpoint->family == AF_INET) {
+        sockaddr_in* remote = reinterpret_cast<sockaddr_in*>(&response.remoteAddr);
+        remote->sin_family = AF_INET;
+        remote->sin_port = htons(kSsdpPort);
+        inet_pton(AF_INET, kSsdpMulticastIPv4, &remote->sin_addr);
+        response.remoteLen = static_cast<int>(sizeof(sockaddr_in));
+    } else {
+        sockaddr_in6* remote = reinterpret_cast<sockaddr_in6*>(&response.remoteAddr);
+        remote->sin6_family = AF_INET6;
+        remote->sin6_port = htons(kSsdpPort);
+        remote->sin6_addr = in6addr_any;
+        remote->sin6_scope_id = endpoint->interfaceIndex;
+        response.remoteLen = static_cast<int>(sizeof(sockaddr_in6));
+    }
+    response.messages.push_back("HTTP/1.1 200 OK\r\n\r\n");
+    QueueSearchResponses(std::move(response));
 }
 
 void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
