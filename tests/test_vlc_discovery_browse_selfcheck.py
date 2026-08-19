@@ -7,8 +7,12 @@ like real dlna-server output (see src/ssdp.cpp SendDelayedSearchResponse
 and src/contentdirectory.cpp BuildDIDL for the shapes these fixtures
 mirror). If this file fails, the VLC-equivalence test module itself is
 broken and its results against a real server cannot be trusted.
+
+All synthetic fixtures use TEST-NET addresses (RFC 5737: 192.0.2.x) and
+arbitrary port numbers -- never a real server IP or control server address.
 """
 
+import socket
 import xml.etree.ElementTree as ET
 
 from test_vlc_discovery_browse import (
@@ -18,6 +22,10 @@ from test_vlc_discovery_browse import (
     DIDL_NS,
     CONTENT_DIRECTORY_SOAP_ACTION,
 )
+
+# RFC 5737 TEST-NET address -- never routable, never a real server
+_SYNTHETIC_HOST = "192.0.2.1"
+_SYNTHETIC_PORT = 8200
 
 
 def test_msearch_request_shape():
@@ -31,27 +39,28 @@ def test_msearch_request_shape():
 def test_ssdp_response_parsing_matches_real_server_output_shape():
     # Shaped exactly like SSDP::HandleSearchRequest's response construction
     # in src/ssdp.cpp / src/posix_ssdp.cpp.
+    location = f"http://{_SYNTHETIC_HOST}:{_SYNTHETIC_PORT}/description.xml"
     synthetic_response = (
         "HTTP/1.1 200 OK\r\n"
         "CACHE-CONTROL: max-age=1800\r\n"
         "DATE: Wed, 19 Aug 2026 00:00:00 GMT\r\n"
         "EXT:\r\n"
-        "LOCATION: http://192.168.1.50:8200/description.xml\r\n"
+        f"LOCATION: {location}\r\n"
         "SERVER: Linux/1.0 DLNADOC/1.50 UPnP/1.0 dlna-server/1.7.0\r\n"
         "ST: urn:schemas-upnp-org:device:MediaServer:1\r\n"
         "USN: uuid:abc-123::urn:schemas-upnp-org:device:MediaServer:1\r\n"
         "BOOTID.UPNP.ORG: 123\r\n"
         "CONFIGID.UPNP.ORG: 1\r\n\r\n"
     ).encode()
-    parsed = parse_ssdp_response(synthetic_response, "192.168.1.50")
+    parsed = parse_ssdp_response(synthetic_response, _SYNTHETIC_HOST)
     assert parsed is not None
-    assert parsed.location == "http://192.168.1.50:8200/description.xml"
+    assert parsed.location == location
     assert "DLNADOC/1.50" in parsed.server
 
 
 def test_ssdp_response_rejects_non_200():
     bad = b"HTTP/1.1 404 Not Found\r\n\r\n"
-    assert parse_ssdp_response(bad, "192.168.1.50") is None
+    assert parse_ssdp_response(bad, _SYNTHETIC_HOST) is None
 
 
 def test_browse_soap_envelope_well_formed_and_matches_captured_vlc_shape():
@@ -70,7 +79,12 @@ def test_browse_soap_envelope_well_formed_and_matches_captured_vlc_shape():
 def test_didl_parse_path_against_synthetic_builddidl_output():
     # Shaped exactly like ContentDirectory::BuildDIDL's output in
     # src/contentdirectory.cpp: one container with childCount, one item
-    # with a res URL.
+    # with a res URL. Port is allocated dynamically so this test has no
+    # hardcoded address -- only the structural assertions matter.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    res_url = f"http://127.0.0.1:{port}/media/1000001.mp3"
     didl = (
         '<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" '
         'xmlns:dc="http://purl.org/dc/elements/1.1/" '
@@ -82,8 +96,7 @@ def test_didl_parse_path_against_synthetic_builddidl_output():
         '<item id="1000001" parentID="0" restricted="1">'
         "<dc:title>song.mp3</dc:title>"
         "<upnp:class>object.item.audioItem.musicTrack</upnp:class>"
-        '<res protocolInfo="http-get:*:audio/mpeg:*">'
-        "http://192.168.1.50:8200/media/1000001.mp3</res>"
+        f'<res protocolInfo="http-get:*:audio/mpeg:*">{res_url}</res>'
         "</item>"
         "</DIDL-Lite>"
     )
