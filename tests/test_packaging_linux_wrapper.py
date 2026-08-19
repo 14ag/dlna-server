@@ -16,7 +16,7 @@ pytestmark = [pytest.mark.posix_only]
 
 def test_wrapper_waits_promptly_when_compositor_socket_present(tmp_path):
     if not WRAPPER.is_file():
-        pytest.skip("wrapper script not found")
+        pytest.fail("wrapper script not found")
 
     runtime = Path(tempfile.mkdtemp(prefix="dlna-wrapper-", dir="/tmp"))
     sock_path = runtime / "wayland-0"

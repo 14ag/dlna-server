@@ -69,7 +69,7 @@ class TestGeometryDumpGating:
         # so it cannot run here. keeping the test with an explicit reason
         # documents the exact manual/CI step needed to cover it
         if not os.environ.get("DLNA_SERVER_GUI_DRIVE_TEST"):
-            pytest.skip(
+            pytest.fail(
                 "no Win32 GUI dialog-driving infrastructure in this repo; "
                 "cannot script a Settings-dialog open to capture debug.log"
             )

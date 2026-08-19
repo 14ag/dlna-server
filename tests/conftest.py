@@ -351,7 +351,7 @@ def dlna_binary():
         p = Path(env_path)
         if p.exists():
             return str(p)
-        pytest.skip(f"DLNA_SERVER={env_path} set but binary not found")
+        pytest.fail(f"DLNA_SERVER={env_path} set but binary not found")
 
     root = Path(__file__).resolve().parent
     candidates = []
@@ -370,7 +370,7 @@ def dlna_binary():
     for path in candidates:
         if path.exists():
             return str(path)
-    pytest.skip("DLNA Server executable not found" +
+    pytest.fail("DLNA Server executable not found" +
                 (" (set DLNA_SERVER env var to path)" if os.name != "nt" else ""))
 
 @pytest.fixture
@@ -387,7 +387,7 @@ def dlna_server_gui_binary():
         p = Path(env_path)
         if p.exists():
             return str(p)
-        pytest.skip(f"DLNA_GUI_BINARY={env_path} set but binary not found")
+        pytest.fail(f"DLNA_GUI_BINARY={env_path} set but binary not found")
 
     root = Path(__file__).resolve().parent
     candidates = [
@@ -396,7 +396,7 @@ def dlna_server_gui_binary():
     for path in candidates:
         if path.exists():
             return str(path)
-    pytest.skip("GTK4 GUI binary not found (set DLNA_GUI_BINARY env var to path)")
+    pytest.fail("GTK4 GUI binary not found (set DLNA_GUI_BINARY env var to path)")
 
 
 @pytest.fixture
@@ -410,7 +410,7 @@ def xvfb():
     import shutil
     import socket
     if shutil.which("Xvfb") is None:
-        pytest.skip("Xvfb not installed")
+        pytest.fail("Xvfb not installed")
     display = f":{100 + (os.getpid() % 4000)}"
     # On some WSL environments the X Unix socket dir (/tmp/.X11-unix) is
     # root-owned and Xvfb cannot create its socket there. Fall back to
@@ -444,7 +444,7 @@ def xvfb():
                 pass
             time.sleep(0.1)
         if not ok:
-            pytest.skip("Xvfb did not become ready in time")
+            pytest.fail("Xvfb did not become ready in time")
         yield dict(os.environ, DISPLAY=display)
     finally:
         proc.terminate()
@@ -661,18 +661,38 @@ def _resolve_dlna_binary():
 
 
 @pytest.fixture(scope="module")
-def dlna_server_endpoint():
-    """Yield the active DLNA server endpoint to test against.
+def dlna_server_endpoint(tmp_path_factory):
+    """Launch the built dlna-server binary and yield its LAN IP:port endpoint.
 
-    Set DLNA_SERVER_ENDPOINT=host:port in the environment to point at any
-    running dlna-server instance. Tests that depend on this fixture are
-    skipped when the variable is not set.
+    Falls back to DLNA_SERVER_ENDPOINT env var if set, which lets CI or the
+    user point at an already-running instance without launching a new one.
+    Skips the module if neither the binary nor the env var is available.
     """
-    endpoint = os.environ.get("DLNA_SERVER_ENDPOINT")
-    if not endpoint:
-        pytest.skip(
-            "DLNA_SERVER_ENDPOINT not set. "
-            "Set it to host:port of a running dlna-server instance."
+    override = os.environ.get("DLNA_SERVER_ENDPOINT")
+    if override:
+        yield override
+        return
+
+    binary = _resolve_dlna_binary()
+    if not binary:
+        pytest.fail(
+            "dlna-server binary not found and DLNA_SERVER_ENDPOINT not set. "
+            "Build the project or set DLNA_SERVER_ENDPOINT=host:port."
         )
-    yield endpoint
+
+    media_dir = tmp_path_factory.mktemp("dlna-vlc-media")
+    (media_dir / "sample.mp3").write_bytes(b"\x00" * 1024)
+
+    port = _free_port()
+    proc, connected, old_config, config_ini = _launch_server(
+        binary, port, str(media_dir))
+
+    if not connected:
+        _teardown_server(proc, old_config, config_ini)
+        pytest.fail(f"dlna-server did not open HTTP port {port} within 15s")
+
+    lan_ip = _get_lan_ip()
+    yield f"{lan_ip}:{port}"
+
+    _teardown_server(proc, old_config, config_ini)
 
