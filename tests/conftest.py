@@ -662,7 +662,17 @@ def _resolve_dlna_binary():
 
 @pytest.fixture(scope="module")
 def dlna_server_endpoint():
-    """Yield the active DLNA server endpoint to test against."""
-    endpoint = os.environ.get("DLNA_SERVER_ENDPOINT", "192.168.1.69:38520")
+    """Yield the active DLNA server endpoint to test against.
+
+    Set DLNA_SERVER_ENDPOINT=host:port in the environment to point at any
+    running dlna-server instance. Tests that depend on this fixture are
+    skipped when the variable is not set.
+    """
+    endpoint = os.environ.get("DLNA_SERVER_ENDPOINT")
+    if not endpoint:
+        pytest.skip(
+            "DLNA_SERVER_ENDPOINT not set. "
+            "Set it to host:port of a running dlna-server instance."
+        )
     yield endpoint
 

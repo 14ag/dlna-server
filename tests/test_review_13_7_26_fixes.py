@@ -180,7 +180,8 @@ class TestSsdpInitialBurstThreadIsJoined:
         stop_idx = source.find("void SSDP::Stop()")
         assert start_idx > 0 and stop_idx > 0
         start_region = source[start_idx:stop_idx]
-        stop_region = source[stop_idx:stop_idx + 1200]
+        next_fn = source.find("\nvoid SSDP::", stop_idx + 10)
+        stop_region = source[stop_idx:next_fn if next_fn > -1 else stop_idx + 1200]
         assert "m_initialBurstThread = std::thread(" in start_region
         assert "m_initialBurstThread.joinable()" in stop_region
         assert "m_initialBurstThread.join();" in stop_region
