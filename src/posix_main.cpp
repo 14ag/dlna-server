@@ -927,6 +927,45 @@ int main(int argc, char** argv) {
             DLNAServer.Stop();
             return 0;
         }
+        else if (arg == "--print-network-change-restart-noop-detection") {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            LogSnapshot before = GetSystemLogSince(0);
+            DLNAServer.RestartSsdpForNetworkChange();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+            DLNAServer.RestartSsdpForNetworkChange();
+            LogSnapshot after = GetSystemLogSince(before.latestSequence);
+            const bool sawSkip = after.text.find(L"SSDP restart skipped") != std::wstring::npos ||
+                                 after.text.find(L"Endpoint set unchanged") != std::wstring::npos;
+            const bool sawJoin = after.text.find(L"multicast join ok") != std::wstring::npos;
+            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+            std::wcout << L"saw-skip-message=" << (sawSkip ? L"1" : L"0") << std::endl;
+            std::wcout << L"saw-fresh-multicast-join=" << (sawJoin ? L"1" : L"0") << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
+        else if (arg == "--print-ssdp-stop-flushes-due-response") {
+            AppConfig.debugLog = true;
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            LogSnapshot before = GetSystemLogSince(0);
+            SSDP::Get().QueueTestResponseDueNow();
+            SSDP::Get().Stop();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            LogSnapshot after = GetSystemLogSince(before.latestSequence);
+            const bool sawResponseSent = after.text.find(L"SSDP response sent") != std::wstring::npos;
+            std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
+            std::cout << "ran=" << 1 << std::endl;
+            std::cout << "saw-response-sent=" << (sawResponseSent ? "1" : "0") << std::endl;
+            DLNAServer.Stop();
+            return 0;
+        }
         else if (arg == "--print-ssdp-start-latency") {
             // regression hook for the ssdp initial burst thread fix
             // measures how long Start takes to return with a real

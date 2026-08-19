@@ -47,6 +47,10 @@ public:
     // test only accessor for the bootid persistence regression hook
     // cheap and harmless in production so it is not ifdef guarded
     unsigned int GetBootIdForTest() const { return m_bootId; }
+    // test only queues a synthetic response due immediately then calls
+    // Stop so a pytest can confirm task 3 flushes it instead of
+    // dropping it silently
+    void QueueTestResponseDueNow();
 
 private:
     SSDP();

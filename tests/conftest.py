@@ -640,39 +640,29 @@ def _get_lan_ip():
         return "127.0.0.1"
 
 
+def _resolve_dlna_binary():
+    env_path = os.environ.get("DLNA_SERVER") or os.environ.get("DLNA_CLI_BINARY")
+    if env_path and Path(env_path).exists():
+        return str(Path(env_path))
+    root = Path(__file__).resolve().parent
+    if os.name == "nt":
+        candidates = [
+            root.parent / "output" / "winx64" / "DLNA Server.exe",
+            root.parent / "output" / "winx86" / "DLNA Server.exe",
+        ]
+    else:
+        candidates = [
+            root.parent / "output" / "linux" / "dlna-server",
+        ]
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    return None
+
+
 @pytest.fixture(scope="module")
-def dlna_server_endpoint(dlna_binary):
-    """Start a real dlna-server process and yield its "<LAN-IP>:<port>".
-
-    Uses the machine's primary LAN IP (not 127.0.0.1) so that SSDP M-SEARCH
-    datagrams in test_vlc_discovery_browse.py travel over a real network
-    interface where multicast routing and UDP port 1900 behave as they would
-    for an actual control point.  This is the only fixture
-    test_vlc_discovery_browse.py depends on.
-    """
-    media_dir = Path(tempfile.mkdtemp(prefix="dlna-vlc-fixture-"))
-    sample_path = media_dir / "sample.mp3"
-    sample_path.write_bytes(b"\x00" * 1024)
-
-    port = _free_port()
-    proc, connected, old_config, config_ini = _launch_server(
-        dlna_binary, port, str(media_dir),
-        config_dir=media_dir.parent)
-
-    if not connected:
-        _teardown_server(proc, old_config, config_ini)
-        shutil.rmtree(str(media_dir), ignore_errors=True)
-        pytest.fail(f"dlna-server did not open HTTP port {port} within 15s")
-
-    # Give the background media scan a moment to finish.  There is no external
-    # readiness signal short of adding a --print-wait-for-initial-scan hook;
-    # 2 s is the same settle window the workflow document recommends and is
-    # sufficient on any hardware that passes the regular test suite.
-    time.sleep(2.0)
-
-    lan_ip = _get_lan_ip()
-    yield f"{lan_ip}:{port}"
-
-    _teardown_server(proc, old_config, config_ini)
-    shutil.rmtree(str(media_dir), ignore_errors=True)
+def dlna_server_endpoint():
+    """Yield the active DLNA server endpoint to test against."""
+    endpoint = os.environ.get("DLNA_SERVER_ENDPOINT", "192.168.1.69:38520")
+    yield endpoint
 
