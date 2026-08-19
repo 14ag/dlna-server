@@ -1,0 +1,706 @@
+[
+  {
+    "tag": "container",
+    "attrib": {
+      "id": "v",
+      "parentID": "0",
+      "restricted": "1",
+      "searchable": "1",
+      "childCount": "3"
+    },
+    "children": {
+      "class": {
+        "text": "object.container",
+        "attrib": {}
+      },
+      "title": {
+        "text": "Videos",
+        "attrib": {}
+      }
+    }
+  },
+  {
+    "tag": "container",
+    "attrib": {
+      "id": "p",
+      "parentID": "0",
+      "restricted": "1",
+      "searchable": "1",
+      "childCount": "3"
+    },
+    "children": {
+      "class": {
+        "text": "object.container",
+        "attrib": {}
+      },
+      "title": {
+        "text": "Playlists",
+        "attrib": {}
+      }
+    }
+  },
+  {
+    "tag": "container",
+    "attrib": {
+      "id": "v$rf",
+      "parentID": "v",
+      "restricted": "0",
+      "searchable": "1",
+      "childCount": "1"
+    },
+    "children": {
+      "class": {
+        "text": "object.container.storageFolder",
+        "attrib": {}
+      },
+      "title": {
+        "text": "Folders",
+        "attrib": {}
+      }
+    }
+  },
+  {
+    "tag": "container",
+    "attrib": {
+      "id": "v$am",
+      "parentID": "v",
+      "restricted": "0",
+      "searchable": "1",
+      "childCount": "1"
+    },
+    "children": {
+      "class": {
+        "text": "object.container",
+        "attrib": {}
+      },
+      "title": {
+        "text": "All Videos",
+        "attrib": {}
+      }
+    }
+  },
+  {
+    "tag": "container",
+    "attrib": {
+      "id": "v$rm",
+      "parentID": "v",
+      "restricted": "0",
+      "searchable": "0",
+      "childCount": "1"
+    },
+    "children": {
+      "class": {
+        "text": "object.container.storageFolder",
+        "attrib": {}
+      },
+      "title": {
+        "text": "Recently Added",
+        "attrib": {}
+      }
+    }
+  },
+  {
+    "tag": "container",
+    "attrib": {
+      "id": "p$0",
+      "parentID": "p",
+      "restricted": "0",
+      "searchable": "1",
+      "childCount": "1"
+    },
+    "children": {
+      "class": {
+        "text": "object.container.storageFolder",
+        "attrib": {}
+      },
+      "title": {
+        "text": "test-local-playlist",
+        "attrib": {}
+      }
+    }
+  },
+  {
+    "tag": "container",
+    "attrib": {
+      "id": "p$1",
+      "parentID": "p",
+      "restricted": "0",
+      "searchable": "1",
+      "childCount": "1"
+    },
+    "children": {
+      "class": {
+        "text": "object.container.storageFolder",
+        "attrib": {}
+      },
+      "title": {
+        "text": "test-hls-playlist",
+        "attrib": {}
+      }
+    }
+  },
+  {
+    "tag": "container",
+    "attrib": {
+      "id": "p$2",
+      "parentID": "p",
+      "restricted": "0",
+      "searchable": "1",
+      "childCount": "9"
+    },
+    "children": {
+      "class": {
+        "text": "object.container.storageFolder",
+        "attrib": {}
+      },
+      "title": {
+        "text": "test-hls-extended-playlist",
+        "attrib": {}
+      }
+    }
+  },
+  {
+    "tag": "container",
+    "attrib": {
+      "id": "v$storage",
+      "parentID": "v$rf",
+      "restricted": "0",
+      "searchable": "1",
+      "childCount": "1"
+    },
+    "children": {
+      "class": {
+        "text": "object.container.storageFolder",
+        "attrib": {}
+      },
+      "title": {
+        "text": "storage",
+        "attrib": {}
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "0_test-clip.mp4",
+      "parentID": "v$am",
+      "restricted": "1",
+      "rawDate": "1784038102"
+    },
+    "children": {
+      "title": {
+        "text": "test-clip.mp4",
+        "attrib": {}
+      },
+      "creator": {
+        "text": "unknown",
+        "attrib": {}
+      },
+      "album": {
+        "text": "test media",
+        "attrib": {}
+      },
+      "artist": {
+        "text": "unknown",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-07-14",
+        "attrib": {}
+      },
+      "res": {
+        "text": "http://192.168.1.69:18192/0_test-clip.srt",
+        "attrib": {
+          "protocolInfo": "http-get:*:text/srt:*",
+          "size": "302"
+        }
+      },
+      "CaptionInfoEx": {
+        "text": "http://192.168.1.69:18192/0_test-clip.srt",
+        "attrib": {
+          "{http://www.sec.co.kr/}type": "srt"
+        }
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "0_test-clip.mp4",
+      "parentID": "v$rm",
+      "restricted": "1",
+      "rawDate": "1784038102"
+    },
+    "children": {
+      "title": {
+        "text": "test-clip.mp4",
+        "attrib": {}
+      },
+      "creator": {
+        "text": "unknown",
+        "attrib": {}
+      },
+      "album": {
+        "text": "test media",
+        "attrib": {}
+      },
+      "artist": {
+        "text": "unknown",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-07-14",
+        "attrib": {}
+      },
+      "res": {
+        "text": "http://192.168.1.69:18192/0_test-clip.srt",
+        "attrib": {
+          "protocolInfo": "http-get:*:text/srt:*",
+          "size": "302"
+        }
+      },
+      "CaptionInfoEx": {
+        "text": "http://192.168.1.69:18192/0_test-clip.srt",
+        "attrib": {
+          "{http://www.sec.co.kr/}type": "srt"
+        }
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "0%241%240_test-clip",
+      "parentID": "p$0",
+      "restricted": "1",
+      "rawDate": "0"
+    },
+    "children": {
+      "title": {
+        "text": "test-clip",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "1970-01-01",
+        "attrib": {}
+      },
+      "res": {
+        "text": "http://192.168.1.69:18192/0%241%240_test-clip",
+        "attrib": {
+          "protocolInfo": "http-get:*:video/mp4:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000",
+          "size": "0"
+        }
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "1%242%240_ABC+13+Asheville+NC+%28WLOS%29+%281080p%29",
+      "parentID": "p$1",
+      "restricted": "1",
+      "rawDate": "1787149437734"
+    },
+    "children": {
+      "title": {
+        "text": "ABC 13 Asheville NC (WLOS) (1080p)",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-08-19",
+        "attrib": {}
+      },
+      "res": {
+        "text": "https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist.m3u8",
+        "attrib": {
+          "protocolInfo": "http-get:*:video/mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+        }
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "2%243%240_ABC+13+Asheville+NC+%28WLOS%29+%281080p%29",
+      "parentID": "p$2",
+      "restricted": "1",
+      "rawDate": "1787149437739"
+    },
+    "children": {
+      "title": {
+        "text": "ABC 13 Asheville NC (WLOS) (1080p)",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-08-19",
+        "attrib": {}
+      },
+      "res": {
+        "text": "https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist.m3u8",
+        "attrib": {
+          "protocolInfo": "http-get:*:video/mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+        }
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "2%244%241_ABC+%28720p%29",
+      "parentID": "p$2",
+      "restricted": "1",
+      "rawDate": "1787149437740"
+    },
+    "children": {
+      "title": {
+        "text": "ABC (720p)",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-08-19",
+        "attrib": {}
+      },
+      "res": {
+        "text": "https://5ff3d9babae13.streamlock.net/ynfpncxxjg/ynfpncxxjg/playlist.m3u8",
+        "attrib": {
+          "protocolInfo": "http-get:*:video/mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+        }
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "2%245%242_ABC+%28WPLG-DT1%29+Miami+FL+%28720p%29",
+      "parentID": "p$2",
+      "restricted": "1",
+      "rawDate": "1787149437740"
+    },
+    "children": {
+      "title": {
+        "text": "ABC (WPLG-DT1) Miami FL (720p)",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-08-19",
+        "attrib": {}
+      },
+      "res": {
+        "text": "http://41.205.93.154/ABC/index.m3u8",
+        "attrib": {
+          "protocolInfo": "http-get:*:video/mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+        }
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "2%246%243_ABC+10+Duluth+MN+%28WDIO%29+%281080p%29",
+      "parentID": "p$2",
+      "restricted": "1",
+      "rawDate": "1787149437741"
+    },
+    "children": {
+      "title": {
+        "text": "ABC 10 Duluth MN (WDIO) (1080p)",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-08-19",
+        "attrib": {}
+      },
+      "res": {
+        "text": "https://pubads.g.doubleclick.net/ssai/event/tQD6w9OJQVOobcyV3Dammw/master.m3u8",
+        "attrib": {
+          "protocolInfo": "http-get:*:video/mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+        }
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "2%247%244_ABC+10+San+Diego+CA+%28KGTV%29+%28720p%29",
+      "parentID": "p$2",
+      "restricted": "1",
+      "rawDate": "1787149437741"
+    },
+    "children": {
+      "title": {
+        "text": "ABC 10 San Diego CA (KGTV) (720p)",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-08-19",
+        "attrib": {}
+      },
+      "res": {
+        "text": "https://amg01942-amg01942c3-stirr-us-10196.playouts.now.amagi.tv/playlist.m3u8",
+        "attrib": {
+          "protocolInfo": "http-get:*:video/mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+        }
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "2%248%245_ABC+12+Milwaukee+WI+%28WISN%29+%28720p%29",
+      "parentID": "p$2",
+      "restricted": "1",
+      "rawDate": "1787149437742"
+    },
+    "children": {
+      "title": {
+        "text": "ABC 12 Milwaukee WI (WISN) (720p)",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-08-19",
+        "attrib": {}
+      },
+      "res": {
+        "text": "https://aegis-cloudfront-1.tubi.video/1a352414-3a30-4f42-b14b-c091d02a5e45/playlist.m3u8",
+        "attrib": {
+          "protocolInfo": "http-get:*:video/mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+        }
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "2%249%246_ABC+13+Asheville+NC+%28WLOS%29+%281080p%29",
+      "parentID": "p$2",
+      "restricted": "1",
+      "rawDate": "1787149437742"
+    },
+    "children": {
+      "title": {
+        "text": "ABC 13 Asheville NC (WLOS) (1080p)",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-08-19",
+        "attrib": {}
+      },
+      "res": {
+        "text": "https://aegis-cloudfront-1.tubi.video/ec903a48-3638-4d0b-ac89-813e147bca58/playlist.m3u8",
+        "attrib": {
+          "protocolInfo": "http-get:*:video/mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+        }
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "2%2410%247_ABC+13+Las+Vegas+NV+%28KTNV%29+%28720p%29",
+      "parentID": "p$2",
+      "restricted": "1",
+      "rawDate": "1787149437743"
+    },
+    "children": {
+      "title": {
+        "text": "ABC 13 Las Vegas NV (KTNV) (720p)",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-08-19",
+        "attrib": {}
+      },
+      "res": {
+        "text": "https://linear-695.frequency.stream/dist/stirr/695/hls/master/playlist.m3u8",
+        "attrib": {
+          "protocolInfo": "http-get:*:video/mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+        }
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "2%2411%248_ABC+15+Myrtle+Beach+FL+%28WPDE%29+%281080p%29",
+      "parentID": "p$2",
+      "restricted": "1",
+      "rawDate": "1787149437743"
+    },
+    "children": {
+      "title": {
+        "text": "ABC 15 Myrtle Beach FL (WPDE) (1080p)",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-08-19",
+        "attrib": {}
+      },
+      "res": {
+        "text": "https://content.uplynk.com/channel/39919d3f7a074eefa8bf579214e952f9.m3u8",
+        "attrib": {
+          "protocolInfo": "http-get:*:video/mpegurl:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+        }
+      }
+    }
+  },
+  {
+    "tag": "container",
+    "attrib": {
+      "id": "v$storage$emulated",
+      "parentID": "v$storage",
+      "restricted": "0",
+      "searchable": "1",
+      "childCount": "1"
+    },
+    "children": {
+      "class": {
+        "text": "object.container.storageFolder",
+        "attrib": {}
+      },
+      "title": {
+        "text": "emulated",
+        "attrib": {}
+      }
+    }
+  },
+  {
+    "tag": "container",
+    "attrib": {
+      "id": "v$storage$emulated$0",
+      "parentID": "v$storage$emulated",
+      "restricted": "0",
+      "searchable": "1",
+      "childCount": "1"
+    },
+    "children": {
+      "class": {
+        "text": "object.container.storageFolder",
+        "attrib": {}
+      },
+      "title": {
+        "text": "0",
+        "attrib": {}
+      }
+    }
+  },
+  {
+    "tag": "container",
+    "attrib": {
+      "id": "v$storage$emulated$0$test+media",
+      "parentID": "v$storage$emulated$0",
+      "restricted": "0",
+      "searchable": "1",
+      "childCount": "1"
+    },
+    "children": {
+      "class": {
+        "text": "object.container.storageFolder",
+        "attrib": {}
+      },
+      "title": {
+        "text": "test media",
+        "attrib": {}
+      }
+    }
+  },
+  {
+    "tag": "item",
+    "attrib": {
+      "id": "0_test-clip.mp4",
+      "parentID": "v$storage$emulated$0$test+media",
+      "restricted": "1",
+      "rawDate": "1784038102"
+    },
+    "children": {
+      "title": {
+        "text": "test-clip.mp4",
+        "attrib": {}
+      },
+      "creator": {
+        "text": "unknown",
+        "attrib": {}
+      },
+      "album": {
+        "text": "test media",
+        "attrib": {}
+      },
+      "artist": {
+        "text": "unknown",
+        "attrib": {}
+      },
+      "class": {
+        "text": "object.item.videoItem",
+        "attrib": {}
+      },
+      "date": {
+        "text": "2026-07-14",
+        "attrib": {}
+      },
+      "res": {
+        "text": "http://192.168.1.69:18192/0_test-clip.srt",
+        "attrib": {
+          "protocolInfo": "http-get:*:text/srt:*",
+          "size": "302"
+        }
+      },
+      "CaptionInfoEx": {
+        "text": "http://192.168.1.69:18192/0_test-clip.srt",
+        "attrib": {
+          "{http://www.sec.co.kr/}type": "srt"
+        }
+      }
+    }
+  }
+]
