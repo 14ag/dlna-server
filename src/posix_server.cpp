@@ -136,11 +136,19 @@ void Server::RestartSsdpForNetworkChange() {
         return;
     }
     LogPrint(L"Network topology change detected; refreshing endpoints");
-    InvalidateRoutableHostUrlCache();
+    const std::vector<NetworkEndpoint> endpointsBeforeRefresh = GetEndpoints();
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     RefreshEndpoints(cfg);
+    const std::vector<NetworkEndpoint> endpointsAfterRefresh = GetEndpoints();
+    if (NetworkEndpointSetsEqual(endpointsBeforeRefresh, endpointsAfterRefresh)) {
+        LogPrint(L"Endpoint set unchanged after refresh; SSDP restart skipped");
+        m_lastSsdpRestartCompletedAt = std::chrono::steady_clock::now();
+        m_hasSsdpRestartCompletedAt = true;
+        return;
+    }
+    InvalidateRoutableHostUrlCache();
     SSDP::Get().Stop();
-    SSDP::Get().Start(GetEndpoints(), cfg.port, cfg.serverName, cfg.deviceUUID);
+    SSDP::Get().Start(endpointsAfterRefresh, cfg.port, cfg.serverName, cfg.deviceUUID);
     m_lastSsdpRestartCompletedAt = std::chrono::steady_clock::now();
     m_hasSsdpRestartCompletedAt = true;
 }

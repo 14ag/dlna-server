@@ -846,6 +846,45 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             DLNAServer.Stop();
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-network-change-restart-noop-detection") == 0) {
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            LogSnapshot before = GetSystemLogSince(0);
+            DLNAServer.RestartSsdpForNetworkChange();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+            DLNAServer.RestartSsdpForNetworkChange();
+            LogSnapshot after = GetSystemLogSince(before.latestSequence);
+            const bool sawSkip = after.text.find(L"SSDP restart skipped") != std::wstring::npos ||
+                                 after.text.find(L"Endpoint set unchanged") != std::wstring::npos;
+            const bool sawJoin = after.text.find(L"multicast join ok") != std::wstring::npos;
+            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+            std::wcout << L"saw-skip-message=" << (sawSkip ? L"1" : L"0") << std::endl;
+            std::wcout << L"saw-fresh-multicast-join=" << (sawJoin ? L"1" : L"0") << std::endl;
+            DLNAServer.Stop();
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-ssdp-stop-flushes-due-response") == 0) {
+            AppConfig.debugLog = true;
+            std::wstring reason;
+            bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            LogSnapshot before = GetSystemLogSince(0);
+            SSDP::Get().QueueTestResponseDueNow();
+            SSDP::Get().Stop();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            LogSnapshot after = GetSystemLogSince(before.latestSequence);
+            const bool sawResponseSent = after.text.find(L"SSDP response sent") != std::wstring::npos;
+            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+            std::wcout << L"ran=" << 1 << std::endl;
+            std::wcout << L"saw-response-sent=" << (sawResponseSent ? L"1" : L"0") << std::endl;
+            DLNAServer.Stop();
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-single-file-source-scan") == 0) {
             // Regression test for F-FEAT-01. Run with --source pointing
             // at a single supported media file.
