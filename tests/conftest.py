@@ -621,3 +621,58 @@ def slow_playlist_source(media_source_dir):
         root_dir=media_source_dir, num_nested=20, delay_ms=100)
     with result["serve"]():
         yield result
+
+
+def _get_lan_ip():
+    """Return the machine's primary LAN IPv4 address.
+
+    Opens a UDP socket toward a public address (no packets are sent; connect()
+    on a UDP socket just selects the route) and reads the local side.  Falls
+    back to 127.0.0.1 only if no routable interface is available, which keeps
+    the fixture working in fully offline environments at the cost of not
+    exercising real multicast routing.
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+@pytest.fixture(scope="module")
+def dlna_server_endpoint(dlna_binary):
+    """Start a real dlna-server process and yield its "<LAN-IP>:<port>".
+
+    Uses the machine's primary LAN IP (not 127.0.0.1) so that SSDP M-SEARCH
+    datagrams in test_vlc_discovery_browse.py travel over a real network
+    interface where multicast routing and UDP port 1900 behave as they would
+    for an actual control point.  This is the only fixture
+    test_vlc_discovery_browse.py depends on.
+    """
+    media_dir = Path(tempfile.mkdtemp(prefix="dlna-vlc-fixture-"))
+    sample_path = media_dir / "sample.mp3"
+    sample_path.write_bytes(b"\x00" * 1024)
+
+    port = _free_port()
+    proc, connected, old_config, config_ini = _launch_server(
+        dlna_binary, port, str(media_dir),
+        config_dir=media_dir.parent)
+
+    if not connected:
+        _teardown_server(proc, old_config, config_ini)
+        shutil.rmtree(str(media_dir), ignore_errors=True)
+        pytest.fail(f"dlna-server did not open HTTP port {port} within 15s")
+
+    # Give the background media scan a moment to finish.  There is no external
+    # readiness signal short of adding a --print-wait-for-initial-scan hook;
+    # 2 s is the same settle window the workflow document recommends and is
+    # sufficient on any hardware that passes the regular test suite.
+    time.sleep(2.0)
+
+    lan_ip = _get_lan_ip()
+    yield f"{lan_ip}:{port}"
+
+    _teardown_server(proc, old_config, config_ini)
+    shutil.rmtree(str(media_dir), ignore_errors=True)
+
