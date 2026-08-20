@@ -581,7 +581,7 @@ def _win_clean_stale_config():
             pass
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(scope="session", autouse=True)
 def _kill_previously_running_instance() -> None:
     _kill_all_runtime_instances()
     _win_clean_stale_config()
