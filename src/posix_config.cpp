@@ -166,6 +166,9 @@ std::string ResolveBundledResourcePath(const std::string& fileName) {
     const std::vector<std::string> candidates = {
         std::string(DLNA_RESOURCE_DIR) + "/" + fileName,
         exeDir + "/" + fileName,
+        exeDir + "/resources/" + fileName,
+        exeDir + "/../resources/" + fileName,
+        exeDir + "/../share/dlna-server/" + fileName,
         exeDir + "/../share/dlna-server/icons/" + fileName,
         exeDir + "/../Resources/" + fileName,
     };

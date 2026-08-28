@@ -1,0 +1,305 @@
+/* Figma dlna-server-14ag overlay rules. Loaded after the generated
+   style.css (see OnAppStartup in gtk4_gui_main.cpp, Task 2.2 below).
+   Only classes whose Figma color differs from the generated stylesheet
+   belong here. Do not duplicate a rule that style.css already produces
+   correctly with the same hex value. */
+
+/* ===== TITLEBAR =====
+   SVG: title-bar fill #191919, height 30px.
+   Two-pronged override:
+   1. Adwaita CSS custom properties (--headerbar-bg-color etc.) which
+      Adwaita reads before computing background-color.
+   2. background-color with !important as belt-and-suspenders against
+      any remaining theme rule that ignores the variable. */
+headerbar,
+headerbar.titlebar,
+headerbar.win10-titlebar,
+.win10-titlebar,
+.win10-titlebar.win10-active,
+.win10-titlebar.win10-inactive,
+window headerbar,
+window.csd headerbar,
+window.csd .titlebar {
+    /* Adwaita CSS variable overrides */
+    --headerbar-bg-color: #191919;
+    --headerbar-backdrop-color: #191919;
+    --headerbar-fg-color: #ffffff;
+    --headerbar-border-color: #191919;
+    --headerbar-shade-color: transparent;
+    /* Fallback hard overrides */
+    background-color: #191919 !important;
+    background-image: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    min-height: 30px;
+    padding: 0 !important;
+    margin: 0 !important;
+    color: #ffffff;
+}
+
+headerbar:backdrop,
+.win10-titlebar:backdrop,
+window.csd headerbar:backdrop {
+    --headerbar-bg-color: #191919;
+    --headerbar-backdrop-color: #191919;
+    background-color: #191919 !important;
+    background-image: none !important;
+}
+
+.win10-titlebar .title {
+    color: #ffffff;
+    font-family: "Inter", "Segoe UI", sans-serif;
+    font-size: 12px;
+}
+
+/* Window controls: Flat Windows-style minimize and close buttons */
+headerbar windowcontrols,
+windowcontrols {
+    margin: 0;
+    padding: 0;
+    border-spacing: 0;
+}
+
+headerbar windowcontrols button,
+windowcontrols button,
+headerbar button.minimize,
+headerbar button.close,
+headerbar button.maximize {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    color: #ffffff;
+    min-width: 46px;
+    min-height: 30px;
+    padding: 0;
+    margin: 0;
+    outline: none;
+}
+
+headerbar windowcontrols button:hover,
+windowcontrols button:hover {
+    background-color: #3a3839;
+    background-image: none;
+    color: #ffffff;
+}
+
+headerbar windowcontrols button:active,
+windowcontrols button:active {
+    background-color: #575354;
+    background-image: none;
+    color: #ffffff;
+}
+
+headerbar windowcontrols button.close:hover,
+windowcontrols button.close:hover {
+    background-color: #c42b1c;
+    background-image: none;
+    color: #ffffff;
+}
+
+headerbar windowcontrols button.close:active,
+windowcontrols button.close:active {
+    background-color: #b41e14;
+    background-image: none;
+    color: #ffffff;
+}
+
+/* Main window outer surface (fixed .css node applied to the top-level
+   window/child in Task 5.1). */
+.dlna-main-surface {
+    background-color: #2b2b2b;
+}
+
+/* Main toolbar. */
+.toolbar {
+    background-color: #252525;
+}
+
+/* Main toolbar buttons, normal/hover/active/disabled/focus. */
+.toolbar-button,
+button.toolbar-button {
+    background-color: #3a3839;
+    background-image: none;
+    border: 1px solid #555555;
+    color: #ffffff;
+    font-size: 14px;
+    border-radius: 0px;
+    box-shadow: none;
+}
+.toolbar-button:hover,
+button.toolbar-button:hover {
+    background-color: #464344;
+    background-image: none;
+}
+.toolbar-button:active,
+button.toolbar-button:active {
+    background-color: #575354;
+    background-image: none;
+}
+.toolbar-button:disabled,
+button.toolbar-button:disabled {
+    background-color: #3a3839;
+    background-image: none;
+    color: #7a7a7a;
+    border-color: #444444;
+}
+.toolbar-button:focus,
+.toolbar-button:focus-visible,
+button.toolbar-button:focus,
+button.toolbar-button:focus-visible {
+    outline: 2px solid #60a5fa;
+    outline-offset: -2px;
+}
+
+/* Main source list. */
+.source-list, .source-list list {
+    background-color: #1f1f1f;
+    border: 1px solid #434343;
+}
+.source-list row:selected {
+    background-color: #3a5a8c;
+}
+
+/* Settings/dialog body. */
+.dlna-dialog-body {
+    background-color: #f0f0f0;
+}
+
+/* Settings command ribbon. */
+.settings-ribbon {
+    background-color: #ffffff;
+}
+.settings-toolbar-button,
+button.settings-toolbar-button {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    color: #000000;
+    box-shadow: none;
+}
+.settings-toolbar-button:hover,
+button.settings-toolbar-button:hover {
+    background-color: #e5e5e5;
+}
+
+/* Settings group boxes. */
+.dlna-groupbox {
+    border: 1px solid #d9d9d9;
+    background-color: #f0f0f0;
+}
+.dlna-groupbox-label {
+    background-color: #f0f0f0;
+    font-size: 12px;
+}
+
+/* Settings/dialog text entries. */
+.dlna-dialog-entry,
+entry.dlna-dialog-entry,
+entry {
+    background-color: #ffffff;
+    background-image: none;
+    color: #000000;
+    border: 1px solid #cccccc;
+    box-shadow: none;
+}
+.dlna-dialog-entry:focus,
+entry:focus {
+    border-color: #0078d7;
+    box-shadow: none;
+}
+.dlna-dialog-entry-warm-border {
+    background-color: #ffffff;
+    background-image: none;
+    color: #000000;
+    border: 1px solid #7a7a7a;
+    box-shadow: none;
+}
+
+/* Settings/dialog light buttons (Cancel/OK/Add/Folder/File/Browse). */
+.dlna-dialog-button,
+button.dlna-dialog-button {
+    background-color: #e1e1e1;
+    background-image: none;
+    border: 1px solid #a0a0a0;
+    color: #000000;
+    border-radius: 2px;
+    box-shadow: none;
+}
+.dlna-dialog-button:hover,
+button.dlna-dialog-button:hover {
+    background-color: #e9e9e9;
+    background-image: none;
+}
+.dlna-dialog-button:active,
+button.dlna-dialog-button:active {
+    background-color: #cfcfcf;
+    background-image: none;
+}
+.dlna-dialog-button:disabled,
+button.dlna-dialog-button:disabled {
+    background-color: #e1e1e1;
+    background-image: none;
+    color: #a0a0a0;
+    border-color: #cccccc;
+}
+.dlna-dialog-button.suggested-action,
+button.dlna-dialog-button.suggested-action {
+    background-color: #e1e1e1;
+    border: 1.5px solid #0078d7;
+}
+.dlna-dialog-button.suggested-action:hover,
+button.dlna-dialog-button.suggested-action:hover {
+    background-color: #e9e9e9;
+    border: 1.5px solid #0078d7;
+}
+.dlna-dialog-button.suggested-action:focus,
+button.dlna-dialog-button.suggested-action:focus {
+    outline: 1px solid #0078d7;
+    outline-offset: -1px;
+}
+
+/* Warning dialog specific (Phase 9). */
+.dlna-warning-message {
+    background-color: #ffffff;
+    color: #000000;
+}
+.dlna-warning-footer {
+    background-color: #f0f0f0;
+}
+.dlna-warning-ok {
+    background-color: #e1e1e1;
+    background-image: none;
+    border: 1.5px solid #0078d6;
+    border-radius: 2px;
+    color: #000000;
+    box-shadow: none;
+}
+.dlna-warning-ok:hover {
+    background-color: #e9e9e9;
+}
+.dlna-warning-ok:active {
+    background-color: #cfcfcf;
+}
+
+/* Log surface (terminal-like light per Figma). */
+.dlna-log-surface, .dlna-log-surface text,
+textview.dlna-log-surface, textview.dlna-log-surface text {
+    background-color: #ffffff;
+    color: #000000;
+    font-family: monospace;
+}
+
+/* Help surface (light, monospaced Cousine where available, else the
+   project's existing monospace fallback — GTK4 has no built-in font
+   installation mechanism; if "Cousine" is not installed on the target
+   system GTK silently falls back to the generic monospace family,
+   which is acceptable per the source document's own fallback clause). */
+.dlna-help-surface, .dlna-help-surface text,
+textview.dlna-help-surface, textview.dlna-help-surface text {
+    background-color: #f0f0f0;
+    color: #000000;
+    font-family: "Cousine", monospace;
+}
