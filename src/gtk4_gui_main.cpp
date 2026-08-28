@@ -24,8 +24,12 @@
 #include "posix_single_instance.h"
 #include "source_drop_policy.h"
 #include "ui_tokens.h"
+#include "ui_tokens_posix.h"
 #include "server_ui_state.h"
 #include "posix_tray.h"
+#include "source_list_focus.h"
+#include "access_keys.h"
+#include "access_keys_gtk_adapter.h"
 
 #include <gtk/gtk.h>
 #include <gio/gio.h>
@@ -160,7 +164,7 @@ bool g_hasPendingResult = false;
 bool g_pendingSuccess = false;
 ServerUiState g_pendingState = ServerUiState::Stopped;
 std::string g_pendingMessage;
-bool g_sourceListHasFocus = false;
+SourceListFocusState g_sourceFocusState;
 std::atomic<bool> g_scanInProgress{false};
 int g_consecutiveUnhealthyPolls = 0;
 // WSLg can report a freshly mapped window as minimized before it has been
@@ -201,6 +205,101 @@ unsigned long long g_logLastSequence = 0;
 
 GtkWindow* g_activeModal = nullptr;
 
+KeyboardCueState g_cueState;
+std::vector<wchar_t> g_toolbarMnemonics;
+
+// Applies a Win32-style "&"-marked mnemonic label (produced by
+// InsertMnemonicMarker) to a GTK4 button, translating it to GTK's
+// "_"-underscore convention via the existing adapter, and enables
+// use-underline rendering on the button.
+void ApplyMnemonicLabel(GtkWidget* button, const std::wstring& plainLabel, wchar_t mnemonic) {
+    const std::wstring markedWide = InsertMnemonicMarker(plainLabel, mnemonic);
+    const std::wstring underscoreWide = ConvertAmpersandMnemonicToUnderscore(markedWide);
+    gtk_button_set_label(GTK_BUTTON(button), WideToUtf8(underscoreWide).c_str());
+    gtk_button_set_use_underline(GTK_BUTTON(button), TRUE);
+}
+
+// Same, for a plain GtkLabel (used by static text such as group-box
+// titles that are not buttons but still carry an access key in a menu
+// or ribbon-item context).
+[[maybe_unused]] void ApplyMnemonicLabelText(GtkWidget* label, const std::wstring& plainLabel, wchar_t mnemonic) {
+    const std::wstring markedWide = InsertMnemonicMarker(plainLabel, mnemonic);
+    const std::wstring underscoreWide = ConvertAmpersandMnemonicToUnderscore(markedWide);
+    gtk_label_set_text_with_mnemonic(GTK_LABEL(label), WideToUtf8(underscoreWide).c_str());
+}
+
+// Applies the current KeyboardCueState visibility to a specific
+// top-level window. Call this once per top-level immediately after
+// KeyboardCueState changes (see the key/button controllers installed
+// in Task 8.3).
+void ApplyMnemonicsVisible(GtkWindow* window) {
+    if (window == nullptr) return;
+    gtk_window_set_mnemonics_visible(window, !g_cueState.HideAccel() ? TRUE : FALSE);
+}
+
+// Wires KeyboardCueState into a specific top-level window: any keyboard
+// key reveals mnemonic underlines on that window, any mouse-button press
+// hides them again. Uses GTK_PHASE_CAPTURE so this observes input before
+// any specific widget's own handler consumes it, and never returns TRUE,
+// so it never blocks normal key/click handling elsewhere in the window.
+void InstallMnemonicCueControllers(GtkWidget* window) {
+    GtkEventController* keyWatcher = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(keyWatcher, GTK_PHASE_CAPTURE);
+    gtk_widget_add_controller(window, keyWatcher);
+    g_signal_connect(keyWatcher, "key-pressed",
+                     G_CALLBACK(+[](GtkEventController*, guint, guint, GdkModifierType, gpointer data) -> gboolean {
+        g_cueState.OnKeyboardInput();
+        ApplyMnemonicsVisible(GTK_WINDOW(data));
+        return FALSE;
+    }), window);
+
+    GtkGesture* clickWatcher = gtk_gesture_click_new();
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(clickWatcher), GTK_PHASE_CAPTURE);
+    gtk_widget_add_controller(window, GTK_EVENT_CONTROLLER(clickWatcher));
+    g_signal_connect(clickWatcher, "pressed",
+                     G_CALLBACK(+[](GtkGestureClick*, gint, gdouble, gdouble, gpointer data) {
+        g_cueState.OnMouseButtonInput();
+        ApplyMnemonicsVisible(GTK_WINDOW(data));
+    }), window);
+}
+
+// Escape always closes the given window. Backspace closes it only when
+// the currently focused widget inside the window is not an editable
+// text widget (GtkEntry, GtkText, GtkSpinButton, GtkSearchEntry, etc.
+// all implement GtkEditable), matching the Win32 isLiveEdit check in
+// mainwindow.cpp/help_dialog.cpp/logdlg.cpp. onClose is invoked instead
+// of calling gtk_window_destroy directly so callers can run their
+// existing "done"/"cancel" cleanup path (RestoreModalFocus equivalents,
+// ClearActiveModal, etc.) instead of bypassing it.
+void InstallSubwindowCloseKeys(GtkWidget* window, std::function<void()> onClose) {
+    auto* closeFn = new std::function<void()>(std::move(onClose));
+    g_object_set_data_full(G_OBJECT(window), "dlna-close-fn", closeFn,
+                           +[](gpointer data) { delete static_cast<std::function<void()>*>(data); });
+
+    GtkEventController* keyController = gtk_event_controller_key_new();
+    gtk_widget_add_controller(window, keyController);
+    g_signal_connect(keyController, "key-pressed",
+                     G_CALLBACK(+[](GtkEventController*, guint keyval, guint, GdkModifierType, gpointer data) -> gboolean {
+        GtkWidget* win = GTK_WIDGET(data);
+        auto* fn = static_cast<std::function<void()>*>(g_object_get_data(G_OBJECT(win), "dlna-close-fn"));
+        if (!fn) return FALSE;
+        if (keyval == GDK_KEY_Escape) {
+            (*fn)();
+            return TRUE;
+        }
+        if (keyval == GDK_KEY_BackSpace) {
+            GtkRoot* root = gtk_widget_get_root(win) ? GTK_ROOT(gtk_widget_get_root(win)) : nullptr;
+            GtkWidget* focused = root ? gtk_root_get_focus(root) : nullptr;
+            const bool isLiveEdit = focused != nullptr && GTK_IS_EDITABLE(focused);
+            if (!isLiveEdit) {
+                (*fn)();
+                return TRUE;
+            }
+        }
+        return FALSE;
+    }), window);
+}
+
 GtkWindow* ActiveTopLevelWindow() {
     // g_activeModal is set by PresentModalChild and cleared by
     // ClearActiveModal every time a modal child opens or closes
@@ -239,6 +338,7 @@ bool g_dumpGeometry = false;
 bool g_dumpLogDialogReopen = false;
 bool g_dumpMsgBoxParent = false;
 bool g_printDeleteFocusGating = false;
+bool g_printPlaylistAddSensitivity = false;
 bool g_printStoppedCloseExit = false;
 
 // Number of attempts and delay between attempts when the initial
@@ -311,13 +411,27 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
 
     GtkWidget* titlebar = gtk_header_bar_new();
     gtk_widget_add_css_class(titlebar, "win10-titlebar");
+    gtk_widget_set_size_request(titlebar, -1, UiTokensPosix::kTitlebarHeight);
     // HeaderBar otherwise adds its own automatic decoration buttons in
     // addition to the explicit GtkWindowControls below.
     g_object_set(titlebar, "show-title-buttons", FALSE, nullptr);
 
+    GtkWidget* leftBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_margin_start(leftBox, 10);
+    gtk_widget_set_valign(leftBox, GTK_ALIGN_CENTER);
+
+    if (chrome == WindowChrome::Main) {
+        GtkWidget* icon = gtk_image_new_from_icon_name("dlna-server");
+        gtk_image_set_pixel_size(GTK_IMAGE(icon), 16);
+        gtk_box_append(GTK_BOX(leftBox), icon);
+    }
+
     GtkWidget* titleLabel = gtk_label_new(title);
     gtk_widget_add_css_class(titleLabel, "title");
-    gtk_header_bar_set_title_widget(GTK_HEADER_BAR(titlebar), titleLabel);
+    gtk_label_set_xalign(GTK_LABEL(titleLabel), 0.0f);
+    gtk_box_append(GTK_BOX(leftBox), titleLabel);
+
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(titlebar), leftBox);
 
     GtkWidget* controls = gtk_window_controls_new(GTK_PACK_END);
     if (chrome == WindowChrome::Main) {
@@ -348,6 +462,7 @@ GtkWindow* CreateMessageWindow(GtkWindow* parent,
     GtkWindow* window = GTK_WINDOW(gtk_window_new());
     gtk_window_set_modal(window, TRUE);
     gtk_window_set_resizable(window, FALSE);
+    gtk_window_set_default_size(window, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningWindowHeight);
     gtk_window_set_transient_for(window, parent);
     gtk_window_set_titlebar(
         window,
@@ -357,6 +472,13 @@ GtkWindow* CreateMessageWindow(GtkWindow* parent,
 
 void MessageBoxShow(GtkWindow* parent, const std::string& text) {
     GtkWindow* msgWin = CreateMessageWindow(parent, "DLNA Server", WindowChrome::Dialog);
+
+    if (g_dumpGeometry) {
+        PresentModalChild(msgWin, parent);
+        DumpWindowGeometry("warning", GTK_WIDGET(msgWin));
+        gtk_window_destroy(msgWin);
+        return;
+    }
 
     if (g_dumpMsgBoxParent) {
         GtkWindow* transientParent = gtk_window_get_transient_for(msgWin);
@@ -371,24 +493,46 @@ void MessageBoxShow(GtkWindow* parent, const std::string& text) {
         return;
     }
 
-    GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_set_margin_start(vbox, 16);
-    gtk_widget_set_margin_end(vbox, 16);
-    gtk_widget_set_margin_top(vbox, 12);
-    gtk_widget_set_margin_bottom(vbox, 12);
+    GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_window_set_child(msgWin, vbox);
+
+    GtkWidget* messageArea = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_add_css_class(messageArea, "dlna-warning-message");
+    gtk_widget_set_size_request(messageArea, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningMessageAreaH);
+    gtk_widget_set_margin_start(messageArea, 12);
+    gtk_widget_set_margin_end(messageArea, 12);
+    gtk_widget_set_margin_top(messageArea, 8);
+    gtk_widget_set_margin_bottom(messageArea, 8);
+    gtk_box_append(GTK_BOX(vbox), messageArea);
+
+    // Figma warning glyph: reuse the project app icon as a stand-in if a
+    // dedicated triangle asset is not bundled under resources/. Grep for
+    // an existing warning/triangle PNG or SVG before adding a new binary
+    // asset to the repository; do not invent a fabricated icon file path.
+    GtkWidget* icon = gtk_image_new_from_icon_name("dialog-warning-symbolic");
+    gtk_image_set_pixel_size(GTK_IMAGE(icon), UiTokensPosix::kWarningTriangleW);
+    gtk_widget_set_valign(icon, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(messageArea), icon);
 
     GtkWidget* label = gtk_label_new(text.c_str());
     gtk_label_set_wrap(GTK_LABEL(label), TRUE);
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_box_append(GTK_BOX(vbox), label);
+    gtk_widget_set_valign(label, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(messageArea), label);
 
-    GtkWidget* buttonBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_widget_set_halign(buttonBox, GTK_ALIGN_END);
-    gtk_box_append(GTK_BOX(vbox), buttonBox);
+    GtkWidget* footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_add_css_class(footer, "dlna-warning-footer");
+    gtk_widget_set_size_request(footer, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningFooterH);
+    gtk_widget_set_halign(footer, GTK_ALIGN_END);
+    gtk_widget_set_valign(footer, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_end(footer, 12);
+    gtk_box_append(GTK_BOX(vbox), footer);
+    GtkWidget* buttonBox = footer;
 
     gboolean done = FALSE;
     GtkWidget* okButton = gtk_button_new_with_label("OK");
+    gtk_widget_add_css_class(okButton, "dlna-warning-ok");
+    gtk_widget_set_size_request(okButton, UiTokensPosix::kWarningOkW, UiTokensPosix::kWarningOkH);
     g_signal_connect(okButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer userData) {
         *static_cast<gboolean*>(userData) = TRUE;
     }), &done);
@@ -399,31 +543,52 @@ void MessageBoxShow(GtkWindow* parent, const std::string& text) {
         return TRUE;
     }), &done);
 
-    gtk_window_present(msgWin);
+    PresentModalChild(msgWin, parent);
     while (!done) {
         g_main_context_iteration(nullptr, TRUE);
     }
+    ClearActiveModal(msgWin);
     gtk_window_destroy(msgWin);
 }
 
 bool MessageBoxQuestion(GtkWindow* parent, const std::string& text) {
     GtkWindow* msgWin = CreateMessageWindow(parent, "DLNA Server", WindowChrome::Dialog);
 
-    GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-    gtk_widget_set_margin_start(vbox, 16);
-    gtk_widget_set_margin_end(vbox, 16);
-    gtk_widget_set_margin_top(vbox, 12);
-    gtk_widget_set_margin_bottom(vbox, 12);
+    GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_window_set_child(msgWin, vbox);
+
+    GtkWidget* messageArea = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_add_css_class(messageArea, "dlna-warning-message");
+    gtk_widget_set_size_request(messageArea, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningMessageAreaH);
+    gtk_widget_set_margin_start(messageArea, 12);
+    gtk_widget_set_margin_end(messageArea, 12);
+    gtk_widget_set_margin_top(messageArea, 8);
+    gtk_widget_set_margin_bottom(messageArea, 8);
+    gtk_box_append(GTK_BOX(vbox), messageArea);
+
+    // Figma warning glyph: reuse the project app icon as a stand-in if a
+    // dedicated triangle asset is not bundled under resources/. Grep for
+    // an existing warning/triangle PNG or SVG before adding a new binary
+    // asset to the repository; do not invent a fabricated icon file path.
+    GtkWidget* icon = gtk_image_new_from_icon_name("dialog-warning-symbolic");
+    gtk_image_set_pixel_size(GTK_IMAGE(icon), UiTokensPosix::kWarningTriangleW);
+    gtk_widget_set_valign(icon, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(messageArea), icon);
 
     GtkWidget* label = gtk_label_new(text.c_str());
     gtk_label_set_wrap(GTK_LABEL(label), TRUE);
     gtk_widget_set_halign(label, GTK_ALIGN_START);
-    gtk_box_append(GTK_BOX(vbox), label);
+    gtk_widget_set_valign(label, GTK_ALIGN_START);
+    gtk_box_append(GTK_BOX(messageArea), label);
 
-    GtkWidget* buttonBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_widget_set_halign(buttonBox, GTK_ALIGN_END);
-    gtk_box_append(GTK_BOX(vbox), buttonBox);
+    GtkWidget* footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_add_css_class(footer, "dlna-warning-footer");
+    gtk_widget_set_size_request(footer, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningFooterH);
+    gtk_widget_set_halign(footer, GTK_ALIGN_END);
+    gtk_widget_set_valign(footer, GTK_ALIGN_CENTER);
+    gtk_widget_set_margin_end(footer, 12);
+    gtk_box_append(GTK_BOX(vbox), footer);
+    GtkWidget* buttonBox = footer;
 
     struct QuestionState {
         int result;
@@ -432,6 +597,7 @@ bool MessageBoxQuestion(GtkWindow* parent, const std::string& text) {
     QuestionState state = { GTK_RESPONSE_NONE, FALSE };
 
     GtkWidget* yesButton = gtk_button_new_with_label("Yes");
+    gtk_widget_add_css_class(yesButton, "dlna-dialog-button");
     g_signal_connect(yesButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer userData) {
         QuestionState* qs = static_cast<QuestionState*>(userData);
         qs->result = GTK_RESPONSE_YES;
@@ -440,6 +606,7 @@ bool MessageBoxQuestion(GtkWindow* parent, const std::string& text) {
     gtk_box_append(GTK_BOX(buttonBox), yesButton);
 
     GtkWidget* noButton = gtk_button_new_with_label("No");
+    gtk_widget_add_css_class(noButton, "dlna-dialog-button");
     g_signal_connect(noButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer userData) {
         QuestionState* qs = static_cast<QuestionState*>(userData);
         qs->result = GTK_RESPONSE_NO;
@@ -454,10 +621,11 @@ bool MessageBoxQuestion(GtkWindow* parent, const std::string& text) {
         return TRUE;
     }), &state);
 
-    gtk_window_present(msgWin);
+    PresentModalChild(msgWin, parent);
     while (!state.done) {
         g_main_context_iteration(nullptr, TRUE);
     }
+    ClearActiveModal(msgWin);
     gtk_window_destroy(msgWin);
     return state.result == GTK_RESPONSE_YES;
 }
@@ -563,9 +731,10 @@ void ShowPlaylistEntryDialog() {
     g_playlistDone = false;
 
     g_playlistDialog = gtk_window_new();
+    InstallMnemonicCueControllers(g_playlistDialog);
     gtk_window_set_title(GTK_WINDOW(g_playlistDialog), "Default playlist entry");
     gtk_window_set_default_size(GTK_WINDOW(g_playlistDialog),
-                                UiTokens::kPlaylistWindowWidth, UiTokens::kPlaylistWindowHeight);
+                                UiTokensPosix::kPlaylistWindowWidth, UiTokensPosix::kPlaylistWindowHeight);
     gtk_window_set_resizable(GTK_WINDOW(g_playlistDialog), FALSE);
 
     gtk_window_set_titlebar(
@@ -575,52 +744,72 @@ void ShowPlaylistEntryDialog() {
                             WindowChrome::Dialog));
 
     GtkWidget* fixed = gtk_fixed_new();
-    gtk_widget_set_size_request(fixed, UiTokens::kPlaylistWindowWidth, UiTokens::kPlaylistWindowHeight);
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kPlaylistWindowWidth, UiTokensPosix::kPlaylistWindowHeight);
     gtk_window_set_child(GTK_WINDOW(g_playlistDialog), fixed);
+    gtk_widget_add_css_class(fixed, "dlna-dialog-body");
 
     GtkWidget* movieLabel = gtk_label_new("Movie path:");
     gtk_widget_set_size_request(movieLabel, UiTokens::kPlaylistMovieLabelW, UiTokens::kPlaylistMovieLabelH);
-    gtk_fixed_put(GTK_FIXED(fixed), movieLabel, UiTokens::kPlaylistMovieLabelX, UiTokens::kPlaylistMovieLabelY);
+    gtk_fixed_put(GTK_FIXED(fixed), movieLabel, UiTokensPosix::kPlaylistMovieLabelX, UiTokensPosix::kPlaylistMovieLabelY);
     gtk_label_set_xalign(GTK_LABEL(movieLabel), 0.0f);
 
     g_movieEntry = gtk_entry_new();
-    gtk_widget_set_size_request(g_movieEntry, UiTokens::kPlaylistMovieEditW, UiTokens::kPlaylistMovieEditH);
-    gtk_fixed_put(GTK_FIXED(fixed), g_movieEntry, UiTokens::kPlaylistMovieEditX, UiTokens::kPlaylistMovieEditY);
+    gtk_widget_set_size_request(g_movieEntry, UiTokensPosix::kPlaylistMovieEditW, UiTokensPosix::kPlaylistMovieEditH);
+    gtk_fixed_put(GTK_FIXED(fixed), g_movieEntry, UiTokensPosix::kPlaylistMovieEditX, UiTokensPosix::kPlaylistMovieEditY);
 
     GtkWidget* movieBrowse = gtk_button_new_with_label("Browse...");
-    gtk_widget_set_size_request(movieBrowse, UiTokens::kPlaylistMovieBrowseW, UiTokens::kPlaylistMovieBrowseH);
-    gtk_fixed_put(GTK_FIXED(fixed), movieBrowse, UiTokens::kPlaylistMovieBrowseX, UiTokens::kPlaylistMovieBrowseY);
-    gtk_widget_add_css_class(movieBrowse, "toolbar-button");
+    gtk_widget_set_size_request(movieBrowse, UiTokensPosix::kPlaylistMovieBrowseW, UiTokensPosix::kPlaylistMovieBrowseH);
+    gtk_fixed_put(GTK_FIXED(fixed), movieBrowse, UiTokensPosix::kPlaylistMovieBrowseX, UiTokensPosix::kPlaylistMovieBrowseY);
+    gtk_widget_add_css_class(movieBrowse, "dlna-dialog-button");
     g_signal_connect(movieBrowse, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ShowPlaylistMovieBrowse(GTK_WINDOW(g_playlistDialog));
     }), nullptr);
 
     GtkWidget* subtitleLabel = gtk_label_new("Subtitle path:");
     gtk_widget_set_size_request(subtitleLabel, UiTokens::kPlaylistSubtitleLabelW, UiTokens::kPlaylistSubtitleLabelH);
-    gtk_fixed_put(GTK_FIXED(fixed), subtitleLabel, UiTokens::kPlaylistSubtitleLabelX, UiTokens::kPlaylistSubtitleLabelY);
+    gtk_fixed_put(GTK_FIXED(fixed), subtitleLabel, UiTokensPosix::kPlaylistSubtitleLabelX, UiTokensPosix::kPlaylistSubtitleLabelY);
     gtk_label_set_xalign(GTK_LABEL(subtitleLabel), 0.0f);
 
     g_subtitleEntry = gtk_entry_new();
-    gtk_widget_set_size_request(g_subtitleEntry, UiTokens::kPlaylistSubtitleEditW, UiTokens::kPlaylistSubtitleEditH);
-    gtk_fixed_put(GTK_FIXED(fixed), g_subtitleEntry, UiTokens::kPlaylistSubtitleEditX, UiTokens::kPlaylistSubtitleEditY);
+    gtk_widget_set_size_request(g_subtitleEntry, UiTokensPosix::kPlaylistSubtitleEditW, UiTokensPosix::kPlaylistSubtitleEditH);
+    gtk_fixed_put(GTK_FIXED(fixed), g_subtitleEntry, UiTokensPosix::kPlaylistSubtitleEditX, UiTokensPosix::kPlaylistSubtitleEditY);
 
     GtkWidget* subtitleBrowse = gtk_button_new_with_label("Browse...");
-    gtk_widget_set_size_request(subtitleBrowse, UiTokens::kPlaylistSubtitleBrowseW, UiTokens::kPlaylistSubtitleBrowseH);
-    gtk_fixed_put(GTK_FIXED(fixed), subtitleBrowse, UiTokens::kPlaylistSubtitleBrowseX, UiTokens::kPlaylistSubtitleBrowseY);
-    gtk_widget_add_css_class(subtitleBrowse, "toolbar-button");
+    gtk_widget_set_size_request(subtitleBrowse, UiTokensPosix::kPlaylistSubtitleBrowseW, UiTokensPosix::kPlaylistSubtitleBrowseH);
+    gtk_fixed_put(GTK_FIXED(fixed), subtitleBrowse, UiTokensPosix::kPlaylistSubtitleBrowseX, UiTokensPosix::kPlaylistSubtitleBrowseY);
+    gtk_widget_add_css_class(subtitleBrowse, "dlna-dialog-button");
     g_signal_connect(subtitleBrowse, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ShowPlaylistSubtitleBrowse(GTK_WINDOW(g_playlistDialog));
     }), nullptr);
 
     GtkWidget* addButton = gtk_button_new_with_label("Add");
-    gtk_widget_set_size_request(addButton, UiTokens::kPlaylistAddW, UiTokens::kPlaylistAddH);
-    gtk_fixed_put(GTK_FIXED(fixed), addButton, UiTokens::kPlaylistAddX, UiTokens::kPlaylistAddY);
-    gtk_widget_add_css_class(addButton, "toolbar-button");
+    gtk_widget_set_size_request(addButton, UiTokensPosix::kPlaylistAddW, UiTokensPosix::kPlaylistAddH);
+    gtk_fixed_put(GTK_FIXED(fixed), addButton, UiTokensPosix::kPlaylistAddX, UiTokensPosix::kPlaylistAddY);
+    gtk_widget_add_css_class(addButton, "dlna-dialog-button");
     gtk_widget_add_css_class(addButton, "suggested-action");
+    gtk_widget_set_sensitive(addButton, FALSE);
     g_signal_connect(addButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         g_playlistDone = true;
         gtk_widget_set_visible(g_playlistDialog, FALSE);
     }), nullptr);
+    auto refreshPlaylistAddSensitivity = +[](GtkEditable*, gpointer data) {
+        GtkWidget* button = static_cast<GtkWidget*>(data);
+        gtk_widget_set_sensitive(button,
+            AnyFieldHasContent({
+                static_cast<int>(g_utf8_strlen(gtk_editable_get_text(GTK_EDITABLE(g_movieEntry)), -1)),
+                static_cast<int>(g_utf8_strlen(gtk_editable_get_text(GTK_EDITABLE(g_subtitleEntry)), -1))
+            }) ? TRUE : FALSE);
+    };
+    g_signal_connect(g_movieEntry, "changed", G_CALLBACK(refreshPlaylistAddSensitivity), addButton);
+    g_signal_connect(g_subtitleEntry, "changed", G_CALLBACK(refreshPlaylistAddSensitivity), addButton);
+
+    {
+        std::vector<std::wstring> playlistLabels = { L"Browse...", L"Browse...", L"Add" };
+        std::vector<wchar_t> playlistMnemonics = AssignMnemonics(playlistLabels);
+        ApplyMnemonicLabel(movieBrowse, playlistLabels[0], playlistMnemonics[0]);
+        ApplyMnemonicLabel(subtitleBrowse, playlistLabels[1], playlistMnemonics[1]);
+        ApplyMnemonicLabel(addButton, playlistLabels[2], playlistMnemonics[2]);
+    }
 
     g_signal_connect(g_playlistDialog, "close-request", G_CALLBACK(+[](GtkWidget* w, gpointer) -> gboolean {
         g_playlistDone = true;
@@ -628,11 +817,24 @@ void ShowPlaylistEntryDialog() {
         ClearActiveModal(GTK_WINDOW(w));
         return TRUE;
     }), nullptr);
+    InstallSubwindowCloseKeys(g_playlistDialog, []() {
+        g_playlistDone = true;
+        gtk_widget_set_visible(g_playlistDialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(g_playlistDialog));
+    });
 
     g_signal_connect(g_playlistDialog, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer) {
         g_playlistDialog = nullptr;
     }), nullptr);
 
+    if (g_printPlaylistAddSensitivity) {
+        std::printf("initial=%s\n", gtk_widget_get_sensitive(addButton) ? "true" : "false");
+        gtk_editable_set_text(GTK_EDITABLE(g_movieEntry), "movie.mp4");
+        std::printf("after-movie-text=%s\n", gtk_widget_get_sensitive(addButton) ? "true" : "false");
+        std::fflush(stdout);
+        gtk_window_destroy(GTK_WINDOW(g_playlistDialog));
+        return;
+    }
     if (g_dumpGeometry) {
         PresentModalChild(GTK_WINDOW(g_playlistDialog), GTK_WINDOW(g_mainWindow));
         DumpWindowGeometry("playlist-entry", g_playlistDialog);
@@ -680,9 +882,10 @@ void PromptForMediaSource() {
     g_sourceDone = false;
 
     g_sourceDialog = gtk_window_new();
+    InstallMnemonicCueControllers(g_sourceDialog);
     gtk_window_set_title(GTK_WINDOW(g_sourceDialog), "Add media source");
     gtk_window_set_default_size(GTK_WINDOW(g_sourceDialog),
-                                UiTokens::kSourcePromptWindowWidth, UiTokens::kSourcePromptWindowHeight);
+                                UiTokensPosix::kSourcePromptWindowWidth, UiTokensPosix::kSourcePromptWindowHeight);
     gtk_window_set_resizable(GTK_WINDOW(g_sourceDialog), FALSE);
 
     gtk_window_set_titlebar(
@@ -692,8 +895,9 @@ void PromptForMediaSource() {
                             WindowChrome::Dialog));
 
     GtkWidget* fixed = gtk_fixed_new();
-    gtk_widget_set_size_request(fixed, UiTokens::kSourcePromptWindowWidth, UiTokens::kSourcePromptWindowHeight);
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kSourcePromptWindowWidth, UiTokensPosix::kSourcePromptWindowHeight);
     gtk_window_set_child(GTK_WINDOW(g_sourceDialog), fixed);
+    gtk_widget_add_css_class(fixed, "dlna-dialog-body");
 
     GtkWidget* label = gtk_label_new("Add a local source or a Network share URL:");
     gtk_widget_set_size_request(label, UiTokens::kSourcePromptLabelW, UiTokens::kSourcePromptLabelH);
@@ -701,8 +905,9 @@ void PromptForMediaSource() {
     gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
 
     g_sourceEntry = gtk_entry_new();
-    gtk_widget_set_size_request(g_sourceEntry, UiTokens::kSourcePromptEditW, UiTokens::kSourcePromptEditH);
-    gtk_fixed_put(GTK_FIXED(fixed), g_sourceEntry, UiTokens::kSourcePromptEditX, UiTokens::kSourcePromptEditY);
+    gtk_widget_add_css_class(g_sourceEntry, "dlna-dialog-entry-warm-border");
+    gtk_widget_set_size_request(g_sourceEntry, UiTokensPosix::kSourcePromptInputW, UiTokensPosix::kSourcePromptInputH);
+    gtk_fixed_put(GTK_FIXED(fixed), g_sourceEntry, UiTokensPosix::kSourcePromptInputX, UiTokensPosix::kSourcePromptInputY);
     g_signal_connect(g_sourceEntry, "changed", G_CALLBACK(OnSourceEntryChanged), nullptr);
 
     GtkWidget* hintLabel = gtk_label_new("Example: ftp://user:pass@server:21/media");
@@ -711,27 +916,27 @@ void PromptForMediaSource() {
     gtk_label_set_xalign(GTK_LABEL(hintLabel), 0.0f);
 
     GtkWidget* folderButton = gtk_button_new_with_label("Folder...");
-    gtk_widget_set_size_request(folderButton, UiTokens::kSourcePromptFolderW, UiTokens::kSourcePromptFolderH);
+    gtk_widget_set_size_request(folderButton, UiTokensPosix::kSourcePromptFolderW, UiTokensPosix::kSourcePromptFolderH);
     gtk_fixed_put(GTK_FIXED(fixed), folderButton, UiTokens::kSourcePromptFolderX, UiTokens::kSourcePromptFolderY);
-    gtk_widget_add_css_class(folderButton, "toolbar-button");
+    gtk_widget_add_css_class(folderButton, "dlna-dialog-button");
     g_signal_connect(folderButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ChooseSourcePath(GTK_WINDOW(g_sourceDialog), GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
                          "Choose media folder");
     }), nullptr);
 
     GtkWidget* fileButton = gtk_button_new_with_label("File...");
-    gtk_widget_set_size_request(fileButton, UiTokens::kSourcePromptFileW, UiTokens::kSourcePromptFileH);
+    gtk_widget_set_size_request(fileButton, UiTokensPosix::kSourcePromptFileW, UiTokensPosix::kSourcePromptFileH);
     gtk_fixed_put(GTK_FIXED(fixed), fileButton, UiTokens::kSourcePromptFileX, UiTokens::kSourcePromptFileY);
-    gtk_widget_add_css_class(fileButton, "toolbar-button");
+    gtk_widget_add_css_class(fileButton, "dlna-dialog-button");
     g_signal_connect(fileButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ChooseSourcePath(GTK_WINDOW(g_sourceDialog), GTK_FILE_CHOOSER_ACTION_OPEN,
                          "Choose media file");
     }), nullptr);
 
     g_sourceAddButton = gtk_button_new_with_label("Add");
-    gtk_widget_set_size_request(g_sourceAddButton, UiTokens::kSourcePromptAddW, UiTokens::kSourcePromptAddH);
+    gtk_widget_set_size_request(g_sourceAddButton, UiTokensPosix::kSourcePromptAddW, UiTokensPosix::kSourcePromptAddH);
     gtk_fixed_put(GTK_FIXED(fixed), g_sourceAddButton, UiTokens::kSourcePromptAddX, UiTokens::kSourcePromptAddY);
-    gtk_widget_add_css_class(g_sourceAddButton, "toolbar-button");
+    gtk_widget_add_css_class(g_sourceAddButton, "dlna-dialog-button");
     gtk_widget_add_css_class(g_sourceAddButton, "suggested-action");
     gtk_widget_set_sensitive(g_sourceAddButton, FALSE);
     g_signal_connect(g_sourceAddButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -740,15 +945,31 @@ void PromptForMediaSource() {
     }), nullptr);
 
     GtkWidget* cancelButton = gtk_button_new_with_label("Cancel");
-    gtk_widget_set_size_request(cancelButton, UiTokens::kSourcePromptCancelW, UiTokens::kSourcePromptCancelH);
+    gtk_widget_set_size_request(cancelButton, UiTokensPosix::kSourcePromptCancelW, UiTokensPosix::kSourcePromptCancelH);
     gtk_fixed_put(GTK_FIXED(fixed), cancelButton, UiTokens::kSourcePromptCancelX, UiTokens::kSourcePromptCancelY);
-    gtk_widget_add_css_class(cancelButton, "toolbar-button");
+    gtk_widget_add_css_class(cancelButton, "dlna-dialog-button");
     g_signal_connect(cancelButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         gtk_editable_set_text(GTK_EDITABLE(g_sourceEntry), "");
         g_sourceDone = false;
         gtk_widget_set_visible(g_sourceDialog, FALSE);
         ClearActiveModal(GTK_WINDOW(g_sourceDialog));
     }), nullptr);
+
+    {
+        std::vector<std::wstring> sourceLabels = { L"Folder...", L"File...", L"Add", L"Cancel" };
+        std::vector<wchar_t> sourceMnemonics = AssignMnemonics(sourceLabels);
+        ApplyMnemonicLabel(folderButton, sourceLabels[0], sourceMnemonics[0]);
+        ApplyMnemonicLabel(fileButton, sourceLabels[1], sourceMnemonics[1]);
+        ApplyMnemonicLabel(g_sourceAddButton, sourceLabels[2], sourceMnemonics[2]);
+        ApplyMnemonicLabel(cancelButton, sourceLabels[3], sourceMnemonics[3]);
+    }
+
+    InstallSubwindowCloseKeys(g_sourceDialog, []() {
+        gtk_editable_set_text(GTK_EDITABLE(g_sourceEntry), "");
+        g_sourceDone = false;
+        gtk_widget_set_visible(g_sourceDialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(g_sourceDialog));
+    });
 
     g_signal_connect(g_sourceDialog, "close-request", G_CALLBACK(+[](GtkWidget* w, gpointer) -> gboolean {
         g_sourceDone = false;
@@ -835,9 +1056,10 @@ void ShowLogDialog() {
     }
 
     g_logDialog = gtk_window_new();
+    InstallMnemonicCueControllers(g_logDialog);
     gtk_window_set_title(GTK_WINDOW(g_logDialog), "DLNA Server Log");
     gtk_window_set_default_size(GTK_WINDOW(g_logDialog),
-                                UiTokens::kLogWindowWidth, UiTokens::kLogWindowHeight);
+                                UiTokensPosix::kLogWindowWidth, UiTokensPosix::kLogWindowHeight);
     gtk_window_set_resizable(GTK_WINDOW(g_logDialog), FALSE);
 
     gtk_window_set_titlebar(
@@ -847,7 +1069,7 @@ void ShowLogDialog() {
                             WindowChrome::Dialog));
 
     GtkWidget* fixed = gtk_fixed_new();
-    gtk_widget_set_size_request(fixed, UiTokens::kLogWindowWidth, UiTokens::kLogWindowHeight);
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kLogWindowWidth, UiTokensPosix::kLogWindowHeight);
     gtk_window_set_child(GTK_WINDOW(g_logDialog), fixed);
 
     GtkWidget* scrolled = gtk_scrolled_window_new();
@@ -857,6 +1079,7 @@ void ShowLogDialog() {
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
 
     GtkWidget* textView = gtk_text_view_new();
+    gtk_widget_add_css_class(textView, "dlna-log-surface");
     g_logBuffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(textView));
     gtk_text_view_set_editable(GTK_TEXT_VIEW(textView), FALSE);
     gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(textView), FALSE);
@@ -866,7 +1089,7 @@ void ShowLogDialog() {
     GtkWidget* refreshButton = gtk_button_new_with_label("Refresh");
     gtk_widget_set_size_request(refreshButton, UiTokens::kLogRefreshW, UiTokens::kLogRefreshH);
     gtk_fixed_put(GTK_FIXED(fixed), refreshButton, UiTokens::kLogRefreshX, UiTokens::kLogRefreshY);
-    gtk_widget_add_css_class(refreshButton, "toolbar-button");
+    gtk_widget_add_css_class(refreshButton, "dlna-dialog-button");
     g_signal_connect(refreshButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         RefreshLogDialog();
     }), nullptr);
@@ -874,7 +1097,8 @@ void ShowLogDialog() {
     GtkWidget* closeButton = gtk_button_new_with_label("Close");
     gtk_widget_set_size_request(closeButton, UiTokens::kLogCloseW, UiTokens::kLogCloseH);
     gtk_fixed_put(GTK_FIXED(fixed), closeButton, UiTokens::kLogCloseX, UiTokens::kLogCloseY);
-    gtk_widget_add_css_class(closeButton, "toolbar-button");
+    gtk_widget_add_css_class(closeButton, "dlna-dialog-button");
+    gtk_widget_add_css_class(closeButton, "suggested-action");
     g_signal_connect(closeButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         gtk_widget_set_visible(g_logDialog, FALSE);
         ClearActiveModal(GTK_WINDOW(g_logDialog));
@@ -892,6 +1116,13 @@ void ShowLogDialog() {
         ClearActiveModal(GTK_WINDOW(g_logDialog));
         return TRUE;
     }), nullptr);
+    InstallSubwindowCloseKeys(g_logDialog, []() {
+        gtk_widget_set_visible(g_logDialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(g_logDialog));
+        if (g_mainWindow != nullptr) {
+            gtk_window_present(GTK_WINDOW(g_mainWindow));
+        }
+    });
 
     RefreshLogDialog();
     if (g_dumpGeometry) {
@@ -919,10 +1150,11 @@ void ShowHelpDialog(GtkWindow* parent) {
         return;
     }
     GtkWidget* dialog = gtk_window_new();
+    InstallMnemonicCueControllers(dialog);
     g_helpDialog = dialog;
     gtk_window_set_title(GTK_WINDOW(dialog), "DLNA Server Help");
     gtk_window_set_default_size(GTK_WINDOW(dialog),
-                                UiTokens::kHelpWindowWidth, UiTokens::kHelpWindowHeight);
+                                UiTokensPosix::kHelpWindowWidth, UiTokensPosix::kHelpWindowHeight);
     gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
 
     gtk_window_set_titlebar(
@@ -932,8 +1164,9 @@ void ShowHelpDialog(GtkWindow* parent) {
                             WindowChrome::Dialog));
 
     GtkWidget* fixed = gtk_fixed_new();
-    gtk_widget_set_size_request(fixed, UiTokens::kHelpWindowWidth, UiTokens::kHelpWindowHeight);
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kHelpWindowWidth, UiTokensPosix::kHelpWindowHeight);
     gtk_window_set_child(GTK_WINDOW(dialog), fixed);
+    gtk_widget_add_css_class(fixed, "dlna-dialog-body");
 
     GtkWidget* scrolled = gtk_scrolled_window_new();
     gtk_widget_set_size_request(scrolled, UiTokens::kHelpTextW, UiTokens::kHelpTextH);
@@ -942,6 +1175,7 @@ void ShowHelpDialog(GtkWindow* parent) {
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
 
     GtkWidget* textView = gtk_text_view_new();
+    gtk_widget_add_css_class(textView, "dlna-help-surface");
     GtkTextBuffer* buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(textView));
     gtk_text_view_set_editable(GTK_TEXT_VIEW(textView), FALSE);
     gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(textView), FALSE);
@@ -998,6 +1232,11 @@ void ShowHelpDialog(GtkWindow* parent) {
         ClearActiveModal(GTK_WINDOW(w));
         return TRUE;
     }), nullptr);
+    InstallSubwindowCloseKeys(dialog, [dialog]() {
+        gtk_widget_set_visible(dialog, FALSE);
+        g_helpDialog = nullptr;
+        ClearActiveModal(GTK_WINDOW(dialog));
+    });
 
     g_signal_connect(dialog, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer) {
         g_helpDialog = nullptr;
@@ -1100,17 +1339,20 @@ bool ShowSettingsDialog() {
     g_settingsRestartRequested = false;
 
     g_settingsDialog = gtk_window_new();
+    InstallMnemonicCueControllers(g_settingsDialog);
     gtk_window_set_title(GTK_WINDOW(g_settingsDialog), "DLNA Server Settings");
     gtk_window_set_default_size(GTK_WINDOW(g_settingsDialog),
-                                UiTokens::kSettingsWindowWidth, UiTokens::kSettingsWindowHeight);
+                                UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsWindowHeight);
     gtk_window_set_resizable(GTK_WINDOW(g_settingsDialog), FALSE);
 
     GtkWidget* fixed = gtk_fixed_new();
-    gtk_widget_set_size_request(fixed, UiTokens::kSettingsWindowWidth, UiTokens::kSettingsWindowHeight);
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsWindowHeight);
     gtk_window_set_child(GTK_WINDOW(g_settingsDialog), fixed);
+    gtk_widget_add_css_class(fixed, "dlna-dialog-body");
 
     auto makeFrame = [&](const char* label, int x, int y, int w, int h) {
         GtkWidget* frame = gtk_frame_new(label);
+        gtk_widget_add_css_class(frame, "dlna-groupbox");
         gtk_widget_set_size_request(frame, w, h);
         gtk_fixed_put(GTK_FIXED(fixed), frame, x, y);
         gtk_frame_set_label_align(GTK_FRAME(frame), 0.0f);
@@ -1125,6 +1367,7 @@ bool ShowSettingsDialog() {
     };
     auto makeEntry = [&](int x, int y, int w, int h) {
         GtkWidget* entry = gtk_entry_new();
+        gtk_widget_add_css_class(entry, "dlna-dialog-entry");
         gtk_widget_set_size_request(entry, w, h);
         gtk_fixed_put(GTK_FIXED(fixed), entry, x, y);
         return entry;
@@ -1140,12 +1383,17 @@ bool ShowSettingsDialog() {
     // the non-client area so it is absent from the geometry dump and the
     // group boxes below start at the captured y coordinate of 21
     const int kSettingsToolbarButtonWidth = 72;
-    const int kSettingsToolbarButtonHeight = 28;
-    const int kSettingsToolbarTop = UiTokens::kSettingsServerGroupY - 36;
+    const int kSettingsToolbarButtonHeight = UiTokensPosix::kSettingsRibbonHeight;
+    const int kSettingsToolbarTop = 0;
+
+    GtkWidget* settingsRibbon = gtk_fixed_new();
+    gtk_widget_set_size_request(settingsRibbon, UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsRibbonHeight);
+    gtk_widget_add_css_class(settingsRibbon, "settings-ribbon");
+    gtk_fixed_put(GTK_FIXED(fixed), settingsRibbon, 0, 0);
 
     GtkWidget* logsButton = gtk_button_new_with_label("Logs");
     gtk_widget_set_size_request(logsButton, kSettingsToolbarButtonWidth, kSettingsToolbarButtonHeight);
-    gtk_fixed_put(GTK_FIXED(fixed), logsButton, UiTokens::kSettingsServerGroupX,
+    gtk_fixed_put(GTK_FIXED(fixed), logsButton, UiTokensPosix::kSettingsRibbonLogsX,
                   kSettingsToolbarTop);
     gtk_widget_add_css_class(logsButton, "settings-toolbar-button");
     g_signal_connect(logsButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -1154,37 +1402,39 @@ bool ShowSettingsDialog() {
 
     GtkWidget* helpButton = gtk_button_new_with_label("Help");
     gtk_widget_set_size_request(helpButton, kSettingsToolbarButtonWidth, kSettingsToolbarButtonHeight);
-    gtk_fixed_put(GTK_FIXED(fixed), helpButton,
-                  UiTokens::kSettingsServerGroupX + kSettingsToolbarButtonWidth + UiTokens::kButtonGap,
-                  kSettingsToolbarTop);
+    gtk_fixed_put(GTK_FIXED(fixed), helpButton, UiTokensPosix::kSettingsRibbonHelpX, kSettingsToolbarTop);
     gtk_widget_add_css_class(helpButton, "settings-toolbar-button");
     g_signal_connect(helpButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ShowHelpDialog(GTK_WINDOW(g_settingsDialog));
     }), nullptr);
 
-    makeFrame("Server", UiTokens::kSettingsServerGroupX, UiTokens::kSettingsServerGroupY,
-              UiTokens::kSettingsServerGroupW, UiTokens::kSettingsServerGroupH);
+    {
+        std::vector<std::wstring> ribbonLabels = { L"Logs", L"Help" };
+        std::vector<wchar_t> ribbonMnemonics = AssignMnemonics(ribbonLabels);
+        ApplyMnemonicLabel(logsButton, ribbonLabels[0], ribbonMnemonics[0]);
+        ApplyMnemonicLabel(helpButton, ribbonLabels[1], ribbonMnemonics[1]);
+    }
+
+    makeFrame("Server", UiTokensPosix::kServerGroupX, UiTokensPosix::kServerGroupY, UiTokensPosix::kServerGroupW, UiTokensPosix::kServerGroupH);
     makeLabel("Server name:", UiTokens::kSettingsServerNameLabelX, UiTokens::kSettingsServerNameLabelY,
               UiTokens::kSettingsServerNameLabelW, UiTokens::kSettingsServerNameLabelH);
     g_serverNameEntry = makeEntry(UiTokens::kSettingsServerNameEditX, UiTokens::kSettingsServerNameEditY,
-                                  UiTokens::kSettingsServerNameEditW, UiTokens::kSettingsServerNameEditH);
+                                  UiTokensPosix::kServerNameEditW, UiTokensPosix::kServerNameEditH);
     makeLabel("HTTP port:", UiTokens::kSettingsHttpPortLabelX, UiTokens::kSettingsHttpPortLabelY,
               UiTokens::kSettingsHttpPortLabelW, UiTokens::kSettingsHttpPortLabelH);
     g_httpPortEntry = makeEntry(UiTokens::kSettingsHttpPortEditX, UiTokens::kSettingsHttpPortEditY,
-                                UiTokens::kSettingsHttpPortEditW, UiTokens::kSettingsHttpPortEditH);
+                                UiTokensPosix::kHttpPortEditW, UiTokensPosix::kHttpPortEditH);
     makeLabel("IP whitelist:", UiTokens::kSettingsIpWhitelistLabelX, UiTokens::kSettingsIpWhitelistLabelY,
               UiTokens::kSettingsIpWhitelistLabelW, UiTokens::kSettingsIpWhitelistLabelH);
     g_ipWhitelistEntry = makeEntry(UiTokens::kSettingsIpWhitelistEditX, UiTokens::kSettingsIpWhitelistEditY,
-                                   UiTokens::kSettingsIpWhitelistEditW, UiTokens::kSettingsIpWhitelistEditH);
+                                   UiTokensPosix::kIpWhitelistEditW, UiTokensPosix::kIpWhitelistEditH);
 
-    makeFrame("General", UiTokens::kSettingsGeneralGroupX, UiTokens::kSettingsGeneralGroupY,
-              UiTokens::kSettingsGeneralGroupW, UiTokens::kSettingsGeneralGroupH);
+    makeFrame("General", UiTokensPosix::kGeneralGroupX, UiTokensPosix::kGeneralGroupY, UiTokensPosix::kGeneralGroupW, UiTokensPosix::kGeneralGroupH);
     g_debugLogCheck = makeCheck("Debug log (write to file)",
                                 UiTokens::kSettingsDebugLogX, UiTokens::kSettingsDebugLogY,
                                 UiTokens::kSettingsDebugLogW, UiTokens::kSettingsDebugLogH);
 
-    makeFrame("Playlist", UiTokens::kSettingsPlaylistGroupX, UiTokens::kSettingsPlaylistGroupY,
-              UiTokens::kSettingsPlaylistGroupW, UiTokens::kSettingsPlaylistGroupH);
+    makeFrame("Playlist", UiTokensPosix::kPlaylistGroupX, UiTokensPosix::kPlaylistGroupY, UiTokensPosix::kPlaylistGroupW, UiTokensPosix::kPlaylistGroupH);
     g_defaultPlaylistCheck = makeCheck("Default playlist",
                                        UiTokens::kSettingsDefaultPlaylistX, UiTokens::kSettingsDefaultPlaylistY,
                                        UiTokens::kSettingsDefaultPlaylistW, UiTokens::kSettingsDefaultPlaylistH);
@@ -1193,7 +1443,7 @@ bool ShowSettingsDialog() {
                                   UiTokens::kSettingsPlaylistAddW, UiTokens::kSettingsPlaylistAddH);
     gtk_fixed_put(GTK_FIXED(fixed), g_defaultPlaylistAddButton,
                   UiTokens::kSettingsPlaylistAddX, UiTokens::kSettingsPlaylistAddY);
-    gtk_widget_add_css_class(g_defaultPlaylistAddButton, "toolbar-button");
+    gtk_widget_add_css_class(g_defaultPlaylistAddButton, "dlna-dialog-button");
     g_signal_connect(g_defaultPlaylistAddButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ShowPlaylistEntryDialog();
         gtk_check_button_set_active(GTK_CHECK_BUTTON(g_defaultPlaylistCheck), TRUE);
@@ -1203,8 +1453,7 @@ bool ShowSettingsDialog() {
         RefreshDefaultPlaylistControls();
     }), nullptr);
 
-    makeFrame("Media browsing", UiTokens::kSettingsMediaGroupX, UiTokens::kSettingsMediaGroupY,
-              UiTokens::kSettingsMediaGroupW, UiTokens::kSettingsMediaGroupH);
+    makeFrame("Media browsing", UiTokensPosix::kMediaGroupX, UiTokensPosix::kMediaGroupY, UiTokensPosix::kMediaGroupW, UiTokensPosix::kMediaGroupH);
     g_artistAlbumCheck = makeCheck("Add artist/album folders to audio",
                                    UiTokens::kSettingsArtistAlbumsX, UiTokens::kSettingsArtistAlbumsY,
                                    UiTokens::kSettingsArtistAlbumsW, UiTokens::kSettingsArtistAlbumsH);
@@ -1230,7 +1479,7 @@ bool ShowSettingsDialog() {
     GtkWidget* cancelButton = gtk_button_new_with_label("Cancel");
     gtk_widget_set_size_request(cancelButton, UiTokens::kSettingsCancelW, UiTokens::kSettingsCancelH);
     gtk_fixed_put(GTK_FIXED(fixed), cancelButton, UiTokens::kSettingsCancelX, UiTokens::kSettingsCancelY);
-    gtk_widget_add_css_class(cancelButton, "toolbar-button");
+    gtk_widget_add_css_class(cancelButton, "dlna-dialog-button");
     g_signal_connect(cancelButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         g_settingsSaved = false;
         gtk_widget_set_visible(g_settingsDialog, FALSE);
@@ -1241,7 +1490,7 @@ bool ShowSettingsDialog() {
     GtkWidget* okButton = gtk_button_new_with_label("OK");
     gtk_widget_set_size_request(okButton, UiTokens::kSettingsOkW, UiTokens::kSettingsOkH);
     gtk_fixed_put(GTK_FIXED(fixed), okButton, UiTokens::kSettingsOkX, UiTokens::kSettingsOkY);
-    gtk_widget_add_css_class(okButton, "toolbar-button");
+    gtk_widget_add_css_class(okButton, "dlna-dialog-button");
     gtk_widget_add_css_class(okButton, "suggested-action");
     g_signal_connect(okButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         if (SaveSettingsToConfig()) {
@@ -1264,6 +1513,13 @@ bool ShowSettingsDialog() {
         }
         return TRUE;
     }), nullptr);
+    InstallSubwindowCloseKeys(g_settingsDialog, []() {
+        if (g_settingsDialog != nullptr) {
+            gtk_widget_set_visible(g_settingsDialog, FALSE);
+            ClearActiveModal(GTK_WINDOW(g_settingsDialog));
+            RefreshStatus();
+        }
+    });
 
     gtk_window_set_titlebar(
         GTK_WINDOW(g_settingsDialog),
@@ -1297,33 +1553,25 @@ bool ShowSettingsDialog() {
 }
 
 void LayoutMainWindow(int width, int height) {
-    gtk_widget_set_size_request(g_toolbar, width, UiTokens::kToolbarHeight);
-
-    const int buttonTop = (UiTokens::kToolbarHeight - UiTokens::kButtonHeight) / 2;
-    const int settingsLeft = width - UiTokens::kGutter - UiTokens::kSettingsButtonWidth;
-    const int startLeft = settingsLeft - UiTokens::kButtonGap - UiTokens::kStartStopButtonWidth;
-    const int deleteLeft = startLeft - UiTokens::kButtonGap - UiTokens::kDeleteButtonWidth;
-    const int addLeft = deleteLeft - UiTokens::kButtonGap - UiTokens::kAddButtonWidth;
+    (void)width;
+    (void)height;
+    gtk_widget_set_size_request(g_toolbar, UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainToolbarHeight);
 
     GtkWidget* fixed = gtk_widget_get_parent(g_toolbar);
 
-    gtk_fixed_move(GTK_FIXED(fixed), g_addButton, addLeft, buttonTop);
-    gtk_fixed_move(GTK_FIXED(fixed), g_removeButton, deleteLeft, buttonTop);
-    gtk_fixed_move(GTK_FIXED(fixed), g_startStopButton, startLeft, buttonTop);
-    gtk_fixed_move(GTK_FIXED(fixed), g_settingsButton, settingsLeft, buttonTop);
+    gtk_fixed_move(GTK_FIXED(fixed), g_addButton, UiTokensPosix::kAddButtonX, UiTokensPosix::kAddButtonY);
+    gtk_fixed_move(GTK_FIXED(fixed), g_removeButton, UiTokensPosix::kDeleteButtonX, UiTokensPosix::kDeleteButtonY);
+    gtk_fixed_move(GTK_FIXED(fixed), g_startStopButton, UiTokensPosix::kStartStopButtonX, UiTokensPosix::kStartStopButtonY);
+    gtk_fixed_move(GTK_FIXED(fixed), g_settingsButton, UiTokensPosix::kSettingsButtonX, UiTokensPosix::kSettingsButtonY);
 
-    gtk_fixed_move(GTK_FIXED(fixed), g_status, UiTokens::kGutter, UiTokens::kToolbarHeight);
+    gtk_fixed_move(GTK_FIXED(fixed), g_status, UiTokensPosix::kMainSourceListX, UiTokensPosix::kMainToolbarHeight);
 
-    const int kListTop = UiTokens::kToolbarHeight + UiTokens::kStatusHeight + UiTokens::kListTopGap;
-    const int ringSpace = UiTokens::kFocusRingThickness + UiTokens::kFocusRingGap;
-    const int listLeft = UiTokens::kGutter + ringSpace;
-    const int listTop = kListTop + ringSpace;
-    const int listWidth = width - (UiTokens::kGutter * 2) - (ringSpace * 2);
-    const int listHeight = height - kListTop - UiTokens::kGutter - (ringSpace * 2);
-    gtk_fixed_move(GTK_FIXED(fixed), g_sourcesScrolled, listLeft, listTop);
-    gtk_widget_set_size_request(g_sourcesScrolled, listWidth, listHeight);
+    const int listTop = UiTokensPosix::kMainToolbarHeight + UiTokensPosix::kMainSourceListYFromListArea;
+    gtk_fixed_move(GTK_FIXED(fixed), g_sourcesScrolled, UiTokensPosix::kMainSourceListX, listTop);
+    gtk_widget_set_size_request(g_sourcesScrolled, UiTokensPosix::kMainSourceListWidth, UiTokensPosix::kMainSourceListHeight);
+    gtk_widget_add_css_class(g_sourcesScrolled, "source-list");
 
-    gtk_fixed_move(GTK_FIXED(fixed), g_emptyState, UiTokens::kGutter + 16, kListTop + 16);
+    gtk_fixed_move(GTK_FIXED(fixed), g_emptyState, UiTokensPosix::kMainSourceListX + 16, listTop + 16);
 }
 
 void RefreshEmptyState() {
@@ -1353,14 +1601,14 @@ void RefreshDeleteButton() {
         AppConfig.HasRuntimeSourceOverride() &&
         g_state == ServerUiState::Running;
     const bool hasSelection = HasSourceSelection();
-    // mirrors source_list_focus.h NO-FOCUS rule on windows
-    // delete requires both a selection and that the source list
-    // still holds keyboard focus once focus moves elsewhere the
-    // control must go back to disabled even if the row is still
-    // technically selected inside the GtkListBox widget itself
+    // uses source_list_focus.h SourceListFocusState directly, the same
+    // pure state machine src/mainwindow.cpp uses on Win32, instead of a
+    // bare bool. This is required so that a click landing on the Delete
+    // button (which moves keyboard focus away from the source list) does
+    // not disable Delete before the click's own handler executes.
     const bool enabled =
         hasSelection &&
-        g_sourceListHasFocus &&
+        !g_sourceFocusState.IsNoFocus() &&
         !transition &&
         !scanBusy &&
         !overrideSources;
@@ -1368,12 +1616,33 @@ void RefreshDeleteButton() {
 }
 
 void OnSourceFocusChanged(GtkEventControllerFocus*, gboolean, gpointer) {
-    g_sourceListHasFocus = true;
     RefreshDeleteButton();
 }
 
 void OnSourceFocusLeave(GtkEventControllerFocus*, gpointer) {
-    g_sourceListHasFocus = false;
+    // Determine whether the widget that just gained focus is the Delete
+    // button itself, mirroring the wParam check in mainwindow.cpp's
+    // ListBoxProc WM_KILLFOCUS handler
+    // (reinterpret_cast<HWND>(wParam) == pThis->m_hBtnDelete). GTK4 has
+    // no equivalent "which widget is about to gain focus" parameter on
+    // the "leave" signal, so this reads the root's current focus widget
+    // at the moment "leave" fires. This assumes GTK updates the root's
+    // focus widget before dispatching the losing widget's "leave"
+    // signal. VERIFY THIS EMPIRICALLY: select a source, click Delete,
+    // and confirm Delete's own "clicked" handler still runs and removes
+    // the source. If it does not, GTK is dispatching "leave" before the
+    // new focus is committed to the root; in that case move this same
+    // check into a GtkGestureClick "pressed" handler installed on
+    // g_removeButton with GTK_PHASE_CAPTURE, set a
+    // "delete button press in flight" bool there instead, and read that
+    // bool here instead of querying gtk_root_get_focus.
+    GtkRoot* root = gtk_widget_get_root(g_sources);
+    GtkWidget* newFocus = root ? gtk_root_get_focus(root) : nullptr;
+    const bool gainedFocusIsDeleteButton = (newFocus == g_removeButton);
+    g_sourceFocusState.OnListBoxLostFocus(gainedFocusIsDeleteButton);
+    if (!gainedFocusIsDeleteButton) {
+        gtk_list_box_unselect_all(GTK_LIST_BOX(g_sources));
+    }
     RefreshDeleteButton();
 }
 
@@ -1406,9 +1675,7 @@ void RefreshStatus() {
     gtk_widget_set_sensitive(
         g_startStopButton,
         !transition);
-    gtk_button_set_label(
-        GTK_BUTTON(g_startStopButton),
-        g_state == ServerUiState::Running ? "Stop" : "Start");
+    ApplyMnemonicLabel(g_startStopButton, g_state == ServerUiState::Running ? L"Stop" : L"Start", g_toolbarMnemonics[2]);
     gtk_widget_set_tooltip_text(
         g_startStopButton,
         g_state == ServerUiState::Running ? "Stop server" : "Start server");
@@ -1416,9 +1683,7 @@ void RefreshStatus() {
     gtk_widget_set_sensitive(
         g_addButton,
         !transition && !scanBusy);
-    gtk_button_set_label(
-        GTK_BUTTON(g_addButton),
-        g_state == ServerUiState::Running ? "Scan" : "Add");
+    ApplyMnemonicLabel(g_addButton, g_state == ServerUiState::Running ? L"Scan" : L"Add", g_toolbarMnemonics[0]);
 
     gtk_widget_set_sensitive(
         g_settingsButton,
@@ -1693,6 +1958,7 @@ void RemoveSelectedSource() {
     GtkListBoxRow* selected = gtk_list_box_get_selected_row(box);
     if (selected == nullptr) return;
     gtk_list_box_remove(box, GTK_WIDGET(selected));
+    g_sourceFocusState.OnSourceDeleted();
     SaveSourcesFromList();
     RefreshEmptyState();
     RefreshDeleteButton();
@@ -1700,6 +1966,7 @@ void RemoveSelectedSource() {
 
 
 void OnSourceSelectionChanged(GtkListBox*, GtkListBoxRow*, gpointer) {
+    g_sourceFocusState.OnSelectionChanged(HasSourceSelection());
     RefreshDeleteButton();
 }
 
@@ -1834,11 +2101,11 @@ void BuildMainWindow(GtkApplication* app) {
 
     GtkWidget* window = gtk_application_window_new(app);
     g_mainWindow = window;
+    InstallMnemonicCueControllers(window);
     gtk_window_set_title(GTK_WINDOW(window), "DLNA Server");
-    gtk_window_set_default_size(GTK_WINDOW(window),
-                                UiTokens::kWindowWidth, UiTokens::kWindowHeight);
-    gtk_window_set_resizable(GTK_WINDOW(window), TRUE);
-    gtk_widget_set_size_request(window, UiTokens::kWindowWidth, 460);
+gtk_window_set_default_size(GTK_WINDOW(window),
+                                UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainWindowHeight);
+    gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
     gtk_window_set_titlebar(
         GTK_WINDOW(window),
         CreateWin10Titlebar(GTK_WINDOW(window), "DLNA Server", WindowChrome::Main));
@@ -1856,45 +2123,55 @@ void BuildMainWindow(GtkApplication* app) {
         }
         return TRUE;
     }), nullptr);
-    GtkWidget* fixed = gtk_fixed_new();
-    gtk_widget_set_size_request(fixed, UiTokens::kWindowWidth, UiTokens::kWindowHeight);
+GtkWidget* fixed = gtk_fixed_new();
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainWindowHeight);
+    gtk_widget_add_css_class(fixed, "dlna-main-surface");
     gtk_window_set_child(GTK_WINDOW(window), fixed);
 
     g_toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_size_request(g_toolbar, UiTokens::kWindowWidth, UiTokens::kToolbarHeight);
+    gtk_widget_set_size_request(g_toolbar, UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainToolbarHeight);
     gtk_fixed_put(GTK_FIXED(fixed), g_toolbar, 0, 0);
     gtk_widget_add_css_class(g_toolbar, "toolbar");
 
     g_addButton = gtk_button_new_with_label("Add");
-    gtk_widget_set_size_request(g_addButton, UiTokens::kAddButtonWidth, -1);
+    gtk_widget_set_size_request(g_addButton, UiTokensPosix::kAddButtonW, UiTokensPosix::kAddButtonH);
     gtk_fixed_put(GTK_FIXED(fixed), g_addButton, 0, 0);
     gtk_widget_add_css_class(g_addButton, "toolbar-button");
     gtk_widget_set_tooltip_text(g_addButton, "Add media source");
     g_signal_connect(g_addButton, "clicked", G_CALLBACK(OnAddButtonClicked), nullptr);
 
     g_removeButton = gtk_button_new_with_label("Delete");
-    gtk_widget_set_size_request(g_removeButton, UiTokens::kDeleteButtonWidth, -1);
+    gtk_widget_set_size_request(g_removeButton, UiTokensPosix::kDeleteButtonW, UiTokensPosix::kDeleteButtonH);
     gtk_fixed_put(GTK_FIXED(fixed), g_removeButton, 0, 0);
     gtk_widget_add_css_class(g_removeButton, "toolbar-button");
     gtk_widget_set_tooltip_text(g_removeButton, "Delete selected source");
     g_signal_connect(g_removeButton, "clicked", G_CALLBACK(OnRemoveButtonClicked), nullptr);
 
     g_startStopButton = gtk_button_new_with_label("Start");
-    gtk_widget_set_size_request(g_startStopButton, UiTokens::kStartStopButtonWidth, -1);
+    gtk_widget_set_size_request(g_startStopButton, UiTokensPosix::kStartStopButtonW, UiTokensPosix::kStartStopButtonH);
     gtk_fixed_put(GTK_FIXED(fixed), g_startStopButton, 0, 0);
     gtk_widget_add_css_class(g_startStopButton, "toolbar-button");
     gtk_widget_set_tooltip_text(g_startStopButton, "Start server");
     g_signal_connect(g_startStopButton, "clicked", G_CALLBACK(OnStartStopButtonClicked), nullptr);
 
     g_settingsButton = gtk_button_new_with_label("Settings");
-    gtk_widget_set_size_request(g_settingsButton, UiTokens::kSettingsButtonWidth, -1);
+    gtk_widget_set_size_request(g_settingsButton, UiTokensPosix::kSettingsButtonW, UiTokensPosix::kSettingsButtonH);
     gtk_fixed_put(GTK_FIXED(fixed), g_settingsButton, 0, 0);
     gtk_widget_add_css_class(g_settingsButton, "toolbar-button");
     gtk_widget_set_tooltip_text(g_settingsButton, "Settings");
     g_signal_connect(g_settingsButton, "clicked", G_CALLBACK(OnSettingsButtonClicked), nullptr);
 
+    {
+        std::vector<std::wstring> toolbarLabels = { L"Add", L"Delete", L"Start", L"Settings" };
+        g_toolbarMnemonics = AssignMnemonics(toolbarLabels);
+        ApplyMnemonicLabel(g_addButton, toolbarLabels[0], g_toolbarMnemonics[0]);
+        ApplyMnemonicLabel(g_removeButton, toolbarLabels[1], g_toolbarMnemonics[1]);
+        ApplyMnemonicLabel(g_startStopButton, toolbarLabels[2], g_toolbarMnemonics[2]);
+        ApplyMnemonicLabel(g_settingsButton, toolbarLabels[3], g_toolbarMnemonics[3]);
+    }
+
     g_status = gtk_label_new("");
-    gtk_widget_set_size_request(g_status, UiTokens::kWindowWidth - UiTokens::kGutter * 2, UiTokens::kStatusHeight);
+    gtk_widget_set_size_request(g_status, UiTokensPosix::kMainWindowWidth - UiTokens::kGutter * 2, UiTokens::kStatusHeight);
     gtk_fixed_put(GTK_FIXED(fixed), g_status, UiTokens::kGutter, UiTokens::kToolbarHeight);
     gtk_widget_add_css_class(g_status, "status-band");
     gtk_label_set_xalign(GTK_LABEL(g_status), 0.0f);
@@ -1964,18 +2241,22 @@ void BuildMainWindow(GtkApplication* app) {
             RemoveSelectedSource();
             return TRUE;
         }
+        if ((keyval == GDK_KEY_d || keyval == GDK_KEY_D) && !g_sourceFocusState.IsNoFocus()) {
+            RemoveSelectedSource();
+            return TRUE;
+        }
         return FALSE;
     }), nullptr);
 
     g_emptyState = gtk_label_new("Please add shared folders or files with Add.");
-    gtk_widget_set_size_request(g_emptyState, UiTokens::kWindowWidth - UiTokens::kGutter * 2 - 16, 24);
+    gtk_widget_set_size_request(g_emptyState, UiTokensPosix::kMainWindowWidth - UiTokens::kGutter * 2 - 16, 24);
     gtk_fixed_put(GTK_FIXED(fixed), g_emptyState, 0, 0);
     gtk_widget_add_css_class(g_emptyState, "empty-state");
     gtk_label_set_xalign(GTK_LABEL(g_emptyState), 0.0f);
 
     g_signal_connect(window, "close-request", G_CALLBACK(OnMainWindowCloseRequest), nullptr);
 
-    LayoutMainWindow(UiTokens::kWindowWidth, UiTokens::kWindowHeight);
+    LayoutMainWindow(UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainWindowHeight);
     RefreshSourceList();
     RefreshStatus();
 
@@ -2071,6 +2352,7 @@ void DumpAllWindowsAndExit(GtkApplication* app) {
     ShowLogDialog();
     ShowHelpDialog(GTK_WINDOW(g_mainWindow));
     ShowSettingsDialog();
+    MessageBoxShow(GTK_WINDOW(g_mainWindow), "geometry probe");
     // std::_Exit skips static destruction so the joinable single-instance
     // listener thread is not torn down during exit (that path aborts with
     // terminate called without an active exception and truncates the dump)
@@ -2160,19 +2442,29 @@ void OnAppActivate(GtkApplication* app, gpointer) {
     }
     if (g_printDeleteFocusGating) {
         BuildMainWindow(app);
-        // implementation notes for the agent writing this test:
-        // 1 add a hidden CLI flag named --print-delete-focus-gating to
-        //    src/gtk4_gui_main.cpp following the same pattern as the
-        //    existing --dump-msgbox-parent flag
-        // 2 inside its handler after BuildMainWindow add one source row
-        //    to g_sources directly select it then manually invoke
-        //    OnSourceFocusChanged to simulate the list gaining focus and
-        //    print the resulting gtk_widget_get_sensitive value for
-        //    g_removeButton expect true
-        // 3 then manually invoke OnSourceFocusLeave to simulate focus
-        //    moving to another control and print the sensitivity value
-        //    again expect false even though the row is still selected
-        // 4 assert the two printed values are true then false
+        GtkWidget* row = gtk_list_box_row_new();
+        GtkWidget* rowLabel = gtk_label_new("/tmp/probe-source");
+        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), rowLabel);
+        gtk_list_box_append(GTK_LIST_BOX(g_sources), row);
+        gtk_list_box_select_row(GTK_LIST_BOX(g_sources), GTK_LIST_BOX_ROW(row));
+        OnSourceSelectionChanged(GTK_LIST_BOX(g_sources), GTK_LIST_BOX_ROW(row), nullptr);
+        std::printf("after-select=%s\n", gtk_widget_get_sensitive(g_removeButton) ? "true" : "false");
+
+        g_sourceFocusState.OnListBoxLostFocus(/*gainedFocusIsDeleteButton=*/true);
+        RefreshDeleteButton();
+        std::printf("after-focus-to-delete=%s\n", gtk_widget_get_sensitive(g_removeButton) ? "true" : "false");
+
+        g_sourceFocusState.OnListBoxLostFocus(/*gainedFocusIsDeleteButton=*/false);
+        RefreshDeleteButton();
+        std::printf("after-focus-elsewhere=%s\n", gtk_widget_get_sensitive(g_removeButton) ? "true" : "false");
+
+        std::fflush(stdout);
+        std::_Exit(0);
+    }
+    if (g_printPlaylistAddSensitivity) {
+        BuildMainWindow(app);
+        ShowPlaylistEntryDialog();
+        std::fflush(stdout);
         std::_Exit(0);
     }
     if (g_printStoppedCloseExit) {
@@ -2191,14 +2483,27 @@ void OnAppActivate(GtkApplication* app, gpointer) {
 }
 
 void OnAppStartup(GtkApplication* app, gpointer) {
+    GdkDisplay* display = gdk_display_get_default();
     const std::string cssPath = ResolveBundledResourcePath("gtk/style.css");
     if (!cssPath.empty()) {
         GtkCssProvider* provider = gtk_css_provider_new();
         gtk_css_provider_load_from_path(provider, cssPath.c_str());
-        GdkDisplay* display = gdk_display_get_default();
         gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(provider),
-                                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+                                                   GTK_STYLE_PROVIDER_PRIORITY_USER);
         g_object_unref(provider);
+    }
+    // Figma overlay, loaded after style.css so its rules win at equal
+    // selector specificity for the classes it defines. See Section 1,
+    // Conflict B of dlna-server-posix-gui-figma-alignment-workflow-20-08-26.md.
+    const std::string figmaCssPath = ResolveBundledResourcePath("gtk/figma.css");
+    if (!figmaCssPath.empty()) {
+        GtkCssProvider* figmaProvider = gtk_css_provider_new();
+        gtk_css_provider_load_from_path(figmaProvider, figmaCssPath.c_str());
+        gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(figmaProvider),
+                                                   GTK_STYLE_PROVIDER_PRIORITY_USER + 2);
+        g_object_unref(figmaProvider);
+    } else {
+        LogPrint(L"figma.css not found via ResolveBundledResourcePath; Figma overlay styling will be missing.");
     }
 
     // tray icon registers with org.kde.StatusNotifierWatcher when present
@@ -2270,6 +2575,9 @@ int main(int argc, char** argv) {
         } else if (arg == "--print-delete-focus-gating") {
             // handled later by the existing hidden flag stripping loop
             continue;
+        } else if (arg == "--print-playlist-add-sensitivity") {
+            // handled later by the existing hidden flag stripping loop
+            continue;
         } else if (!arg.empty() && arg[0] != '-') {
             // bare positional argument dropped onto the exe or passed by a
             // context menu integration is a source path on its own see the
@@ -2326,6 +2634,8 @@ int main(int argc, char** argv) {
             g_printStoppedCloseExit = true;
         } else if (arg == "--print-delete-focus-gating") {
             g_printDeleteFocusGating = true;
+        } else if (arg == "--print-playlist-add-sensitivity") {
+            g_printPlaylistAddSensitivity = true;
         }
     }
 
@@ -2354,6 +2664,12 @@ int main(int argc, char** argv) {
             return 0;
         }
     }
+
+    // Disable Adwaita before GTK initializes so our CSS has sole control
+    // over all widget styling.  Adwaita hardcodes headerbar background
+    // gradients and button colors that fight user-priority CSS providers.
+    // "Default" is GTK4's minimal built-in theme with no decorative overrides.
+    g_setenv("GTK_THEME", "Default", FALSE);
 
     GtkApplication* app = nullptr;
     int result = 1;
@@ -2421,7 +2737,8 @@ int main(int argc, char** argv) {
             arg == "--dump-log-dialog-reopen" ||
             arg == "--dump-msgbox-parent" ||
             arg == "--print-stopped-close-exit" ||
-            arg == "--print-delete-focus-gating") {
+            arg == "--print-delete-focus-gating" ||
+            arg == "--print-playlist-add-sensitivity") {
             continue;
         }
         if (arg == "--source" && i + 1 < argc) {
