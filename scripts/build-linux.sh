@@ -193,7 +193,7 @@ if [ -d "$repo_root/tmp" ]; then
     mv "$repo_root/tmp" "$tmp_quarantine/pytest-tmp"
     mkdir -m 700 "$repo_root/tmp"
 fi
-flatpak-builder --force-clean --repo="$flatpak_repo" "$flatpak_build" "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.yml"
+flatpak-builder --force-clean --disable-rofiles-fuse --repo="$flatpak_repo" "$flatpak_build" "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.yml"
 rm -rf "$repo_root/tmp"
 # Do not recursively delete quarantine contents: pytest may leave runtime
 # mount points there, which reject unlink/rmdir even for root. The temporary

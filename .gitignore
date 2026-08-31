@@ -97,3 +97,4 @@ pre_existing_fails.txt
 !*.ps1
 posix-full-suite-log.txt
 .flatpak-builder/*
+.serena/.gitignore
