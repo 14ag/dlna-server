@@ -409,19 +409,29 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
     gtk_window_set_title(window, title);
     gtk_window_set_icon_name(window, "dlna-server");
 
-    GtkWidget* titlebar = gtk_header_bar_new();
-    gtk_widget_add_css_class(titlebar, "win10-titlebar");
-    gtk_widget_set_size_request(titlebar, -1, UiTokensPosix::kTitlebarHeight);
-    // HeaderBar otherwise adds its own automatic decoration buttons in
-    // addition to the explicit GtkWindowControls below.
-    g_object_set(titlebar, "show-title-buttons", FALSE, nullptr);
+    GtkWidget* handle = gtk_window_handle_new();
+    gtk_widget_add_css_class(handle, "win10-titlebar");
+    gtk_widget_set_size_request(handle, -1, UiTokensPosix::kTitlebarHeight);
 
-    GtkWidget* leftBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget* titlebar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(titlebar, "win10-titlebar-box");
+    gtk_window_handle_set_child(GTK_WINDOW_HANDLE(handle), titlebar);
+
+    GtkWidget* leftBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_set_margin_start(leftBox, 10);
     gtk_widget_set_valign(leftBox, GTK_ALIGN_CENTER);
 
     if (chrome == WindowChrome::Main) {
-        GtkWidget* icon = gtk_image_new_from_icon_name("dlna-server");
+        GtkWidget* icon = nullptr;
+        std::string iconPath = ResolveBundledResourcePath("server_icon_48.png");
+        if (iconPath.empty()) {
+            iconPath = ResolveBundledResourcePath("icons/server_icon_48.png");
+        }
+        if (!iconPath.empty()) {
+            icon = gtk_image_new_from_file(iconPath.c_str());
+        } else {
+            icon = gtk_image_new_from_icon_name("dlna-server");
+        }
         gtk_image_set_pixel_size(GTK_IMAGE(icon), 16);
         gtk_box_append(GTK_BOX(leftBox), icon);
     }
@@ -431,7 +441,11 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
     gtk_label_set_xalign(GTK_LABEL(titleLabel), 0.0f);
     gtk_box_append(GTK_BOX(leftBox), titleLabel);
 
-    gtk_header_bar_pack_start(GTK_HEADER_BAR(titlebar), leftBox);
+    gtk_box_append(GTK_BOX(titlebar), leftBox);
+
+    GtkWidget* spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(titlebar), spacer);
 
     GtkWidget* controls = gtk_window_controls_new(GTK_PACK_END);
     if (chrome == WindowChrome::Main) {
@@ -441,19 +455,19 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
         gtk_window_controls_set_decoration_layout(
             GTK_WINDOW_CONTROLS(controls), ":close");
     }
-    gtk_header_bar_pack_end(GTK_HEADER_BAR(titlebar), controls);
+    gtk_box_append(GTK_BOX(titlebar), controls);
 
     TitlebarState* state = g_new0(TitlebarState, 1);
     state->window = window;
-    state->titlebar = titlebar;
-    g_object_set_data_full(G_OBJECT(titlebar), "win10-titlebar-state", state,
+    state->titlebar = handle;
+    g_object_set_data_full(G_OBJECT(handle), "win10-titlebar-state", state,
                            reinterpret_cast<GDestroyNotify>(g_free));
 
     UpdateTitlebarActiveState(state);
     g_signal_connect(window, "notify::is-active",
                      G_CALLBACK(OnTitlebarActiveNotify), state);
 
-    return titlebar;
+    return handle;
 }
 
 GtkWindow* CreateMessageWindow(GtkWindow* parent,
@@ -1564,7 +1578,7 @@ void LayoutMainWindow(int width, int height) {
     gtk_fixed_move(GTK_FIXED(fixed), g_startStopButton, UiTokensPosix::kStartStopButtonX, UiTokensPosix::kStartStopButtonY);
     gtk_fixed_move(GTK_FIXED(fixed), g_settingsButton, UiTokensPosix::kSettingsButtonX, UiTokensPosix::kSettingsButtonY);
 
-    gtk_fixed_move(GTK_FIXED(fixed), g_status, UiTokensPosix::kMainSourceListX, UiTokensPosix::kMainToolbarHeight);
+    gtk_fixed_move(GTK_FIXED(fixed), g_status, UiTokensPosix::kMainSourceListX, UiTokensPosix::kMainToolbarHeight + 10);
 
     const int listTop = UiTokensPosix::kMainToolbarHeight + UiTokensPosix::kMainSourceListYFromListArea;
     gtk_fixed_move(GTK_FIXED(fixed), g_sourcesScrolled, UiTokensPosix::kMainSourceListX, listTop);
@@ -2171,8 +2185,8 @@ GtkWidget* fixed = gtk_fixed_new();
     }
 
     g_status = gtk_label_new("");
-    gtk_widget_set_size_request(g_status, UiTokensPosix::kMainWindowWidth - UiTokens::kGutter * 2, UiTokens::kStatusHeight);
-    gtk_fixed_put(GTK_FIXED(fixed), g_status, UiTokens::kGutter, UiTokens::kToolbarHeight);
+    gtk_widget_set_size_request(g_status, UiTokensPosix::kMainSourceListWidth, 24);
+    gtk_fixed_put(GTK_FIXED(fixed), g_status, UiTokensPosix::kMainSourceListX, UiTokensPosix::kMainToolbarHeight + 10);
     gtk_widget_add_css_class(g_status, "status-band");
     gtk_label_set_xalign(GTK_LABEL(g_status), 0.0f);
     gtk_label_set_ellipsize(GTK_LABEL(g_status), PANGO_ELLIPSIZE_END);

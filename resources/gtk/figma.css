@@ -1,56 +1,55 @@
 /* Figma dlna-server-14ag overlay rules. Loaded after the generated
-   style.css (see OnAppStartup in gtk4_gui_main.cpp, Task 2.2 below).
-   Only classes whose Figma color differs from the generated stylesheet
-   belong here. Do not duplicate a rule that style.css already produces
-   correctly with the same hex value. */
+   style.css (see OnAppStartup in gtk4_gui_main.cpp).
+   GTK4 CSS does not support '!important' or custom '--' variables.
+   Priority is handled via GTK_STYLE_PROVIDER_PRIORITY_USER + 2. */
 
 /* ===== TITLEBAR =====
-   SVG: title-bar fill #191919, height 30px.
-   Two-pronged override:
-   1. Adwaita CSS custom properties (--headerbar-bg-color etc.) which
-      Adwaita reads before computing background-color.
-   2. background-color with !important as belt-and-suspenders against
-      any remaining theme rule that ignores the variable. */
-headerbar,
-headerbar.titlebar,
-headerbar.win10-titlebar,
+   SVG: title-bar fill #191919 when active, #202020 when inactive. Height 30px. */
 .win10-titlebar,
-.win10-titlebar.win10-active,
-.win10-titlebar.win10-inactive,
-window headerbar,
-window.csd headerbar,
-window.csd .titlebar {
-    /* Adwaita CSS variable overrides */
-    --headerbar-bg-color: #191919;
-    --headerbar-backdrop-color: #191919;
-    --headerbar-fg-color: #ffffff;
-    --headerbar-border-color: #191919;
-    --headerbar-shade-color: transparent;
-    /* Fallback hard overrides */
-    background-color: #191919 !important;
-    background-image: none !important;
-    border: none !important;
-    border-radius: 0 !important;
-    box-shadow: none !important;
+.win10-titlebar-box,
+windowhandle.win10-titlebar,
+headerbar.win10-titlebar,
+headerbar {
+    background-color: #191919;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
     min-height: 30px;
-    padding: 0 !important;
-    margin: 0 !important;
+    padding: 0;
+    margin: 0;
     color: #ffffff;
 }
 
-headerbar:backdrop,
+.win10-titlebar.win10-active,
+.win10-titlebar.win10-active .win10-titlebar-box,
+windowhandle.win10-titlebar.win10-active,
+headerbar.win10-active,
+headerbar:not(:backdrop),
+window headerbar:not(:backdrop) {
+    background-color: #191919;
+    background-image: none;
+}
+
+.win10-titlebar.win10-inactive,
+.win10-titlebar.win10-inactive .win10-titlebar-box,
+windowhandle.win10-titlebar.win10-inactive,
 .win10-titlebar:backdrop,
-window.csd headerbar:backdrop {
-    --headerbar-bg-color: #191919;
-    --headerbar-backdrop-color: #191919;
-    background-color: #191919 !important;
-    background-image: none !important;
+headerbar.win10-inactive,
+headerbar:backdrop,
+window headerbar:backdrop {
+    background-color: #202020;
+    background-image: none;
 }
 
-.win10-titlebar .title {
+.win10-titlebar .title,
+.win10-titlebar-box .title,
+headerbar .title,
+.title {
     color: #ffffff;
-    font-family: "Inter", "Segoe UI", sans-serif;
+    font-family: "Segoe UI Variable Text", "Segoe UI", "Inter", sans-serif;
     font-size: 12px;
+    font-weight: 400;
 }
 
 /* Window controls: Flat Windows-style minimize and close buttons */
@@ -107,44 +106,62 @@ windowcontrols button.close:active {
     color: #ffffff;
 }
 
-/* Main window outer surface (fixed .css node applied to the top-level
-   window/child in Task 5.1). */
+/* Main window outer surface */
 .dlna-main-surface {
-    background-color: #2b2b2b;
+    background-color: #1f1f1f;
 }
 
 /* Main toolbar. */
-.toolbar {
+.toolbar,
+box.toolbar {
     background-color: #252525;
+    background-image: none;
+    min-height: 57px;
 }
 
 /* Main toolbar buttons, normal/hover/active/disabled/focus. */
 .toolbar-button,
-button.toolbar-button {
+button.toolbar-button,
+button.toolbar-button:not(:hover):not(:active) {
     background-color: #3a3839;
     background-image: none;
     border: 1px solid #555555;
     color: #ffffff;
-    font-size: 14px;
+    font-size: 12px;
+    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
     border-radius: 0px;
     box-shadow: none;
+    text-shadow: none;
+    padding: 0;
+    margin: 0;
 }
 .toolbar-button:hover,
 button.toolbar-button:hover {
     background-color: #464344;
     background-image: none;
+    border: 1px solid #555555;
+    color: #ffffff;
 }
 .toolbar-button:active,
 button.toolbar-button:active {
     background-color: #575354;
     background-image: none;
+    border: 1px solid #555555;
+    color: #ffffff;
 }
 .toolbar-button:disabled,
 button.toolbar-button:disabled {
     background-color: #3a3839;
     background-image: none;
     color: #7a7a7a;
-    border-color: #444444;
+    border: 1px solid #444444;
+    opacity: 1.0;
+}
+.toolbar-button label,
+button.toolbar-button label,
+.toolbar-button:disabled label,
+button.toolbar-button:disabled label {
+    color: inherit;
 }
 .toolbar-button:focus,
 .toolbar-button:focus-visible,
@@ -154,18 +171,77 @@ button.toolbar-button:focus-visible {
     outline-offset: -2px;
 }
 
+/* Status band */
+.status-band,
+label.status-band {
+    background-color: transparent;
+    background-image: none;
+    color: #ffffff;
+    padding: 0;
+    margin: 0;
+}
+
 /* Main source list. */
-.source-list, .source-list list {
+.source-list,
+.source-list list,
+scrolledwindow.source-list,
+scrolledwindow.source-list viewport {
     background-color: #1f1f1f;
+    background-image: none;
     border: 1px solid #434343;
+    border-radius: 0;
+}
+.source-list row {
+    padding: 4px 6px;
+    background-color: #1f1f1f;
+    color: #ffffff;
 }
 .source-list row:selected {
     background-color: #3a5a8c;
+    color: #ffffff;
 }
 
-/* Settings/dialog body. */
+/* Settings/dialog body — light Windows-style surface. */
 .dlna-dialog-body {
     background-color: #f0f0f0;
+    color: #000000;
+}
+
+/* All labels and check buttons inside the settings dialog use dark text. */
+.dlna-dialog-body label,
+.dlna-dialog-body checkbutton,
+.dlna-dialog-body check,
+.dlna-dialog-body frame > label,
+.dlna-dialog-body frame label {
+    color: #000000;
+    background-color: transparent;
+}
+
+/* Checkbuttons inside the settings dialog: white box with gray border. */
+.dlna-dialog-body checkbutton check {
+    background-color: #ffffff;
+    background-image: none;
+    border: 1px solid #cccccc;
+    color: #000000;
+    min-width: 13px;
+    min-height: 13px;
+}
+.dlna-dialog-body checkbutton check:checked {
+    background-color: #ffffff;
+    background-image: none;
+    color: #0078d7;
+}
+.dlna-dialog-body checkbutton:disabled check {
+    background-color: #f0f0f0;
+    border-color: #cccccc;
+}
+
+/* Frames (groupboxes) inside dialog: #F0F0F0 background, #D9D9D9 border. */
+.dlna-dialog-body frame,
+.dlna-dialog-body .dlna-groupbox {
+    background-color: #f0f0f0;
+    color: #000000;
+    border: 1px solid #d9d9d9;
 }
 
 /* Settings command ribbon. */
@@ -261,7 +337,7 @@ button.dlna-dialog-button.suggested-action:focus {
     outline-offset: -1px;
 }
 
-/* Warning dialog specific (Phase 9). */
+/* Warning dialog specific. */
 .dlna-warning-message {
     background-color: #ffffff;
     color: #000000;
@@ -284,7 +360,7 @@ button.dlna-dialog-button.suggested-action:focus {
     background-color: #cfcfcf;
 }
 
-/* Log surface (terminal-like light per Figma). */
+/* Log surface. */
 .dlna-log-surface, .dlna-log-surface text,
 textview.dlna-log-surface, textview.dlna-log-surface text {
     background-color: #ffffff;
@@ -292,11 +368,7 @@ textview.dlna-log-surface, textview.dlna-log-surface text {
     font-family: monospace;
 }
 
-/* Help surface (light, monospaced Cousine where available, else the
-   project's existing monospace fallback — GTK4 has no built-in font
-   installation mechanism; if "Cousine" is not installed on the target
-   system GTK silently falls back to the generic monospace family,
-   which is acceptable per the source document's own fallback clause). */
+/* Help surface. */
 .dlna-help-surface, .dlna-help-surface text,
 textview.dlna-help-surface, textview.dlna-help-surface text {
     background-color: #f0f0f0;

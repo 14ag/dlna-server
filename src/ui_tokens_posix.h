@@ -25,10 +25,10 @@ constexpr int kMainSourceListHeight = 430;
 
 // Toolbar buttons, left to right, y is relative to the toolbar's own
 // origin (not the window origin).
-constexpr int kAddButtonX = 103, kAddButtonY = 14, kAddButtonW = 55, kAddButtonH = 31;
-constexpr int kDeleteButtonX = 167, kDeleteButtonY = 14, kDeleteButtonW = 71, kDeleteButtonH = 31;
-constexpr int kStartStopButtonX = 248, kStartStopButtonY = 14, kStartStopButtonW = 71, kStartStopButtonH = 31;
-constexpr int kSettingsButtonX = 327, kSettingsButtonY = 14, kSettingsButtonW = 82, kSettingsButtonH = 31;
+constexpr int kAddButtonX = 103, kAddButtonY = 14, kAddButtonW = 54, kAddButtonH = 30;
+constexpr int kDeleteButtonX = 167, kDeleteButtonY = 14, kDeleteButtonW = 70, kDeleteButtonH = 30;
+constexpr int kStartStopButtonX = 248, kStartStopButtonY = 14, kStartStopButtonW = 70, kStartStopButtonH = 30;
+constexpr int kSettingsButtonX = 327, kSettingsButtonY = 14, kSettingsButtonW = 81, kSettingsButtonH = 30;
 
 constexpr int kSettingsWindowWidth = 700;
 constexpr int kSettingsWindowHeight = 797;
