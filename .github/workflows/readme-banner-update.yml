@@ -1,25 +1,25 @@
 name: Update Banner
 
 on:
-  schedule:
-    # runs every 24 hours at 0900hrs
-    - cron: '0 9 * * *'
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      # ignore pushes that only change the banner asset
-      # prevents this workflow from triggering itself in a loop
-      - 'assets/**'
+ workflow_dispatch:
+ schedule:
+  # runs every 24 hours at 0900hrs
+  - cron: '0 9 * * *'
+ push:
+  branches:
+   - main
+  paths-ignore:
+   # ignore pushes that only change the banner asset
+   # prevents this workflow from triggering itself in a loop
+   - 'assets/**'
 
 permissions:
-  contents: write
+ contents: write
 
 jobs:
-  call-readme-banner-update:
-    uses: 14ag/dlna-server/.github/workflows/readme-banner-update.yml@main
-    with:
-      VERCEL_URL: ${{ vars.VERCEL_URL }}
-    secrets:
-      BANNER_KEY: ${{ secrets.BANNER_KEY }}
+ call-readme-banner-update:
+  uses: 14ag/dlna-server/.github/workflows/readme-banner-update.yml@main
+  with:
+   VERCEL_URL: ${{ vars.VERCEL_URL }}
+  secrets:
+   BANNER_KEY: ${{ secrets.BANNER_KEY }}
