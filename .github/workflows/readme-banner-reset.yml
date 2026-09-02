@@ -4,7 +4,7 @@ on:
  workflow_dispatch:
 
 jobs:
- call-workflow:
+ call-readme-banner-reset:
   uses: 14ag/dlna-server/.github/workflows/readme-banner-reset.yml@main
   with:
    VERCEL_URL: ${{ vars.VERCEL_URL }}
