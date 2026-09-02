@@ -2,8 +2,8 @@ name: Update Banner
 
 on:
   schedule:
-    # runs every 24 hours
-    - cron: '0 */24 * * *'
+    # runs every 24 hours at 0900hrs
+    - cron: '0 9 * * *'
   workflow_dispatch:
   push:
     branches:
@@ -17,63 +17,9 @@ permissions:
   contents: write
 
 jobs:
-  update-banner:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 2
-
-      - name: Create assets folder if it does not exist
-        run: mkdir -p assets
-
-      - name: Ensure README contains banner
-        shell: bash
-        run: |
-          BANNER='![Banner](./assets/banner.webp)'
-
-          # Create README if it doesn't exist
-          touch README.md
-
-          # Only prepend if the banner isn't already present anywhere
-          if ! grep -Fxq "$BANNER" README.md; then
-            {
-              printf '%s\n\n' "$BANNER"
-              cat README.md
-            } > README.md.tmp
-            mv README.md.tmp README.md
-          fi
-
-      - name: Fetch banner image from backend
-        env:
-          BANNER_KEY: ${{ secrets.BANNER_KEY }}
-        run: |
-          VERCEL_URL="${{ vars.VERCEL_URL }}"
-          curl -sf \
-            -H "X-Banner-Key: ${BANNER_KEY}" \
-            -H "repo-name: ${{ github.event.repository.name }}" \
-            "${VERCEL_URL}/banner" \
-            --output assets/banner.webp
-
-      - name: Commit and push if anything changed
-        run: |
-          COMMIT_MESSAGE="chore: rotate banner"
-          
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add assets/banner.webp README.md
-
-          git diff --cached --quiet && exit 0
-
-          LAST_COMMIT_MESSAGE=$(git log -1 --pretty=format:%s)
-          
-          if [ "$LAST_COMMIT_MESSAGE" = "$COMMIT_MESSAGE" ]; then
-            git commit --amend --no-edit
-            git push --force-with-lease
-          else
-            git commit -m "$COMMIT_MESSAGE"
-            git push
-          fi
+  call-readme-banner-update:
+    uses: 14ag/dlna-server/.github/workflows/readme-banner-update.yml@main
+    with:
+      VERCEL_URL: ${{ vars.VERCEL_URL }}
+    secrets:
+      BANNER_KEY: ${{ secrets.BANNER_KEY }}
