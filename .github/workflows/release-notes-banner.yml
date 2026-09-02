@@ -9,4 +9,4 @@ permissions:
 
 jobs:
   call-release-notes-banner:
-    uses: 14ag/dlna-server/.github/workflows/release-notes-banner.yml@main
+    uses: 14ag/readme-banner/.github/workflows/release-notes-banner.yml@main
