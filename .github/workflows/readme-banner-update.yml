@@ -18,7 +18,7 @@ permissions:
 
 jobs:
  call-readme-banner-update:
-  uses: 14ag/dlna-server/.github/workflows/readme-banner-update.yml@main
+  uses: 14ag/readme-banner/.github/workflows/readme-banner-update.yml@main
   with:
    VERCEL_URL: ${{ vars.VERCEL_URL }}
   secrets:
