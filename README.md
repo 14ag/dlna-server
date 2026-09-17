@@ -104,3 +104,7 @@ Deeper references live in [`docs/`](docs/):
 - [`docs/THREADING-AND-CONCURRENCY.md`](docs/THREADING-AND-CONCURRENCY.md) - locking model and thread-safety guarantees
 - [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) - `config.ini` field reference
 - [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) - open defects and scoped-out findings
+
+
+## Credits
+ [B00merang-Project](https://github.com/B00merang-Project/Windows-10)
