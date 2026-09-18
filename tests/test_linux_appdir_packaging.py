@@ -20,6 +20,13 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn('exec "$appdir/usr/bin/dlna-server-gui"', apprun)
         self.assertNotIn("DLNA_SERVER_GUI_DIR", apprun)
 
+    def test_linux_build_uses_local_wsl_workspace(self):
+        build = self.read("scripts/build-linux.sh")
+        self.assertIn('mktemp -d "${TMPDIR:-/tmp}/dlna-server-linux-build.XXXXXX"', build)
+        self.assertIn('build_dir="$build_root/build"', build)
+        self.assertIn('release_stage_dir="$build_root/stage"', build)
+        self.assertIn('trap \'rm -rf "$build_root"\' EXIT', build)
+
     def test_appdir_desktop_metadata_is_relative(self):
         desktop = self.read("packaging/linux/dlna-server.appimage.desktop")
 

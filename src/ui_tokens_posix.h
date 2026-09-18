@@ -17,6 +17,7 @@ constexpr int kTitlebarLeftPadding = 10;
 
 constexpr int kMainWindowWidth = 426;
 constexpr int kMainWindowHeight = 593;
+constexpr int kMainWindowBodyHeight = 563;
 constexpr int kMainToolbarHeight = 57;
 constexpr int kMainSourceListX = 21;
 constexpr int kMainSourceListYFromListArea = 52;
@@ -32,28 +33,55 @@ constexpr int kSettingsButtonX = 327, kSettingsButtonY = 14, kSettingsButtonW = 
 
 constexpr int kSettingsWindowWidth = 700;
 constexpr int kSettingsWindowHeight = 797;
+constexpr int kSettingsWindowBodyHeight = 767;
 constexpr int kSettingsRibbonHeight = 23;
 constexpr int kSettingsRibbonLogsX = 10;
 constexpr int kSettingsRibbonHelpX = 54;
 
-constexpr int kServerGroupX = 20, kServerGroupY = 28, kServerGroupW = 660, kServerGroupH = 213;
-constexpr int kGeneralGroupX = 24, kGeneralGroupY = 281, kGeneralGroupW = 308, kGeneralGroupH = 124;
-constexpr int kPlaylistGroupX = 348, kPlaylistGroupY = 281, kPlaylistGroupW = 330, kPlaylistGroupH = 124;
-constexpr int kMediaGroupX = 24, kMediaGroupY = 445, kMediaGroupW = 660, kMediaGroupH = 216;
+constexpr int kServerGroupX = 20, kServerGroupY = 51, kServerGroupW = 660, kServerGroupH = 213;
+constexpr int kGeneralGroupX = 24, kGeneralGroupY = 304, kGeneralGroupW = 308, kGeneralGroupH = 124;
+constexpr int kPlaylistGroupX = 348, kPlaylistGroupY = 304, kPlaylistGroupW = 330, kPlaylistGroupH = 124;
+constexpr int kMediaGroupX = 24, kMediaGroupY = 468, kMediaGroupW = 660, kMediaGroupH = 216;
 
+constexpr int kSettingsServerNameLabelX = 41, kSettingsServerNameLabelY = 87, kSettingsServerNameLabelW = 76, kSettingsServerNameLabelH = 15;
+constexpr int kSettingsServerNameEditX = 195, kSettingsServerNameEditY = 77;
+constexpr int kSettingsHttpPortLabelX = 41, kSettingsHttpPortLabelY = 146, kSettingsHttpPortLabelW = 76, kSettingsHttpPortLabelH = 15;
+constexpr int kSettingsHttpPortEditX = 195, kSettingsHttpPortEditY = 135;
+constexpr int kSettingsIpWhitelistLabelX = 41, kSettingsIpWhitelistLabelY = 207, kSettingsIpWhitelistLabelW = 76, kSettingsIpWhitelistLabelH = 15;
+constexpr int kSettingsIpWhitelistEditX = 194, kSettingsIpWhitelistEditY = 194;
 constexpr int kServerNameEditW = 332, kServerNameEditH = 41;
 constexpr int kHttpPortEditW = 330, kHttpPortEditH = 41;
 constexpr int kIpWhitelistEditW = 455, kIpWhitelistEditH = 40;
 constexpr int kPlaylistAddButtonW = 99, kPlaylistAddButtonH = 36;
 
+constexpr int kSettingsDebugLogX = 38, kSettingsDebugLogY = 384, kSettingsDebugLogW = 156, kSettingsDebugLogH = 15;
+constexpr int kSettingsDefaultPlaylistX = 383, kSettingsDefaultPlaylistY = 343, kSettingsDefaultPlaylistW = 106, kSettingsDefaultPlaylistH = 15;
+constexpr int kSettingsPlaylistAddX = 556, kSettingsPlaylistAddY = 377;
+constexpr int kSettingsArtistAlbumsX = 39, kSettingsArtistAlbumsY = 506, kSettingsArtistAlbumsW = 209, kSettingsArtistAlbumsH = 15;
+constexpr int kSettingsHideAllMediaX = 36, kSettingsHideAllMediaY = 551, kSettingsHideAllMediaW = 199, kSettingsHideAllMediaH = 17;
+constexpr int kSettingsSortByTitleX = 37, kSettingsSortByTitleY = 593, kSettingsSortByTitleW = 202, kSettingsSortByTitleH = 15;
+constexpr int kSettingsFlatFoldersX = 378, kSettingsFlatFoldersY = 514, kSettingsFlatFoldersW = 117, kSettingsFlatFoldersH = 15;
+constexpr int kSettingsShowFileNamesX = 378, kSettingsShowFileNamesY = 555, kSettingsShowFileNamesW = 206, kSettingsShowFileNamesH = 15;
+constexpr int kSettingsProxyStreamsX = 378, kSettingsProxyStreamsY = 596, kSettingsProxyStreamsW = 103, kSettingsProxyStreamsH = 15;
+constexpr int kSettingsBackgroundScanX = 37, kSettingsBackgroundScanY = 639, kSettingsBackgroundScanW = 272, kSettingsBackgroundScanH = 15;
+constexpr int kSettingsCancelX = 465, kSettingsCancelY = 715, kSettingsCancelW = 98, kSettingsCancelH = 32;
+constexpr int kSettingsOkX = 580, kSettingsOkY = 715, kSettingsOkW = 104, kSettingsOkH = 32;
+
 constexpr int kLogWindowWidth = 772;
 constexpr int kLogWindowHeight = 712;
+constexpr int kLogWindowBodyHeight = 682;
+constexpr int kLogTextX = 19, kLogTextY = 23, kLogTextW = 735, kLogTextH = 590;
+constexpr int kLogRefreshX = 528, kLogRefreshY = 632, kLogRefreshW = 107, kLogRefreshH = 38;
+constexpr int kLogCloseX = 652, kLogCloseY = 632, kLogCloseW = 101, kLogCloseH = 38;
 
 constexpr int kHelpWindowWidth = 530;
 constexpr int kHelpWindowHeight = 400;
+constexpr int kHelpWindowBodyHeight = 370;
+constexpr int kHelpTextX = 0, kHelpTextY = 0, kHelpTextW = 530, kHelpTextH = 370;
 
 constexpr int kSourcePromptWindowWidth = 538;
 constexpr int kSourcePromptWindowHeight = 209;
+constexpr int kSourcePromptWindowBodyHeight = 179;
 constexpr int kSourcePromptInputX = 18, kSourcePromptInputY = 48, kSourcePromptInputW = 514, kSourcePromptInputH = 33;
 constexpr int kSourcePromptFolderW = 93, kSourcePromptFolderH = 31;
 constexpr int kSourcePromptFileW = 198, kSourcePromptFileH = 30;
@@ -62,19 +90,21 @@ constexpr int kSourcePromptCancelW = 75, kSourcePromptCancelH = 28;
 
 constexpr int kPlaylistWindowWidth = 538;
 constexpr int kPlaylistWindowHeight = 189;
+constexpr int kPlaylistWindowBodyHeight = 159;
 constexpr int kPlaylistMovieLabelX = 17, kPlaylistMovieLabelY = 24;
-constexpr int kPlaylistMovieEditX = 96, kPlaylistMovieEditY = 18, kPlaylistMovieEditW = 323, kPlaylistMovieEditH = 31;
-constexpr int kPlaylistMovieBrowseX = 430, kPlaylistMovieBrowseY = 18, kPlaylistMovieBrowseW = 88, kPlaylistMovieBrowseH = 28;
+constexpr int kPlaylistMovieEditX = 113, kPlaylistMovieEditY = 18, kPlaylistMovieEditW = 323, kPlaylistMovieEditH = 31;
+constexpr int kPlaylistMovieBrowseX = 447, kPlaylistMovieBrowseY = 18, kPlaylistMovieBrowseW = 88, kPlaylistMovieBrowseH = 28;
 constexpr int kPlaylistSubtitleLabelX = 17, kPlaylistSubtitleLabelY = 62;
 constexpr int kPlaylistSubtitleEditX = 95, kPlaylistSubtitleEditY = 62, kPlaylistSubtitleEditW = 325, kPlaylistSubtitleEditH = 31;
 constexpr int kPlaylistSubtitleBrowseX = 445, kPlaylistSubtitleBrowseY = 62, kPlaylistSubtitleBrowseW = 91, kPlaylistSubtitleBrowseH = 31;
-constexpr int kPlaylistAddX = 433, kPlaylistAddY = 99, kPlaylistAddW = 90, kPlaylistAddH = 30;
+constexpr int kPlaylistAddX = 445, kPlaylistAddY = 111, kPlaylistAddW = 90, kPlaylistAddH = 30;
 
 // Warning/restart dialog (Figma node 5:321). No equivalent window exists
 // yet in gtk4_gui_main.cpp; MessageBoxShow/MessageBoxQuestion currently
 // auto-size around their content. See Phase 9.
 constexpr int kWarningWindowWidth = 245;
 constexpr int kWarningWindowHeight = 150;
+constexpr int kWarningWindowBodyHeight = 120;
 constexpr int kWarningMessageAreaH = 76;
 constexpr int kWarningFooterH = 44;
 constexpr int kWarningOkW = 73, kWarningOkH = 22;

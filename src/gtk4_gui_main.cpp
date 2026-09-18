@@ -403,6 +403,30 @@ static void OnTitlebarActiveNotify(GObject*, GParamSpec*, gpointer userData) {
     UpdateTitlebarActiveState(static_cast<TitlebarState*>(userData));
 }
 
+static void OnWindowMinimize(GtkButton*, gpointer userData) {
+    gtk_window_minimize(GTK_WINDOW(userData));
+}
+
+static GtkWidget* CreateWin10WindowControl(GtkWindow* window,
+                                           const char* cssClass,
+                                           bool closesWindow,
+                                           bool disabled = false) {
+    GtkWidget* button = gtk_button_new();
+    gtk_widget_add_css_class(button, "win10-window-control");
+    gtk_widget_add_css_class(button, "flat");
+    gtk_widget_add_css_class(button, cssClass);
+    gtk_widget_set_size_request(button, 46, UiTokensPosix::kTitlebarHeight);
+    gtk_widget_set_tooltip_text(button, closesWindow ? "Close" :
+                                         disabled ? "Maximize" : "Minimize");
+    if (closesWindow) {
+        g_signal_connect_swapped(button, "clicked", G_CALLBACK(gtk_window_close), window);
+    } else if (!disabled) {
+        g_signal_connect(button, "clicked", G_CALLBACK(OnWindowMinimize), window);
+    }
+    gtk_widget_set_sensitive(button, disabled ? FALSE : TRUE);
+    return button;
+}
+
 GtkWidget* CreateWin10Titlebar(GtkWindow* window,
                                const char* title,
                                WindowChrome chrome) {
@@ -411,6 +435,9 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
 
     GtkWidget* handle = gtk_window_handle_new();
     gtk_widget_add_css_class(handle, "win10-titlebar");
+    gtk_widget_add_css_class(handle,
+                             chrome == WindowChrome::Main ? "win10-main-titlebar"
+                                                         : "win10-dialog-titlebar");
     gtk_widget_set_size_request(handle, -1, UiTokensPosix::kTitlebarHeight);
 
     GtkWidget* titlebar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -429,11 +456,9 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
         }
         if (!iconPath.empty()) {
             icon = gtk_image_new_from_file(iconPath.c_str());
-        } else {
-            icon = gtk_image_new_from_icon_name("dlna-server");
+            gtk_image_set_pixel_size(GTK_IMAGE(icon), 16);
+            gtk_box_append(GTK_BOX(leftBox), icon);
         }
-        gtk_image_set_pixel_size(GTK_IMAGE(icon), 16);
-        gtk_box_append(GTK_BOX(leftBox), icon);
     }
 
     GtkWidget* titleLabel = gtk_label_new(title);
@@ -447,14 +472,16 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
     gtk_widget_set_hexpand(spacer, TRUE);
     gtk_box_append(GTK_BOX(titlebar), spacer);
 
-    GtkWidget* controls = gtk_window_controls_new(GTK_PACK_END);
+    GtkWidget* controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(controls, "win10-window-controls");
     if (chrome == WindowChrome::Main) {
-        gtk_window_controls_set_decoration_layout(
-            GTK_WINDOW_CONTROLS(controls), ":minimize,close");
-    } else {
-        gtk_window_controls_set_decoration_layout(
-            GTK_WINDOW_CONTROLS(controls), ":close");
+        gtk_box_append(GTK_BOX(controls),
+                       CreateWin10WindowControl(window, "win10-minimize-control", false));
+        gtk_box_append(GTK_BOX(controls),
+                       CreateWin10WindowControl(window, "win10-maximize-control", false, true));
     }
+    gtk_box_append(GTK_BOX(controls),
+                   CreateWin10WindowControl(window, "win10-close-control", true));
     gtk_box_append(GTK_BOX(titlebar), controls);
 
     TitlebarState* state = g_new0(TitlebarState, 1);
@@ -476,7 +503,7 @@ GtkWindow* CreateMessageWindow(GtkWindow* parent,
     GtkWindow* window = GTK_WINDOW(gtk_window_new());
     gtk_window_set_modal(window, TRUE);
     gtk_window_set_resizable(window, FALSE);
-    gtk_window_set_default_size(window, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningWindowHeight);
+    gtk_window_set_default_size(window, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningWindowBodyHeight);
     gtk_window_set_transient_for(window, parent);
     gtk_window_set_titlebar(
         window,
@@ -486,13 +513,6 @@ GtkWindow* CreateMessageWindow(GtkWindow* parent,
 
 void MessageBoxShow(GtkWindow* parent, const std::string& text) {
     GtkWindow* msgWin = CreateMessageWindow(parent, "DLNA Server", WindowChrome::Dialog);
-
-    if (g_dumpGeometry) {
-        PresentModalChild(msgWin, parent);
-        DumpWindowGeometry("warning", GTK_WIDGET(msgWin));
-        gtk_window_destroy(msgWin);
-        return;
-    }
 
     if (g_dumpMsgBoxParent) {
         GtkWindow* transientParent = gtk_window_get_transient_for(msgWin);
@@ -513,19 +533,13 @@ void MessageBoxShow(GtkWindow* parent, const std::string& text) {
     GtkWidget* messageArea = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_add_css_class(messageArea, "dlna-warning-message");
     gtk_widget_set_size_request(messageArea, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningMessageAreaH);
-    gtk_widget_set_margin_start(messageArea, 12);
-    gtk_widget_set_margin_end(messageArea, 12);
-    gtk_widget_set_margin_top(messageArea, 8);
-    gtk_widget_set_margin_bottom(messageArea, 8);
     gtk_box_append(GTK_BOX(vbox), messageArea);
 
-    // Figma warning glyph: reuse the project app icon as a stand-in if a
-    // dedicated triangle asset is not bundled under resources/. Grep for
-    // an existing warning/triangle PNG or SVG before adding a new binary
-    // asset to the repository; do not invent a fabricated icon file path.
-    GtkWidget* icon = gtk_image_new_from_icon_name("dialog-warning-symbolic");
+    GtkWidget* icon = gtk_image_new_from_file(
+        ResolveBundledResourcePath("gtk/penpot-warning.svg").c_str());
     gtk_image_set_pixel_size(GTK_IMAGE(icon), UiTokensPosix::kWarningTriangleW);
-    gtk_widget_set_valign(icon, GTK_ALIGN_START);
+    gtk_widget_set_margin_start(icon, 19);
+    gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
     gtk_box_append(GTK_BOX(messageArea), icon);
 
     GtkWidget* label = gtk_label_new(text.c_str());
@@ -537,16 +551,20 @@ void MessageBoxShow(GtkWindow* parent, const std::string& text) {
     GtkWidget* footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_add_css_class(footer, "dlna-warning-footer");
     gtk_widget_set_size_request(footer, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningFooterH);
-    gtk_widget_set_halign(footer, GTK_ALIGN_END);
+    gtk_widget_set_halign(footer, GTK_ALIGN_FILL);
     gtk_widget_set_valign(footer, GTK_ALIGN_CENTER);
-    gtk_widget_set_margin_end(footer, 12);
     gtk_box_append(GTK_BOX(vbox), footer);
     GtkWidget* buttonBox = footer;
+
+    GtkWidget* footerSpacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(footerSpacer, TRUE);
+    gtk_box_append(GTK_BOX(buttonBox), footerSpacer);
 
     gboolean done = FALSE;
     GtkWidget* okButton = gtk_button_new_with_label("OK");
     gtk_widget_add_css_class(okButton, "dlna-warning-ok");
     gtk_widget_set_size_request(okButton, UiTokensPosix::kWarningOkW, UiTokensPosix::kWarningOkH);
+    gtk_widget_set_margin_end(okButton, 15);
     g_signal_connect(okButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer userData) {
         *static_cast<gboolean*>(userData) = TRUE;
     }), &done);
@@ -556,6 +574,13 @@ void MessageBoxShow(GtkWindow* parent, const std::string& text) {
         *static_cast<gboolean*>(userData) = TRUE;
         return TRUE;
     }), &done);
+
+    if (g_dumpGeometry) {
+        PresentModalChild(msgWin, parent);
+        DumpWindowGeometry("warning", GTK_WIDGET(msgWin));
+        gtk_window_destroy(msgWin);
+        return;
+    }
 
     PresentModalChild(msgWin, parent);
     while (!done) {
@@ -574,19 +599,13 @@ bool MessageBoxQuestion(GtkWindow* parent, const std::string& text) {
     GtkWidget* messageArea = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_add_css_class(messageArea, "dlna-warning-message");
     gtk_widget_set_size_request(messageArea, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningMessageAreaH);
-    gtk_widget_set_margin_start(messageArea, 12);
-    gtk_widget_set_margin_end(messageArea, 12);
-    gtk_widget_set_margin_top(messageArea, 8);
-    gtk_widget_set_margin_bottom(messageArea, 8);
     gtk_box_append(GTK_BOX(vbox), messageArea);
 
-    // Figma warning glyph: reuse the project app icon as a stand-in if a
-    // dedicated triangle asset is not bundled under resources/. Grep for
-    // an existing warning/triangle PNG or SVG before adding a new binary
-    // asset to the repository; do not invent a fabricated icon file path.
-    GtkWidget* icon = gtk_image_new_from_icon_name("dialog-warning-symbolic");
+    GtkWidget* icon = gtk_image_new_from_file(
+        ResolveBundledResourcePath("gtk/penpot-warning.svg").c_str());
     gtk_image_set_pixel_size(GTK_IMAGE(icon), UiTokensPosix::kWarningTriangleW);
-    gtk_widget_set_valign(icon, GTK_ALIGN_START);
+    gtk_widget_set_margin_start(icon, 19);
+    gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
     gtk_box_append(GTK_BOX(messageArea), icon);
 
     GtkWidget* label = gtk_label_new(text.c_str());
@@ -598,11 +617,14 @@ bool MessageBoxQuestion(GtkWindow* parent, const std::string& text) {
     GtkWidget* footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_add_css_class(footer, "dlna-warning-footer");
     gtk_widget_set_size_request(footer, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningFooterH);
-    gtk_widget_set_halign(footer, GTK_ALIGN_END);
+    gtk_widget_set_halign(footer, GTK_ALIGN_FILL);
     gtk_widget_set_valign(footer, GTK_ALIGN_CENTER);
-    gtk_widget_set_margin_end(footer, 12);
     gtk_box_append(GTK_BOX(vbox), footer);
     GtkWidget* buttonBox = footer;
+
+    GtkWidget* footerSpacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(footerSpacer, TRUE);
+    gtk_box_append(GTK_BOX(buttonBox), footerSpacer);
 
     struct QuestionState {
         int result;
@@ -748,7 +770,7 @@ void ShowPlaylistEntryDialog() {
     InstallMnemonicCueControllers(g_playlistDialog);
     gtk_window_set_title(GTK_WINDOW(g_playlistDialog), "Default playlist entry");
     gtk_window_set_default_size(GTK_WINDOW(g_playlistDialog),
-                                UiTokensPosix::kPlaylistWindowWidth, UiTokensPosix::kPlaylistWindowHeight);
+                                UiTokensPosix::kPlaylistWindowWidth, UiTokensPosix::kPlaylistWindowBodyHeight);
     gtk_window_set_resizable(GTK_WINDOW(g_playlistDialog), FALSE);
 
     gtk_window_set_titlebar(
@@ -758,12 +780,12 @@ void ShowPlaylistEntryDialog() {
                             WindowChrome::Dialog));
 
     GtkWidget* fixed = gtk_fixed_new();
-    gtk_widget_set_size_request(fixed, UiTokensPosix::kPlaylistWindowWidth, UiTokensPosix::kPlaylistWindowHeight);
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kPlaylistWindowWidth, UiTokensPosix::kPlaylistWindowBodyHeight);
     gtk_window_set_child(GTK_WINDOW(g_playlistDialog), fixed);
     gtk_widget_add_css_class(fixed, "dlna-dialog-body");
 
     GtkWidget* movieLabel = gtk_label_new("Movie path:");
-    gtk_widget_set_size_request(movieLabel, UiTokens::kPlaylistMovieLabelW, UiTokens::kPlaylistMovieLabelH);
+    gtk_widget_set_size_request(movieLabel, 85, 16);
     gtk_fixed_put(GTK_FIXED(fixed), movieLabel, UiTokensPosix::kPlaylistMovieLabelX, UiTokensPosix::kPlaylistMovieLabelY);
     gtk_label_set_xalign(GTK_LABEL(movieLabel), 0.0f);
 
@@ -780,7 +802,7 @@ void ShowPlaylistEntryDialog() {
     }), nullptr);
 
     GtkWidget* subtitleLabel = gtk_label_new("Subtitle path:");
-    gtk_widget_set_size_request(subtitleLabel, UiTokens::kPlaylistSubtitleLabelW, UiTokens::kPlaylistSubtitleLabelH);
+    gtk_widget_set_size_request(subtitleLabel, 85, 16);
     gtk_fixed_put(GTK_FIXED(fixed), subtitleLabel, UiTokensPosix::kPlaylistSubtitleLabelX, UiTokensPosix::kPlaylistSubtitleLabelY);
     gtk_label_set_xalign(GTK_LABEL(subtitleLabel), 0.0f);
 
@@ -899,7 +921,7 @@ void PromptForMediaSource() {
     InstallMnemonicCueControllers(g_sourceDialog);
     gtk_window_set_title(GTK_WINDOW(g_sourceDialog), "Add media source");
     gtk_window_set_default_size(GTK_WINDOW(g_sourceDialog),
-                                UiTokensPosix::kSourcePromptWindowWidth, UiTokensPosix::kSourcePromptWindowHeight);
+                                UiTokensPosix::kSourcePromptWindowWidth, UiTokensPosix::kSourcePromptWindowBodyHeight);
     gtk_window_set_resizable(GTK_WINDOW(g_sourceDialog), FALSE);
 
     gtk_window_set_titlebar(
@@ -909,13 +931,13 @@ void PromptForMediaSource() {
                             WindowChrome::Dialog));
 
     GtkWidget* fixed = gtk_fixed_new();
-    gtk_widget_set_size_request(fixed, UiTokensPosix::kSourcePromptWindowWidth, UiTokensPosix::kSourcePromptWindowHeight);
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kSourcePromptWindowWidth, UiTokensPosix::kSourcePromptWindowBodyHeight);
     gtk_window_set_child(GTK_WINDOW(g_sourceDialog), fixed);
     gtk_widget_add_css_class(fixed, "dlna-dialog-body");
 
     GtkWidget* label = gtk_label_new("Add a local source or a Network share URL:");
-    gtk_widget_set_size_request(label, UiTokens::kSourcePromptLabelW, UiTokens::kSourcePromptLabelH);
-    gtk_fixed_put(GTK_FIXED(fixed), label, UiTokens::kSourcePromptLabelX, UiTokens::kSourcePromptLabelY);
+    gtk_widget_set_size_request(label, 273, 16);
+    gtk_fixed_put(GTK_FIXED(fixed), label, 18, 18);
     gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
 
     g_sourceEntry = gtk_entry_new();
@@ -925,14 +947,15 @@ void PromptForMediaSource() {
     g_signal_connect(g_sourceEntry, "changed", G_CALLBACK(OnSourceEntryChanged), nullptr);
 
     GtkWidget* hintLabel = gtk_label_new("Example: ftp://user:pass@server:21/media");
-    gtk_widget_set_size_request(hintLabel, UiTokens::kSourcePromptHintW, UiTokens::kSourcePromptHintH);
-    gtk_fixed_put(GTK_FIXED(fixed), hintLabel, UiTokens::kSourcePromptHintX, UiTokens::kSourcePromptHintY);
+    gtk_widget_set_size_request(hintLabel, 254, 15);
+    gtk_fixed_put(GTK_FIXED(fixed), hintLabel, 18, 92);
     gtk_label_set_xalign(GTK_LABEL(hintLabel), 0.0f);
 
     GtkWidget* folderButton = gtk_button_new_with_label("Folder...");
     gtk_widget_set_size_request(folderButton, UiTokensPosix::kSourcePromptFolderW, UiTokensPosix::kSourcePromptFolderH);
-    gtk_fixed_put(GTK_FIXED(fixed), folderButton, UiTokens::kSourcePromptFolderX, UiTokens::kSourcePromptFolderY);
+    gtk_fixed_put(GTK_FIXED(fixed), folderButton, 18, 129);
     gtk_widget_add_css_class(folderButton, "dlna-dialog-button");
+    gtk_widget_add_css_class(folderButton, "source-dialog-button");
     g_signal_connect(folderButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ChooseSourcePath(GTK_WINDOW(g_sourceDialog), GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
                          "Choose media folder");
@@ -940,8 +963,9 @@ void PromptForMediaSource() {
 
     GtkWidget* fileButton = gtk_button_new_with_label("File...");
     gtk_widget_set_size_request(fileButton, UiTokensPosix::kSourcePromptFileW, UiTokensPosix::kSourcePromptFileH);
-    gtk_fixed_put(GTK_FIXED(fixed), fileButton, UiTokens::kSourcePromptFileX, UiTokens::kSourcePromptFileY);
+    gtk_fixed_put(GTK_FIXED(fixed), fileButton, 122, 130);
     gtk_widget_add_css_class(fileButton, "dlna-dialog-button");
+    gtk_widget_add_css_class(fileButton, "source-dialog-button");
     g_signal_connect(fileButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ChooseSourcePath(GTK_WINDOW(g_sourceDialog), GTK_FILE_CHOOSER_ACTION_OPEN,
                          "Choose media file");
@@ -949,8 +973,9 @@ void PromptForMediaSource() {
 
     g_sourceAddButton = gtk_button_new_with_label("Add");
     gtk_widget_set_size_request(g_sourceAddButton, UiTokensPosix::kSourcePromptAddW, UiTokensPosix::kSourcePromptAddH);
-    gtk_fixed_put(GTK_FIXED(fixed), g_sourceAddButton, UiTokens::kSourcePromptAddX, UiTokens::kSourcePromptAddY);
+    gtk_fixed_put(GTK_FIXED(fixed), g_sourceAddButton, 373, 129);
     gtk_widget_add_css_class(g_sourceAddButton, "dlna-dialog-button");
+    gtk_widget_add_css_class(g_sourceAddButton, "source-dialog-button");
     gtk_widget_add_css_class(g_sourceAddButton, "suggested-action");
     gtk_widget_set_sensitive(g_sourceAddButton, FALSE);
     g_signal_connect(g_sourceAddButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -960,8 +985,9 @@ void PromptForMediaSource() {
 
     GtkWidget* cancelButton = gtk_button_new_with_label("Cancel");
     gtk_widget_set_size_request(cancelButton, UiTokensPosix::kSourcePromptCancelW, UiTokensPosix::kSourcePromptCancelH);
-    gtk_fixed_put(GTK_FIXED(fixed), cancelButton, UiTokens::kSourcePromptCancelX, UiTokens::kSourcePromptCancelY);
+    gtk_fixed_put(GTK_FIXED(fixed), cancelButton, 460, 131);
     gtk_widget_add_css_class(cancelButton, "dlna-dialog-button");
+    gtk_widget_add_css_class(cancelButton, "source-dialog-button");
     g_signal_connect(cancelButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         gtk_editable_set_text(GTK_EDITABLE(g_sourceEntry), "");
         g_sourceDone = false;
@@ -1071,24 +1097,29 @@ void ShowLogDialog() {
 
     g_logDialog = gtk_window_new();
     InstallMnemonicCueControllers(g_logDialog);
-    gtk_window_set_title(GTK_WINDOW(g_logDialog), "DLNA Server Log");
+    gtk_window_set_title(GTK_WINDOW(g_logDialog), "DLNA Server log");
     gtk_window_set_default_size(GTK_WINDOW(g_logDialog),
-                                UiTokensPosix::kLogWindowWidth, UiTokensPosix::kLogWindowHeight);
+                                UiTokensPosix::kLogWindowWidth, UiTokensPosix::kLogWindowBodyHeight);
     gtk_window_set_resizable(GTK_WINDOW(g_logDialog), FALSE);
 
     gtk_window_set_titlebar(
         GTK_WINDOW(g_logDialog),
         CreateWin10Titlebar(GTK_WINDOW(g_logDialog),
-                            "DLNA Server Log",
+                            "DLNA Server log",
                             WindowChrome::Dialog));
 
     GtkWidget* fixed = gtk_fixed_new();
-    gtk_widget_set_size_request(fixed, UiTokensPosix::kLogWindowWidth, UiTokensPosix::kLogWindowHeight);
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kLogWindowWidth, UiTokensPosix::kLogWindowBodyHeight);
     gtk_window_set_child(GTK_WINDOW(g_logDialog), fixed);
 
+    GtkWidget* workspace = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(workspace, "dlna-log-workspace");
+    gtk_widget_set_size_request(workspace, UiTokensPosix::kLogTextW + 6, UiTokensPosix::kLogTextH + 6);
+    gtk_fixed_put(GTK_FIXED(fixed), workspace, UiTokensPosix::kLogTextX - 3, UiTokensPosix::kLogTextY - 3);
+
     GtkWidget* scrolled = gtk_scrolled_window_new();
-    gtk_widget_set_size_request(scrolled, UiTokens::kLogTextW, UiTokens::kLogTextH);
-    gtk_fixed_put(GTK_FIXED(fixed), scrolled, UiTokens::kLogTextX, UiTokens::kLogTextY);
+    gtk_widget_set_size_request(scrolled, UiTokensPosix::kLogTextW, UiTokensPosix::kLogTextH);
+    gtk_fixed_put(GTK_FIXED(fixed), scrolled, UiTokensPosix::kLogTextX, UiTokensPosix::kLogTextY);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
 
@@ -1101,16 +1132,16 @@ void ShowLogDialog() {
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), textView);
 
     GtkWidget* refreshButton = gtk_button_new_with_label("Refresh");
-    gtk_widget_set_size_request(refreshButton, UiTokens::kLogRefreshW, UiTokens::kLogRefreshH);
-    gtk_fixed_put(GTK_FIXED(fixed), refreshButton, UiTokens::kLogRefreshX, UiTokens::kLogRefreshY);
+    gtk_widget_set_size_request(refreshButton, UiTokensPosix::kLogRefreshW, UiTokensPosix::kLogRefreshH);
+    gtk_fixed_put(GTK_FIXED(fixed), refreshButton, UiTokensPosix::kLogRefreshX, UiTokensPosix::kLogRefreshY);
     gtk_widget_add_css_class(refreshButton, "dlna-dialog-button");
     g_signal_connect(refreshButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         RefreshLogDialog();
     }), nullptr);
 
     GtkWidget* closeButton = gtk_button_new_with_label("Close");
-    gtk_widget_set_size_request(closeButton, UiTokens::kLogCloseW, UiTokens::kLogCloseH);
-    gtk_fixed_put(GTK_FIXED(fixed), closeButton, UiTokens::kLogCloseX, UiTokens::kLogCloseY);
+    gtk_widget_set_size_request(closeButton, UiTokensPosix::kLogCloseW, UiTokensPosix::kLogCloseH);
+    gtk_fixed_put(GTK_FIXED(fixed), closeButton, UiTokensPosix::kLogCloseX, UiTokensPosix::kLogCloseY);
     gtk_widget_add_css_class(closeButton, "dlna-dialog-button");
     gtk_widget_add_css_class(closeButton, "suggested-action");
     g_signal_connect(closeButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -1168,7 +1199,7 @@ void ShowHelpDialog(GtkWindow* parent) {
     g_helpDialog = dialog;
     gtk_window_set_title(GTK_WINDOW(dialog), "DLNA Server Help");
     gtk_window_set_default_size(GTK_WINDOW(dialog),
-                                UiTokensPosix::kHelpWindowWidth, UiTokensPosix::kHelpWindowHeight);
+                                UiTokensPosix::kHelpWindowWidth, UiTokensPosix::kHelpWindowBodyHeight);
     gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
 
     gtk_window_set_titlebar(
@@ -1178,13 +1209,13 @@ void ShowHelpDialog(GtkWindow* parent) {
                             WindowChrome::Dialog));
 
     GtkWidget* fixed = gtk_fixed_new();
-    gtk_widget_set_size_request(fixed, UiTokensPosix::kHelpWindowWidth, UiTokensPosix::kHelpWindowHeight);
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kHelpWindowWidth, UiTokensPosix::kHelpWindowBodyHeight);
     gtk_window_set_child(GTK_WINDOW(dialog), fixed);
     gtk_widget_add_css_class(fixed, "dlna-dialog-body");
 
     GtkWidget* scrolled = gtk_scrolled_window_new();
-    gtk_widget_set_size_request(scrolled, UiTokens::kHelpTextW, UiTokens::kHelpTextH);
-    gtk_fixed_put(GTK_FIXED(fixed), scrolled, UiTokens::kHelpTextX, UiTokens::kHelpTextY);
+    gtk_widget_set_size_request(scrolled, UiTokensPosix::kHelpTextW, UiTokensPosix::kHelpTextH);
+    gtk_fixed_put(GTK_FIXED(fixed), scrolled, UiTokensPosix::kHelpTextX, UiTokensPosix::kHelpTextY);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
 
@@ -1356,11 +1387,11 @@ bool ShowSettingsDialog() {
     InstallMnemonicCueControllers(g_settingsDialog);
     gtk_window_set_title(GTK_WINDOW(g_settingsDialog), "DLNA Server Settings");
     gtk_window_set_default_size(GTK_WINDOW(g_settingsDialog),
-                                UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsWindowHeight);
+                                UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsWindowBodyHeight);
     gtk_window_set_resizable(GTK_WINDOW(g_settingsDialog), FALSE);
 
     GtkWidget* fixed = gtk_fixed_new();
-    gtk_widget_set_size_request(fixed, UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsWindowHeight);
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsWindowBodyHeight);
     gtk_window_set_child(GTK_WINDOW(g_settingsDialog), fixed);
     gtk_widget_add_css_class(fixed, "dlna-dialog-body");
 
@@ -1430,33 +1461,33 @@ bool ShowSettingsDialog() {
     }
 
     makeFrame("Server", UiTokensPosix::kServerGroupX, UiTokensPosix::kServerGroupY, UiTokensPosix::kServerGroupW, UiTokensPosix::kServerGroupH);
-    makeLabel("Server name:", UiTokens::kSettingsServerNameLabelX, UiTokens::kSettingsServerNameLabelY,
-              UiTokens::kSettingsServerNameLabelW, UiTokens::kSettingsServerNameLabelH);
-    g_serverNameEntry = makeEntry(UiTokens::kSettingsServerNameEditX, UiTokens::kSettingsServerNameEditY,
+    makeLabel("Server name:", UiTokensPosix::kSettingsServerNameLabelX, UiTokensPosix::kSettingsServerNameLabelY,
+              UiTokensPosix::kSettingsServerNameLabelW, UiTokensPosix::kSettingsServerNameLabelH);
+    g_serverNameEntry = makeEntry(UiTokensPosix::kSettingsServerNameEditX, UiTokensPosix::kSettingsServerNameEditY,
                                   UiTokensPosix::kServerNameEditW, UiTokensPosix::kServerNameEditH);
-    makeLabel("HTTP port:", UiTokens::kSettingsHttpPortLabelX, UiTokens::kSettingsHttpPortLabelY,
-              UiTokens::kSettingsHttpPortLabelW, UiTokens::kSettingsHttpPortLabelH);
-    g_httpPortEntry = makeEntry(UiTokens::kSettingsHttpPortEditX, UiTokens::kSettingsHttpPortEditY,
+    makeLabel("HTTP port: *", UiTokensPosix::kSettingsHttpPortLabelX, UiTokensPosix::kSettingsHttpPortLabelY,
+              UiTokensPosix::kSettingsHttpPortLabelW, UiTokensPosix::kSettingsHttpPortLabelH);
+    g_httpPortEntry = makeEntry(UiTokensPosix::kSettingsHttpPortEditX, UiTokensPosix::kSettingsHttpPortEditY,
                                 UiTokensPosix::kHttpPortEditW, UiTokensPosix::kHttpPortEditH);
-    makeLabel("IP whitelist:", UiTokens::kSettingsIpWhitelistLabelX, UiTokens::kSettingsIpWhitelistLabelY,
-              UiTokens::kSettingsIpWhitelistLabelW, UiTokens::kSettingsIpWhitelistLabelH);
-    g_ipWhitelistEntry = makeEntry(UiTokens::kSettingsIpWhitelistEditX, UiTokens::kSettingsIpWhitelistEditY,
+    makeLabel("IP whitelist: *", UiTokensPosix::kSettingsIpWhitelistLabelX, UiTokensPosix::kSettingsIpWhitelistLabelY,
+              UiTokensPosix::kSettingsIpWhitelistLabelW, UiTokensPosix::kSettingsIpWhitelistLabelH);
+    g_ipWhitelistEntry = makeEntry(UiTokensPosix::kSettingsIpWhitelistEditX, UiTokensPosix::kSettingsIpWhitelistEditY,
                                    UiTokensPosix::kIpWhitelistEditW, UiTokensPosix::kIpWhitelistEditH);
 
     makeFrame("General", UiTokensPosix::kGeneralGroupX, UiTokensPosix::kGeneralGroupY, UiTokensPosix::kGeneralGroupW, UiTokensPosix::kGeneralGroupH);
     g_debugLogCheck = makeCheck("Debug log (write to file)",
-                                UiTokens::kSettingsDebugLogX, UiTokens::kSettingsDebugLogY,
-                                UiTokens::kSettingsDebugLogW, UiTokens::kSettingsDebugLogH);
+                                UiTokensPosix::kSettingsDebugLogX, UiTokensPosix::kSettingsDebugLogY,
+                                UiTokensPosix::kSettingsDebugLogW, UiTokensPosix::kSettingsDebugLogH);
 
     makeFrame("Playlist", UiTokensPosix::kPlaylistGroupX, UiTokensPosix::kPlaylistGroupY, UiTokensPosix::kPlaylistGroupW, UiTokensPosix::kPlaylistGroupH);
     g_defaultPlaylistCheck = makeCheck("Default playlist",
-                                       UiTokens::kSettingsDefaultPlaylistX, UiTokens::kSettingsDefaultPlaylistY,
-                                       UiTokens::kSettingsDefaultPlaylistW, UiTokens::kSettingsDefaultPlaylistH);
+                                       UiTokensPosix::kSettingsDefaultPlaylistX, UiTokensPosix::kSettingsDefaultPlaylistY,
+                                       UiTokensPosix::kSettingsDefaultPlaylistW, UiTokensPosix::kSettingsDefaultPlaylistH);
     g_defaultPlaylistAddButton = gtk_button_new_with_label("Add...");
     gtk_widget_set_size_request(g_defaultPlaylistAddButton,
-                                  UiTokens::kSettingsPlaylistAddW, UiTokens::kSettingsPlaylistAddH);
+                                  UiTokensPosix::kPlaylistAddButtonW, UiTokensPosix::kPlaylistAddButtonH);
     gtk_fixed_put(GTK_FIXED(fixed), g_defaultPlaylistAddButton,
-                  UiTokens::kSettingsPlaylistAddX, UiTokens::kSettingsPlaylistAddY);
+                  UiTokensPosix::kSettingsPlaylistAddX, UiTokensPosix::kSettingsPlaylistAddY);
     gtk_widget_add_css_class(g_defaultPlaylistAddButton, "dlna-dialog-button");
     g_signal_connect(g_defaultPlaylistAddButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ShowPlaylistEntryDialog();
@@ -1469,30 +1500,30 @@ bool ShowSettingsDialog() {
 
     makeFrame("Media browsing", UiTokensPosix::kMediaGroupX, UiTokensPosix::kMediaGroupY, UiTokensPosix::kMediaGroupW, UiTokensPosix::kMediaGroupH);
     g_artistAlbumCheck = makeCheck("Add artist/album folders to audio",
-                                   UiTokens::kSettingsArtistAlbumsX, UiTokens::kSettingsArtistAlbumsY,
-                                   UiTokens::kSettingsArtistAlbumsW, UiTokens::kSettingsArtistAlbumsH);
+                                   UiTokensPosix::kSettingsArtistAlbumsX, UiTokensPosix::kSettingsArtistAlbumsY,
+                                   UiTokensPosix::kSettingsArtistAlbumsW, UiTokensPosix::kSettingsArtistAlbumsH);
     g_hideAllMediaCheck = makeCheck("Do not show 'All Media' folders",
-                                    UiTokens::kSettingsHideAllMediaX, UiTokens::kSettingsHideAllMediaY,
-                                    UiTokens::kSettingsHideAllMediaW, UiTokens::kSettingsHideAllMediaH);
+                                    UiTokensPosix::kSettingsHideAllMediaX, UiTokensPosix::kSettingsHideAllMediaY,
+                                    UiTokensPosix::kSettingsHideAllMediaW, UiTokensPosix::kSettingsHideAllMediaH);
     g_sortByTitleCheck = makeCheck("Sort by title instead of file name",
-                                   UiTokens::kSettingsSortByTitleX, UiTokens::kSettingsSortByTitleY,
-                                   UiTokens::kSettingsSortByTitleW, UiTokens::kSettingsSortByTitleH);
+                                   UiTokensPosix::kSettingsSortByTitleX, UiTokensPosix::kSettingsSortByTitleY,
+                                   UiTokensPosix::kSettingsSortByTitleW, UiTokensPosix::kSettingsSortByTitleH);
     g_flatFoldersCheck = makeCheck("Flat folders style",
-                                   UiTokens::kSettingsFlatFoldersX, UiTokens::kSettingsFlatFoldersY,
-                                   UiTokens::kSettingsFlatFoldersW, UiTokens::kSettingsFlatFoldersH);
+                                   UiTokensPosix::kSettingsFlatFoldersX, UiTokensPosix::kSettingsFlatFoldersY,
+                                   UiTokensPosix::kSettingsFlatFoldersW, UiTokensPosix::kSettingsFlatFoldersH);
     g_showFileNamesCheck = makeCheck("Show file names instead of titles",
-                                     UiTokens::kSettingsShowFileNamesX, UiTokens::kSettingsShowFileNamesY,
-                                     UiTokens::kSettingsShowFileNamesW, UiTokens::kSettingsShowFileNamesH);
+                                     UiTokensPosix::kSettingsShowFileNamesX, UiTokensPosix::kSettingsShowFileNamesY,
+                                     UiTokensPosix::kSettingsShowFileNamesW, UiTokensPosix::kSettingsShowFileNamesH);
     g_proxyStreamsCheck = makeCheck("Proxy streams",
-                                    UiTokens::kSettingsProxyStreamsX, UiTokens::kSettingsProxyStreamsY,
-                                    UiTokens::kSettingsProxyStreamsW, UiTokens::kSettingsProxyStreamsH);
+                                    UiTokensPosix::kSettingsProxyStreamsX, UiTokensPosix::kSettingsProxyStreamsY,
+                                    UiTokensPosix::kSettingsProxyStreamsW, UiTokensPosix::kSettingsProxyStreamsH);
     g_backgroundScanCheck = makeCheck("Background scan (auto-rescan on changes)",
-                                      UiTokens::kSettingsBackgroundScanX, UiTokens::kSettingsBackgroundScanY,
-                                      UiTokens::kSettingsBackgroundScanW, UiTokens::kSettingsBackgroundScanH);
+                                      UiTokensPosix::kSettingsBackgroundScanX, UiTokensPosix::kSettingsBackgroundScanY,
+                                      UiTokensPosix::kSettingsBackgroundScanW, UiTokensPosix::kSettingsBackgroundScanH);
 
     GtkWidget* cancelButton = gtk_button_new_with_label("Cancel");
-    gtk_widget_set_size_request(cancelButton, UiTokens::kSettingsCancelW, UiTokens::kSettingsCancelH);
-    gtk_fixed_put(GTK_FIXED(fixed), cancelButton, UiTokens::kSettingsCancelX, UiTokens::kSettingsCancelY);
+    gtk_widget_set_size_request(cancelButton, UiTokensPosix::kSettingsCancelW, UiTokensPosix::kSettingsCancelH);
+    gtk_fixed_put(GTK_FIXED(fixed), cancelButton, UiTokensPosix::kSettingsCancelX, UiTokensPosix::kSettingsCancelY);
     gtk_widget_add_css_class(cancelButton, "dlna-dialog-button");
     g_signal_connect(cancelButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         g_settingsSaved = false;
@@ -1502,8 +1533,8 @@ bool ShowSettingsDialog() {
     }), nullptr);
 
     GtkWidget* okButton = gtk_button_new_with_label("OK");
-    gtk_widget_set_size_request(okButton, UiTokens::kSettingsOkW, UiTokens::kSettingsOkH);
-    gtk_fixed_put(GTK_FIXED(fixed), okButton, UiTokens::kSettingsOkX, UiTokens::kSettingsOkY);
+    gtk_widget_set_size_request(okButton, UiTokensPosix::kSettingsOkW, UiTokensPosix::kSettingsOkH);
+    gtk_fixed_put(GTK_FIXED(fixed), okButton, UiTokensPosix::kSettingsOkX, UiTokensPosix::kSettingsOkY);
     gtk_widget_add_css_class(okButton, "dlna-dialog-button");
     gtk_widget_add_css_class(okButton, "suggested-action");
     g_signal_connect(okButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -2118,7 +2149,7 @@ void BuildMainWindow(GtkApplication* app) {
     InstallMnemonicCueControllers(window);
     gtk_window_set_title(GTK_WINDOW(window), "DLNA Server");
 gtk_window_set_default_size(GTK_WINDOW(window),
-                                UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainWindowHeight);
+                                UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainWindowBodyHeight);
     gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
     gtk_window_set_titlebar(
         GTK_WINDOW(window),
@@ -2138,7 +2169,7 @@ gtk_window_set_default_size(GTK_WINDOW(window),
         return TRUE;
     }), nullptr);
 GtkWidget* fixed = gtk_fixed_new();
-    gtk_widget_set_size_request(fixed, UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainWindowHeight);
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainWindowBodyHeight);
     gtk_widget_add_css_class(fixed, "dlna-main-surface");
     gtk_window_set_child(GTK_WINDOW(window), fixed);
 
