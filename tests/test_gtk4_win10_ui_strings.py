@@ -24,10 +24,10 @@ def test_sharp_corner_css_present():
 def test_shared_titlebar_owns_the_only_window_controls():
     text = read_source()
     helper = text[text.index("GtkWidget* CreateWin10Titlebar"):text.index("GtkWindow* CreateMessageWindow")]
-    assert 'g_object_set(titlebar, "show-title-buttons", FALSE, nullptr)' in helper
-    assert '":minimize,close"' in helper
-    assert '":close"' in helper
-    assert helper.count("gtk_window_controls_new") == 1
+    assert "CreateWin10WindowControl" in helper
+    assert "gtk_window_controls_new" not in helper
+    assert '"win10-minimize-control"' in text
+    assert '"win10-close-control"' in text
 
 
 def test_blue_accent_hover_rule_present():
