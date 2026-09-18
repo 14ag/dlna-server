@@ -78,6 +78,7 @@ private:
     void UpdateControlFocus(int controlId, bool gained);
     void RepaintHighlightTransition(int before, int after);
     void UpdateListLayout(int width, int height);
+    void UpdateSourceListTooltip(POINT point);
     int SelectedSourceIndex() const;
     HFONT CreateUiFont(int pixelSize, int weight, const wchar_t* faceName);
     void DrawToolbarButton(const DRAWITEMSTRUCT* drawItem);
@@ -112,6 +113,9 @@ private:
     HWND m_hBtnStartStop;
     HWND m_hBtnSettings;
     HWND m_hListSources;
+    HWND m_hListTooltip;
+    int m_listTooltipItem = -1;
+    std::wstring m_listTooltipText;
     std::vector<wchar_t> m_lastMnemonics;
     WNDPROC m_listOldProc;
     WNDPROC m_toolbarOldProc;
