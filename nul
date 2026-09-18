@@ -1,0 +1,12 @@
+
+(dlna-server-gui-bin:43154): Gdk-WARNING **: 20:11:06.203: Compositor doesn't support moving popups, relying on remapping
+
+(dlna-server-gui-bin:43154): Gtk-CRITICAL **: 20:11:13.936: Unable to register the application: Timeout was reached
+
+(dlna-server-gui-bin:43154): Gtk-CRITICAL **: 20:11:46.997: Unable to register the application: Timeout was reached
+
+(dlna-server-gui-bin:43154): Gtk-CRITICAL **: 20:12:25.340: Unable to register the application: Timeout was reached
+
+(dlna-server-gui-bin:43154): Gtk-CRITICAL **: 20:13:44.144: Unable to register the application: Timeout was reached
+
+(dlna-server-gui-bin:43154): Gtk-CRITICAL **: 20:14:51.066: Unable to register the application: Timeout was reached

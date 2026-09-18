@@ -37,6 +37,7 @@ stop_running_instances
 sudo_run rm -f /usr/bin/dlna-server
 sudo_run rm -f /usr/bin/dlna-server-gui
 sudo_run rm -f /usr/bin/dlna-server-gui-bin
+sudo_run rm -f /usr/local/bin/dlna-server-gui
 
 if [ -z "$package_path" ]; then
     package_path=$(

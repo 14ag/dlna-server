@@ -5,7 +5,7 @@
 - Always use caveman skill in this repo.
 - Use `git` for git tasks. Use `gh` for GitHub tasks. that the user explicitly approves. never create a branch, never commit
 - When user names a skill, follow that skill to the latter.
-- No fallbacks when user states a requirement. Ask a yes/no question if requirement conflict exists.
+- No fallbacks when user states a requirement. Ask a yes/no question in B1 english if requirement conflict exists.
 - sudo password for wsl is in the .env file
 - Do not make proactive decisions outside user scope. Ask first.
 - no such thing as a pre-existing failiure. those must be fixed at the very end after imolementing user's requirements
