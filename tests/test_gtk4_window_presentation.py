@@ -126,3 +126,18 @@ def test_win10_window_chrome_uses_profile_border_shadow_and_focus_state(repo_roo
     assert ".win10-titlebar.win10-inactive button.win10-close-control" in css
     assert ".dlna-groupbox > label" in css
     assert ".dlna-log-workspace" in css
+
+
+@pytest.mark.posix_only
+def test_source_list_has_no_horizontal_scrollbar_and_full_path_tooltips(repo_root):
+    code = (repo_root / SOURCE).read_text()
+    css = (repo_root / "resources" / "gtk" / "figma.css").read_text()
+
+    assert "GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC" in code
+    assert "gtk_label_set_ellipsize(GTK_LABEL(rowLabel), PANGO_ELLIPSIZE_END)" in code
+    assert "gtk_widget_set_tooltip_text(rowLabel, selected.c_str())" in code
+    assert "gtk_widget_set_tooltip_text(rowLabel, ToUtf8(source.path).c_str())" in code
+    assert 'font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;' in css
+    assert "font-size: 14px" in css
+    assert ".dlna-log-body" in css
+    assert "border: 0.5px solid #606060" in css

@@ -18,7 +18,8 @@ constexpr int kTitlebarLeftPadding = 10;
 constexpr int kMainWindowWidth = 426;
 constexpr int kMainWindowHeight = 593;
 constexpr int kMainWindowBodyHeight = 563;
-constexpr int kMainToolbarHeight = 57;
+// GTK rendered the prior 57 px toolbar 9 px taller than the Win32 toolbar.
+constexpr int kMainToolbarHeight = 48;
 constexpr int kMainSourceListX = 21;
 constexpr int kMainSourceListYFromListArea = 52;
 constexpr int kMainSourceListWidth = 385;
@@ -26,10 +27,10 @@ constexpr int kMainSourceListHeight = 430;
 
 // Toolbar buttons, left to right, y is relative to the toolbar's own
 // origin (not the window origin).
-constexpr int kAddButtonX = 103, kAddButtonY = 14, kAddButtonW = 54, kAddButtonH = 30;
-constexpr int kDeleteButtonX = 167, kDeleteButtonY = 14, kDeleteButtonW = 70, kDeleteButtonH = 30;
-constexpr int kStartStopButtonX = 248, kStartStopButtonY = 14, kStartStopButtonW = 70, kStartStopButtonH = 30;
-constexpr int kSettingsButtonX = 327, kSettingsButtonY = 14, kSettingsButtonW = 81, kSettingsButtonH = 30;
+constexpr int kAddButtonX = 103, kAddButtonY = 9, kAddButtonW = 54, kAddButtonH = 30;
+constexpr int kDeleteButtonX = 167, kDeleteButtonY = 9, kDeleteButtonW = 70, kDeleteButtonH = 30;
+constexpr int kStartStopButtonX = 248, kStartStopButtonY = 9, kStartStopButtonW = 70, kStartStopButtonH = 30;
+constexpr int kSettingsButtonX = 327, kSettingsButtonY = 9, kSettingsButtonW = 81, kSettingsButtonH = 30;
 
 constexpr int kSettingsWindowWidth = 700;
 constexpr int kSettingsWindowHeight = 797;

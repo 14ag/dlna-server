@@ -1055,6 +1055,10 @@ void PromptForMediaSource() {
                 GtkWidget* row = gtk_list_box_row_new();
                 GtkWidget* rowLabel = gtk_label_new(selected.c_str());
                 gtk_label_set_xalign(GTK_LABEL(rowLabel), 0.0f);
+                gtk_label_set_ellipsize(GTK_LABEL(rowLabel), PANGO_ELLIPSIZE_END);
+                gtk_label_set_single_line_mode(GTK_LABEL(rowLabel), TRUE);
+                gtk_widget_set_hexpand(rowLabel, TRUE);
+                gtk_widget_set_tooltip_text(rowLabel, selected.c_str());
                 gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), rowLabel);
                 gtk_list_box_append(GTK_LIST_BOX(g_sources), row);
                 SaveSourcesFromList();
@@ -1111,6 +1115,7 @@ void ShowLogDialog() {
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokensPosix::kLogWindowWidth, UiTokensPosix::kLogWindowBodyHeight);
     gtk_window_set_child(GTK_WINDOW(g_logDialog), fixed);
+    gtk_widget_add_css_class(fixed, "dlna-log-body");
 
     GtkWidget* workspace = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_add_css_class(workspace, "dlna-log-workspace");
@@ -1752,6 +1757,10 @@ void RefreshSourceList() {
         GtkWidget* row = gtk_list_box_row_new();
         GtkWidget* rowLabel = gtk_label_new(ToUtf8(source.path).c_str());
         gtk_label_set_xalign(GTK_LABEL(rowLabel), 0.0f);
+        gtk_label_set_ellipsize(GTK_LABEL(rowLabel), PANGO_ELLIPSIZE_END);
+        gtk_label_set_single_line_mode(GTK_LABEL(rowLabel), TRUE);
+        gtk_widget_set_hexpand(rowLabel, TRUE);
+        gtk_widget_set_tooltip_text(rowLabel, ToUtf8(source.path).c_str());
         gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), rowLabel);
         gtk_list_box_append(GTK_LIST_BOX(g_sources), row);
     }
@@ -2225,7 +2234,7 @@ GtkWidget* fixed = gtk_fixed_new();
     g_sourcesScrolled = gtk_scrolled_window_new();
     gtk_widget_add_css_class(g_sourcesScrolled, "source-list");
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(g_sourcesScrolled),
-                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_fixed_put(GTK_FIXED(fixed), g_sourcesScrolled, 0, 0);
 
     g_sources = gtk_list_box_new();

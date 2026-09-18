@@ -12,7 +12,8 @@ label,
 checkbutton,
 textview,
 textview text {
-    font-family: "Inter", sans-serif;
+    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 14px;
 }
 
 /* Windows 10 frame: 1 px profile border plus downward soft shadow. */
@@ -21,7 +22,7 @@ window.csd decoration,
 window.csd decoration:backdrop {
     border: 1px solid #606060;
     border-radius: 0;
-    box-shadow: 0 6px 22px 9px rgba(0, 0, 0, 0.38);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .win10-titlebar,
@@ -64,7 +65,7 @@ windowhandle.win10-titlebar.win10-inactive,
 .win10-titlebar-box .title,
 .title {
     color: #ffffff;
-    font-family: "Inter", sans-serif;
+    font-family: "Segoe UI", sans-serif;
     font-size: 12px;
     font-weight: 400;
 }
@@ -132,7 +133,7 @@ button.win10-close-control:active {
 box.toolbar {
     background-color: #252525;
     background-image: none;
-    min-height: 57px;
+    min-height: 48px;
 }
 
 /* Main toolbar buttons, normal/hover/active/disabled/focus. */
@@ -143,8 +144,8 @@ button.toolbar-button:not(:hover):not(:active) {
     background-image: none;
     border: 0.5px solid #555555;
     color: #ffffff;
-    font-size: 12px;
-    font-family: "Inter", sans-serif;
+    font-size: 14px;
+    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
     border-radius: 0px;
     box-shadow: none;
     text-shadow: none;
@@ -200,19 +201,26 @@ label.status-band {
 }
 
 /* Main source list. */
-.source-list,
-.source-list list,
-scrolledwindow.source-list,
-scrolledwindow.source-list viewport {
+scrolledwindow.source-list {
     background-color: #1f1f1f;
     background-image: none;
     border: 0.5px solid #434343;
     border-radius: 0;
 }
+scrolledwindow.source-list viewport,
+scrolledwindow.source-list list {
+    background-color: #1f1f1f;
+    background-image: none;
+    border: none;
+}
 .source-list row {
     padding: 4px 6px;
     background-color: #1f1f1f;
     color: #ffffff;
+}
+.source-list row label {
+    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 14px;
 }
 .source-list row:selected {
     background-color: #3a5a8c;
@@ -223,7 +231,7 @@ scrolledwindow.source-list viewport {
 .dlna-dialog-body {
     background-color: #f0f0f0;
     color: #000000;
-    font-family: "Inter", sans-serif;
+    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 12px;
 }
 
@@ -392,13 +400,17 @@ button.dlna-dialog-button.suggested-action:focus {
     border: 0;
 }
 
+.dlna-log-body {
+    background-color: #f0f0f0;
+}
+
 /* Log surface. */
 .dlna-log-surface, .dlna-log-surface text,
 textview.dlna-log-surface, textview.dlna-log-surface text {
     background-color: #ffffff;
     color: #000000;
-    font-family: "Cousine", monospace;
-    font-size: 12px;
+    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 14px;
 }
 
 /* Help surface. */
@@ -406,8 +418,8 @@ textview.dlna-log-surface, textview.dlna-log-surface text {
 textview.dlna-help-surface, textview.dlna-help-surface text {
     background-color: #f0f0f0;
     color: #000000;
-    font-family: "Cousine", monospace;
-    font-size: 12px;
+    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 14px;
 }
 
 button.source-dialog-button {
