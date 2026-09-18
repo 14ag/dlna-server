@@ -307,7 +307,7 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
 }
 
 MainWindow::MainWindow() : m_hwnd(NULL), m_hInstance(NULL), m_state(ServerUiState::Stopped),
-m_hBtnAdd(NULL), m_hBtnDelete(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL), m_listOldProc(NULL), m_toolbarOldProc(NULL),
+m_hBtnAdd(NULL), m_hBtnDelete(NULL), m_hBtnStartStop(NULL), m_hBtnSettings(NULL), m_hListSources(NULL), m_hListTooltip(NULL), m_listOldProc(NULL), m_toolbarOldProc(NULL),
 m_startedHeadless(false), m_scanInProgress(false), m_scanningStatusActive(false) {
     m_hBgBrush = CreateSolidBrush(RGB(UiTokens::kPageColor.r, UiTokens::kPageColor.g, UiTokens::kPageColor.b));
     m_hDarkBrush = CreateSolidBrush(RGB(UiTokens::kControlColor.r, UiTokens::kControlColor.g, UiTokens::kControlColor.b));
@@ -435,6 +435,23 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
     // Strip theming so the theme engine cannot apply a DWM-level focus border
     // on the listbox NC frame (which would appear as blue lines on focus).
     SetWindowTheme(m_hListSources, L"", L"");
+
+    m_hListTooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, NULL,
+        WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+        m_hwnd, NULL, hInstance, NULL);
+    if (m_hListTooltip) {
+        TOOLINFOW tool = {};
+        tool.cbSize = sizeof(tool);
+        tool.uFlags = TTF_SUBCLASS;
+        tool.hwnd = m_hListSources;
+        tool.uId = reinterpret_cast<UINT_PTR>(m_hListSources);
+        GetClientRect(m_hListSources, &tool.rect);
+        tool.lpszText = const_cast<wchar_t*>(L"");
+        SendMessageW(m_hListTooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+        SendMessageW(m_hListTooltip, TTM_SETDELAYTIME, TTDT_INITIAL, 0);
+        SendMessageW(m_hListTooltip, TTM_SETMAXTIPWIDTH, 0, 1200);
+    }
 
     OleInitialize(NULL);
     m_sourceDropTarget = new SourceListDropTarget(
@@ -855,6 +872,43 @@ void MainWindow::UpdateListLayout(int width, int height) {
     m_listRingRect.top = listTop - UiTokens::kFocusRingGap;
     m_listRingRect.right = listLeft + listWidth + UiTokens::kFocusRingGap;
     m_listRingRect.bottom = listTop + listHeight + UiTokens::kFocusRingGap;
+}
+
+void MainWindow::UpdateSourceListTooltip(POINT point) {
+    if (!m_hListTooltip || !m_hListSources) return;
+
+    const DWORD hit = static_cast<DWORD>(SendMessageW(
+        m_hListSources, LB_ITEMFROMPOINT, 0, MAKELPARAM(point.x, point.y)));
+    const int index = LOWORD(hit);
+    std::wstring text;
+    if (HIWORD(hit) == 0 && index >= 0 &&
+        index < SendMessageW(m_hListSources, LB_GETCOUNT, 0, 0)) {
+        const int length = static_cast<int>(SendMessageW(m_hListSources, LB_GETTEXTLEN, index, 0));
+        if (length > 0) {
+            text.resize(static_cast<size_t>(length));
+            SendMessageW(m_hListSources, LB_GETTEXT, index, reinterpret_cast<LPARAM>(text.data()));
+            HDC dc = GetDC(m_hListSources);
+            HGDIOBJ oldFont = m_hBodyFont ? SelectObject(dc, m_hBodyFont) : NULL;
+            SIZE size = {};
+            GetTextExtentPoint32W(dc, text.c_str(), length, &size);
+            if (oldFont) SelectObject(dc, oldFont);
+            ReleaseDC(m_hListSources, dc);
+            RECT client = {};
+            GetClientRect(m_hListSources, &client);
+            if (size.cx <= client.right - client.left - 8) text.clear();
+        }
+    }
+
+    if (index == m_listTooltipItem && text == m_listTooltipText) return;
+    m_listTooltipItem = index;
+    m_listTooltipText = text;
+    TOOLINFOW tool = {};
+    tool.cbSize = sizeof(tool);
+    tool.hwnd = m_hListSources;
+    tool.uId = reinterpret_cast<UINT_PTR>(m_hListSources);
+    tool.lpszText = const_cast<wchar_t*>(m_listTooltipText.c_str());
+    SendMessageW(m_hListTooltip, TTM_UPDATETIPTEXTW, 0, reinterpret_cast<LPARAM>(&tool));
+    SendMessageW(m_hListTooltip, TTM_ACTIVATE, !m_listTooltipText.empty(), 0);
 }
 
 void MainWindow::ArmMouseTracking(HWND hwnd) {
