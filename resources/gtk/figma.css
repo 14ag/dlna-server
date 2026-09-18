@@ -5,11 +5,28 @@
 
 /* ===== TITLEBAR =====
    SVG: title-bar fill #191919 when active, #202020 when inactive. Height 30px. */
+window,
+button,
+entry,
+label,
+checkbutton,
+textview,
+textview text {
+    font-family: "Inter", sans-serif;
+}
+
+/* Windows 10 frame: 1 px profile border plus downward soft shadow. */
+window.csd,
+window.csd decoration,
+window.csd decoration:backdrop {
+    border: 1px solid #606060;
+    border-radius: 0;
+    box-shadow: 0 6px 22px 9px rgba(0, 0, 0, 0.38);
+}
+
 .win10-titlebar,
 .win10-titlebar-box,
-windowhandle.win10-titlebar,
-headerbar.win10-titlebar,
-headerbar {
+windowhandle.win10-titlebar {
     background-color: #191919;
     background-image: none;
     border: none;
@@ -23,50 +40,47 @@ headerbar {
 
 .win10-titlebar.win10-active,
 .win10-titlebar.win10-active .win10-titlebar-box,
-windowhandle.win10-titlebar.win10-active,
-headerbar.win10-active,
-headerbar:not(:backdrop),
-window headerbar:not(:backdrop) {
+windowhandle.win10-titlebar.win10-active {
     background-color: #191919;
     background-image: none;
+}
+
+.win10-titlebar.win10-dialog-titlebar,
+.win10-titlebar.win10-dialog-titlebar .win10-titlebar-box,
+.win10-titlebar.win10-dialog-titlebar.win10-active,
+.win10-titlebar.win10-dialog-titlebar.win10-active .win10-titlebar-box {
+    background-color: #202020;
 }
 
 .win10-titlebar.win10-inactive,
 .win10-titlebar.win10-inactive .win10-titlebar-box,
 windowhandle.win10-titlebar.win10-inactive,
-.win10-titlebar:backdrop,
-headerbar.win10-inactive,
-headerbar:backdrop,
-window headerbar:backdrop {
+.win10-titlebar:backdrop {
     background-color: #202020;
     background-image: none;
 }
 
 .win10-titlebar .title,
 .win10-titlebar-box .title,
-headerbar .title,
 .title {
     color: #ffffff;
-    font-family: "Segoe UI Variable Text", "Segoe UI", "Inter", sans-serif;
+    font-family: "Inter", sans-serif;
     font-size: 12px;
     font-weight: 400;
 }
 
 /* Window controls: Flat Windows-style minimize and close buttons */
-headerbar windowcontrols,
-windowcontrols {
+.win10-window-controls {
     margin: 0;
     padding: 0;
     border-spacing: 0;
 }
 
-headerbar windowcontrols button,
-windowcontrols button,
-headerbar button.minimize,
-headerbar button.close,
-headerbar button.maximize {
+button.win10-window-control {
     background-color: transparent;
-    background-image: none;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 46px 30px;
     border: none;
     border-radius: 0;
     box-shadow: none;
@@ -78,32 +92,34 @@ headerbar button.maximize {
     outline: none;
 }
 
-headerbar windowcontrols button:hover,
-windowcontrols button:hover {
-    background-color: #3a3839;
-    background-image: none;
-    color: #ffffff;
+button.win10-minimize-control {
+    background-image: url("penpot-minimize.svg");
 }
-
-headerbar windowcontrols button:active,
-windowcontrols button:active {
-    background-color: #575354;
-    background-image: none;
-    color: #ffffff;
+button.win10-minimize-control:hover,
+button.win10-minimize-control:active {
+    background-color: #333333;
 }
-
-headerbar windowcontrols button.close:hover,
-windowcontrols button.close:hover {
+button.win10-maximize-control,
+button.win10-maximize-control:disabled {
+    background-image: url("penpot-maximize.svg");
+    opacity: 1;
+}
+button.win10-close-control {
+    background-image: url("penpot-close.svg");
+}
+button.win10-close-control:hover,
+button.win10-close-control:active {
     background-color: #c42b1c;
-    background-image: none;
-    color: #ffffff;
 }
 
-headerbar windowcontrols button.close:active,
-windowcontrols button.close:active {
-    background-color: #b41e14;
-    background-image: none;
-    color: #ffffff;
+.win10-titlebar.win10-inactive button.win10-minimize-control,
+.win10-titlebar.win10-inactive button.win10-close-control {
+    opacity: 0.5;
+}
+
+.win10-titlebar.win10-active button.win10-minimize-control,
+.win10-titlebar.win10-active button.win10-close-control {
+    opacity: 1;
 }
 
 /* Main window outer surface */
@@ -123,35 +139,37 @@ box.toolbar {
 .toolbar-button,
 button.toolbar-button,
 button.toolbar-button:not(:hover):not(:active) {
-    background-color: #3a3839;
+    background-color: #333333;
     background-image: none;
-    border: 1px solid #555555;
+    border: 0.5px solid #555555;
     color: #ffffff;
     font-size: 12px;
-    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-family: "Inter", sans-serif;
     border-radius: 0px;
     box-shadow: none;
     text-shadow: none;
     padding: 0;
     margin: 0;
+    min-width: 0;
+    min-height: 0;
 }
 .toolbar-button:hover,
 button.toolbar-button:hover {
     background-color: #464344;
     background-image: none;
-    border: 1px solid #555555;
+    border: 0.5px solid #555555;
     color: #ffffff;
 }
 .toolbar-button:active,
 button.toolbar-button:active {
     background-color: #575354;
     background-image: none;
-    border: 1px solid #555555;
+    border: 0.5px solid #555555;
     color: #ffffff;
 }
 .toolbar-button:disabled,
 button.toolbar-button:disabled {
-    background-color: #3a3839;
+    background-color: #333333;
     background-image: none;
     color: #7a7a7a;
     border: 1px solid #444444;
@@ -188,7 +206,7 @@ scrolledwindow.source-list,
 scrolledwindow.source-list viewport {
     background-color: #1f1f1f;
     background-image: none;
-    border: 1px solid #434343;
+    border: 0.5px solid #434343;
     border-radius: 0;
 }
 .source-list row {
@@ -205,6 +223,8 @@ scrolledwindow.source-list viewport {
 .dlna-dialog-body {
     background-color: #f0f0f0;
     color: #000000;
+    font-family: "Inter", sans-serif;
+    font-size: 12px;
 }
 
 /* All labels and check buttons inside the settings dialog use dark text. */
@@ -266,6 +286,12 @@ button.settings-toolbar-button:hover {
     border: 1px solid #d9d9d9;
     background-color: #f0f0f0;
 }
+.dlna-groupbox > label {
+    background-color: #f0f0f0;
+    color: #000000;
+    margin-left: 4px;
+    padding: 0 4px;
+}
 .dlna-groupbox-label {
     background-color: #f0f0f0;
     font-size: 12px;
@@ -299,9 +325,9 @@ entry:focus {
 button.dlna-dialog-button {
     background-color: #e1e1e1;
     background-image: none;
-    border: 1px solid #a0a0a0;
+    border: 1px solid #adadad;
     color: #000000;
-    border-radius: 2px;
+    border-radius: 0;
     box-shadow: none;
 }
 .dlna-dialog-button:hover,
@@ -316,7 +342,7 @@ button.dlna-dialog-button:active {
 }
 .dlna-dialog-button:disabled,
 button.dlna-dialog-button:disabled {
-    background-color: #e1e1e1;
+    background-color: #f0f0f0;
     background-image: none;
     color: #a0a0a0;
     border-color: #cccccc;
@@ -360,12 +386,19 @@ button.dlna-dialog-button.suggested-action:focus {
     background-color: #cfcfcf;
 }
 
+/* Profile AppWorkspace surrounds the white log field. */
+.dlna-log-workspace {
+    background-color: #191919;
+    border: 0;
+}
+
 /* Log surface. */
 .dlna-log-surface, .dlna-log-surface text,
 textview.dlna-log-surface, textview.dlna-log-surface text {
     background-color: #ffffff;
     color: #000000;
-    font-family: monospace;
+    font-family: "Cousine", monospace;
+    font-size: 12px;
 }
 
 /* Help surface. */
@@ -374,4 +407,27 @@ textview.dlna-help-surface, textview.dlna-help-surface text {
     background-color: #f0f0f0;
     color: #000000;
     font-family: "Cousine", monospace;
+    font-size: 12px;
+}
+
+button.source-dialog-button {
+    border-color: #a0a0a0;
+}
+
+button.source-dialog-button:disabled {
+    background-color: #e1e1e1;
+    border-color: #a0a0a0;
+    color: #a0a0a0;
+}
+
+scrollbar {
+    background-color: #f0f0f0;
+    border: 1px solid #cccccc;
+    border-radius: 0;
+}
+
+scrollbar slider {
+    background-color: #c7c7c7;
+    border: 0;
+    border-radius: 0;
 }

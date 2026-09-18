@@ -9,8 +9,14 @@ export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 version=$(grep -E '^project\(dlna-server VERSION ' "$repo_root/CMakeLists.txt" | sed -E 's/.*VERSION ([0-9.]+).*/\1/')
 output_dir="$repo_root/output/linux"
-build_dir="$repo_root/build-release-linux"
-release_stage_dir="$repo_root/build-release-linux-stage"
+# DrvFS does not implement chmod. CMake's compiler probes preserve file mode,
+# so builds under /mnt/<drive> fail after copying their test executables.
+# Keep all mutable build state on the Linux filesystem; release artifacts
+# remain under output/linux in the source tree.
+build_root=$(mktemp -d "${TMPDIR:-/tmp}/dlna-server-linux-build.XXXXXX")
+trap 'rm -rf "$build_root"' EXIT
+build_dir="$build_root/build"
+release_stage_dir="$build_root/stage"
 install_dir="$release_stage_dir/install"
 appdir="$release_stage_dir/dlna-server.AppDir"
 tools_dir="$repo_root/build-release-tools/linux"

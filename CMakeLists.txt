@@ -258,6 +258,12 @@ add_library(dlna_core STATIC
         install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/style.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
         install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/figma.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
+        install(FILES
+            "${CMAKE_SOURCE_DIR}/resources/gtk/penpot-minimize.svg"
+            "${CMAKE_SOURCE_DIR}/resources/gtk/penpot-maximize.svg"
+            "${CMAKE_SOURCE_DIR}/resources/gtk/penpot-close.svg"
+            "${CMAKE_SOURCE_DIR}/resources/gtk/penpot-warning.svg"
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
     endif()
 
     if(APPLE)
