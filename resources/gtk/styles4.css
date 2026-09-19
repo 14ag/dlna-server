@@ -1,0 +1,453 @@
+/*
+ * styles4.css
+ *
+ * Audit purpose:
+ *   This file contains ONLY GTK CSS definitions that satisfy all of these
+ *   conditions:
+ *     1. The corresponding UI element/property/visual state is actually
+ *        represented in the Win32 UI source or its dialog resource.
+ *     2. gtk.css defines the same element/property/state.
+ *     3. The property was not already defined by the verified GTK4
+ *        application CSS currently embedded in gtk4_gui_main.cpp.
+ *
+ * Source basis used for this audit:
+ *   - Win32 main window: mainwindow.cpp
+ *   - Win32 settings dialog: settingsdlg.cpp
+ *   - Win32 log dialog: logdlg.cpp
+ *   - Win32 dialog resource: app.rc
+ *   - Win32 dark-frame helper: dark_frame.cpp
+ *   - Project UI behavior specification: SPECS.txt
+ *   - supplied gtk.css
+ *
+ * Important:
+ *   - This is not a generic GTK theme import.
+ *   - No GTK widget is added merely because gtk.css happens to style it.
+ *   - Win32-only concepts such as GDI mouse tracking, WM_UPDATEUISTATE,
+ *     mnemonic assignment, modal focus snapshots, WS_TABSTOP/WS_GROUP,
+ *     BS_OWNERDRAW, BS_DEFPUSHBUTTON, and HWND enable/disable transitions
+ *     are documented in comments below but are not incorrectly translated
+ *     into unrelated CSS.
+ *
+ * Verified existing GTK4 CSS that is deliberately NOT repeated here:
+ *   - window background/color
+ *   - label color
+ *   - entry geometry/colors/disabled state
+ *   - .source-list geometry/colors/selection/focus
+ *   - .toolbar-button base/hover/active/disabled/focus
+ *   - CSD/headerbar square/no-shadow rules
+ *   - .win10-titlebar
+ *
+ * The Win32 source's values are treated as behavioral evidence; the actual
+ * CSS values below are taken from gtk.css, not invented replacements.
+ */
+
+
+/* ==========================================================================
+ * 1. GENERIC KEYBOARD FOCUS DECORATION
+ * ========================================================================== */
+
+/*
+ * Win32 evidence:
+ *   mainwindow.cpp::DrawToolbarButton()
+ *     - focused controls receive a 1 px focus rectangle
+ *     - the rectangle is inset by 4 px
+ *     - focus visibility is gated by the Win32 UI-state/mnemonic logic
+ *
+ *   mainwindow.cpp::WM_UPDATEUISTATE
+ *     - keyboard input clears UISF_HIDEACCEL
+ *     - mouse-button input hides accelerator cues again
+ *
+ *   mainwindow.cpp also draws a separate focus ring around the source list
+ *   and explicitly tracks WM_MOUSEMOVE/WM_MOUSELEAVE.
+ *
+ * GTK evidence:
+ *   gtk.css defines a generic focus outline:
+ *     outline-width: 1px
+ *     outline-offset: -3px
+ *     outline-style: dashed
+ *     outline-color: #595959
+ *
+ * Why this belongs here:
+ *   The current application CSS has per-widget focus rules for the toolbar
+ *   and source list, but it does not define the generic GTK focus decoration
+ *   used by other controls appearing in the Win32 dialogs, especially
+ *   checkbuttons and dialog controls.
+ *
+ * Do not use this rule to replace the existing .toolbar-button or
+ * .source-list focus rules. Those are deliberately more specific Win32
+ * translations already present in the application CSS.
+ */
+*:focus {
+  outline-width: 1px;
+  outline-offset: -3px;
+  outline-style: dashed;
+  outline-color: #595959;
+}
+
+
+/* ==========================================================================
+ * 2. DISABLED-STATE ICON DIMMING
+ * ========================================================================== */
+
+/*
+ * Win32 evidence:
+ *   mainwindow.cpp::DrawToolbarButton() explicitly distinguishes ODS_DISABLED
+ *   from normal/hover/pressed states.
+ *
+ *   settingsdlg.cpp and the source/playlist dialogs explicitly call
+ *   EnableWindow(..., FALSE) for controls whose action is unavailable.
+ *
+ *   app.rc declares WS_TABSTOP and standard Button controls, so disabled
+ *   checkbox/button glyphs are part of the UI state, not decorative extras.
+ *
+ * GTK evidence:
+ *   gtk.css defines:
+ *     *:disabled { -gtk-icon-effect: dim; }
+ *
+ * This is intentionally limited to the icon effect. The application's
+ * existing button disabled colors are already defined elsewhere and are
+ * therefore not repeated here.
+ */
+*:disabled {
+  -gtk-icon-effect: dim;
+}
+
+
+/* ==========================================================================
+ * 3. WIN32 CHECKBOX / AUTOCHECKBOX GEOMETRY
+ * ========================================================================== */
+
+/*
+ * Win32 evidence:
+ *   app.rc declares the settings controls as:
+ *     CONTROL ..., "Button", BS_AUTOCHECKBOX | WS_TABSTOP
+ *
+ *   settingsdlg.cpp creates/updates these controls and uses their enabled
+ *   state as part of the settings UI behavior.
+ *
+ * GTK evidence:
+ *   gtk.css defines the checkbox container and its internal check indicator:
+ *     checkbutton, radiobutton { padding: 4px; outline-offset: 0; }
+ *     check, radio {
+ *       margin: 4px;
+ *       min-height: 13px;
+ *       min-width: 13px;
+ *     }
+ *
+ * These rules are included because the Win32 UI explicitly contains
+ * checkbox controls. The GTK internal `check` selector is the corresponding
+ * GTK checkbox indicator, not an unrelated widget.
+ *
+ * Focus note:
+ *   The Win32 controls participate in keyboard navigation through
+ *   WS_TABSTOP/IsDialogMessage. The `outline-offset: 0` value is therefore
+ *   relevant to keeping the checkbox focus decoration attached to the
+ *   control rather than creating an arbitrary external gap.
+ */
+checkbutton,
+radiobutton {
+  padding: 4px;
+  outline-offset: 0;
+}
+
+check,
+radio {
+  margin: 4px;
+  min-height: 13px;
+  min-width: 13px;
+}
+
+
+/* ==========================================================================
+ * 4. GROUP BOX / FRAME BORDER
+ * ========================================================================== */
+
+/*
+ * Win32 evidence:
+ *   app.rc contains GROUPBOX controls for:
+ *     - Server
+ *     - General
+ *     - Playlist
+ *     - Media browsing
+ *
+ *   settingsdlg.cpp creates the GTK equivalents as `GtkFrame` objects on
+ *   the POSIX side.
+ *
+ * GTK evidence:
+ *   gtk.css defines:
+ *     .frame, frame > border {
+ *       border-width: 1px;
+ *       border-style: solid;
+ *       border-color: #333333;
+ *       border-radius: 0;
+ *       box-shadow: none;
+ *       background: none;
+ *     }
+ *
+ * Existing application CSS only supplies the frame text color. It does not
+ * supply these frame boundary properties, so they belong here.
+ */
+.frame,
+frame > border {
+  border-width: 1px;
+  border-style: solid;
+  border-color: #333333;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+}
+
+
+/* ==========================================================================
+ * 5. DEFAULT-ACTION / DEFPUSHBUTTON VISUAL
+ * ========================================================================== */
+
+/*
+ * Win32 evidence:
+ *   mainwindow.cpp::SourcePromptProc()
+ *     - the Add button is created with BS_DEFPUSHBUTTON.
+ *
+ *   settingsdlg.cpp::PlaylistEntryProc()
+ *     - the Add button is created with BS_DEFPUSHBUTTON.
+ *
+ *   The settings dialog's OK action is the standard IDOK action, so it is
+ *   also a default dialog action in the Win32 implementation.
+ *
+ * GTK evidence:
+ *   The POSIX implementation marks these corresponding buttons with the
+ *   `suggested-action` CSS class.
+ *
+ *   gtk.css defines:
+ *     button.suggested-action {
+ *       border-color: #2e2e2e;
+ *       box-shadow: inset 0 0 0 1px #2e2e2e;
+ *     }
+ *
+ * This rule is intentionally narrow. The generic button styling is already
+ * present in the application CSS and is not repeated.
+ */
+button.suggested-action {
+  border-color: #2e2e2e;
+  box-shadow: inset 0 0 0 1px #2e2e2e;
+}
+
+button.suggested-action:hover {
+  border-color: #2e2e2e;
+  box-shadow: inset 0 0 0 1px #2e2e2e;
+}
+
+
+/* ==========================================================================
+ * 6. READ-ONLY LOG / HELP TEXT SURFACE
+ * ========================================================================== */
+
+/*
+ * Win32 evidence:
+ *   logdlg.cpp loads log text into IDC_EDT_LOG_TEXT and appends new text
+ *   without treating the control as an ordinary editable field.
+ *
+ *   The Win32 main window's WM_CTLCOLOREDIT/WM_CTLCOLORSTATIC handling uses
+ *   the same page/background palette for text controls.
+ *
+ * GTK evidence:
+ *   gtk4_gui_main.cpp implements the log/help surfaces using GtkTextView.
+ *   gtk.css defines:
+ *     textview {
+ *       color: #FFFFFF;
+ *       background-color: #202020;
+ *     }
+ *     textview text {
+ *       background-color: #202020;
+ *     }
+ *
+ * The application CSS currently defines entry/text-like colors but does not
+ * define the GtkTextView surface. These rules keep the log/help controls on
+ * the same dark surface as the Win32 implementation.
+ *
+ * Selection is included because the Win32 log EDIT control is a selectable
+ * text surface and gtk.css explicitly defines the corresponding text
+ * selection state.
+ */
+textview {
+  color: #FFFFFF;
+  background-color: #202020;
+}
+
+textview text {
+  background-color: #202020;
+}
+
+textview text:selected,
+textview text selection,
+textview text:selected:focus,
+textview text selection:focus {
+  color: #FFFFFF;
+  background-color: #0078D7;
+}
+
+
+/* ==========================================================================
+ * 7. FLAT SETTINGS COMMAND-RIBBON BUTTON STATE
+ * ========================================================================== */
+
+/*
+ * Win32 evidence:
+ *   settingsdlg.cpp creates a real menu bar with:
+ *     Logs
+ *     Help
+ *   and assigns keyboard mnemonics to those commands.
+ *
+ * GTK4 evidence:
+ *   The POSIX settings implementation represents those commands as
+ *   `GtkButton`s carrying the `flat` CSS class.
+ *
+ * GTK evidence:
+ *   gtk.css defines the flat-button state:
+ *     transparent border/background
+ *     square radius
+ *     white text
+ *
+ * This is included because the element is directly part of the Win32
+ * settings command surface. It is not a generic GTK button reset.
+ */
+button.flat {
+  border-color: transparent;
+  border-radius: 0px;
+  color: #FFFFFF;
+  background-color: transparent;
+}
+
+button.flat:disabled {
+  border-color: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  background-color: transparent;
+}
+
+button.flat:backdrop {
+  border-color: transparent;
+  background-color: transparent;
+  color: #FFFFFF;
+}
+
+
+/* ==========================================================================
+ * 8. AUDIT NOTES: TRACKING / FOCUS / ENABLED-DISABLED BEHAVIOR
+ * ========================================================================== */
+
+/*
+ * These Win32 behaviors were deliberately audited but are NOT emitted as
+ * CSS because gtk.css has no equivalent property that would faithfully
+ * represent them:
+ *
+ * 1. WM_MOUSEMOVE / WM_MOUSELEAVE tracking
+ *    mainwindow.cpp explicitly arms TrackMouseEvent(TME_LEAVE) and updates
+ *    HoverFocusState. CSS cannot reproduce the lifetime/state machine of
+ *    that tracking. Do not invent a CSS "tracking" property.
+ *
+ * 2. Hover vs keyboard focus precedence
+ *    DrawToolbarButton() shows the ring whenever the control is hovered,
+ *    otherwise it shows the keyboard focus ring only when focus cues are
+ *    visible. This is behavior implemented by C++ state, not just CSS.
+ *
+ * 3. Source-list focus ring
+ *    mainwindow.cpp maintains m_listRingRect and paints a dedicated ring
+ *    around the list. The current GTK4 source already has a
+ *    .source-list:focus-within rule. It is therefore not duplicated here.
+ *
+ * 4. Mnemonic visibility
+ *    WM_UPDATEUISTATE, m_cueState, AssignMnemonics(), InsertMnemonicMarker()
+ *    and DT_HIDEPREFIX control when access-key underlines appear/disappear.
+ *    gtk.css cannot implement that keyboard/mouse state machine.
+ *
+ * 5. Disabled/enabled application logic
+ *    Win32 uses EnableWindow() and IsWindowEnabled(); the server state
+ *    controls whether Add/Start/Delete/Settings are enabled. GTK4 already
+ *    performs this with gtk_widget_set_sensitive(). CSS only supplies the
+ *    visual state; it must not become the source of truth for availability.
+ *
+ * 6. Modal focus priority
+ *    Settings, source prompt, playlist entry, log, and help windows use
+ *    modal/transient ownership and focus snapshots. No CSS rule is emitted
+ *    for this because CSS cannot enforce window modality.
+ *
+ * 7. Escape/Backspace close behavior
+ *    The Win32 dialogs install message hooks to close the active subwindow
+ *    on Escape/Backspace unless the focused control is a live EDIT control.
+ *    This is input behavior and must remain in the GTK event-controller
+ *    implementation, not CSS.
+ */
+
+
+/* ==========================================================================
+ * 9. AUDIT EXCLUSIONS
+ * ========================================================================== */
+
+/*
+ * The following gtk.css definitions were inspected and intentionally omitted
+ * because the corresponding property is already present in the verified
+ * application CSS, or the Win32 UI source does not contain the corresponding
+ * UI element:
+ *
+ * Already represented by application CSS:
+ *   - toolbar-button base/hover/active/disabled/focus
+ *   - entry base/focus/disabled/selection
+ *   - source-list base/hover/active/selected/focus
+ *   - window/CSD/headerbar/Win10 titlebar
+ *
+ * Not justified by the Win32 UI source:
+ *   - switch / switch slider
+ *   - scale / scale slider
+ *   - progressbar
+ *   - notebook/tab
+ *   - generic popover styling
+ *   - tooltip styling
+ *   - scrollbar styling when it is not tied to a Win32 UI element being
+ *     translated; do not add a generic scrollbar theme here
+ *   - destructive-action styling
+ *   - sidebar-button styling
+ *   - colorswatch styling
+ *   - treeview-specific styling
+ *
+ * Also deliberately excluded:
+ *   - GTK3-only -GtkWidget-*, -GtkDialog-*, -GtkScrollbar-* and similar
+ *     legacy properties from the supplied theme. They are not GTK4 CSS
+ *     properties and cannot be justified as Win32-to-GTK4 UI rules.
+ */
+
+
+/* ==========================================================================
+ * 10. SPEC BEHAVIOR CROSS-REFERENCE
+ * ========================================================================== */
+
+/*
+ * SPECS.txt behaviors used to decide whether a Windows UI value was relevant:
+ *
+ *   - Keyboard focus moves between toolbar and source-list groups.
+ *   - Access keys must become visible after keyboard input and disappear
+ *     after mouse input.
+ *   - Delete availability follows source selection AND source-list focus.
+ *   - Start/Stop/Add controls change enabled state during server transitions.
+ *   - Settings remains available according to the specified state rules.
+ *   - Add buttons in the source and playlist dialogs are disabled until at
+ *     least one input character exists.
+ *   - All subwindows are modal/focus-priority windows and are not resizable.
+ *   - Settings Logs/Help commands require access keys.
+ *
+ * CSS consequences emitted by this file:
+ *   - generic focus geometry
+ *   - disabled icon dimming
+ *   - checkbox geometry
+ *   - group/frame geometry
+ *   - default-action button geometry
+ *   - log/help textview surface and selection
+ *   - flat command-ribbon button geometry
+ *
+ * CSS consequences intentionally NOT emitted:
+ *   - state transitions
+ *   - actual sensitivity/enabled decisions
+ *   - focus ownership
+ *   - mouse tracking
+ *   - mnemonic state
+ *   - modal behavior
+ *   - keyboard event handling
+ */

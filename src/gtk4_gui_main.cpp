@@ -28,6 +28,8 @@
 #include "server_ui_state.h"
 #include "posix_tray.h"
 #include "source_list_focus.h"
+#include "modal_stack.h"
+#include "function_key_action.h"
 #include "access_keys.h"
 #include "access_keys_gtk_adapter.h"
 
@@ -203,7 +205,7 @@ GtkWidget* g_helpDialog = nullptr;
 GtkTextBuffer* g_logBuffer = nullptr;
 unsigned long long g_logLastSequence = 0;
 
-GtkWindow* g_activeModal = nullptr;
+ModalStack<GtkWindow*> g_modalStack;
 
 KeyboardCueState g_cueState;
 std::vector<wchar_t> g_toolbarMnemonics;
@@ -301,32 +303,67 @@ void InstallSubwindowCloseKeys(GtkWidget* window, std::function<void()> onClose)
 }
 
 GtkWindow* ActiveTopLevelWindow() {
-    // g_activeModal is set by PresentModalChild and cleared by
-    // ClearActiveModal every time a modal child opens or closes
-    // it always names the actual current topmost owner including
-    // nested cases such as Settings opening Log
-    // a fixed order candidate array cannot express nesting so it
-    // must not be used here see the workflow document for the
-    // full citation trail behind this change
-    if (g_activeModal != nullptr && gtk_widget_get_visible(GTK_WIDGET(g_activeModal))) {
-        return g_activeModal;
+    // The topmost still-visible modal owns the focus chain. A plain "current
+    // modal" pointer cannot express nesting (Settings -> Log -> message box),
+    // so the stack is popped past any window that has already been hidden or
+    // destroyed.
+    while (!g_modalStack.Empty()) {
+        GtkWindow* top = g_modalStack.Top();
+        if (top != nullptr && GTK_IS_WIDGET(top) && gtk_widget_get_visible(GTK_WIDGET(top))) {
+            return top;
+        }
+        g_modalStack.Remove(top);
     }
     return GTK_WINDOW(g_mainWindow);
 }
 
 void PresentModalChild(GtkWindow* child, GtkWindow* parent) {
+    // Spec C11: subwindows take priority focus over the main window and are
+    // not minimizable. transient_for + modal is the GTK4 equivalent of the
+    // Win32 EnableWindow(owner, FALSE) the dialogs use.
     if (parent != nullptr) {
         gtk_window_set_transient_for(child, parent);
     }
     gtk_window_set_modal(child, TRUE);
+    gtk_window_set_resizable(child, FALSE);
+    gtk_window_set_deletable(child, TRUE);
     gtk_window_present(child);
-    g_activeModal = child;
+    g_modalStack.Push(child);
 }
 
 void ClearActiveModal(GtkWindow* child) {
-    if (g_activeModal == child) {
-        g_activeModal = nullptr;
+    g_modalStack.Remove(child);
+}
+
+// Spec C11: "the subwindow flashes signaling you should act on it first".
+// GTK4 has no urgency hint API, so the attention cue is a short CSS class
+// toggle on the modal's own title bar.
+void FlashActiveModal() {
+    GtkWindow* top = g_modalStack.Top();
+    if (top == nullptr || !GTK_IS_WIDGET(top)) return;
+    GtkWidget* titlebar = gtk_window_get_titlebar(top);
+    if (titlebar == nullptr) return;
+    gtk_widget_add_css_class(titlebar, "win10-attention");
+    g_timeout_add(220, +[](gpointer data) -> gboolean {
+        GtkWidget* bar = GTK_WIDGET(data);
+        if (GTK_IS_WIDGET(bar)) gtk_widget_remove_css_class(bar, "win10-attention");
+        return G_SOURCE_REMOVE;
+    }, titlebar);
+}
+
+// Every modal subwindow runs its loop through here. The slot pointer
+// (g_settingsDialog, g_logDialog, ...) is cleared by the window's own
+// "destroy" handler; destroying here is what allows the dialog to be opened
+// again. Leaving a hidden-but-alive window in the slot is the defect that made
+// Settings unopenable after its first close.
+void RunModalLoopAndDestroy(GtkWidget* dialog) {
+    if (dialog == nullptr) return;
+    while (GTK_IS_WIDGET(dialog) && gtk_widget_get_visible(dialog)) {
+        g_main_context_iteration(nullptr, TRUE);
     }
+    if (!GTK_IS_WIDGET(dialog)) return;
+    ClearActiveModal(GTK_WINDOW(dialog));
+    gtk_window_destroy(GTK_WINDOW(dialog));
 }
 
 // hidden debug hook: --dump-widget-geometry builds every Part-1 dialog
@@ -340,6 +377,7 @@ bool g_dumpMsgBoxParent = false;
 bool g_printDeleteFocusGating = false;
 bool g_printPlaylistAddSensitivity = false;
 bool g_printStoppedCloseExit = false;
+bool g_printSettingsReopen = false;
 
 // Number of attempts and delay between attempts when the initial
 // stopped distro (microsoft/WSL#11958). Total worst-case wait is
@@ -352,6 +390,7 @@ constexpr int kGuiStartupRetryDelayMs = 300;
 void DumpWindowGeometry(const char* tag, GtkWidget* toplevel);
 void DumpAllWindowsAndExit(GtkApplication* app);
 void DumpLogDialogReopenAndExit(GtkApplication* app);
+void PrintSettingsReopenAndExit(GtkApplication* app);
 void DumpMessageBoxParentAndExit(GtkApplication* app);
 void RefreshStatus();
 void ApplyPendingResult();
@@ -365,6 +404,14 @@ void LayoutMainWindow(int width, int height);
 void RefreshSourceList();
 void RefreshEmptyState();
 void RefreshDeleteButton();
+bool CanRemoveSelectedSource();
+void ShowSourceListContextMenu(double x, double y);
+void RemoveSelectedSource();
+bool IsShowingOverrideSources();
+void RunModalLoopAndDestroy(GtkWidget* dialog);
+void FlashActiveModal();
+GtkWidget* BuildSourceRow(const std::string& pathUtf8);
+void HideSourceHoverTip();
 void OnSourceFocusChanged(GtkEventControllerFocus*, gboolean, gpointer);
 void OnSourceFocusLeave(GtkEventControllerFocus*, gpointer);
 void OnSourceSelectionChanged(GtkListBox*, GtkListBoxRow*, gpointer);
@@ -373,6 +420,8 @@ void SaveSourcesFromList();
 void ShowPlaylistEntryDialog();
 void PromptForMediaSource();
 void ShowHelpDialog(GtkWindow* parent);
+bool IsBusy();
+gboolean OnMainWindowKeyPressed(GtkEventControllerKey*, guint, guint, GdkModifierType, gpointer);
 bool ShowSettingsDialog();
 void RestoreAndFocusMainWindow();
 gboolean OnTrayAction(gpointer);
@@ -574,6 +623,7 @@ void MessageBoxShow(GtkWindow* parent, const std::string& text) {
         *static_cast<gboolean*>(userData) = TRUE;
         return TRUE;
     }), &done);
+    InstallSubwindowCloseKeys(GTK_WIDGET(msgWin), [&done]() { done = TRUE; });
 
     if (g_dumpGeometry) {
         PresentModalChild(msgWin, parent);
@@ -656,6 +706,12 @@ bool MessageBoxQuestion(GtkWindow* parent, const std::string& text) {
         qs->done = TRUE;
         return TRUE;
     }), &state);
+    // Escape/Backspace on a Yes/No box means "No", matching the Win32
+    // MB_YESNO + MB_DEFBUTTON2 behaviour in settingsdlg.cpp.
+    InstallSubwindowCloseKeys(GTK_WIDGET(msgWin), [&state]() {
+        state.result = GTK_RESPONSE_NO;
+        state.done = TRUE;
+    });
 
     PresentModalChild(msgWin, parent);
     while (!state.done) {
@@ -781,6 +837,9 @@ void ShowPlaylistEntryDialog() {
 
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokensPosix::kPlaylistWindowWidth, UiTokensPosix::kPlaylistWindowBodyHeight);
+    gtk_widget_set_hexpand(fixed, TRUE);
+    gtk_widget_set_vexpand(fixed, TRUE);
+    gtk_widget_add_css_class(GTK_WIDGET(g_playlistDialog), "dlna-dialog-window");
     gtk_window_set_child(GTK_WINDOW(g_playlistDialog), fixed);
     gtk_widget_add_css_class(fixed, "dlna-dialog-body");
 
@@ -883,6 +942,10 @@ void ShowPlaylistEntryDialog() {
     }
     gtk_widget_set_visible(g_playlistDialog, FALSE);
     ClearActiveModal(GTK_WINDOW(g_playlistDialog));
+    // NOTE: the dialog is intentionally NOT destroyed yet -- the accepted text
+    // is read out of g_movieEntry/g_subtitleEntry below. gtk_window_destroy is
+    // called at the end of this function, which nulls g_playlistDialog via its
+    // destroy handler.
 
     if (g_playlistDone) {
         const std::string movie = gtk_editable_get_text(GTK_EDITABLE(g_movieEntry));
@@ -932,6 +995,9 @@ void PromptForMediaSource() {
 
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokensPosix::kSourcePromptWindowWidth, UiTokensPosix::kSourcePromptWindowBodyHeight);
+    gtk_widget_set_hexpand(fixed, TRUE);
+    gtk_widget_set_vexpand(fixed, TRUE);
+    gtk_widget_add_css_class(GTK_WIDGET(g_sourceDialog), "dlna-dialog-window");
     gtk_window_set_child(GTK_WINDOW(g_sourceDialog), fixed);
     gtk_widget_add_css_class(fixed, "dlna-dialog-body");
 
@@ -1033,6 +1099,9 @@ void PromptForMediaSource() {
         g_main_context_iteration(nullptr, TRUE);
     }
     ClearActiveModal(GTK_WINDOW(g_sourceDialog));
+    // NOTE: the dialog is intentionally NOT destroyed yet -- the accepted text
+    // is read out of g_sourceEntry below. gtk_window_destroy is called at the
+    // end of this function, which nulls g_sourceDialog via its destroy handler.
 
     if (g_sourceDone) {
         const gchar* text = gtk_editable_get_text(GTK_EDITABLE(g_sourceEntry));
@@ -1052,15 +1121,7 @@ void PromptForMediaSource() {
                 rowWidget = gtk_widget_get_next_sibling(rowWidget);
             }
             if (!duplicate) {
-                GtkWidget* row = gtk_list_box_row_new();
-                GtkWidget* rowLabel = gtk_label_new(selected.c_str());
-                gtk_label_set_xalign(GTK_LABEL(rowLabel), 0.0f);
-                gtk_label_set_ellipsize(GTK_LABEL(rowLabel), PANGO_ELLIPSIZE_END);
-                gtk_label_set_single_line_mode(GTK_LABEL(rowLabel), TRUE);
-                gtk_widget_set_hexpand(rowLabel, TRUE);
-                gtk_widget_set_tooltip_text(rowLabel, selected.c_str());
-                gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), rowLabel);
-                gtk_list_box_append(GTK_LIST_BOX(g_sources), row);
+                gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(selected));
                 SaveSourcesFromList();
             }
         }
@@ -1114,8 +1175,13 @@ void ShowLogDialog() {
 
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokensPosix::kLogWindowWidth, UiTokensPosix::kLogWindowBodyHeight);
-    gtk_window_set_child(GTK_WINDOW(g_logDialog), fixed);
+    // hexpand/vexpand so the body surface actually covers the whole client
+    // area; without it the window background (dark) shows around the fixed.
+    gtk_widget_set_hexpand(fixed, TRUE);
+    gtk_widget_set_vexpand(fixed, TRUE);
     gtk_widget_add_css_class(fixed, "dlna-log-body");
+    gtk_widget_add_css_class(GTK_WIDGET(g_logDialog), "dlna-log-window");
+    gtk_window_set_child(GTK_WINDOW(g_logDialog), fixed);
 
     GtkWidget* workspace = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_add_css_class(workspace, "dlna-log-workspace");
@@ -1188,10 +1254,7 @@ void ShowLogDialog() {
         return;
     }
     PresentModalChild(GTK_WINDOW(g_logDialog), GTK_WINDOW(g_mainWindow));
-    while (gtk_widget_get_visible(g_logDialog)) {
-        g_main_context_iteration(nullptr, TRUE);
-    }
-    ClearActiveModal(GTK_WINDOW(g_logDialog));
+    RunModalLoopAndDestroy(g_logDialog);
 }
 
 void ShowHelpDialog(GtkWindow* parent) {
@@ -1215,6 +1278,9 @@ void ShowHelpDialog(GtkWindow* parent) {
 
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokensPosix::kHelpWindowWidth, UiTokensPosix::kHelpWindowBodyHeight);
+    gtk_widget_set_hexpand(fixed, TRUE);
+    gtk_widget_set_vexpand(fixed, TRUE);
+    gtk_widget_add_css_class(GTK_WIDGET(dialog), "dlna-dialog-window");
     gtk_window_set_child(GTK_WINDOW(dialog), fixed);
     gtk_widget_add_css_class(fixed, "dlna-dialog-body");
 
@@ -1277,14 +1343,16 @@ void ShowHelpDialog(GtkWindow* parent) {
     for (const auto& setting : GetSettingsHelpTable()) insertRow(setting.label, setting.meaning);
 
     g_signal_connect(dialog, "close-request", G_CALLBACK(+[](GtkWidget* w, gpointer) -> gboolean {
+        // Only hide here. The slot is nulled by the "destroy" handler, and the
+        // destroy itself is performed by RunModalLoopAndDestroy once the loop
+        // that owns this window exits. Nulling the slot here as well would
+        // leave a live, unreachable window behind.
         gtk_widget_set_visible(w, FALSE);
-        g_helpDialog = nullptr;
         ClearActiveModal(GTK_WINDOW(w));
         return TRUE;
     }), nullptr);
     InstallSubwindowCloseKeys(dialog, [dialog]() {
         gtk_widget_set_visible(dialog, FALSE);
-        g_helpDialog = nullptr;
         ClearActiveModal(GTK_WINDOW(dialog));
     });
 
@@ -1298,10 +1366,7 @@ void ShowHelpDialog(GtkWindow* parent) {
         return;
     }
     PresentModalChild(GTK_WINDOW(dialog), parent ? parent : GTK_WINDOW(g_mainWindow));
-    while (gtk_widget_get_visible(dialog)) {
-        g_main_context_iteration(nullptr, TRUE);
-    }
-    ClearActiveModal(GTK_WINDOW(dialog));
+    RunModalLoopAndDestroy(dialog);
 }
 
 void RefreshDefaultPlaylistControls() {
@@ -1384,7 +1449,12 @@ bool SaveSettingsToConfig() {
 }
 
 bool ShowSettingsDialog() {
-    if (g_settingsDialog != nullptr) return false;
+    if (g_settingsDialog != nullptr) {
+        // Already open (re-entrant click while the modal loop is running).
+        // Bring it forward instead of silently doing nothing.
+        gtk_window_present(GTK_WINDOW(g_settingsDialog));
+        return false;
+    }
     g_settingsSaved = false;
     g_settingsRestartRequested = false;
 
@@ -1397,15 +1467,33 @@ bool ShowSettingsDialog() {
 
     GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(fixed, UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsWindowBodyHeight);
+    gtk_widget_set_hexpand(fixed, TRUE);
+    gtk_widget_set_vexpand(fixed, TRUE);
+    gtk_widget_add_css_class(GTK_WIDGET(g_settingsDialog), "dlna-dialog-window");
     gtk_window_set_child(GTK_WINDOW(g_settingsDialog), fixed);
     gtk_widget_add_css_class(fixed, "dlna-dialog-body");
 
+    // Win32 GROUPBOX parity: the caption sits ON the top stroke with the
+    // stroke interrupted behind it. GtkFrame's own label is drawn above the
+    // border instead, so the frame is created unlabelled and the caption is a
+    // separate label positioned over the border line, painting the dialog
+    // background to punch the gap.
+    constexpr int kGroupCaptionHeight = 15;
+    constexpr int kGroupCaptionInset = 9;
     auto makeFrame = [&](const char* label, int x, int y, int w, int h) {
-        GtkWidget* frame = gtk_frame_new(label);
+        GtkWidget* frame = gtk_frame_new(nullptr);
         gtk_widget_add_css_class(frame, "dlna-groupbox");
         gtk_widget_set_size_request(frame, w, h);
         gtk_fixed_put(GTK_FIXED(fixed), frame, x, y);
-        gtk_frame_set_label_align(GTK_FRAME(frame), 0.0f);
+        if (label != nullptr && *label != '\0') {
+            GtkWidget* caption = gtk_label_new(label);
+            gtk_widget_add_css_class(caption, "dlna-groupbox-caption");
+            gtk_label_set_xalign(GTK_LABEL(caption), 0.0f);
+            gtk_widget_set_size_request(caption, -1, kGroupCaptionHeight);
+            gtk_fixed_put(GTK_FIXED(fixed), caption,
+                          x + kGroupCaptionInset,
+                          y - (kGroupCaptionHeight / 2));
+        }
         return frame;
     };
     auto makeLabel = [&](const char* text, int x, int y, int w, int h) {
@@ -1439,11 +1527,15 @@ bool ShowSettingsDialog() {
     GtkWidget* settingsRibbon = gtk_fixed_new();
     gtk_widget_set_size_request(settingsRibbon, UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsRibbonHeight);
     gtk_widget_add_css_class(settingsRibbon, "settings-ribbon");
+    gtk_widget_set_overflow(settingsRibbon, GTK_OVERFLOW_HIDDEN);
     gtk_fixed_put(GTK_FIXED(fixed), settingsRibbon, 0, 0);
 
     GtkWidget* logsButton = gtk_button_new_with_label("Logs");
     gtk_widget_set_size_request(logsButton, kSettingsToolbarButtonWidth, kSettingsToolbarButtonHeight);
-    gtk_fixed_put(GTK_FIXED(fixed), logsButton, UiTokensPosix::kSettingsRibbonLogsX,
+    gtk_widget_set_valign(logsButton, GTK_ALIGN_START);
+    // Parented to the ribbon, not to the dialog body, so the hover/selection
+    // rectangle is clipped to the ribbon strip (Win32 menu-bar behaviour).
+    gtk_fixed_put(GTK_FIXED(settingsRibbon), logsButton, UiTokensPosix::kSettingsRibbonLogsX,
                   kSettingsToolbarTop);
     gtk_widget_add_css_class(logsButton, "settings-toolbar-button");
     g_signal_connect(logsButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
@@ -1452,7 +1544,8 @@ bool ShowSettingsDialog() {
 
     GtkWidget* helpButton = gtk_button_new_with_label("Help");
     gtk_widget_set_size_request(helpButton, kSettingsToolbarButtonWidth, kSettingsToolbarButtonHeight);
-    gtk_fixed_put(GTK_FIXED(fixed), helpButton, UiTokensPosix::kSettingsRibbonHelpX, kSettingsToolbarTop);
+    gtk_widget_set_valign(helpButton, GTK_ALIGN_START);
+    gtk_fixed_put(GTK_FIXED(settingsRibbon), helpButton, UiTokensPosix::kSettingsRibbonHelpX, kSettingsToolbarTop);
     gtk_widget_add_css_class(helpButton, "settings-toolbar-button");
     g_signal_connect(helpButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ShowHelpDialog(GTK_WINDOW(g_settingsDialog));
@@ -1584,21 +1677,18 @@ bool ShowSettingsDialog() {
         return false;
     }
     if (g_dumpMsgBoxParent) {
-        g_activeModal = GTK_WINDOW(g_settingsDialog);
+        g_modalStack.Push(GTK_WINDOW(g_settingsDialog));
         gtk_window_set_transient_for(GTK_WINDOW(g_settingsDialog), GTK_WINDOW(g_mainWindow));
         gtk_window_set_modal(GTK_WINDOW(g_settingsDialog), TRUE);
         gtk_window_present(GTK_WINDOW(g_settingsDialog));
         return false;
     }
     PresentModalChild(GTK_WINDOW(g_settingsDialog), GTK_WINDOW(g_mainWindow));
-    while (gtk_widget_get_visible(g_settingsDialog)) {
-        g_main_context_iteration(nullptr, TRUE);
-    }
+    RunModalLoopAndDestroy(g_settingsDialog);
     if (g_settingsSaved) {
         RefreshSourceList();
         RefreshStatus();
     }
-    ClearActiveModal(GTK_WINDOW(g_settingsDialog));
     return g_settingsRestartRequested;
 }
 
@@ -1624,6 +1714,26 @@ void LayoutMainWindow(int width, int height) {
     gtk_fixed_move(GTK_FIXED(fixed), g_emptyState, UiTokensPosix::kMainSourceListX + 16, listTop + 16);
 }
 
+// Single construction point for a source-list row. Both PromptForMediaSource()
+// and RefreshSourceList() must use this so the ellipsis/tooltip behaviour can
+// never diverge between "just added" rows and "reloaded from config" rows.
+GtkWidget* BuildSourceRow(const std::string& pathUtf8) {
+    GtkWidget* row = gtk_list_box_row_new();
+    GtkWidget* rowLabel = gtk_label_new(pathUtf8.c_str());
+    gtk_label_set_xalign(GTK_LABEL(rowLabel), 0.0f);
+    gtk_label_set_ellipsize(GTK_LABEL(rowLabel), PANGO_ELLIPSIZE_END);
+    gtk_label_set_single_line_mode(GTK_LABEL(rowLabel), TRUE);
+    gtk_widget_set_hexpand(rowLabel, TRUE);
+    // Full path on hover. GTK4 has no settable tooltip delay
+    // (GtkSettings:gtk-tooltip-timeout is ignored), so the immediate-show
+    // behaviour is provided by the motion-driven popover installed in
+    // InstallSourceListHoverTip(); this tooltip text is the data source for it
+    // and the accessibility fallback.
+    gtk_widget_set_tooltip_text(rowLabel, pathUtf8.c_str());
+    gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), rowLabel);
+    return row;
+}
+
 void RefreshEmptyState() {
     bool hasSources = gtk_widget_get_first_child(g_sources) != nullptr;
     gtk_widget_set_visible(g_emptyState, !hasSources);
@@ -1641,28 +1751,14 @@ bool IsShowingOverrideSources() {
 
 void RefreshDeleteButton() {
     if (g_removeButton == nullptr) return;
-    const bool transition =
-        g_state == ServerUiState::Starting ||
-        g_state == ServerUiState::Stopping;
-    const bool scanBusy =
-        g_scanInProgress.load() ||
-        DLNAServer.IsInitialScanInProgress();
-    const bool overrideSources =
-        AppConfig.HasRuntimeSourceOverride() &&
-        g_state == ServerUiState::Running;
-    const bool hasSelection = HasSourceSelection();
     // uses source_list_focus.h SourceListFocusState directly, the same
     // pure state machine src/mainwindow.cpp uses on Win32, instead of a
     // bare bool. This is required so that a click landing on the Delete
     // button (which moves keyboard focus away from the source list) does
     // not disable Delete before the click's own handler executes.
-    const bool enabled =
-        hasSelection &&
-        !g_sourceFocusState.IsNoFocus() &&
-        !transition &&
-        !scanBusy &&
-        !overrideSources;
-    gtk_widget_set_sensitive(g_removeButton, enabled);
+    // Single predicate shared by the button, the context menu and the keyboard
+    // shortcut, so the three can never disagree about whether deletion is legal.
+    gtk_widget_set_sensitive(g_removeButton, CanRemoveSelectedSource() ? TRUE : FALSE);
 }
 
 void OnSourceFocusChanged(GtkEventControllerFocus*, gboolean, gpointer) {
@@ -1747,27 +1843,31 @@ void RefreshStatus() {
 }
 
 void RefreshSourceList() {
+    HideSourceHoverTip();
     GtkWidget* rowWidget = gtk_widget_get_first_child(g_sources);
     while (rowWidget != nullptr) {
         GtkWidget* next = gtk_widget_get_next_sibling(rowWidget);
         gtk_list_box_remove(GTK_LIST_BOX(g_sources), rowWidget);
         rowWidget = next;
     }
-    for (const auto& source : AppConfig.mediaSources) {
-        GtkWidget* row = gtk_list_box_row_new();
-        GtkWidget* rowLabel = gtk_label_new(ToUtf8(source.path).c_str());
-        gtk_label_set_xalign(GTK_LABEL(rowLabel), 0.0f);
-        gtk_label_set_ellipsize(GTK_LABEL(rowLabel), PANGO_ELLIPSIZE_END);
-        gtk_label_set_single_line_mode(GTK_LABEL(rowLabel), TRUE);
-        gtk_widget_set_hexpand(rowLabel, TRUE);
-        gtk_widget_set_tooltip_text(rowLabel, ToUtf8(source.path).c_str());
-        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), rowLabel);
-        gtk_list_box_append(GTK_LIST_BOX(g_sources), row);
+    // Win32 parity (MainWindow::RefreshSourceList): while a runtime --source
+    // override is actually being served, the list shows the override, not
+    // config.ini. When the server is stopped the config list is shown even if
+    // an override has been installed, because a later Start() is what makes it
+    // take effect.
+    const std::vector<MediaSource> displayed = IsShowingOverrideSources()
+        ? AppConfig.GetRuntimeSourceOverride()
+        : AppConfig.mediaSources;
+    for (const auto& source : displayed) {
+        gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(ToUtf8(source.path)));
     }
     RefreshEmptyState();
 }
 
 void SaveSourcesFromList() {
+    // Never persist override rows. Win32 reaches the same outcome by disabling
+    // Add/Delete entirely while IsShowingOverrideSources() is true.
+    if (IsShowingOverrideSources()) return;
     size_t savedCount = 0;
     std::vector<std::wstring> paths;
     GtkWidget* rowWidget = gtk_widget_get_first_child(g_sources);
@@ -1849,7 +1949,9 @@ void ApplySourceOverridePayload(const std::string& payload) {
 
 void StartServer() {
     if (IsBusy() || g_state == ServerUiState::Running) return;
-    if (AppConfig.mediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
+    // A runtime --source override is a valid source set on its own; Server::Start
+    // validates against cfg.effectiveMediaSources, so this pre-check must too.
+    if (AppConfig.Snapshot().effectiveMediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
         MessageBoxShow(GTK_WINDOW(g_mainWindow), "Add at least one media source.");
         return;
     }
@@ -2003,11 +2105,34 @@ void BeginRescan() {
     });
 }
 
+// Win32 parity: MainWindow::ShowSourceListContextMenu. Same single item, same
+// enablement predicate, reachable by right-click and by Shift+F10 / Menu key.
+bool CanRemoveSelectedSource() {
+    return HasSourceSelection() &&
+           !g_sourceFocusState.IsNoFocus() &&
+           !IsBusy() &&
+           !g_scanInProgress.load() &&
+           !DLNAServer.IsInitialScanInProgress() &&
+           !IsShowingOverrideSources();
+}
+
+void ShowSourceListContextMenu(double x, double y) {
+    GMenu* model = g_menu_new();
+    g_menu_append(model, "Remove selected source", "win.remove-source");
+    GtkWidget* popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(model));
+    g_object_unref(model);
+    gtk_widget_set_parent(popover, g_sources);
+    const GdkRectangle rect = { static_cast<int>(x), static_cast<int>(y), 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
+    gtk_popover_set_has_arrow(GTK_POPOVER(popover), FALSE);
+    g_signal_connect(popover, "closed", G_CALLBACK(+[](GtkPopover* p, gpointer) {
+        gtk_widget_unparent(GTK_WIDGET(p));
+    }), nullptr);
+    gtk_popover_popup(GTK_POPOVER(popover));
+}
+
 void RemoveSelectedSource() {
-    if (!HasSourceSelection() || IsBusy() || g_scanInProgress.load() ||
-        DLNAServer.IsInitialScanInProgress() || IsShowingOverrideSources()) {
-        return;
-    }
+    if (!CanRemoveSelectedSource()) return;
     GtkListBox* box = GTK_LIST_BOX(g_sources);
     GtkListBoxRow* selected = gtk_list_box_get_selected_row(box);
     if (selected == nullptr) return;
@@ -2101,8 +2226,9 @@ void RestoreAndFocusMainWindow() {
     if (g_mainWindow != nullptr) {
         gtk_window_present(GTK_WINDOW(g_mainWindow));
     }
-    if (g_activeModal != nullptr) {
-        gtk_window_present(GTK_WINDOW(g_activeModal));
+    GtkWindow* top = g_modalStack.Top();
+    if (top != nullptr) {
+        gtk_window_present(top);
     }
 }
 
@@ -2151,6 +2277,154 @@ void OnTrayNotify(TrayNotifyAction action) {
     }
 }
 
+GtkWidget* g_sourceHoverTip = nullptr;
+GtkWidget* g_sourceHoverTipLabel = nullptr;
+GtkListBoxRow* g_sourceHoverTipRow = nullptr;
+
+// Returns the full path a row carries, or an empty string when the row's label
+// is not being ellipsized (i.e. the text already fits, so no tip is wanted).
+std::string SourceRowClippedText(GtkListBoxRow* row) {
+    if (row == nullptr) return {};
+    GtkWidget* child = gtk_list_box_row_get_child(row);
+    if (!GTK_IS_LABEL(child)) return {};
+    PangoLayout* layout = gtk_label_get_layout(GTK_LABEL(child));
+    if (layout == nullptr) return {};
+    if (!pango_layout_is_ellipsized(layout)) return {};
+    const gchar* text = gtk_label_get_text(GTK_LABEL(child));
+    return text ? std::string(text) : std::string();
+}
+
+void HideSourceHoverTip() {
+    g_sourceHoverTipRow = nullptr;
+    if (g_sourceHoverTip != nullptr) {
+        gtk_popover_popdown(GTK_POPOVER(g_sourceHoverTip));
+    }
+}
+
+void UpdateSourceHoverTip(double x, double y) {
+    if (g_sourceHoverTip == nullptr) return;
+    GtkListBoxRow* row = gtk_list_box_get_row_at_y(GTK_LIST_BOX(g_sources), static_cast<int>(y));
+    if (row == g_sourceHoverTipRow) return;
+    g_sourceHoverTipRow = row;
+    const std::string text = SourceRowClippedText(row);
+    if (text.empty()) {
+        gtk_popover_popdown(GTK_POPOVER(g_sourceHoverTip));
+        return;
+    }
+    gtk_label_set_text(GTK_LABEL(g_sourceHoverTipLabel), text.c_str());
+    graphene_rect_t bounds;
+    if (gtk_widget_compute_bounds(GTK_WIDGET(row), g_sources, &bounds)) {
+        const GdkRectangle rect = {
+            static_cast<int>(bounds.origin.x), static_cast<int>(bounds.origin.y),
+            static_cast<int>(bounds.size.width), static_cast<int>(bounds.size.height)
+        };
+        gtk_popover_set_pointing_to(GTK_POPOVER(g_sourceHoverTip), &rect);
+    } else {
+        const GdkRectangle rect = { static_cast<int>(x), static_cast<int>(y), 1, 1 };
+        gtk_popover_set_pointing_to(GTK_POPOVER(g_sourceHoverTip), &rect);
+    }
+    gtk_popover_popup(GTK_POPOVER(g_sourceHoverTip));
+}
+
+// Win32 parity: mainwindow.cpp sets TTM_SETDELAYTIME/TTDT_INITIAL to 0 so the
+// source-list tooltip appears with no hover delay. GTK4 offers no equivalent
+// knob, so a popover is driven directly off pointer motion instead.
+void InstallSourceListHoverTip() {
+    g_sourceHoverTip = gtk_popover_new();
+    gtk_widget_add_css_class(g_sourceHoverTip, "dlna-hover-tip");
+    gtk_popover_set_autohide(GTK_POPOVER(g_sourceHoverTip), FALSE);
+    gtk_popover_set_has_arrow(GTK_POPOVER(g_sourceHoverTip), FALSE);
+    gtk_popover_set_position(GTK_POPOVER(g_sourceHoverTip), GTK_POS_BOTTOM);
+    gtk_widget_set_parent(g_sourceHoverTip, g_sources);
+    g_sourceHoverTipLabel = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(g_sourceHoverTipLabel), 0.0f);
+    gtk_popover_set_child(GTK_POPOVER(g_sourceHoverTip), g_sourceHoverTipLabel);
+
+    GtkEventController* motion = gtk_event_controller_motion_new();
+    gtk_widget_add_controller(g_sources, motion);
+    g_signal_connect(motion, "motion", G_CALLBACK(+[](GtkEventControllerMotion*, gdouble x, gdouble y, gpointer) {
+        UpdateSourceHoverTip(x, y);
+    }), nullptr);
+    g_signal_connect(motion, "leave", G_CALLBACK(+[](GtkEventControllerMotion*, gpointer) {
+        HideSourceHoverTip();
+    }), nullptr);
+}
+
+// Spec C1: the toolbar button row is one navigation group and the source list
+// is a second group. Tab moves between groups; Left/Right cycle inside the
+// toolbar group; Up/Down are inert on toolbar buttons. This is the GTK4
+// counterpart of WS_GROUP/WS_TABSTOP plus mainwindow.cpp::ToolbarButtonProc,
+// which swallows VK_UP/VK_DOWN while letting VK_LEFT/VK_RIGHT reach
+// IsDialogMessage's group navigation.
+int ToolbarFocusIndex() {
+    GtkRoot* root = g_mainWindow ? gtk_widget_get_root(g_mainWindow) : nullptr;
+    GtkWidget* focused = root ? gtk_root_get_focus(root) : nullptr;
+    GtkWidget* const order[] = { g_addButton, g_removeButton, g_startStopButton, g_settingsButton };
+    for (int i = 0; i < 4; ++i) {
+        if (focused == order[i]) return i;
+    }
+    return -1;
+}
+
+void FocusToolbarIndex(int index) {
+    GtkWidget* const order[] = { g_addButton, g_removeButton, g_startStopButton, g_settingsButton };
+    for (int step = 0; step < 4; ++step) {
+        const int candidate = ((index + step) % 4 + 4) % 4;
+        if (gtk_widget_get_sensitive(order[candidate])) {
+            gtk_widget_grab_focus(order[candidate]);
+            return;
+        }
+    }
+}
+
+// Last toolbar button that held focus, so Tab re-enters the group where the
+// user left it (Win32 WS_GROUP semantics).
+int g_lastToolbarFocusIndex = 0;
+
+gboolean OnMainWindowKeyPressed(GtkEventControllerKey*, guint keyval, guint,
+                                GdkModifierType modifiers, gpointer) {
+    switch (DecideFunctionKeyAction(keyval == GDK_KEY_F1 ? 0x70 : (keyval == GDK_KEY_F5 ? 0x74 : 0),
+                                    g_state == ServerUiState::Running,
+                                    IsBusy(),
+                                    g_scanInProgress.load())) {
+    case FunctionKeyAction::ShowHelp:
+        ShowHelpDialog(GTK_WINDOW(g_mainWindow));
+        return TRUE;
+    case FunctionKeyAction::Rescan:
+        BeginRescan();
+        return TRUE;
+    case FunctionKeyAction::RefreshSourceList:
+        RefreshSourceList();
+        return TRUE;
+    case FunctionKeyAction::ShowSourceListContextMenu:
+    case FunctionKeyAction::None:
+        break;
+    }
+
+    const int toolbarIndex = ToolbarFocusIndex();
+    const bool inToolbar = toolbarIndex >= 0;
+    if (inToolbar) g_lastToolbarFocusIndex = toolbarIndex;
+
+    if ((modifiers & GDK_CONTROL_MASK) != 0 || (modifiers & GDK_ALT_MASK) != 0) return FALSE;
+
+    if (keyval == GDK_KEY_Tab || keyval == GDK_KEY_ISO_Left_Tab) {
+        if (inToolbar) {
+            gtk_widget_grab_focus(g_sources);
+        } else {
+            FocusToolbarIndex(g_lastToolbarFocusIndex);
+        }
+        return TRUE;
+    }
+
+    if (!inToolbar) return FALSE;
+
+    if (keyval == GDK_KEY_Left) { FocusToolbarIndex(toolbarIndex - 1); return TRUE; }
+    if (keyval == GDK_KEY_Right) { FocusToolbarIndex(toolbarIndex + 1); return TRUE; }
+    // Up/Down are swallowed on toolbar buttons, never forwarded.
+    if (keyval == GDK_KEY_Up || keyval == GDK_KEY_Down) return TRUE;
+    return FALSE;
+}
+
 void BuildMainWindow(GtkApplication* app) {
 
     GtkWidget* window = gtk_application_window_new(app);
@@ -2171,9 +2445,11 @@ gtk_window_set_default_size(GTK_WINDOW(window),
     GtkEventController* mainFocus = gtk_event_controller_focus_new();
     gtk_widget_add_controller(GTK_WIDGET(g_mainWindow), mainFocus);
     g_signal_connect(mainFocus, "enter", G_CALLBACK(+[](GtkEventController*, gpointer) -> gboolean {
-        if (g_activeModal != nullptr) {
-            gtk_window_present(GTK_WINDOW(g_activeModal));
-            return FALSE; // deny focus to main window
+        GtkWindow* top = g_modalStack.Top();
+        if (top != nullptr && top != GTK_WINDOW(g_mainWindow)) {
+            gtk_window_present(top);
+            FlashActiveModal();
+            return FALSE; // deny focus to main window (spec C11)
         }
         return TRUE;
     }), nullptr);
@@ -2242,6 +2518,24 @@ GtkWidget* fixed = gtk_fixed_new();
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(g_sourcesScrolled), g_sources);
     g_signal_connect(g_sources, "row-selected", G_CALLBACK(OnSourceSelectionChanged), nullptr);
 
+    {
+        GSimpleAction* removeAction = g_simple_action_new("remove-source", nullptr);
+        g_signal_connect(removeAction, "activate", G_CALLBACK(+[](GSimpleAction*, GVariant*, gpointer) {
+            RemoveSelectedSource();
+        }), nullptr);
+        g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(removeAction));
+        g_object_unref(removeAction);
+
+        GtkGesture* rightClick = gtk_gesture_click_new();
+        gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rightClick), GDK_BUTTON_SECONDARY);
+        gtk_widget_add_controller(g_sources, GTK_EVENT_CONTROLLER(rightClick));
+        g_signal_connect(rightClick, "pressed",
+                         G_CALLBACK(+[](GtkGestureClick*, gint, gdouble x, gdouble y, gpointer) {
+            if (!CanRemoveSelectedSource()) return;
+            ShowSourceListContextMenu(x, y);
+        }), nullptr);
+    }
+
     GtkEventController* sourceFocus = gtk_event_controller_focus_new();
     gtk_widget_add_controller(g_sources, sourceFocus);
     g_signal_connect(sourceFocus, "enter", G_CALLBACK(OnSourceFocusChanged), nullptr);
@@ -2270,11 +2564,7 @@ GtkWidget* fixed = gtk_fixed_new();
             // the same supported extension list IsSupportedLocalMediaOrPlaylistPath
             // already implements on both platforms see dlna utils cpp
             if (IsSupportedLocalMediaOrPlaylistPath(widePath)) {
-                GtkWidget* row = gtk_list_box_row_new();
-                GtkWidget* rowLabel = gtk_label_new(ToUtf8(widePath).c_str());
-                gtk_label_set_xalign(GTK_LABEL(rowLabel), 0.0f);
-                gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), rowLabel);
-                gtk_list_box_append(GTK_LIST_BOX(g_sources), row);
+                gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(ToUtf8(widePath)));
                 addedAny = true;
             }
         }
@@ -2286,6 +2576,8 @@ GtkWidget* fixed = gtk_fixed_new();
         return addedAny ? TRUE : FALSE;
     }), nullptr);
     gtk_widget_add_controller(g_sources, GTK_EVENT_CONTROLLER(sourceDropTarget));
+
+    InstallSourceListHoverTip();
 
     GtkEventController* keyController = gtk_event_controller_key_new();
     gtk_widget_add_controller(g_sources, keyController);
@@ -2299,6 +2591,11 @@ GtkWidget* fixed = gtk_fixed_new();
             RemoveSelectedSource();
             return TRUE;
         }
+        if (keyval == GDK_KEY_Menu ||
+            (keyval == GDK_KEY_F10 && CanRemoveSelectedSource())) {
+            ShowSourceListContextMenu(0, 0);
+            return TRUE;
+        }
         return FALSE;
     }), nullptr);
 
@@ -2307,6 +2604,11 @@ GtkWidget* fixed = gtk_fixed_new();
     gtk_fixed_put(GTK_FIXED(fixed), g_emptyState, 0, 0);
     gtk_widget_add_css_class(g_emptyState, "empty-state");
     gtk_label_set_xalign(GTK_LABEL(g_emptyState), 0.0f);
+
+    GtkEventController* mainKeys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(mainKeys, GTK_PHASE_CAPTURE);
+    gtk_widget_add_controller(window, mainKeys);
+    g_signal_connect(mainKeys, "key-pressed", G_CALLBACK(OnMainWindowKeyPressed), nullptr);
 
     g_signal_connect(window, "close-request", G_CALLBACK(OnMainWindowCloseRequest), nullptr);
 
@@ -2467,6 +2769,36 @@ void DumpMessageBoxParentAndExit(GtkApplication* app) {
     std::_Exit(0);
 }
 
+// Regression hook for the "Settings will not reopen after being closed" defect.
+// Opens the settings dialog, closes it the way its Cancel button does, then
+// opens it again, printing the visibility of each attempt. Before the Phase 8
+// fix the second attempt hit the stale non-null g_settingsDialog guard and
+// printed second-open=0.
+void PrintSettingsReopenAndExit(GtkApplication* app) {
+    (void)app;
+    gtk_window_present(GTK_WINDOW(g_mainWindow));
+    g_dumpMsgBoxParent = true;   // present without entering the modal loop
+    ShowSettingsDialog();
+    for (int i = 0; i < 200 && (g_settingsDialog == nullptr || !gtk_widget_get_visible(g_settingsDialog)); ++i) {
+        g_main_context_iteration(nullptr, TRUE);
+    }
+    std::printf("first-open=%d\n", (g_settingsDialog != nullptr && gtk_widget_get_visible(g_settingsDialog)) ? 1 : 0);
+
+    gtk_widget_set_visible(g_settingsDialog, FALSE);
+    ClearActiveModal(GTK_WINDOW(g_settingsDialog));
+    gtk_window_destroy(GTK_WINDOW(g_settingsDialog));
+    for (int i = 0; i < 50; ++i) g_main_context_iteration(nullptr, FALSE);
+    std::printf("slot-cleared=%d\n", g_settingsDialog == nullptr ? 1 : 0);
+
+    ShowSettingsDialog();
+    for (int i = 0; i < 200 && (g_settingsDialog == nullptr || !gtk_widget_get_visible(g_settingsDialog)); ++i) {
+        g_main_context_iteration(nullptr, TRUE);
+    }
+    std::printf("second-open=%d\n", (g_settingsDialog != nullptr && gtk_widget_get_visible(g_settingsDialog)) ? 1 : 0);
+    std::fflush(stdout);
+    std::_Exit(0);
+}
+
 void OnAppActivate(GtkApplication* app, gpointer) {
     BuildMainWindow(app);
     // Give the tray registration's async D-Bus round trip a moment to
@@ -2521,6 +2853,10 @@ void OnAppActivate(GtkApplication* app, gpointer) {
         std::fflush(stdout);
         std::_Exit(0);
     }
+    if (g_printSettingsReopen) {
+        PrintSettingsReopenAndExit(app);
+        return;
+    }
     if (g_printStoppedCloseExit) {
         // Task 1: Close in the Stopped state must destroy the window and
         // exit the process cleanly instead of hiding it.
@@ -2546,6 +2882,25 @@ void OnAppStartup(GtkApplication* app, gpointer) {
                                                    GTK_STYLE_PROVIDER_PRIORITY_USER);
         g_object_unref(provider);
     }
+    // Win32 look-and-feel base layer. These three sheets are derived from the
+    // Windows-10-Dark GTK theme and audited against the Win32 sources; they sit
+    // ABOVE the generated style.css (so they can replace GTK/desktop-theme
+    // defaults) and BELOW figma.css (so any property the Figma design owns
+    // still wins). Order within the layer is 2 -> 3 -> 4: 2 is generic theme
+    // geometry, 3 is shared-property overrides, 4 is the Win32-verified subset.
+    for (const char* sheet : { "gtk/styles2.css", "gtk/styles3.css", "gtk/styles4.css" }) {
+        const std::string sheetPath = ResolveBundledResourcePath(sheet);
+        if (sheetPath.empty()) {
+            LogPrint(L"%hs not found via ResolveBundledResourcePath; Win32 base styling will be incomplete.", sheet);
+            continue;
+        }
+        GtkCssProvider* sheetProvider = gtk_css_provider_new();
+        gtk_css_provider_load_from_path(sheetProvider, sheetPath.c_str());
+        gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(sheetProvider),
+                                                   GTK_STYLE_PROVIDER_PRIORITY_USER + 1);
+        g_object_unref(sheetProvider);
+    }
+
     // Figma overlay, loaded after style.css so its rules win at equal
     // selector specificity for the classes it defines. See Section 1,
     // Conflict B of dlna-server-posix-gui-figma-alignment-workflow-20-08-26.md.
@@ -2623,6 +2978,9 @@ int main(int argc, char** argv) {
         } else if (arg == "--dump-msgbox-parent") {
             // handled later by the existing hidden flag stripping loop
             continue;
+        } else if (arg == "--print-settings-reopen") {
+            // handled later by the existing hidden flag stripping loop
+            continue;
         } else if (arg == "--print-stopped-close-exit") {
             // handled later by the existing hidden flag stripping loop
             continue;
@@ -2684,6 +3042,8 @@ int main(int argc, char** argv) {
             g_dumpLogDialogReopen = true;
         } else if (arg == "--dump-msgbox-parent") {
             g_dumpMsgBoxParent = true;
+        } else if (arg == "--print-settings-reopen") {
+            g_printSettingsReopen = true;
         } else if (arg == "--print-stopped-close-exit") {
             g_printStoppedCloseExit = true;
         } else if (arg == "--print-delete-focus-gating") {
@@ -2699,7 +3059,7 @@ int main(int argc, char** argv) {
     // skip the single-instance handshake for dump/test flags so headless
     // geometry dumps run regardless of whether another instance holds the lock
     if (!g_dumpGeometry && !g_dumpLogDialogReopen && !g_dumpMsgBoxParent &&
-        !g_printStoppedCloseExit && !g_printDeleteFocusGating) {
+        !g_printStoppedCloseExit && !g_printDeleteFocusGating && !g_printSettingsReopen) {
         if (!SingleInstance::TryAcquireLock()) {
             if (!sourcePayload.empty()) {
                 // a running instance already exists forward the override instead
@@ -2791,6 +3151,7 @@ int main(int argc, char** argv) {
             arg == "--dump-log-dialog-reopen" ||
             arg == "--dump-msgbox-parent" ||
             arg == "--print-stopped-close-exit" ||
+            arg == "--print-settings-reopen" ||
             arg == "--print-delete-focus-gating" ||
             arg == "--print-playlist-add-sensitivity") {
             continue;

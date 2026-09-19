@@ -451,8 +451,20 @@ def xvfb():
         try:
             proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=3)
+             proc.kill()
+             proc.wait(timeout=3)
+
+
+@pytest.fixture
+def gtk_binary(dlna_server_gui_binary):
+    """Alias for dlna_server_gui_binary — provided for tests that use that name."""
+    return dlna_server_gui_binary
+
+
+@pytest.fixture
+def xvfb_env(xvfb):
+    """Alias for xvfb — provided for tests that use that name."""
+    return xvfb
 
 
 def _candidate_runtime_dirs():

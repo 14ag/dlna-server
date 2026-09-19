@@ -1,0 +1,365 @@
+/*
+ * styles3.css
+ *
+ * Purpose:
+ *   Shared-property patch for the existing GTK4 Win32-style implementation.
+ *
+ * The current code already defines these properties in its dialog/application
+ * CSS. The supplied gtk.css defines the same visual concepts with different
+ * values. This file records the definitions worth changing so the application
+ * moves toward the supplied theme's square Windows-10-like geometry rather
+ * than retaining GTK/theme-dependent rounded controls.
+ *
+ * Existing code locations:
+ *   gtk4_gui_main.cpp loads gtk/style.css and then installs dialog CSS.
+ *   The current dialog CSS defines window, label, frame, entry, source-list,
+ *   toolbar-button, focus, CSD/headerbar and win10-titlebar rules.
+ *
+ * Source comparison:
+ *   Existing code: gtk4_gui_main.cpp OnAppStartup().
+ *   Reference: supplied gtk.css.
+ *
+ * These rules are intended to be merged into gtk/style.css / figma.css where
+ * the existing Figma design permits the change. Do not paste this file after
+ * figma.css blindly: selector precedence must remain intentional.
+ */
+
+/* ========================================================================
+ * 1. MAIN WINDOW / BACKGROUND
+ * ========================================================================
+ *
+ * Current code uses rgb(31,31,31) for windows/dialogs.
+ * gtk.css uses #202020 for content areas and #191919 for theme backgrounds.
+ *
+ * Use #202020 for content surfaces where the Figma design does not specify
+ * another color. Keep the existing #252525 win10-titlebar separately.
+ */
+window {
+    background-color: #202020;
+    color: #FFFFFF;
+}
+
+/* gtk.css: .background uses #191919.
+ * Apply this only to the outer application background, not to the content
+ * list or source viewport.
+ */
+.background {
+    color: #FFFFFF;
+    background-color: #191919;
+}
+
+/* ========================================================================
+ * 2. BUTTON GEOMETRY
+ * ========================================================================
+ *
+ * Current code:
+ *   background-color: rgb(51,51,51)
+ *   inset border via box-shadow
+ *   border-radius: 8px
+ *
+ * gtk.css:
+ *   1px solid border
+ *   border-radius: 0
+ *   #191919 base
+ *   #4F4F4F hover
+ *   #494949 active
+ *
+ * The important Win32 visual change is the geometry: replace the 8px radius
+ * with square corners and use a real 1px border instead of an inset shadow.
+ */
+.toolbar-button {
+    background-image: none;
+    background-color: #191919;
+    border: 1px solid #333333;
+    border-radius: 0;
+    box-shadow: none;
+    color: #FFFFFF;
+}
+
+.toolbar-button:hover {
+    background-image: none;
+    background-color: #4F4F4F;
+    border-color: #363636;
+}
+
+.toolbar-button:active,
+.toolbar-button:checked {
+    background-image: none;
+    background-color: #494949;
+    border-color: #3E3E3E;
+}
+
+.toolbar-button:disabled {
+    background-image: none;
+    background-color: #1A1A1A;
+    border-color: #202020;
+    color: #EEEEEE;
+}
+
+/* Keep the application's keyboard focus mechanism but use the compact
+ * square focus geometry from gtk.css.
+ */
+.toolbar-button:focus-visible {
+    outline: 1px dashed #595959;
+    outline-width: 1px;
+    outline-offset: -3px;
+}
+
+/* ========================================================================
+ * 3. ENTRY CONTROLS
+ * ========================================================================
+ *
+ * Current code uses:
+ *   border: none
+ *   inset 1px #585858
+ *   border-radius: 8px
+ *
+ * gtk.css uses:
+ *   1px solid #333333
+ *   border-radius: 0
+ *   padding: 4px 3px
+ *   background #202020
+ *   focus border #4D4D4D
+ *
+ * This is one of the clearest changes from modern rounded GTK styling to
+ * classic Windows control geometry.
+ */
+entry {
+    padding: 4px 3px;
+    border: 1px solid #333333;
+    border-radius: 0;
+    box-shadow: none;
+    color: #FFFFFF;
+    caret-color: currentColor;
+    background-color: #202020;
+}
+
+entry:focus,
+entry:active {
+    border-color: #4D4D4D;
+}
+
+entry:disabled {
+    color: #8C8C8C;
+    border-color: #202020;
+    background-color: #212121;
+}
+
+entry selection {
+    color: #FFFFFF;
+    background-color: #0078D7;
+}
+
+/* ========================================================================
+ * 4. SOURCE LIST
+ * ========================================================================
+ *
+ * Current code already defines a dark list, row padding and selected-row
+ * color. gtk.css supplies square rows and explicit hover/active/selected
+ * states.
+ *
+ * Preserve the application's existing selection semantics. Only the visual
+ * geometry and colors are changed here.
+ */
+.source-list {
+    background-color: #202020;
+    border: 1px solid #333333;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.source-list list {
+    padding: 2px;
+    background-color: #202020;
+    color: #FFFFFF;
+}
+
+.source-list row {
+    padding: 2px;
+    background-color: #202020;
+    color: #FFFFFF;
+}
+
+.source-list row:hover {
+    background-color: #515151;
+}
+
+.source-list row:active {
+    background-color: #4A4A4A;
+}
+
+.source-list row:selected,
+.source-list row:selected:focus {
+    border: none;
+    background-color: #4D4D4D;
+    color: #FFFFFF;
+}
+
+/* ========================================================================
+ * 6. FOCUS RING FOR THE SOURCE LIST
+ * ========================================================================
+ *
+ * Existing code uses a blue 1px outline with offset 2px.
+ * gtk.css uses a compact dashed outline as its generic focus geometry.
+ *
+ * Use the GTK focus geometry so keyboard navigation looks like a control
+ * rather than a web-style focus ring.
+ */
+.source-list:focus-within {
+    outline: 1px dashed #595959;
+    outline-offset: -3px;
+}
+
+/* ========================================================================
+ * 7. MENUS / POPOVERS
+ * ========================================================================
+ *
+ * Existing application styling and gtk.css both intentionally remove
+ * shadows. gtk.css additionally makes the menu square and gives it a
+ * one-pixel border.
+ */
+menu,
+.menu,
+popover,
+popover.background {
+    padding: 2px;
+    border: 1px solid #333333;
+    border-radius: 0;
+    background-color: #191919;
+    color: #FFFFFF;
+    box-shadow: none;
+}
+
+menu menuitem,
+.menu menuitem {
+    min-height: 16px;
+    min-width: 40px;
+    padding: 4px;
+    border: none;
+    border-radius: 0;
+    background-color: #191919;
+    color: #FFFFFF;
+}
+
+menu menuitem:hover,
+.menu menuitem:hover {
+    background-color: #4D4D4D;
+    color: #FFFFFF;
+}
+
+
+/* ========================================================================
+ * 9. TOOLTIP
+ * ========================================================================
+ *
+ * This matters because tooltips are often still supplied by the host GTK
+ * theme even after the main window is customized.
+ */
+tooltip {
+    border-radius: 0;
+    box-shadow: none;
+}
+
+tooltip.background {
+    border: 1px solid #333333;
+    background-color: #191919;
+}
+
+tooltip.background label {
+    padding: 1px;
+}
+
+tooltip * {
+    background-color: transparent;
+    color: #FFFFFF;
+}
+
+/* ========================================================================
+ * 10. SEPARATORS
+ * ========================================================================
+ *
+ * Use the same 1px / #333333 boundary used by entries, frames and menus.
+ * This keeps the visual system internally consistent.
+ */
+separator {
+    min-width: 1px;
+    min-height: 1px;
+    border: none;
+    background-color: #333333;
+}
+
+/* ========================================================================
+ * 11. SWITCH
+ * ========================================================================
+ *
+ * The supplied theme already uses the Windows accent blue #0078D7. This is
+ * preferable to inheriting an arbitrary desktop accent color when the goal is
+ * deterministic Win10 imitation.
+ */
+switch {
+    outline-offset: -4px;
+    border: 3px solid #FFFFFF;
+    border-radius: 16px;
+    background-color: transparent;
+    min-width: 42px;
+}
+
+switch:checked {
+    border-color: #0078D7;
+    background-color: #0078D7;
+    box-shadow: none;
+}
+
+switch:disabled {
+    border-color: #8C8C8C;
+}
+
+switch slider {
+    min-width: 12px;
+    min-height: 12px;
+    margin: 3px 4px;
+    border: none;
+    border-radius: 100%;
+    background-color: #FFFFFF;
+}
+
+switch:checked slider {
+    background-color: #202020;
+}
+
+/* ========================================================================
+ * 12. SELECTION BLUE
+ * ========================================================================
+ *
+ * Use the supplied theme's explicit Windows blue for text selection where
+ * the current application has not already established a Figma-specific
+ * selection color.
+ */
+label selection,
+entry selection {
+    background-color: #0078D7;
+    color: #FFFFFF;
+}
+
+/* ========================================================================
+ * 13. TRANSITIONS
+ * ========================================================================
+ *
+ * The supplied theme uses short transitions for buttons and entries:
+ *   button border: 100ms
+ *   entry border: 100ms
+ *
+ * These are shared interaction definitions worth retaining because they
+ * prevent the GTK theme from introducing longer effects.
+ */
+button {
+    transition: border 100ms ease-in-out;
+}
+
+entry {
+    transition: border 100ms ease-out;
+}
+
+entry:focus {
+    transition: border 100ms ease-in;
+}

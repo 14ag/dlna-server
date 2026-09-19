@@ -56,7 +56,7 @@ def test_penpot_surface_tokens_and_windows_assets(repo_root):
     css = (repo_root / "resources" / "gtk" / "figma.css").read_text()
     for color in ("#191919", "#1f1f1f", "#252525", "#f0f0f0", "#333333"):
         assert color in css
-    assert 'font-family: "Inter", sans-serif;' in css
+    assert 'font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;' in css
 
     assets = repo_root / "resources" / "gtk"
     for name in (
@@ -88,7 +88,7 @@ def test_main_window_chrome_matches_penpot_without_gtk_chrome(repo_root):
     assert "#191919" in css
     assert "#252525" in css
     assert "#1f1f1f" in css
-    assert "border: 0.5px solid #555555" in css
+    assert "border: 1px solid #3b3b3b" in css
 
 
 @pytest.mark.posix_only
@@ -134,10 +134,15 @@ def test_source_list_has_no_horizontal_scrollbar_and_full_path_tooltips(repo_roo
     css = (repo_root / "resources" / "gtk" / "figma.css").read_text()
 
     assert "GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC" in code
-    assert "gtk_label_set_ellipsize(GTK_LABEL(rowLabel), PANGO_ELLIPSIZE_END)" in code
-    assert "gtk_widget_set_tooltip_text(rowLabel, selected.c_str())" in code
-    assert "gtk_widget_set_tooltip_text(rowLabel, ToUtf8(source.path).c_str())" in code
+    # One construction point for every source row.
+    assert "GtkWidget* BuildSourceRow(const std::string& pathUtf8)" in code
+    assert code.count("gtk_list_box_row_new()") == 1
+    assert "PANGO_ELLIPSIZE_END" in code
+    assert "gtk_widget_set_tooltip_text(rowLabel, pathUtf8.c_str())" in code
+    # GTK4 cannot shorten the tooltip delay, so the immediate tip is a popover.
+    assert "InstallSourceListHoverTip" in code
+    assert "pango_layout_is_ellipsized" in code
     assert 'font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;' in css
     assert "font-size: 14px" in css
     assert ".dlna-log-body" in css
-    assert "border: 0.5px solid #606060" in css
+    assert "window.dlna-log-window" in css

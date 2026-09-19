@@ -22,6 +22,7 @@
 #include "upnp_eventing.h"
 #include "transmitfile_chunking.h"
 #include "close_pending_state.h"
+#include "modal_stack.h"
 #include "server_close_policy.h"
 #include "health_check_policy.h"
 #include "geometry_dump_policy.h"
@@ -635,6 +636,25 @@ int main(int argc, char** argv) {
             std::cout << "running-after-http-death=" << (DLNAServer.IsRunning() ? "1" : "0") << std::endl;
             std::cout << "healthy-after-http-death=" << (DLNAServer.IsHealthy() ? "1" : "0") << std::endl;
             DLNAServer.Stop();
+            return 0;
+        }
+        else if (arg == "--print-modal-stack-lifecycle") {
+            ModalStack<int> stack;
+            std::cout << "empty=" << (stack.Empty() ? 1 : 0) << std::endl;
+            stack.Push(0);                       // HandleT{} is ignored
+            std::cout << "after-null-push-depth=" << stack.Depth() << std::endl;
+            stack.Push(1);
+            stack.Push(2);
+            stack.Push(3);
+            std::cout << "top=" << stack.Top() << " depth=" << stack.Depth() << std::endl;
+            stack.Push(1);                       // re-push moves to top
+            std::cout << "repush-top=" << stack.Top() << " depth=" << stack.Depth() << std::endl;
+            stack.Remove(1);
+            std::cout << "after-remove-top=" << stack.Top() << " depth=" << stack.Depth() << std::endl;
+            stack.Remove(99);                    // absent handle is a no-op
+            std::cout << "remove-absent-depth=" << stack.Depth() << std::endl;
+            stack.Clear();
+            std::cout << "cleared-top=" << stack.Top() << " empty=" << (stack.Empty() ? 1 : 0) << std::endl;
             return 0;
         }
         else if (arg == "--print-close-pending-lifecycle") {

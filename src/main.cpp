@@ -46,6 +46,7 @@
 #include "health_check_policy.h"
 #include "win_geometry_dump.h"
 #include "close_pending_state.h"
+#include "modal_stack.h"
 #include "function_key_action.h"
 #include "tray_notify.h"
 #include "../resources/resource.h"
@@ -1058,6 +1059,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::wcout << L"running-after-http-death=" << (DLNAServer.IsRunning() ? L"1" : L"0") << std::endl;
             std::wcout << L"healthy-after-http-death=" << (DLNAServer.IsHealthy() ? L"1" : L"0") << std::endl;
             DLNAServer.Stop();
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-modal-stack-lifecycle") == 0) {
+            ModalStack<int> stack;
+            std::wcout << L"empty=" << (stack.Empty() ? 1 : 0) << std::endl;
+            stack.Push(0);
+            std::wcout << L"after-null-push-depth=" << stack.Depth() << std::endl;
+            stack.Push(1);
+            stack.Push(2);
+            stack.Push(3);
+            std::wcout << L"top=" << stack.Top() << L" depth=" << stack.Depth() << std::endl;
+            stack.Push(1);
+            std::wcout << L"repush-top=" << stack.Top() << L" depth=" << stack.Depth() << std::endl;
+            stack.Remove(1);
+            std::wcout << L"after-remove-top=" << stack.Top() << L" depth=" << stack.Depth() << std::endl;
+            stack.Remove(99);
+            std::wcout << L"remove-absent-depth=" << stack.Depth() << std::endl;
+            stack.Clear();
+            std::wcout << L"cleared-top=" << stack.Top() << L" empty=" << (stack.Empty() ? 1 : 0) << std::endl;
             LocalFree(argv);
             return 0;
         } else if (wcscmp(argv[i], L"--print-close-pending-lifecycle") == 0) {

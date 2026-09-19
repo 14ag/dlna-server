@@ -137,6 +137,7 @@ set(HEADERS
           src/scan_cancellation.h
           src/input_gate.h
           src/modal_focus.h
+          src/modal_stack.h
           src/thread_guard.h
           src/health_check_policy.h
           src/geometry_dump_policy.h
@@ -258,6 +259,11 @@ add_library(dlna_core STATIC
         install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/style.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
         install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/figma.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
+        install(FILES
+            "${CMAKE_SOURCE_DIR}/resources/gtk/styles2.css"
+            "${CMAKE_SOURCE_DIR}/resources/gtk/styles3.css"
+            "${CMAKE_SOURCE_DIR}/resources/gtk/styles4.css"
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
         install(FILES
             "${CMAKE_SOURCE_DIR}/resources/gtk/penpot-minimize.svg"
             "${CMAKE_SOURCE_DIR}/resources/gtk/penpot-maximize.svg"
