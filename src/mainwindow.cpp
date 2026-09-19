@@ -1144,6 +1144,7 @@ LRESULT CALLBACK MainWindow::ListBoxProc(HWND hwnd, UINT uMsg, WPARAM wParam, LP
         if (PtInRect(&rcClient, pt)) {
             pThis->ArmMouseTracking(hwnd);
             pThis->UpdateControlHover(hwnd, IDC_LIST_SOURCES, true);
+            pThis->UpdateSourceListTooltip(pt);
         } else {
             pThis->UpdateControlHover(hwnd, IDC_LIST_SOURCES, false);
         }
