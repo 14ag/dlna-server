@@ -22,7 +22,7 @@ namespace {
 constexpr size_t kMaxDelayedResponses = 256;
 
 void DiscoveryLog(const wchar_t* fmt, ...) {
-    if (!AppConfig.Snapshot().debugLog) {
+    if (!AppConfig.IsDebugLogEnabled()) {
         return;
     }
 
@@ -235,11 +235,18 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     // at the same time Stop is writing them during teardown
     m_initialBurstThread = std::thread([this]() {
         Sleep(ComputeSsdpStartupJitterMilliseconds());
-        // 5 rounds at 150ms instead of 3 rounds at 100ms still completes
-        // within under a second of Start returning does not meaningfully
-        // delay startup but gives a freshly listening control point two
-        // more independent chances to catch the burst see F-DISCOVERY-02
-        SendNotifyBurst("ssdp:alive", 5, 150);
+        static const DWORD kFollowUpDelaysMs[] = { 0, 1000, 3000, 8000, 20000 };
+        for (DWORD delayMs : kFollowUpDelaysMs) {
+            if (delayMs > 0) {
+                std::unique_lock<std::mutex> burstLock(m_burstMutex);
+                if (m_burstCondition.wait_for(burstLock, std::chrono::milliseconds(delayMs),
+                                              [this]() { return !m_running.load(); })) {
+                    return;
+                }
+            }
+            if (!m_running.load()) return;
+            SendNotifyBurst("ssdp:alive", 2, 150);
+        }
     });
     return true;
 }
@@ -281,6 +288,7 @@ void SSDP::Stop() {
     }
 
     m_running.store(false);
+    m_burstCondition.notify_all();
     SendNotifyBurst("ssdp:byebye", 1, 0);
     if (m_ipv4Socket != INVALID_SOCKET) shutdown(m_ipv4Socket, SD_BOTH);
     if (m_ipv6Socket != INVALID_SOCKET) shutdown(m_ipv6Socket, SD_BOTH);
@@ -465,12 +473,16 @@ void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
 
     for (size_t i = 0; i < response.messages.size(); ++i) {
         const std::string& message = response.messages[i];
-        int sent = sendto(response.socket,
+        int sent = SOCKET_ERROR;
+        for (int attempt = 0; attempt < kSearchResponseSendCount; ++attempt) {
+            sent = sendto(response.socket,
                           message.c_str(),
                           static_cast<int>(message.size()),
                           0,
                           reinterpret_cast<const SOCKADDR*>(&response.remoteAddr),
                           response.remoteLen);
+            if (sent == SOCKET_ERROR) break;
+        }
         const std::string st = i < response.logSt.size() ? response.logSt[i] : std::string();
         const std::string usn = i < response.logUsn.size() ? response.logUsn[i] : std::string();
         std::string destination = SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&response.remoteAddr));
@@ -579,20 +591,16 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
     delayed.dueAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(delayMs);
     memcpy(&delayed.remoteAddr, remoteAddr, remoteLen);
     for (const SSDPTarget* target : responses) {
-        std::string response =
-            "HTTP/1.1 200 OK\r\n"
-            "CACHE-CONTROL: max-age=1800\r\n"
-            "DATE: " + date + "\r\n"
-            "EXT:\r\n"
-            "LOCATION: " + endpoint->locationUrl + "\r\n"
-            "SERVER: " + serverHeader + "\r\n"
-            "ST: " + target->st + "\r\n"
-            "USN: " + target->usn + "\r\n"
-            "BOOTID.UPNP.ORG: " + std::to_string(m_bootId) + "\r\n"
-            "CONFIGID.UPNP.ORG: " + std::to_string(m_configId) + "\r\n"
-            "\r\n";
+        SsdpSearchResponseFields fields;
+        fields.date = date;
+        fields.serverHeader = serverHeader;
+        fields.locationUrl = endpoint->locationUrl;
+        fields.st = target->st;
+        fields.usn = target->usn;
+        fields.bootId = m_bootId;
+        fields.configId = m_configId;
 
-        delayed.messages.push_back(response);
+        delayed.messages.push_back(BuildSearchResponseMessage(fields));
         delayed.logSt.push_back(target->st);
         delayed.logUsn.push_back(target->usn);
         DiscoveryLog(L"SSDP response queued: dst=%hs st=%hs usn=%hs location=%hs", source.c_str(), target->st.c_str(), target->usn.c_str(), endpoint->locationUrl.c_str());

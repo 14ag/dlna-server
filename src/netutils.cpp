@@ -307,6 +307,7 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
             continue;
         }
 
+        const IP_ADAPTER_UNICAST_ADDRESS* chosenV4 = NULL;
         const IP_ADAPTER_UNICAST_ADDRESS* chosenV6 = NULL;
         int chosenV6Rank = 0;
 
@@ -317,8 +318,12 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
 
             if (unicast->Address.lpSockaddr->sa_family == AF_INET) {
                 const SOCKADDR_IN* addr4 = reinterpret_cast<const SOCKADDR_IN*>(unicast->Address.lpSockaddr);
-                if (!IsIPv4Apipa(addr4)) {
-                    AddEndpointForUnicast(endpoints, adapter, unicast, port);
+                // One advertised address per adapter per family. A control
+                // point keys a device by USN and keeps the LAST LOCATION it
+                // saw, so advertising a secondary address under the same USN
+                // can replace a reachable LOCATION with an unreachable one.
+                if (!IsIPv4Apipa(addr4) && chosenV4 == NULL) {
+                    chosenV4 = unicast;
                 }
             } else if (unicast->Address.lpSockaddr->sa_family == AF_INET6) {
                 const SOCKADDR_IN6* addr6 = reinterpret_cast<const SOCKADDR_IN6*>(unicast->Address.lpSockaddr);
@@ -330,6 +335,9 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
             }
         }
 
+        if (chosenV4 && chosenV4->Address.lpSockaddr) {
+            AddEndpointForUnicast(endpoints, adapter, chosenV4, port);
+        }
         if (chosenV6 && chosenV6->Address.lpSockaddr) {
             AddEndpointForUnicast(endpoints, adapter, chosenV6, port);
         }

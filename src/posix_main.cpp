@@ -510,6 +510,22 @@ int main(int argc, char** argv) {
             std::cout << ComputeMaxDelayMilliseconds(mx) << std::endl;
             return 0;
         }
+        else if (arg == "--print-ssdp-search-response") {
+            SsdpSearchResponseFields fields;
+            fields.date = "Sat, 20 Sep 2026 00:00:00 GMT";
+            fields.serverHeader = GetDlnaServerHeader();
+            fields.locationUrl = "http://192.0.2.10:8200/description.xml";
+            fields.st = "urn:schemas-upnp-org:device:MediaServer:1";
+            fields.usn = "uuid:test::urn:schemas-upnp-org:device:MediaServer:1";
+            fields.bootId = 1234;
+            fields.configId = 1;
+            std::cout << BuildSearchResponseMessage(fields);
+            return 0;
+        }
+        else if (arg == "--print-ssdp-search-response-send-count") {
+            std::cout << kSearchResponseSendCount << std::endl;
+            return 0;
+        }
         else if (arg == "--print-should-allow-source-drop" && i + 1 < argc) {
             // ShouldAllowSourceDrop now lives in source drop policy h
             // no ole drop target exists on posix today

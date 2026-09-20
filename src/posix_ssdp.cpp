@@ -46,7 +46,7 @@ constexpr const char* kSsdpMulticastIPv6 = "ff02::c";
 constexpr size_t kMaxDelayedResponses = 256;
 
 void DiscoveryLog(const wchar_t* fmt, ...) {
-    if (!AppConfig.Snapshot().debugLog) {
+    if (!AppConfig.IsDebugLogEnabled()) {
         return;
     }
     wchar_t buffer[2048];
@@ -154,21 +154,22 @@ bool SetMulticastOutboundInterface(int fd, const NetworkEndpoint& endpoint) {
 // here would turn a soft hint into a hard failure on the one path
 // every discovering client actually depends on
 bool SetUnicastOutboundInterface(int fd, const NetworkEndpoint& endpoint) {
+    // Both IP_UNICAST_IF and IPV6_UNICAST_IF take the interface index in
+    // NETWORK byte order on Linux (the kernel ntohl()s the value before using
+    // it). Passing host order makes the call fail with ENODEV and silently
+    // leaves the send on default routing.
+    const uint32_t ifIndexNetworkOrder = htonl(static_cast<uint32_t>(endpoint.interfaceIndex));
     if (endpoint.family == AF_INET) {
 #ifdef IP_UNICAST_IF
-        unsigned int ifIndex = static_cast<unsigned int>(endpoint.interfaceIndex);
-        setsockopt(fd, IPPROTO_IP, IP_UNICAST_IF, &ifIndex, sizeof(ifIndex));
+        setsockopt(fd, IPPROTO_IP, IP_UNICAST_IF, &ifIndexNetworkOrder, sizeof(ifIndexNetworkOrder));
 #else
         (void)fd;
-        (void)endpoint;
 #endif
     } else if (endpoint.family == AF_INET6) {
 #ifdef IPV6_UNICAST_IF
-        unsigned int ifIndex = static_cast<unsigned int>(endpoint.interfaceIndex);
-        setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_IF, &ifIndex, sizeof(ifIndex));
+        setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_IF, &ifIndexNetworkOrder, sizeof(ifIndexNetworkOrder));
 #else
         (void)fd;
-        (void)endpoint;
 #endif
     }
     return true;
@@ -253,9 +254,18 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     // at the same time Stop is writing them during teardown
     m_initialBurstThread = std::thread([this]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(ComputeSsdpStartupJitterMilliseconds()));
-        // mirrors the windows side change in ssdp cpp see that file for
-        // the full rationale comment
-        SendNotifyBurst("ssdp:alive", 5, 150);
+        static const unsigned int kFollowUpDelaysMs[] = { 0, 1000, 3000, 8000, 20000 };
+        for (unsigned int delayMs : kFollowUpDelaysMs) {
+            if (delayMs > 0) {
+                std::unique_lock<std::mutex> burstLock(m_burstMutex);
+                if (m_burstCondition.wait_for(burstLock, std::chrono::milliseconds(delayMs),
+                                              [this]() { return !m_running.load(); })) {
+                    return;
+                }
+            }
+            if (!m_running.load()) return;
+            SendNotifyBurst("ssdp:alive", 2, 150);
+        }
     });
     return true;
 }
@@ -297,6 +307,7 @@ void SSDP::Stop() {
     }
 
     m_running.store(false);
+    m_burstCondition.notify_all();
     SendNotifyBurst("ssdp:byebye", 1, 0);
     if (m_ipv4Socket >= 0) shutdown(m_ipv4Socket, SHUT_RDWR);
     if (m_ipv6Socket >= 0) shutdown(m_ipv6Socket, SHUT_RDWR);
@@ -427,12 +438,16 @@ void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
     if (!SetUnicastOutboundInterface(response.socket, response.endpoint)) return;
     for (size_t i = 0; i < response.messages.size(); ++i) {
         const std::string& message = response.messages[i];
-        ssize_t sent = sendto(response.socket,
-                              message.data(),
-                              message.size(),
-                              0,
-                              reinterpret_cast<const sockaddr*>(&response.remoteAddr),
-                              static_cast<socklen_t>(response.remoteLen));
+        ssize_t sent = -1;
+        for (int attempt = 0; attempt < kSearchResponseSendCount; ++attempt) {
+            sent = sendto(response.socket,
+                          message.data(),
+                          message.size(),
+                          0,
+                          reinterpret_cast<const sockaddr*>(&response.remoteAddr),
+                          static_cast<socklen_t>(response.remoteLen));
+            if (sent < 0) break;
+        }
         const std::string st = i < response.logSt.size() ? response.logSt[i] : std::string();
         const std::string usn = i < response.logUsn.size() ? response.logUsn[i] : std::string();
         std::string destination = SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&response.remoteAddr));
@@ -529,18 +544,16 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
     delayed.dueAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(delayMs);
     std::memcpy(&delayed.remoteAddr, remoteAddr, remoteLen);
     for (const auto& target : responses) {
-        std::stringstream ss;
-        ss << "HTTP/1.1 200 OK\r\n"
-           << "CACHE-CONTROL: max-age=1800\r\n"
-           << "DATE: " << BuildHttpDateHeaderValue() << "\r\n"
-           << "EXT:\r\n"
-           << "LOCATION: " << endpoint->locationUrl << "\r\n"
-           << "SERVER: " << serverHeader << "\r\n"
-           << "ST: " << target.st << "\r\n"
-           << "USN: " << target.usn << "\r\n"
-           << "BOOTID.UPNP.ORG: " << m_bootId << "\r\n"
-           << "CONFIGID.UPNP.ORG: " << m_configId << "\r\n\r\n";
-        delayed.messages.push_back(ss.str());
+        SsdpSearchResponseFields fields;
+        fields.date = BuildHttpDateHeaderValue();
+        fields.serverHeader = serverHeader;
+        fields.locationUrl = endpoint->locationUrl;
+        fields.st = target.st;
+        fields.usn = target.usn;
+        fields.bootId = m_bootId;
+        fields.configId = m_configId;
+
+        delayed.messages.push_back(BuildSearchResponseMessage(fields));
         delayed.logSt.push_back(target.st);
         delayed.logUsn.push_back(target.usn);
         DiscoveryLog(L"SSDP response queued: dst=%hs st=%hs usn=%hs location=%hs", source.c_str(), target.st.c_str(), target.usn.c_str(), endpoint->locationUrl.c_str());
