@@ -372,7 +372,7 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
 
     m_hwnd = CreateWindowExW(
         m_startedHeadless ? WS_EX_TOOLWINDOW : 0, CLASS_NAME, L"DLNA Server",
-        WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX,
+        WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_THICKFRAME,
         CW_USEDEFAULT, CW_USEDEFAULT, UiTokens::kWindowWidth, UiTokens::kWindowHeight,
         NULL, NULL, hInstance, this
     );
@@ -1288,6 +1288,26 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             RepaintHighlightTransition(before, m_hoverFocusState.HighlightedControlId());
         }
         return DefWindowProcW(hwnd, uMsg, wParam, lParam);
+    }
+    case WM_MOUSEACTIVATE: {
+        // Spec C11 parity with the GTK FlashActiveModal path: when a modal
+        // child owns input, clicking the main window flashes the child instead
+        // of silently doing nothing.
+        if (!IsWindowEnabled(hwnd)) {
+            HWND active = GetLastActivePopup(hwnd);
+            if (active && active != hwnd) {
+                FLASHWINFO flash = {};
+                flash.cbSize = sizeof(flash);
+                flash.hwnd = active;
+                flash.dwFlags = FLASHW_ALL;
+                flash.uCount = 2;
+                flash.dwTimeout = 110;
+                FlashWindowEx(&flash);
+                SetForegroundWindow(active);
+            }
+            return MA_NOACTIVATEANDEAT;
+        }
+        return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
     case WM_UPDATEUISTATE: {
         WORD action = LOWORD(wParam);
