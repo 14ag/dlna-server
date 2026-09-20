@@ -378,6 +378,11 @@ def dlna_server_binary(dlna_binary):
     """Alias for dlna_binary — provided for tests that use that name."""
     return dlna_binary
 
+@pytest.fixture
+def server_binary(dlna_binary):
+    """Alias for dlna_binary — provided for tests that use that name."""
+    return dlna_binary
+
 
 @pytest.fixture
 def dlna_server_gui_binary():

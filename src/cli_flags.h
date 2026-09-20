@@ -15,7 +15,9 @@ inline std::vector<CliFlagInfo> GetCliFlagTable() {
         { L"--source \"pathA\",\"pathB\"", L"Add one or more media sources replaces the current session sources not saved to config" },
         { L"--kill-server, -k", L"Stop the running server and close the app" },
         { L"--debug", L"Enable debug logging" },
+#ifdef _WIN32
         { L"--configure-firewall", L"Run firewall helper and exit" },
+#endif
         { L"--help", L"Show this help and exit" }
     };
 }
