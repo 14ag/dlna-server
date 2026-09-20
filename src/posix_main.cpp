@@ -269,7 +269,7 @@ int main(int argc, char** argv) {
             case FunctionKeyAction::Rescan: std::cout << "rescan" << std::endl; break;
             case FunctionKeyAction::RefreshSourceList: std::cout << "refresh-source-list" << std::endl; break;
             case FunctionKeyAction::ShowSourceListContextMenu: std::cout << "show-context-menu" << std::endl; break;
-            case FunctionKeyAction::None: std::cout << "none" << std::endl; break;
+            case FunctionKeyAction::NoAction: std::cout << "none" << std::endl; break;
             }
             return 0;
         }

@@ -553,7 +553,7 @@ bool MainWindow::TryHandleFunctionKey(WPARAM vkCode) {
     case FunctionKeyAction::ShowSourceListContextMenu:
         // handled separately by wm contextmenu see task a4
         return false;
-    case FunctionKeyAction::None:
+    case FunctionKeyAction::NoAction:
         return false;
     }
     return false;
