@@ -205,6 +205,33 @@ def test_gtk4_settings_uses_client_side_titlebar():
     ), f"settings titlebar reported {values.get('settings')!r}, expected csd"
 
 
+def test_gtk4_main_window_uses_client_side_titlebar():
+    """Main window must still report titlebar=csd after Task 2.8 poll-tick change."""
+    text = _run_gtk4_dump()
+    values = {m["tag"]: m["value"] for m in TITLEBAR_RE.finditer(text)}
+    assert (
+        values.get("main-window") == "csd"
+    ), f"main-window titlebar reported {values.get('main-window')!r}, expected csd"
+
+
+def test_gtk4_main_window_toolbar_buttons_keep_posix_rects():
+    """The four toolbar buttons must keep their UiTokensPosix rects after
+    Task 2.8's poll-tick change (RefreshStatus only runs on state change)."""
+    items = _parse_dump(_run_gtk4_dump())
+    actual = {(t, c, x, y): (w, h) for (t, c, x, y, w, h) in items}
+    toolbar_keys = [
+        ("main-window", "GtkButton", 118, 44),  # Add
+        ("main-window", "GtkButton", 182, 44),  # Sources
+        ("main-window", "GtkButton", 262, 44),  # Start/Stop
+        ("main-window", "GtkButton", 342, 44),  # Settings
+    ]
+    for key in toolbar_keys:
+        assert key in actual, f"toolbar button {key} missing from geometry dump"
+        assert actual[key] == EXPECTED[key], (
+            f"toolbar button {key}: got {actual[key]} expected {EXPECTED[key]}"
+        )
+
+
 def test_gtk4_client_size_parity_with_win32_log():
     """When a Win32 geometry capture exists, GTK4 client sizes must match."""
     line_re = re.compile(
