@@ -11,7 +11,9 @@ inline std::vector<SettingHelpInfo> GetSettingsHelpTable() {
         { L"Server name", L"UPnP friendly name advertised on the network" },
         { L"HTTP port", L"TCP port for the HTTP media server (default 0 = auto)" },
         { L"IP whitelist", L"Comma-separated IPs or CIDR ranges allowed to connect" },
+#ifdef _WIN32
         { L"Run on Windows startup", L"Automatically start the server when you log in" },
+#endif
         { L"Debug log (write to file)", L"Write detailed debug information to a log file" },
         { L"Default playlist", L"Automatically enqueue selected items as a playlist" },
         { L"Add artist/album folders to audio", L"Organize audio by artist then album directory structure" },
