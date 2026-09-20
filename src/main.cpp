@@ -416,7 +416,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             case FunctionKeyAction::Rescan: std::wcout << L"rescan" << std::endl; break;
             case FunctionKeyAction::RefreshSourceList: std::wcout << L"refresh-source-list" << std::endl; break;
             case FunctionKeyAction::ShowSourceListContextMenu: std::wcout << L"show-context-menu" << std::endl; break;
-            case FunctionKeyAction::None: std::wcout << L"none" << std::endl; break;
+            case FunctionKeyAction::NoAction: std::wcout << L"none" << std::endl; break;
             }
             LocalFree(argv);
             return 0;

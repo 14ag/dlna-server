@@ -2397,7 +2397,7 @@ gboolean OnMainWindowKeyPressed(GtkEventControllerKey*, guint keyval, guint,
         RefreshSourceList();
         return TRUE;
     case FunctionKeyAction::ShowSourceListContextMenu:
-    case FunctionKeyAction::None:
+    case FunctionKeyAction::NoAction:
         break;
     }
 
