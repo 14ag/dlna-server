@@ -81,6 +81,8 @@ private:
 #endif
     std::thread m_responseThread;
     std::thread m_initialBurstThread;
+    std::mutex m_burstMutex;
+    std::condition_variable m_burstCondition;
     std::mutex m_responseMutex;
     std::condition_variable m_responseCondition;
     // deque, not vector: QueueSearchResponses() evicts the oldest queued

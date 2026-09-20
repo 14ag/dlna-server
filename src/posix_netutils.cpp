@@ -10,7 +10,9 @@
 #include <mutex>
 #include <net/if.h>
 #include <netdb.h>
+#include <set>
 #include <unistd.h>
+#include <utility>
 
 namespace {
 bool PrefixMatchBits(const unsigned char* a, const unsigned char* b, size_t bitCount) {
@@ -245,6 +247,8 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
     const std::string defaultRouteV4 = DetectDefaultRouteSourceAddress(AF_INET);
     const std::string defaultRouteV6 = DetectDefaultRouteSourceAddress(AF_INET6);
 
+    std::set<std::pair<unsigned long, int>> emittedInterfaceFamilies;
+
     for (ifaddrs* it = list; it; it = it->ifa_next) {
         if (!it->ifa_addr) continue;
         if (!(it->ifa_flags & IFF_UP) || !(it->ifa_flags & IFF_MULTICAST) || (it->ifa_flags & IFF_LOOPBACK)) continue;
@@ -277,6 +281,14 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
         }
         endpoint.address = SockaddrToLiteral(reinterpret_cast<SOCKADDR*>(&endpoint.sockaddr));
         endpoint.locationUrl = "http://" + endpoint.host + ":" + std::to_string(port) + "/description.xml";
+        // One advertised address per (interface, family). See the matching
+        // comment in src/netutils.cpp: a control point keeps the LAST LOCATION
+        // it received for a USN, so a second address on the same interface can
+        // replace a reachable LOCATION with an unreachable one.
+        if (!emittedInterfaceFamilies.insert({endpoint.interfaceIndex, endpoint.family}).second) {
+            continue;
+        }
+        
         endpoints.push_back(endpoint);
     }
     freeifaddrs(list);

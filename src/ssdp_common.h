@@ -26,4 +26,18 @@ unsigned int ComputeMaxDelayMilliseconds(int mxSeconds);
 // bound rounds to zero.
 unsigned int ComputeDelayMilliseconds(int mxSeconds);
 
+struct SsdpSearchResponseFields {
+    std::string date;
+    std::string serverHeader;
+    std::string locationUrl;
+    std::string st;
+    std::string usn;
+    unsigned int bootId = 0;
+    unsigned int configId = 1;
+};
+
+std::string BuildSearchResponseMessage(const SsdpSearchResponseFields& fields);
+
+inline constexpr int kSearchResponseSendCount = 2;
+
 #endif // SSDP_COMMON_H

@@ -535,6 +535,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             std::cout << ComputeMaxDelayMilliseconds(mx) << std::endl;
             LocalFree(argv);
             return 0;
+        } else if (wcscmp(argv[i], L"--print-ssdp-search-response") == 0) {
+            SsdpSearchResponseFields fields;
+            fields.date = "Sat, 20 Sep 2026 00:00:00 GMT";
+            fields.serverHeader = GetDlnaServerHeader();
+            fields.locationUrl = "http://192.0.2.10:8200/description.xml";
+            fields.st = "urn:schemas-upnp-org:device:MediaServer:1";
+            fields.usn = "uuid:test::urn:schemas-upnp-org:device:MediaServer:1";
+            fields.bootId = 1234;
+            fields.configId = 1;
+            std::cout << BuildSearchResponseMessage(fields);
+            LocalFree(argv);
+            return 0;
+        } else if (wcscmp(argv[i], L"--print-ssdp-search-response-send-count") == 0) {
+            std::cout << kSearchResponseSendCount << std::endl;
+            LocalFree(argv);
+            return 0;
         } else if (wcscmp(argv[i], L"--print-config-path") == 0) {
             std::wcout << AppConfig.GetConfigPath() << std::endl;
             LocalFree(argv);
