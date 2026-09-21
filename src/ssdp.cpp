@@ -103,7 +103,10 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
 
     if (m_running.load()) return true;
 
-    m_endpoints = endpoints;
+    {
+        std::lock_guard<std::mutex> lock(m_endpointsMutex);
+        m_endpoints = endpoints;
+    }
     m_uuidStr = WideToUtf8(uuid);
     m_targets = BuildAdvertisedTargets(m_uuidStr);
     if (!m_bootIdAssigned) {
@@ -122,9 +125,12 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     int ipv6EndpointCount = 0;
     int ipv4JoinCount = 0;
     int ipv6JoinCount = 0;
-    for (const auto& endpoint : m_endpoints) {
-        if (endpoint.family == AF_INET) ++ipv4EndpointCount;
-        else if (endpoint.family == AF_INET6) ++ipv6EndpointCount;
+    {
+        std::lock_guard<std::mutex> lock(m_endpointsMutex);
+        for (const auto& endpoint : m_endpoints) {
+            if (endpoint.family == AF_INET) ++ipv4EndpointCount;
+            else if (endpoint.family == AF_INET6) ++ipv6EndpointCount;
+        }
     }
 
     m_ipv4Socket = WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, 0);
@@ -144,12 +150,12 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
             closesocket(m_ipv4Socket);
             m_ipv4Socket = INVALID_SOCKET;
         } else {
-            for (const auto& endpoint : m_endpoints) {
-                if (endpoint.family != AF_INET) {
-                    continue;
-                }
+        for (const auto& endpoint : EndpointsSnapshot()) {
+            if (endpoint.family != AF_INET) {
+                continue;
+            }
 
-                ip_mreq membership = {};
+            ip_mreq membership = {};
                 if (InetPtonA(AF_INET, SSDP_MULTICAST_IPV4, &membership.imr_multiaddr) != 1) {
                     LogPrint(L"SSDP IPv4 multicast address parse failed");
                     continue;
@@ -185,12 +191,12 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
             closesocket(m_ipv6Socket);
             m_ipv6Socket = INVALID_SOCKET;
         } else {
-            for (const auto& endpoint : m_endpoints) {
-                if (endpoint.family != AF_INET6) {
-                    continue;
-                }
+        for (const auto& endpoint : EndpointsSnapshot()) {
+            if (endpoint.family != AF_INET6) {
+                continue;
+            }
 
-                ipv6_mreq membership6 = {};
+            ipv6_mreq membership6 = {};
                 inet_pton(AF_INET6, SSDP_MULTICAST_IPV6, &membership6.ipv6mr_multiaddr);
                 membership6.ipv6mr_interface = endpoint.interfaceIndex;
 
@@ -324,7 +330,8 @@ void SSDP::SendNotifyRound(const char* nts) {
     const std::vector<SSDPTarget>& targets = m_targets;
     std::string serverHeader = GetDlnaServerHeader();
 
-    for (const auto& endpoint : m_endpoints) {
+    const auto endpoints = EndpointsSnapshot();
+    for (const auto& endpoint : endpoints) {
         SOCKET socket = (endpoint.family == AF_INET) ? m_ipv4Socket : m_ipv6Socket;
         if (socket == INVALID_SOCKET) {
             continue;
@@ -426,14 +433,15 @@ void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
 }
 
 void SSDP::QueueTestResponseDueNow() {
-    if (m_endpoints.empty()) return;
+    const auto endpoints = EndpointsSnapshot();
+    if (endpoints.empty()) return;
     const NetworkEndpoint* endpoint = nullptr;
     if (m_ipv4Socket != INVALID_SOCKET) {
-        for (const auto& candidate : m_endpoints) {
+        for (const auto& candidate : endpoints) {
             if (candidate.family == AF_INET) { endpoint = &candidate; break; }
         }
     } else if (m_ipv6Socket != INVALID_SOCKET) {
-        for (const auto& candidate : m_endpoints) {
+        for (const auto& candidate : endpoints) {
             if (candidate.family == AF_INET6) { endpoint = &candidate; break; }
         }
     }
@@ -554,7 +562,8 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
         return;
     }
 
-    const NetworkEndpoint* endpoint = SelectBestEndpoint(m_endpoints, remoteAddr);
+    const auto endpoints = EndpointsSnapshot();
+    const NetworkEndpoint* endpoint = SelectBestEndpoint(endpoints, remoteAddr);
     if (!endpoint || endpoint->family != remoteAddr->sa_family) {
         // SelectBestEndpoint's final fallback can return an endpoint of
         // the wrong address family when no same family endpoint exists

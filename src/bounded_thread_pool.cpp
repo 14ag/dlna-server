@@ -22,6 +22,17 @@ BoundedThreadPool::~BoundedThreadPool() {
     for (auto& worker : m_workers) {
         if (worker.joinable()) worker.join();
     }
+    // Run whatever the workers did not reach. Queued tasks own
+    // TaskGroupLeaveGuard instances; discarding them leaves a concurrent
+    // TaskGroup::Wait() blocked forever.
+    std::deque<std::function<void()>> leftover;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        leftover.swap(m_queue);
+    }
+    for (auto& task : leftover) {
+        try { task(); } catch (...) {}
+    }
 }
 
 void BoundedThreadPool::Submit(std::function<void()> task) {

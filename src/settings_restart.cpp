@@ -15,5 +15,6 @@ std::vector<std::wstring> DetermineSettingsRequiringRestart(const ConfigSnapshot
     if (before.showFileNamesInsteadOfTitles != after.showFileNamesInsteadOfTitles) changed.push_back(L"Show File Names Instead Of Titles");
     if (before.proxyStreams != after.proxyStreams) changed.push_back(L"Proxy Streams");
     if (before.backgroundScanEnabled != after.backgroundScanEnabled) changed.push_back(L"Background Scan");
+    if (before.defaultPlaylistEnabled != after.defaultPlaylistEnabled) changed.push_back(L"Default Playlist");
     return changed;
 }

@@ -198,8 +198,10 @@ void FinishPlaylistEntry(HWND hwnd, PlaylistEntryState* state, bool add) {
             MessageBoxW(hwnd, L"Could not write default playlist.", L"Default playlist", MB_ICONWARNING | MB_OK);
             return;
         }
-        AppConfig.defaultPlaylistEnabled = true;
-        AppConfig.defaultPlaylistPath = AppConfig.defaultPlaylistPath.empty() ? AppConfig.GetDefaultPlaylistPath() : AppConfig.defaultPlaylistPath;
+        AppConfig.Mutate([](Config& cfg) {
+            cfg.defaultPlaylistEnabled = true;
+            if (cfg.defaultPlaylistPath.empty()) cfg.defaultPlaylistPath = cfg.GetDefaultPlaylistPath();
+        });
         AppConfig.Save();
     }
     state->done = true;
@@ -433,6 +435,9 @@ void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+    }
+    if (getResult == -1) {
+        state.done = true;
     }
     if (!state.done) {
         EnableOwnerAndRestoreModalFocus(state.focusSnapshot, hwndDlg);

@@ -54,6 +54,14 @@ struct DeviceDescriptionConfig {
     std::wstring presentationUrl;
 };
 
+struct RuntimeFlags {
+    int port;
+    bool debugLog;
+    bool sortByTitle;
+    bool proxyStreams;
+    bool backgroundScanEnabled;
+};
+
 class Config {
 public:
     static Config& Get();
@@ -69,6 +77,11 @@ public:
     DeviceDescriptionConfig GetDeviceDescriptionConfig() const {
         std::shared_lock<std::shared_mutex> lock(m_mutex);
         return DeviceDescriptionConfig{ deviceUUID, serverName, deviceManufacturer, deviceModelName, presentationUrl };
+    }
+
+    RuntimeFlags GetRuntimeFlags() const {
+        std::shared_lock<std::shared_mutex> lock(m_mutex);
+        return RuntimeFlags{ port, debugLog, sortByTitle, proxyStreams, backgroundScanEnabled };
     }
     
     // Properties

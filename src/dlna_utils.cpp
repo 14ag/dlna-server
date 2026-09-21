@@ -111,9 +111,25 @@ std::string ProtocolTail(const MediaFormatInfo& info, bool hasKnownSize) {
     return tail;
 }
 
-std::string NarrowAscii(const std::wstring& value) {
-    return WideToUtf8(value);
-}
+std::string ReadWholeFileBinary(const std::wstring& path) {
+#ifdef _WIN32
+    FILE* fp = nullptr;
+    if (_wfopen_s(&fp, path.c_str(), L"rb") != 0 || !fp) return {};
+#else
+    FILE* fp = std::fopen(WideToUtf8(path).c_str(), "rb");
+    if (!fp) return {};
+#endif
+    std::string text;
+    char buffer[4096];
+    while (true) {
+        size_t readCount = std::fread(buffer, 1, sizeof(buffer), fp);
+        if (readCount > 0) text.append(buffer, readCount);
+        if (readCount < sizeof(buffer)) {
+            if (std::feof(fp) || std::ferror(fp)) break;
+        }
+    }
+    std::fclose(fp);
+    return text;
 }
 
 std::string TrimAscii(const std::string& value) {
@@ -311,7 +327,7 @@ bool GetMediaFormatForExtension(const std::wstring& ext, MediaFormatInfo& info) 
 }
 
 std::string BuildProtocolInfo(const MediaFormatInfo& info, bool hasKnownSize) {
-    return "http-get:*:" + NarrowAscii(info.mimeType) + ":" + ProtocolTail(info, hasKnownSize);
+    return "http-get:*:" + WideToUtf8(info.mimeType) + ":" + ProtocolTail(info, hasKnownSize);
 }
 
 std::string BuildProtocolInfoForExtension(const std::wstring& ext, const std::wstring& mimeType, bool hasKnownSize) {
@@ -353,38 +369,44 @@ std::string BuildHlsProtocolInfo() {
 }
 
 std::string BuildSourceProtocolInfoList() {
-    std::vector<std::string> entries;
-    std::unordered_set<std::string> seen;
-    for (const auto& format : kFormats) {
-        MediaFormatInfo info = FormatInfoFromExtensionFormat(format);
-        std::string entry = BuildProtocolInfo(info, true);
-        if (seen.insert(entry).second) {
-            entries.push_back(entry);
+    static const std::string kCached = []() {
+        std::vector<std::string> entries;
+        std::unordered_set<std::string> seen;
+        for (const auto& format : kFormats) {
+            MediaFormatInfo info = FormatInfoFromExtensionFormat(format);
+            std::string entry = BuildProtocolInfo(info, true);
+            if (seen.insert(entry).second) {
+                entries.push_back(entry);
+            }
         }
-    }
-    // HLS is excluded from kFormats so file scanning does not treat .m3u8 as a
-    // generic playable extension. It must still be advertised here so DLNA
-    // renderers that consult GetProtocolInfo before playback accept HLS items.
-    // Flags match contentdirectory.cpp ItemProtocolInfo() and the Android
-    // contentFeatures.dlna.org response header in j.java.
-    entries.push_back(std::string("http-get:*:video/mpegurl:") + kHlsProtocolContentFeatures);
-    std::string result;
-    for (size_t i = 0; i < entries.size(); ++i) {
-        if (i > 0) result += ",";
-        result += entries[i];
-    }
-    return result;
+        // HLS is excluded from kFormats so file scanning does not treat .m3u8 as a
+        // generic playable extension. It must still be advertised here so DLNA
+        // renderers that consult GetProtocolInfo before playback accept HLS items.
+        // Flags match contentdirectory.cpp ItemProtocolInfo() and the Android
+        // contentFeatures.dlna.org response header in j.java.
+        entries.push_back(std::string("http-get:*:video/mpegurl:") + kHlsProtocolContentFeatures);
+        std::string result;
+        for (size_t i = 0; i < entries.size(); ++i) {
+            if (i > 0) result += ",";
+            result += entries[i];
+        }
+        return result;
+    }();
+    return kCached;
 }
 
 
 std::string GetDlnaServerHeader() {
+    static const std::string kHeader = []() -> std::string {
 #ifdef _WIN32
-    return "Windows/10.0 DLNADOC/1.50 UPnP/1.0 dlna-server/" DLNA_SERVER_VERSION_STRING;
+        return "Windows/10.0 DLNADOC/1.50 UPnP/1.0 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #elif defined(DLNA_PLATFORM_NAME)
-    return std::string(DLNA_PLATFORM_NAME) + " DLNADOC/1.50 UPnP/1.0 dlna-server/" DLNA_SERVER_VERSION_STRING;
+        return std::string(DLNA_PLATFORM_NAME) + " DLNADOC/1.50 UPnP/1.0 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #else
-    return "POSIX DLNADOC/1.50 UPnP/1.0 dlna-server/" DLNA_SERVER_VERSION_STRING;
+        return "POSIX DLNADOC/1.50 UPnP/1.0 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #endif
+    }();
+    return kHeader;
 }
 
 std::string BuildMediaResourceUrlExtensionSuffix(const std::wstring& sourcePath) {

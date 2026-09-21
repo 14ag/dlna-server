@@ -23,11 +23,6 @@
 #pragma comment(lib, "ws2_32.lib")
 
 namespace {
-// GetEnvironmentVariableW returns 0 both when a variable is absent and
-// when it is present but set to an empty string
-// GetLastError only reports ERROR_ENVVAR_NOT_FOUND for the absent case
-// so that must be checked to correctly treat present-but-empty as set
-// see https://learn.microsoft.com/windows/win32/api/processenv/nf-processenv-getenvironmentvariablew
 bool IsSkipFirewallEnvVarPresent() {
     wchar_t buffer[8] = {};
     DWORD copied = GetEnvironmentVariableW(L"DLNA_SERVER_SKIP_FIREWALL", buffer, 8);
@@ -36,18 +31,9 @@ bool IsSkipFirewallEnvVarPresent() {
 }
 }
 
-Server& Server::Get() {
-    static Server instance;
-    return instance;
-}
-
 Server::Server() : m_running(false), m_stopping(false), m_starting(false), m_initialScanComplete(false), m_initialScanInProgress(false), m_stopWatch(false) {
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
-    // libcurl global init is not guaranteed thread safe on every build
-    // see curl_global_init and libcurl-thread documentation
-    // must happen exactly once synchronously here before any GENA
-    // notify worker or remote source scan thread ever touches curl
     curl_global_init(CURL_GLOBAL_DEFAULT);
 }
 
@@ -55,214 +41,6 @@ Server::~Server() {
     Stop();
     curl_global_cleanup();
     WSACleanup();
-}
-
-std::wstring Server::GetEndpoint() const {
-    std::lock_guard<std::mutex> lock(m_endpointMutex);
-    return m_endpoint;
-}
-
-bool Server::IsHealthy() const {
-    if (!m_running.load(std::memory_order_acquire)) return true;
-    return HttpServer::Get().IsHealthy() && SSDP::Get().IsHealthy();
-}
-
-std::vector<NetworkEndpoint> Server::GetEndpoints() const {
-    std::lock_guard<std::mutex> lock(m_endpointMutex);
-    return m_endpoints;
-}
-
-bool Server::ShouldStartScan() const {
-    return m_running.load(std::memory_order_acquire) && !m_stopping.load(std::memory_order_acquire);
-}
-
-void Server::StartBackgroundScan() {
-    if (!ShouldStartScan()) {
-        return;
-    }
-
-    std::thread previousScan;
-    {
-        std::lock_guard<std::mutex> lock(m_scanMutex);
-        if (m_scanThread.joinable()) {
-            previousScan = std::move(m_scanThread);
-        }
-    }
-    if (previousScan.joinable()) {
-        previousScan.join();
-    }
-    if (!ShouldStartScan()) return;
-
-    std::lock_guard<std::mutex> lock(m_scanMutex);
-    if (m_scanThread.joinable()) {
-        return;
-    }
-    m_scanThread = std::thread([]() { RunGuarded(L"media-scan", []() { AppMedia.Scan(); }); });
-}
-
-void Server::JoinBackgroundScanLocked() {
-    if (m_scanThread.joinable()) {
-        m_scanThread.join();
-    }
-}
-
-void Server::JoinBackgroundScan() {
-    std::thread previousScan;
-    {
-        std::lock_guard<std::mutex> lock(m_scanMutex);
-        if (m_scanThread.joinable()) {
-            previousScan = std::move(m_scanThread);
-        }
-    }
-    if (previousScan.joinable()) {
-        previousScan.join();
-    }
-}
-
-void Server::TriggerAutoRescanIfEnabled() {
-    ConfigSnapshot cfg = AppConfig.Snapshot();
-    if (ShouldAutoRescan(cfg, true)) {
-        LogPrint(L"Media source change detected; rescanning.");
-        if (!m_stopWatch.load(std::memory_order_acquire)) {
-            StartBackgroundScan();
-        }
-    }
-}
-
-std::vector<std::wstring> Server::LocalWatchFolders() const {
-    ConfigSnapshot cfg = AppConfig.Snapshot();
-    std::vector<std::wstring> folders;
-    for (const auto& source : cfg.effectiveMediaSources) {
-        if (!IsRemoteMediaUrl(source.path)) {
-            folders.push_back(source.path);
-        }
-    }
-    return folders;
-}
-
-void Server::StartNetworkChangeWatcher() {
-    StartNetworkChangeWatch([this]() {
-        RestartSsdpForNetworkChange();
-    });
-}
-
-void Server::RestartSsdpForNetworkChange() {
-    std::lock_guard<std::mutex> lock(m_ssdpRestartMutex);
-    if (!m_running.load(std::memory_order_acquire)) return;
-    // NotifyIpInterfaceChange and NotifyUnicastIpAddressChange each
-    // serialize their own callback invocations but carry no guarantee
-    // against each other and WM_POWERBROADCAST resume is a third
-    // independent trigger a single adapter reconfiguration or sleep
-    // resume cycle can fire more than one of these within a few
-    // hundred milliseconds of each other this mutex plus the short
-    // circuit below make repeated near simultaneous callers a safe
-    // cheap no op instead of a second concurrent SSDP Stop Start pair
-    // racing the first see
-    // https://learn.microsoft.com/en-us/windows/win32/api/netioapi/nf-netioapi-notifyunicastipaddresschange
-    const auto now = std::chrono::steady_clock::now();
-    if (m_hasSsdpRestartCompletedAt && (now - m_lastSsdpRestartCompletedAt) < std::chrono::seconds(2)) {
-        LogPrint(L"SSDP restart skipped: already restarted less than 2s ago.");
-        return;
-    }
-    LogPrint(L"Network topology change detected; refreshing endpoints");
-    const std::vector<NetworkEndpoint> endpointsBeforeRefresh = GetEndpoints();
-    const ConfigSnapshot cfg = AppConfig.Snapshot();
-    RefreshEndpoints(cfg);
-    const std::vector<NetworkEndpoint> endpointsAfterRefresh = GetEndpoints();
-    if (NetworkEndpointSetsEqual(endpointsBeforeRefresh, endpointsAfterRefresh)) {
-        LogPrint(L"Endpoint set unchanged after refresh; SSDP restart skipped");
-        m_lastSsdpRestartCompletedAt = std::chrono::steady_clock::now();
-        m_hasSsdpRestartCompletedAt = true;
-        return;
-    }
-    InvalidateRoutableHostUrlCache();
-    SSDP::Get().Stop();
-    SSDP::Get().Start(endpointsAfterRefresh, cfg.port, cfg.serverName, cfg.deviceUUID);
-    m_lastSsdpRestartCompletedAt = std::chrono::steady_clock::now();
-    m_hasSsdpRestartCompletedAt = true;
-}
-
-void Server::StopNetworkChangeWatcher() {
-    StopNetworkChangeWatch();
-}
-
-void Server::StartDirectoryWatcher() {
-    StartDirectoryWatch(LocalWatchFolders(), [this]() {
-        if (!m_running.load(std::memory_order_acquire)) return;
-        TriggerAutoRescanIfEnabled();
-    });
-}
-
-void Server::StopDirectoryWatcher() {
-    StopDirectoryWatch();
-}
-
-void Server::StartWatchMode() {
-    StopWatchMode();
-    m_stopWatch.store(false);
-    std::lock_guard<std::mutex> lock(m_watchThreadMutex);
-    m_watchThread = std::thread(&Server::WatchLoop, this);
-}
-
-void Server::StopWatchMode() {
-    m_stopWatch.store(true);
-    m_watchCv.notify_all();
-    std::thread threadToJoin;
-    {
-        std::lock_guard<std::mutex> lock(m_watchThreadMutex);
-        if (m_watchThread.joinable()) {
-            threadToJoin = std::move(m_watchThread);
-        }
-    }
-    if (threadToJoin.joinable()) {
-        threadToJoin.join();
-    }
-}
-
-void Server::WatchLoop() {
-    ConfigSnapshot cfg = AppConfig.Snapshot();
-    std::string signature = ComputeMediaSourceSignature(cfg);
-    while (!m_stopWatch.load()) {
-        std::unique_lock<std::mutex> lock(m_watchMutex);
-        if (m_watchCv.wait_for(lock, std::chrono::seconds(60), [&]() { return m_stopWatch.load(); })) {
-            break;
-        }
-        lock.unlock();
-
-        cfg = AppConfig.Snapshot();
-        const bool sourcesChanged = MediaSourcesHaveChanged(cfg, signature);
-        if (ShouldAutoRescan(cfg, sourcesChanged)) {
-            LogPrint(L"Media source change detected; rescanning.");
-            if (!m_stopWatch.load(std::memory_order_acquire)) {
-                StartBackgroundScan();
-            }
-        }
-    }
-}
-
-void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
-    std::vector<NetworkEndpoint> endpoints;
-    if (!EnumerateNetworkEndpoints(cfg.port, cfg.networkInterfaceAllowList, endpoints)) {
-        LogPrint(L"Network endpoint enumeration failed.");
-        std::lock_guard<std::mutex> lock(m_endpointMutex);
-        m_endpoint = L"";
-        m_endpoints.clear();
-        return;
-    }
-
-    if (cfg.debugLog) {
-        for (const auto& endpoint : endpoints) {
-            LogPrint(L"Discovery endpoint selected: family=%d addr=%hs if=%lu prefix=%lu location=%hs",
-                     endpoint.family,
-                     endpoint.address.c_str(),
-                     endpoint.interfaceIndex,
-                     endpoint.prefixLength,
-                     endpoint.locationUrl.c_str());
-        }
-    }
-
-    std::lock_guard<std::mutex> lock(m_endpointMutex);
-    m_endpoints = std::move(endpoints);
 }
 
 bool Server::Start(std::wstring& outReason) {
@@ -350,11 +128,13 @@ bool Server::Start(std::wstring& outReason) {
     // can still be publishing MediaItems when Start() runs on a second
     // thread moments later, and Start()'s ResetForRescan() call wipes the
     // catalog out from under it. See F-CRASH-01.
-    std::lock_guard<std::mutex> startScanLock(m_rescanMutex);
-    AppMedia.ResetForRescan();
-    AppContent.ClearSearchCache();
-    m_initialScanComplete.store(true, std::memory_order_release);
-    m_initialScanInProgress.store(true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> startScanLock(m_rescanMutex);
+        AppMedia.ResetForRescan();
+        AppContent.ClearSearchCache();
+        m_initialScanComplete.store(true, std::memory_order_release);
+        m_initialScanInProgress.store(true, std::memory_order_release);
+    }
 
     if (!HttpServer::Get().Start(cfg.port)) {
         LogPrint(L"Failed to start HTTP server.");
@@ -392,67 +172,3 @@ bool Server::Start(std::wstring& outReason) {
     return true;
 }
 
-bool Server::Rescan() {
-    // serialize the whole reset then scan sequence per caller
-    // two overlapping Rescan calls must not let one caller reset the
-    // published item tree while another caller is still publishing into
-    // it from a scan that has not finished yet
-    std::lock_guard<std::mutex> rescanLock(m_rescanMutex);
-    AppScanCancel.BeginScan();
-    AppMedia.ResetForRescan();
-    AppContent.ClearSearchCache();
-    if (m_running.load(std::memory_order_acquire)) {
-        // StartBackgroundScan only launches the scan thread and returns
-        // Rescan must not report completion until the scan is done
-        // JoinBackgroundScan blocks this call until that thread finishes
-        // every caller of Rescan already runs on its own worker thread
-        // see MainWindow::BeginRescan so this never blocks the UI thread
-        StartBackgroundScan();
-        JoinBackgroundScan();
-    } else {
-        AppMedia.Scan();
-    }
-    StopDirectoryWatcher();
-    StartDirectoryWatcher();
-    return true;
-}
-
-void Server::Stop() {
-    if (!m_running.exchange(false, std::memory_order_acq_rel)) return;
-    m_stopping.store(true, std::memory_order_release);
-    AppScanCancel.RequestCancel();
-
-    LogPrint(L"Stopping server");
-
-    // Join the post-scan completion hook (see Start()) before anything
-    // else. That hook calls StartWatchMode() as its last step; joining it
-    // here guarantees StartWatchMode() has either already run or will
-    // never run before StopWatchMode() below executes, so there is no
-    // window where StopWatchMode() finds no watch thread yet, returns,
-    // and then StartWatchMode() creates one that nothing will ever stop.
-    if (m_scanCompletionThread.joinable()) {
-        m_scanCompletionThread.join();
-    }
-
-    StopWatchMode();
-    StopNetworkChangeWatcher();
-    StopDirectoryWatcher();
-    SSDP::Get().Stop();
-    HttpServer::Get().Stop();
-    JoinBackgroundScan();
-
-    // A runtime --source override is scoped to a single "on" session. Once
-    // the server is fully stopped, the next Start() (manual or automatic)
-    // must serve config.ini's sources again, not a stale override. Phase 3
-    // depends on this: an incoming interrupt-restart calls Stop() first,
-    // which clears whatever override was active, and only then sets the
-    // NEW override before Start() -- so ordering here matters for both
-    // features and must not be changed independently of Phase 3.
-    AppConfig.ClearRuntimeSourceOverride();
-
-    {
-        std::lock_guard<std::mutex> lock(m_endpointMutex);
-        m_endpoint = L"";
-        m_endpoints.clear();
-    }
-}

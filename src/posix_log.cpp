@@ -35,10 +35,12 @@ std::wstring TimestampPrefix() {
                   ts.tv_nsec / 1000000);
     return buffer;
 }
-}
 
 std::FILE* g_debugLogFile = nullptr;
 std::string g_debugLogPath;
+std::mutex g_debugFileMutex;
+}
+
 std::atomic<bool> g_consoleEchoEnabled(false);
 
 void SetConsoleEchoEnabled(bool enabled) {
@@ -97,27 +99,17 @@ void LogPrint(const wchar_t* fmt, ...) {
     // workers stalled in LogPrint while the echo thread was blocked in
     // fflush(stderr).
     if (g_consoleEchoEnabled.load(std::memory_order_relaxed)) {
-        std::fwprintf(stderr, L"%ls\n", line.c_str());
-        std::fflush(stderr);
+        std::fwprintf(stdout, L"%ls\n", line.c_str());
+        std::fflush(stdout);
     }
     if (writeDebugLog) {
+        std::lock_guard<std::mutex> fileLock(g_debugFileMutex);
         std::FILE* file = GetDebugLogFile();
         if (file) {
             std::fprintf(file, "%s\n", WideToUtf8(line).c_str());
             std::fflush(file);
         }
     }
-}
-
-std::wstring GetSystemLog() {
-    std::lock_guard<std::mutex> lock(g_logMutex);
-    std::wstring result;
-    result.reserve(g_lines.size() * 128);
-    for (const auto& entry : g_lines) {
-        result += entry.second;
-        result += L"\n";
-    }
-    return result;
 }
 
 LogSnapshot GetSystemLogSince(unsigned long long sinceSequence) {

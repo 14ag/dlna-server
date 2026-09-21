@@ -250,6 +250,14 @@ bool HttpServer::Start(int port) {
     } lifecycleGuard{ m_lifecycleBusy };
 
     if (m_running) return true;
+    if (m_wakeupReadFd < 0 || m_wakeupWriteFd < 0) {
+        int fds[2];
+        if (pipe(fds) == 0) {
+            m_wakeupReadFd = fds[0];
+            m_wakeupWriteFd = fds[1];
+            fcntl(m_wakeupReadFd, F_SETFL, fcntl(m_wakeupReadFd, F_GETFL) | O_NONBLOCK);
+        }
+    }
     m_listenSocketV4 = CreateListenSocket(AF_INET, port);
     m_listenSocketV6 = CreateListenSocket(AF_INET6, port);
     if (m_listenSocketV4 < 0 && m_listenSocketV6 < 0) return false;

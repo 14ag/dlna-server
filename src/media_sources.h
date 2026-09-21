@@ -56,9 +56,6 @@ struct PendingPlaylistNode {
 };
 
 struct MediaIndexState {
-    std::vector<MediaItem> items;
-    std::unordered_map<int, size_t> idToIndex;
-    std::unordered_map<int, std::vector<size_t>> childrenByParent;
     std::unordered_map<std::wstring, int> containerKeys;
     std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> folderAlbumArt;
     std::unordered_map<std::wstring, std::pair<std::wstring, std::wstring>> perStemAlbumArt;
@@ -70,7 +67,7 @@ struct MediaIndexState {
     std::unordered_set<std::wstring> duplicateKeys;
     MediaDatabase* mediaDatabase = nullptr;
 
-    std::unique_ptr<std::mutex> mutationMutex = std::make_unique<std::mutex>();
+    std::mutex mutationMutex;
 };
 
 constexpr int kMaxPlaylistRecursionDepth = 8;
@@ -135,6 +132,10 @@ std::shared_mutex m_mutex;   // was: std::mutex m_mutex;
     std::atomic<int> m_systemUpdateId;
     // bumped once per ResetForRescan call never reset never decremented
     int m_currentGeneration = 0;
+    // batch mode counter incremented around a source scan; when non-zero
+    // PublishItem/PublishContainer skip NotifySystemUpdateId and one
+    // notification is issued when it returns to zero in Scan()
+    std::atomic<int> m_publishBatchDepth{0};
 };
 
 // Owns everything needed to scan one top-level media source's playlist/HLS

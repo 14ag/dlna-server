@@ -93,8 +93,8 @@ std::string MakeSystemUpdateBody(int updateId) {
 }
 
 std::string MakeSid(unsigned long long counter) {
-    std::random_device random;
-    unsigned int parts[4] = { random(), random(), random(), random() };
+    static thread_local std::mt19937 generator(std::random_device{}());
+    unsigned int parts[4] = { generator(), generator(), generator(), generator() };
     std::ostringstream ss;
     ss << "uuid:" << std::hex << std::setfill('0')
        << std::setw(8) << parts[0] << "-"
@@ -355,11 +355,12 @@ void UpnpEventManager::WorkerLoop() {
 }
 
 void UpnpEventManager::SendNotifyJob(const NotifyJob& job) {
-    CURL* curl = curl_easy_init();
+    static thread_local CURL* curl = curl_easy_init();
     if (!curl) {
         LogPrint(L"GENA notify failed: libcurl handle creation failed.");
         return;
     }
+    curl_easy_reset(curl);
 
     struct curl_slist* headers = nullptr;
     const std::string contentType = "Content-Type: text/xml; charset=\"utf-8\"";
@@ -395,5 +396,4 @@ void UpnpEventManager::SendNotifyJob(const NotifyJob& job) {
         ExpireSubscription(job.sid);
     }
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
 }

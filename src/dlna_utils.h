@@ -77,6 +77,9 @@ std::wstring Utf8ToWide(const std::string& value);
 std::wstring BuildQuotedCommaList(const std::vector<std::wstring>& values);
 std::vector<std::wstring> ParseQuotedCommaList(const std::wstring& text);
 
+// Reads a file as raw bytes. Returns empty string on failure.
+std::string ReadWholeFileBinary(const std::wstring& path);
+
 // decodes the old pipe delimited MediaSources format from before this change
 // only used once per config file during Load if the new parser finds nothing
 // and the raw text still contains an unescaped pipe character

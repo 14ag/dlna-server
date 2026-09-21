@@ -14,6 +14,7 @@ static std::mutex g_logMutex;
 static FILE* g_debugLogFile = NULL;
 static std::wstring g_debugLogPath;
 const size_t MAX_LOG_LINES = 1000;
+static std::mutex g_debugFileMutex;
 static std::atomic<bool> g_consoleEchoEnabled(false);
 
 void SetConsoleEchoEnabled(bool enabled) {
@@ -92,6 +93,7 @@ void LogPrint(const wchar_t* fmt, ...) {
     // (e.g. a captured pipe) can never pin the log mutex and stall every
     // other logging thread.
     if (writeDebugLog) {
+        std::lock_guard<std::mutex> fileLock(g_debugFileMutex);
         FILE* fp = GetDebugLogFile();
         if (fp) {
             fwprintf(fp, L"%s", line.c_str());
@@ -102,16 +104,6 @@ void LogPrint(const wchar_t* fmt, ...) {
         fwprintf(stdout, L"%ls", line.c_str());
         fflush(stdout);
     }
-}
-
-std::wstring GetSystemLog() {
-    std::lock_guard<std::mutex> lock(g_logMutex);
-    std::wstring res;
-    res.reserve(g_logLines.size() * 128);
-    for (const auto& entry : g_logLines) {
-        res += entry.second;
-    }
-    return res;
 }
 
 LogSnapshot GetSystemLogSince(unsigned long long sinceSequence) {

@@ -470,22 +470,23 @@ long GetRoutableHostUrlRecomputeCountForTest() {
 }
 
 std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
-    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
-    if (!g_routableHostCacheValid || g_routableHostCachedPort != port) {
-        ++g_routableHostRecomputeCount;
-        g_routableHostCached.clear();
-        std::vector<NetworkEndpoint> endpoints;
-        if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
-            for (const auto& ep : endpoints) {
-                // first non link local endpoint is the best routable address
-                if (!ep.isLinkLocal) {
-                    g_routableHostCached = ep.address + ":" + std::to_string(port);
-                    break;
-                }
-            }
+    {
+        std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+        if (g_routableHostCacheValid && g_routableHostCachedPort == port) {
+            return g_routableHostCached;
         }
-        g_routableHostCachedPort = port;
-        g_routableHostCacheValid = true;
     }
+    std::string computed;
+    std::vector<NetworkEndpoint> endpoints;
+    if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
+        for (const auto& ep : endpoints) {
+            if (!ep.isLinkLocal) { computed = ep.address + ":" + std::to_string(port); break; }
+        }
+    }
+    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+    ++g_routableHostRecomputeCount;
+    g_routableHostCached = computed;
+    g_routableHostCachedPort = port;
+    g_routableHostCacheValid = true;
     return g_routableHostCached;
 }

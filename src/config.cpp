@@ -111,12 +111,8 @@ int ParseIntOrDefault(const std::unordered_map<std::string, std::string>& values
     if (it == values.end() || it->second.empty()) {
         return defaultValue;
     }
-
-    try {
-        return std::stoi(it->second);
-    } catch (...) {
-        return defaultValue;
-    }
+    int parsed = 0;
+    return TryParseIntStrict(TrimAscii(it->second), parsed) ? parsed : defaultValue;
 }
 
 std::wstring DefaultServerName() {
@@ -383,5 +379,11 @@ void Config::Save() {
         LogPrint(L"Config save failed: %ls", path.c_str());
     }
 
-    SetRunOnBoot(runOnBootLocal);
+    static bool s_lastAppliedRunOnBoot = false;
+    static bool s_hasAppliedRunOnBoot = false;
+    if (!s_hasAppliedRunOnBoot || s_lastAppliedRunOnBoot != runOnBootLocal) {
+        SetRunOnBoot(runOnBootLocal);
+        s_lastAppliedRunOnBoot = runOnBootLocal;
+        s_hasAppliedRunOnBoot = true;
+    }
 }
