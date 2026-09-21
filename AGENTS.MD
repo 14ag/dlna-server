@@ -56,7 +56,7 @@ python -m pytest -v --tb=no 2>&1 | Select-String -Pattern " FAILED | ERROR | SKI
 or
 
 ```bash
-python3 -m pytest -v --tb=no 2>&1 | grep -E '(^|[[:space:]])(FAILED|ERROR|SKIP)([[:space:]]|$)'
+python3 -m pytest -v --tb=no 2>&1 | tee >(result=$(grep "100"); if [ -n "$result" ]; then top -b -n 1 | grep "dlna-server" | awk '{print $1}' | xargs kill -9; fi) | grep -E '(^|[[:space:]])(FAILED|ERROR|SKIP)([[:space:]]|$)'
 
 ```
 when executing the full test suite so as to filter out passed tests and see failed tests only.
