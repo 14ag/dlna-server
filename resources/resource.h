@@ -23,6 +23,7 @@
 #define IDC_CHK_RUN_ON_BOOT             401
 #define IDC_CHK_DEFAULT_PLAYLIST        402
 #define IDC_BTN_DEFAULT_PLAYLIST_ADD    403
+// IDs 404 and 405 were retired and are intentionally left unused
 #define IDC_CHK_ADD_ARTIST_ALBUM        406
 #define IDC_CHK_HIDE_ALL_MEDIA          407
 #define IDC_CHK_FLAT_FOLDERS            408
@@ -33,10 +34,8 @@
 #define IDC_CHK_BACKGROUND_SCAN         421
 #define IDC_EDT_SERVER_NAME             413
 #define IDC_EDT_PORT                    414
-#define IDC_EDT_FILESERVER_PORT         415
 #define IDC_EDT_IP_WHITELIST            416
 #define ID_MENU_LOGS                    417
-#define IDC_BTN_RESTART                 418
 #define ID_MENU_HELP                    419
 
 // Log Dialog Controls

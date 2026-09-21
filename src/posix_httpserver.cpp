@@ -482,14 +482,120 @@ ScopedFd client(clientSocket);
                         continue;
                     }
                     if (IsRemoteMediaUrl(item.path)) {
-                    long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
-                    std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
-                    bool hasKnownSize = fileSize > 0;
-                    HttpByteRange parsedRange;
+                        long long fileSize = item.sizeBytes > 0 ? item.sizeBytes : ProbeRemoteContentLength(item.path);
+                        std::string rangeHeader = FindHeaderValueCaseInsensitive(req, "Range");
+                        bool hasKnownSize = fileSize > 0;
+                        HttpByteRange parsedRange;
+                        if (hasKnownSize) {
+                            parsedRange = ParseHttpRangeHeader(rangeHeader, fileSize);
+                            if (!parsedRange.satisfiable) {
+                                SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(fileSize) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                                return;
+                            }
+                        }
+
+                        bool partial = hasKnownSize && parsedRange.requested;
+                        long long start = hasKnownSize ? parsedRange.start : 0;
+                        long long end = hasKnownSize ? parsedRange.end : 0;
+                        long long bodyLength = hasKnownSize ? (end - start + 1) : 0;
+                        std::stringstream headers;
+                        headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
+                        if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << fileSize << "\r\n";
+                        headers << "Content-Type: " << WideToUtf8(item.mimeType) << "\r\n";
+                    
+                        bool spoofSamsung = false;
+                        if (!hasKnownSize) {
+                            std::string ua = FindHeaderValueCaseInsensitive(req, "User-Agent");
+                            if (ua.empty() || ua.find("SEC_HHP_") != std::string::npos) {
+                                spoofSamsung = true;
+                            }
+                        }
+
+                        if (hasKnownSize) {
+                            headers << "Content-Length: " << bodyLength << "\r\n"
+                                    << "Accept-Ranges: bytes\r\n";
+                        } else if (spoofSamsung) {
+                            headers << "Content-Length: 1073741824\r\n"
+                                    << "Accept-Ranges: none\r\n";
+                        } else {
+                            headers << "Accept-Ranges: none\r\n";
+                        }
+                        headers << ConnectionHeader(keepAlive)
+                                << "transferMode.dlna.org: Streaming\r\n"
+                                << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize) << "\r\n";
+
+                        std::vector<std::string> proxyReqHeaders;
+                        if (FindHeaderValueCaseInsensitive(req, "Icy-MetaData") == "1") {
+                            proxyReqHeaders.push_back("Icy-MetaData: 1");
+                        }
+
+                        if (method != "GET") {
+                            headers << "\r\n";
+                            SendAll(clientSocket, headers.str());
+                            if (!keepAlive) return;
+                            continue;
+                        }
+
+                        SetSocketStreamTimeouts(clientSocket);
+                        bool headersSent = false;
+                        std::string baseHeaders = headers.str();
+
+                        auto onRemoteHeader = [&](const std::string& key, const std::string& value) {
+                            if (headersSent) return;
+                            if (key.empty() && value.empty()) {
+                                baseHeaders += "\r\n";
+                                SendAll(clientSocket, baseHeaders);
+                                headersSent = true;
+                                return;
+                            }
+                            std::string lowerKey = ToLowerAscii(key);
+                            if (lowerKey.find("icy-") == 0) {
+                                baseHeaders += key + ": " + value + "\r\n";
+                            }
+                        };
+
+                        bool remoteOk = StreamRemoteContent(item.path, partial, start, end, [&](const char* data, size_t length) {
+                            if (!headersSent) {
+                                baseHeaders += "\r\n";
+                                SendAll(clientSocket, baseHeaders);
+                                headersSent = true;
+                            }
+                            const char* p = data;
+                            size_t remaining = length;
+                            while (remaining > 0) {
+                                ssize_t sent = send(clientSocket, p, remaining, MSG_NOSIGNAL);
+                                if (sent <= 0) return false;
+                                p += sent;
+                                remaining -= static_cast<size_t>(sent);
+                            }
+                            return m_running.load();
+                        }, proxyReqHeaders, onRemoteHeader);
+                    
+                        if (!headersSent) {
+                            baseHeaders += "\r\n";
+                            SendAll(clientSocket, baseHeaders);
+                        }
+
+                        if (!remoteOk || !keepAlive) return;
+                        continue;
+                    }
+                    ScopedFd fd(open(WideToUtf8(item.path).c_str(), O_RDONLY));
+                    if (fd.get() < 0) {
+                        SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                        return;
+                    }
+                    struct stat st{};
+                    if (fstat(fd.get(), &st) != 0) {
+                        SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                        return;
+                    }
+
+                    bool hasKnownSize = st.st_size > 0;
+                    HttpByteRange parsedRange{};
                     if (hasKnownSize) {
-                        parsedRange = ParseHttpRangeHeader(rangeHeader, fileSize);
+                        parsedRange = ParseHttpRangeHeader(FindHeaderValueCaseInsensitive(req, "Range"), static_cast<long long>(st.st_size));
                         if (!parsedRange.satisfiable) {
-                            SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(fileSize) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                            SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(static_cast<long long>(st.st_size)) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
                             return;
                         }
                     }
@@ -500,141 +606,33 @@ ScopedFd client(clientSocket);
                     long long bodyLength = hasKnownSize ? (end - start + 1) : 0;
                     std::stringstream headers;
                     headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
-                    if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << fileSize << "\r\n";
+                    if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << static_cast<long long>(st.st_size) << "\r\n";
                     headers << "Content-Type: " << WideToUtf8(item.mimeType) << "\r\n";
-                    
-                    bool spoofSamsung = false;
-                    if (!hasKnownSize) {
-                        std::string ua = FindHeaderValueCaseInsensitive(req, "User-Agent");
-                        if (ua.empty() || ua.find("SEC_HHP_") != std::string::npos) {
-                            spoofSamsung = true;
-                        }
-                    }
 
                     if (hasKnownSize) {
                         headers << "Content-Length: " << bodyLength << "\r\n"
                                 << "Accept-Ranges: bytes\r\n";
-                    } else if (spoofSamsung) {
-                        headers << "Content-Length: 1073741824\r\n"
-                                << "Accept-Ranges: none\r\n";
                     } else {
                         headers << "Accept-Ranges: none\r\n";
                     }
                     headers << ConnectionHeader(keepAlive)
                             << "transferMode.dlna.org: Streaming\r\n"
-                            << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, hasKnownSize) << "\r\n";
-
-                    std::vector<std::string> proxyReqHeaders;
-                    if (FindHeaderValueCaseInsensitive(req, "Icy-MetaData") == "1") {
-                        proxyReqHeaders.push_back("Icy-MetaData: 1");
-                    }
-
-                    if (method != "GET") {
-                        headers << "\r\n";
-                        SendAll(clientSocket, headers.str());
+                            << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n";
+                    SendAll(clientSocket, headers.str());
+                    if (!sendBody) {
+                        // head request the headers above are the full
+                        // response never fall through past this point or a
+                        // second unrelated response gets appended on the
+                        // same connection see rfc 7230 section 4 3 2
                         if (!keepAlive) return;
                         continue;
                     }
-
-                    SetSocketStreamTimeouts(clientSocket);
-                    bool headersSent = false;
-                    std::string baseHeaders = headers.str();
-
-                    auto onRemoteHeader = [&](const std::string& key, const std::string& value) {
-                        if (headersSent) return;
-                        if (key.empty() && value.empty()) {
-                            baseHeaders += "\r\n";
-                            SendAll(clientSocket, baseHeaders);
-                            headersSent = true;
-                            return;
-                        }
-                        std::string lowerKey = ToLowerAscii(key);
-                        if (lowerKey.find("icy-") == 0) {
-                            baseHeaders += key + ": " + value + "\r\n";
-                        }
-                    };
-
-                    bool remoteOk = StreamRemoteContent(item.path, partial, start, end, [&](const char* data, size_t length) {
-                        if (!headersSent) {
-                            baseHeaders += "\r\n";
-                            SendAll(clientSocket, baseHeaders);
-                            headersSent = true;
-                        }
-                        const char* p = data;
-                        size_t remaining = length;
-                        while (remaining > 0) {
-                            ssize_t sent = send(clientSocket, p, remaining, MSG_NOSIGNAL);
-                            if (sent <= 0) return false;
-                            p += sent;
-                            remaining -= static_cast<size_t>(sent);
-                        }
-                        return m_running.load();
-                    }, proxyReqHeaders, onRemoteHeader);
-                    
-                    if (!headersSent) {
-                        baseHeaders += "\r\n";
-                        SendAll(clientSocket, baseHeaders);
-                    }
-
-                    if (!remoteOk || !keepAlive) return;
-                    continue;
-                }
-                ScopedFd fd(item.id == -1 ? -1 : open(WideToUtf8(item.path).c_str(), O_RDONLY));
-                if (fd.get() < 0) {
-                    SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                    return;
-                }
-                struct stat st{};
-                if (fstat(fd.get(), &st) != 0) {
-                    SendAll(clientSocket, "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                    return;
-                }
-
-                bool hasKnownSize = st.st_size > 0;
-                HttpByteRange parsedRange{};
-                if (hasKnownSize) {
-                    parsedRange = ParseHttpRangeHeader(FindHeaderValueCaseInsensitive(req, "Range"), static_cast<long long>(st.st_size));
-                    if (!parsedRange.satisfiable) {
-                        SendAll(clientSocket, "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + std::to_string(static_cast<long long>(st.st_size)) + "\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
-                        return;
-                    }
-                }
-
-                bool partial = hasKnownSize && parsedRange.requested;
-                long long start = hasKnownSize ? parsedRange.start : 0;
-                long long end = hasKnownSize ? parsedRange.end : 0;
-                long long bodyLength = hasKnownSize ? (end - start + 1) : 0;
-                std::stringstream headers;
-                headers << "HTTP/1.1 " << (partial ? "206 Partial Content" : "200 OK") << "\r\n";
-                if (partial) headers << "Content-Range: bytes " << start << "-" << end << "/" << static_cast<long long>(st.st_size) << "\r\n";
-                headers << "Content-Type: " << WideToUtf8(item.mimeType) << "\r\n";
-
-                if (hasKnownSize) {
-                    headers << "Content-Length: " << bodyLength << "\r\n"
-                            << "Accept-Ranges: bytes\r\n";
-                } else {
-                    headers << "Accept-Ranges: none\r\n";
-                }
-                headers << ConnectionHeader(keepAlive)
-                        << "transferMode.dlna.org: Streaming\r\n"
-                        << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n";
-                SendAll(clientSocket, headers.str());
-                if (!sendBody) {
-                    // head request the headers above are the full
-                    // response never fall through past this point or a
-                    // second unrelated response gets appended on the
-                    // same connection see rfc 7230 section 4 3 2
-                    if (!keepAlive) return;
-                    continue;
-                }
-                if (method == "GET") {
                     SetSocketStreamTimeouts(clientSocket);
                     if (!TrySendFile(clientSocket, fd.get(), start, static_cast<size_t>(bodyLength))) return;
                     if (!keepAlive) return;
                     continue;
                 }
             }
-}
 
             if (path.rfind("/subtitle/", 0) == 0) {
                 int mediaId = -1;
