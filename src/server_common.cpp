@@ -202,6 +202,19 @@ void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
     m_endpoints = std::move(endpoints);
 }
 
+// true when not running since nothing can be unexpectedly wrong
+// while running both reachable components must still be alive
+bool Server::IsHealthy() const {
+    if (!m_running.load(std::memory_order_acquire)) return true;
+    return HttpServer::Get().IsHealthy() && SSDP::Get().IsHealthy();
+}
+
+// snapshot copy under the endpoint mutex for hook and start callers
+std::vector<NetworkEndpoint> Server::GetEndpoints() const {
+    std::lock_guard<std::mutex> lock(m_endpointMutex);
+    return m_endpoints;
+}
+
 bool Server::Rescan() {
     std::lock_guard<std::mutex> rescanLock(m_rescanMutex);
     AppScanCancel.BeginScan();

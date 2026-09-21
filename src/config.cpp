@@ -136,7 +136,7 @@ Config& Config::Get() {
     return instance;
 }
 
-Config::Config() : port(8200), fileServerPort(8201), flatFolderStyle(false), showFileNamesInsteadOfTitles(false),
+Config::Config() : port(8200), flatFolderStyle(false), showFileNamesInsteadOfTitles(false),
     proxyStreams(false), sortByTitle(false), doNotShowAllMediaFolders(false), addArtistAlbumFolders(false),
     debugLog(false),
     deviceManufacturer(L"dlna-server contributors"),
@@ -152,7 +152,6 @@ ConfigSnapshot Config::Snapshot() const {
     return ConfigSnapshot{
         serverName,
         port,
-        fileServerPort,
         flatFolderStyle,
         showFileNamesInsteadOfTitles,
         proxyStreams,
@@ -277,7 +276,8 @@ void Config::Load() {
     }
 
     port = ParsePortOrDefault(values, "Port", 8200);
-    fileServerPort = ParsePortOrDefault(values, "FileServerPort", 8201);
+    // Dead key kept readable so old config files still load
+    ParsePortOrDefault(values, "FileServerPort", 8201);
     flatFolderStyle = ParseIntOrDefault(values, "FlatFolderStyle", 0) != 0;
     showFileNamesInsteadOfTitles = ParseIntOrDefault(values, "ShowFileNamesInsteadOfTitles", 0) != 0;
     proxyStreams = ParseIntOrDefault(values, "ProxyStreams", 0) != 0;
@@ -340,7 +340,6 @@ void Config::Save() {
     ss << "[Settings]\n";
     ss << "ServerName=" << WideToUtf8(serverName) << "\n";
     ss << "Port=" << port << "\n";
-    ss << "FileServerPort=" << fileServerPort << "\n";
     ss << "FlatFolderStyle=" << (flatFolderStyle ? 1 : 0) << "\n";
     ss << "ShowFileNamesInsteadOfTitles=" << (showFileNamesInsteadOfTitles ? 1 : 0) << "\n";
     ss << "ProxyStreams=" << (proxyStreams ? 1 : 0) << "\n";

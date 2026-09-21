@@ -88,6 +88,8 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
     std::pair<std::wstring, std::wstring> stemCacheValue;
     bool folderCacheKnown = false;
     std::pair<std::wstring, std::wstring> folderCacheValue;
+    bool namesKnown = false;
+    std::unordered_set<std::wstring> namesCopy;
     {
         std::lock_guard<std::mutex> lock(state.mutationMutex);
         auto stemCached = state.perStemAlbumArt.find(stemKey);
@@ -99,6 +101,11 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
         if (folderCached != state.folderAlbumArt.end()) {
             folderCacheKnown = true;
             folderCacheValue = folderCached->second;
+        }
+        auto namesCached = state.folderFileNames.find(folder);
+        if (namesCached != state.folderFileNames.end()) {
+            namesKnown = true;
+            namesCopy = namesCached->second;
         }
     }
 
@@ -145,16 +152,26 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
         return;
     }
 
+    if (!namesKnown) {
+        // Unlocked listing same rationale as the stat calls above
+        // one directory read replaces one stat per candidate name
+        // the write below stays idempotent like the stem cache write
+        std::vector<FsDirEntry> entries;
+        FsListDirectory(folder, entries);
+        for (const auto& entry : entries) {
+            if (!entry.isDirectory) namesCopy.insert(ToLowerWide(entry.name));
+        }
+    }
     for (const auto& candidate : BuildAlbumArtCandidateNames(L"")) {
-        std::wstring candidatePath = folder + kPathSeparator + candidate.fileName;
-        if (FsIsRegularFile(candidatePath)) {
-            folderCacheValue = { candidatePath, candidate.mimeType };
+        if (namesCopy.find(ToLowerWide(candidate.fileName)) != namesCopy.end()) {
+            folderCacheValue = { folder + kPathSeparator + candidate.fileName, candidate.mimeType };
             break;
         }
     }
     {
         std::lock_guard<std::mutex> lock(state.mutationMutex);
         state.folderAlbumArt[folder] = folderCacheValue;
+        if (!namesKnown) state.folderFileNames[folder] = namesCopy;
     }
     item.albumArtPath = folderCacheValue.first;
     item.albumArtMime = folderCacheValue.second;
@@ -587,7 +604,7 @@ void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx,
 }
 
 void MediaSources::ScanNetworkFolder(std::shared_ptr<PlaylistScanContext> sourceContext, const std::wstring& folderUrl, int parentId, int depth) {
-    if (depth > 8 || AppScanCancel.IsCancelled()) {
+    if (depth > kMaxNetworkFolderDepth || AppScanCancel.IsCancelled()) {
         if (AppScanCancel.IsCancelled()) {
             LogPrint(L"[media:cancelled] Network folder scan cancelled: %ls", RedactUrlForLog(folderUrl).c_str());
         } else {
@@ -621,7 +638,7 @@ void MediaSources::ScanNetworkFolder(std::shared_ptr<PlaylistScanContext> source
 }
 
 void MediaSources::ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext, const std::wstring& rootPath, int parentId, int depth) {
-    if (depth > 64 || AppScanCancel.IsCancelled()) {
+    if (depth > kMaxLocalFolderDepth || AppScanCancel.IsCancelled()) {
         if (AppScanCancel.IsCancelled()) {
             LogPrint(L"[media:cancelled] Folder scan cancelled: %ls", rootPath.c_str());
         } else {

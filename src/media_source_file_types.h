@@ -29,6 +29,8 @@ inline std::vector<std::wstring> GetMediaSourceFileExtensions() {
         L"oga", L"opus", L"aiff", L"aif", L"ac3", L"dts",
         // Playlists (mirrors network_sources.h IsPlaylistSourcePath)
         L"m3u", L"m3u8", L"pls",
+        // Image (mirrors dlna_utils.cpp kFormats image entries)
+        L"jpg", L"png", L"gif", L"bmp", L"tif", L"webp",
     };
 }
 
