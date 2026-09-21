@@ -71,6 +71,8 @@ struct MediaIndexState {
 };
 
 constexpr int kMaxPlaylistRecursionDepth = 8;
+constexpr int kMaxLocalFolderDepth = 64;
+constexpr int kMaxNetworkFolderDepth = 8;
 
 class MediaSources {
 public:

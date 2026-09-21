@@ -181,7 +181,6 @@ Config& Config::Get() {
 Config::Config()
     : serverName(DefaultServerName()),
       port(8200),
-      fileServerPort(8201),
       flatFolderStyle(false),
       showFileNamesInsteadOfTitles(false),
       proxyStreams(false),
@@ -205,7 +204,6 @@ ConfigSnapshot Config::Snapshot() const {
     return ConfigSnapshot{
         serverName,
         port,
-        fileServerPort,
         flatFolderStyle,
         showFileNamesInsteadOfTitles,
         proxyStreams,
@@ -326,7 +324,8 @@ void Config::Load() {
         const std::string value = line.substr(eq + 1);
         if (key == "ServerName") serverName = Utf8ToWide(value);
         else if (key == "Port") port = ParsePortOrDefault(value, port);
-        else if (key == "FileServerPort") fileServerPort = ParsePortOrDefault(value, fileServerPort);
+        // Dead key kept readable so old config files still load
+        else if (key == "FileServerPort") ParsePortOrDefault(value, 8201);
         else if (key == "FlatFolderStyle") flatFolderStyle = ParseIntOrDefault(value, 0) != 0;
         else if (key == "ShowFileNamesInsteadOfTitles") showFileNamesInsteadOfTitles = ParseIntOrDefault(value, 0) != 0;
         else if (key == "ProxyStreams") proxyStreams = ParseIntOrDefault(value, 0) != 0;
@@ -387,7 +386,6 @@ void Config::Save() {
     out << "[Settings]\n";
     out << "ServerName=" << WideToUtf8(serverName) << "\n";
     out << "Port=" << port << "\n";
-    out << "FileServerPort=" << fileServerPort << "\n";
     out << "FlatFolderStyle=" << (flatFolderStyle ? 1 : 0) << "\n";
     out << "ShowFileNamesInsteadOfTitles=" << (showFileNamesInsteadOfTitles ? 1 : 0) << "\n";
     out << "ProxyStreams=" << (proxyStreams ? 1 : 0) << "\n";
