@@ -16,7 +16,6 @@ struct MediaSource {
 struct ConfigSnapshot {
     std::wstring serverName;
     int port;
-    int fileServerPort;
     bool flatFolderStyle;
     bool showFileNamesInsteadOfTitles;
     bool proxyStreams;
@@ -87,7 +86,6 @@ public:
     // Properties
     std::wstring serverName;
     int port;
-    int fileServerPort;
     bool flatFolderStyle;
     bool showFileNamesInsteadOfTitles;
     bool proxyStreams;

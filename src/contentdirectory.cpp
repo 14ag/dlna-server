@@ -316,8 +316,9 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
     const bool includeAlbumArt = ApplyDidlFilter(filter, "upnp:albumArtURI");
     const bool includeResource = ApplyDidlFilter(filter, "res");
     const bool includeDate = ApplyDidlFilter(filter, "dc:date");
-    std::string didl = "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" xmlns:dlna=\"urn:schemas-dlna-org:metadata-1-0/\" xmlns:sec=\"http://www.sec.co.kr/dlna\">";
+    std::string didl;
     didl.reserve(256 + (static_cast<size_t>((std::max)(0, requested)) * 512));
+    didl.append("<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" xmlns:dlna=\"urn:schemas-dlna-org:metadata-1-0/\" xmlns:sec=\"http://www.sec.co.kr/dlna\">");
     std::ostringstream entry;
     for (int i = safeStart; i < static_cast<int>(items.size()) && returnCount < requested; ++i) {
         const auto& it = items[i];

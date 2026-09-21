@@ -5,11 +5,10 @@
 #include <cstddef>
 #include <vector>
 
-// Pure, platform-free ownership stack for "which subwindow currently owns the
-// modal focus chain". No Win32 and no GTK types, so both front ends share one
-// implementation and one CLI-testable behaviour. Mirrors the extraction pattern
-// already used by source_list_focus.h, close_pending_state.h and
-// server_close_policy.h.
+// Pure platform free ownership stack for which subwindow currently owns the
+// modal focus chain No Win32 and no GTK types Only the GTK front end uses it
+// in production plus the shared CLI test hook Mirrors the extraction pattern
+// already used by the other small policy headers
 //
 // Win32 gets modality from EnableWindow(owner, FALSE) plus the
 // ModalFocusSnapshot save/restore in modal_focus.h; GTK4 gets it from

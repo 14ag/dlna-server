@@ -14,46 +14,6 @@ function(dlna_enable_warnings target_name)
     endif()
 endfunction()
 
-find_package(ZLIB)
-
-# Some CMake configurations provide ZLIB via imported targets instead of
-# setting ZLIB_FOUND. Treat either as success.
-if(NOT (ZLIB_FOUND OR TARGET ZLIB::ZLIB))
-    # Try to locate zlib in common vcpkg locations (helpful on Windows)
-    if(DEFINED ENV{VCPKG_ROOT})
-        set(_vcpkg_root $ENV{VCPKG_ROOT})
-    elseif(EXISTS "${CMAKE_SOURCE_DIR}/../vcpkg")
-        set(_vcpkg_root "${CMAKE_SOURCE_DIR}/../vcpkg")
-    elseif(EXISTS "C:/vcpkg")
-        set(_vcpkg_root "C:/vcpkg")
-    endif()
-
-    if(DEFINED _vcpkg_root)
-        file(GLOB _zlibs "${_vcpkg_root}/installed/*/lib/zlib.lib" "${_vcpkg_root}/installed/*/lib/zlibstatic.lib")
-        if(_zlibs)
-            list(GET _zlibs 0 _zlib_lib)
-            get_filename_component(_triplet_dir "${_zlib_lib}" DIRECTORY)
-            get_filename_component(_triplet_name "${_triplet_dir}" NAME)
-            set(ZLIB_LIBRARY "${_zlib_lib}")
-            set(ZLIB_INCLUDE_DIR "${_vcpkg_root}/installed/${_triplet_name}/include")
-            find_package(ZLIB REQUIRED)
-        endif()
-    endif()
-
-    if(NOT ZLIB_FOUND)
-        message(FATAL_ERROR "Could NOT find ZLIB (missing: ZLIB_LIBRARY ZLIB_INCLUDE_DIR)\n\n"
-            "Common fixes:\n"
-            "  - If you use vcpkg (recommended), install zlib for your triplet and re-run CMake:\n"
-            "      from vcpkg root: .\\vcpkg install zlib:x64-windows\n"
-            "      then configure CMake with the vcpkg toolchain file:\n"
-            "      cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake\n\n"
-            "  - Or point CMake directly to an installed zlib:\n"
-            "      -DZLIB_INCLUDE_DIR=\"C:/path/to/zlib/include\" -DZLIB_LIBRARY=\"C:/path/to/zlib/lib/zlib.lib\"\n")
-    endif()
-endif()
-if(TARGET ZLIB::ZLIBSTATIC AND NOT TARGET ZLIB::ZLIB)
-    add_library(ZLIB::ZLIB ALIAS ZLIB::ZLIBSTATIC)
-endif()
 find_package(CURL REQUIRED)
 
 function(dlna_link_required_curl target_name)
@@ -66,14 +26,16 @@ set(SOURCES
          src/access_keys.cpp
          src/tray_notify.cpp
          src/access_key_hook.cpp
-         src/mainwindow.cpp
-         src/settingsdlg.cpp
+          src/mainwindow.cpp
+          src/cli_print_hooks_win.cpp
+          src/settingsdlg.cpp
          src/logdlg.cpp
          src/help_dialog.cpp
          src/ui_font.cpp
          src/dark_frame.cpp
-         src/server.cpp
-         src/netutils.cpp
+          src/server.cpp
+          src/server_common.cpp
+          src/netutils.cpp
          src/httpserver.cpp
          src/http_common.cpp
          src/contentdirectory.cpp
@@ -104,8 +66,9 @@ set(SOURCES
 set(HEADERS
          src/access_keys.h
          src/tray_notify.h
-         src/cli_flags.h
-         src/settings_help.h
+          src/cli_flags.h
+          src/cli_print_hooks_win.h
+          src/settings_help.h
          src/mainwindow.h
          src/settingsdlg.h
          src/logdlg.h
@@ -154,14 +117,18 @@ set(HEADERS
             src/ui_font.h
             src/dark_frame.h
              src/log.h
-             src/network_change_debounce.h
-             src/netchange_watch.h
-             src/fs_change_debounce.h
-             src/dirwatch.h
+              src/network_change_debounce.h
+              src/netchange_watch.h
+              src/dirwatch.h
+            src/copydata_validation.h
+            src/browse_page_cap.h
+            src/access_key_hook.h
+            src/win_geometry_dump.h
+            src/server_ui_state.h
+            src/media_sources.h
            resources/resource.h
      )
 
-    list(REMOVE_ITEM SOURCES src/main.cpp)
     add_library(dlna_core STATIC ${SOURCES} ${HEADERS})
     set_property(TARGET dlna_core PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     dlna_enable_warnings(dlna_core)
@@ -180,7 +147,6 @@ target_link_libraries(dlna_core PUBLIC
     install(TARGETS dlna-server RUNTIME DESTINATION .)
 else()
     include(GNUInstallDirs)
-    include(FetchContent)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     option(DLNA_ENABLE_GTK4_GUI "Build the native GTK4 Linux GUI" ON)
     option(DLNA_FLATPAK_BUILD "Use the flatpak specific GApplication id" OFF)
@@ -188,8 +154,9 @@ else()
 add_library(dlna_core STATIC
          src/access_keys.cpp
          src/tray_notify.cpp
-         src/posix_server.cpp
-         src/posix_ssdp.cpp
+          src/posix_server.cpp
+          src/server_common.cpp
+          src/posix_ssdp.cpp
          src/ssdp_common.cpp
          src/posix_httpserver.cpp
          src/http_common.cpp
@@ -212,9 +179,10 @@ add_library(dlna_core STATIC
          src/settings_restart.cpp
          src/posix_single_instance.cpp
          src/posix_daemonize.cpp
-         src/netchange_watch_posix.cpp
-         src/dirwatch_posix.cpp
-     )
+          src/netchange_watch_posix.cpp
+          src/dirwatch_posix.cpp
+          src/cli_print_hooks_posix.cpp
+      )
     dlna_enable_warnings(dlna_core)
     dlna_link_required_curl(dlna_core)
     target_include_directories(dlna_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
