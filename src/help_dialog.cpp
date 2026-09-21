@@ -194,6 +194,9 @@ void HelpDialog::Show(HWND hParent) {
         DispatchMessage(&msg);
         }
     }
+    if (getResult == -1) {
+        state.done = true;
+    }
     if (!state.done) {
         EnableOwnerAndRestoreModalFocus(state.focusSnapshot, hParent);
         if (IsWindow(hwnd)) DestroyWindow(hwnd);

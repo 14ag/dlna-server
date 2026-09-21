@@ -100,6 +100,11 @@ private:
     std::mutex m_ipv6SendMutex;
 
     std::vector<NetworkEndpoint> m_endpoints;
+    mutable std::mutex m_endpointsMutex;
+    std::vector<NetworkEndpoint> EndpointsSnapshot() const {
+        std::lock_guard<std::mutex> lock(m_endpointsMutex);
+        return m_endpoints;
+    }
     std::string m_uuidStr;
     std::vector<SSDPTarget> m_targets;
     unsigned int m_bootId;

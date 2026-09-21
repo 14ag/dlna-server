@@ -25,11 +25,37 @@ std::thread g_thread;
 std::atomic<bool> g_running(false);
 std::function<void()> g_onChange;
 NetworkChangeDebouncer g_debounce(std::chrono::milliseconds(1500));
+std::atomic<bool> g_deferredThreadRunning(false);
+std::thread g_deferredThread;
+
+void FireNow() {
+    if (g_onChange) g_onChange();
+}
+
+void ScheduleDeferredFire() {
+    bool expected = false;
+    if (!g_deferredThreadRunning.compare_exchange_strong(expected, true)) return;
+    if (g_deferredThread.joinable()) g_deferredThread.join();
+    g_deferredThread = std::thread([]() {
+        while (g_debounce.TrailingPending()) {
+            auto deadline = g_debounce.TrailingDeadline();
+            std::this_thread::sleep_until(deadline);
+            if (std::chrono::steady_clock::now() >= deadline && g_debounce.TrailingPending()) {
+                g_debounce.MarkTrailingHandled(std::chrono::steady_clock::now());
+                FireNow();
+                break;
+            }
+        }
+        g_deferredThreadRunning.store(false);
+    });
+}
 
 void FireDebounced() {
     auto now = std::chrono::steady_clock::now();
     if (g_debounce.OnChangeShouldActNow(now)) {
-        if (g_onChange) g_onChange();
+        FireNow();
+    } else {
+        ScheduleDeferredFire();
     }
 }
 
@@ -96,6 +122,8 @@ void StopNetworkChangeWatch() {
     }
     if (g_netlinkFd >= 0) { close(g_netlinkFd); g_netlinkFd = -1; }
     if (g_thread.joinable()) g_thread.join();
+    if (g_deferredThread.joinable()) g_deferredThread.join();
+    g_deferredThreadRunning.store(false);
     if (g_wakeupReadFd >= 0) { close(g_wakeupReadFd); g_wakeupReadFd = -1; }
     if (g_wakeupWriteFd >= 0) { close(g_wakeupWriteFd); g_wakeupWriteFd = -1; }
     g_onChange = nullptr;

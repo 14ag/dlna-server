@@ -1,11 +1,12 @@
 #include "dirwatch.h"
-#include "fs_change_debounce.h"
+#include "network_change_debounce.h"
 #include "log.h"
 
 #include <windows.h>
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <mutex>
 
 namespace {
 struct WatchedFolder {
@@ -15,10 +16,11 @@ struct WatchedFolder {
 };
 
 std::vector<WatchedFolder> g_folders;
+std::mutex g_foldersMutex;
 std::atomic<bool> g_running(false);
 std::thread g_thread;
 std::function<void()> g_onChange;
-FsChangeDebouncer g_debounce(std::chrono::milliseconds(2000));
+NetworkChangeDebouncer g_debounce(std::chrono::milliseconds(2000));
 
 void CALLBACK CompletionRoutine(DWORD, DWORD bytesTransferred, LPOVERLAPPED overlapped) {
     if (bytesTransferred == 0) {
@@ -28,6 +30,8 @@ void CALLBACK CompletionRoutine(DWORD, DWORD bytesTransferred, LPOVERLAPPED over
     if (g_debounce.OnChangeShouldActNow(now)) {
         if (g_onChange) g_onChange();
     }
+    if (!g_running.load()) return;
+    std::lock_guard<std::mutex> lock(g_foldersMutex);
     for (auto& folder : g_folders) {
         if (&folder.overlapped == overlapped) {
             ReadDirectoryChangesW(folder.dirHandle, folder.buffer.data(),
@@ -57,7 +61,10 @@ bool StartDirectoryWatch(const std::vector<std::wstring>& localFolders, std::fun
             OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, NULL);
         if (folder.dirHandle == INVALID_HANDLE_VALUE) continue;
         folder.buffer.resize(65536);
-        g_folders.push_back(std::move(folder));
+        {
+            std::lock_guard<std::mutex> lock(g_foldersMutex);
+            g_folders.push_back(std::move(folder));
+        }
         anyOk = true;
     }
     if (!anyOk) return false;
@@ -67,12 +74,15 @@ bool StartDirectoryWatch(const std::vector<std::wstring>& localFolders, std::fun
         g_thread.join();
     }
     g_running.store(true);
-    for (auto& folder : g_folders) {
-        ReadDirectoryChangesW(folder.dirHandle, folder.buffer.data(),
-            static_cast<DWORD>(folder.buffer.size()), TRUE,
-            FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
-            FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE,
-            NULL, &folder.overlapped, CompletionRoutine);
+    {
+        std::lock_guard<std::mutex> lock(g_foldersMutex);
+        for (auto& folder : g_folders) {
+            ReadDirectoryChangesW(folder.dirHandle, folder.buffer.data(),
+                static_cast<DWORD>(folder.buffer.size()), TRUE,
+                FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
+                FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE,
+                NULL, &folder.overlapped, CompletionRoutine);
+        }
     }
     g_thread = std::thread(WatchLoopThread);
     return true;
@@ -80,13 +90,16 @@ bool StartDirectoryWatch(const std::vector<std::wstring>& localFolders, std::fun
 
 void StopDirectoryWatch() {
     g_running.store(false);
-    for (auto& folder : g_folders) {
-        if (folder.dirHandle != INVALID_HANDLE_VALUE) {
-            CancelIoEx(folder.dirHandle, &folder.overlapped);
-            CloseHandle(folder.dirHandle);
+    {
+        std::lock_guard<std::mutex> lock(g_foldersMutex);
+        for (auto& folder : g_folders) {
+            if (folder.dirHandle != INVALID_HANDLE_VALUE) {
+                CancelIoEx(folder.dirHandle, &folder.overlapped);
+                CloseHandle(folder.dirHandle);
+            }
         }
+        g_folders.clear();
     }
-    g_folders.clear();
     if (g_thread.joinable()) g_thread.join();
     g_onChange = nullptr;
 }

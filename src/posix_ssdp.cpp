@@ -224,7 +224,10 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     } lifecycleGuard{ m_lifecycleBusy };
 
     if (m_running.load()) return true;
-    m_endpoints = endpoints;
+    {
+        std::lock_guard<std::mutex> lock(m_endpointsMutex);
+        m_endpoints = endpoints;
+    }
     m_uuidStr = WideToUtf8(uuid);
     m_targets = BuildAdvertisedTargets(m_uuidStr);
     if (!m_bootIdAssigned) {
@@ -331,7 +334,8 @@ void SSDP::CloseSockets() {
 
 void SSDP::SendNotifyRound(const char* nts) {
     const std::string serverHeader = GetDlnaServerHeader();
-    for (const auto& endpoint : m_endpoints) {
+    const auto endpoints = EndpointsSnapshot();
+    for (const auto& endpoint : endpoints) {
         int socketFd = endpoint.family == AF_INET ? m_ipv4Socket : m_ipv6Socket;
         if (socketFd < 0) continue;
 
@@ -397,14 +401,15 @@ void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
 }
 
 void SSDP::QueueTestResponseDueNow() {
-    if (m_endpoints.empty()) return;
+    const auto endpoints = EndpointsSnapshot();
+    if (endpoints.empty()) return;
     const NetworkEndpoint* endpoint = nullptr;
     if (m_ipv4Socket >= 0) {
-        for (const auto& candidate : m_endpoints) {
+        for (const auto& candidate : endpoints) {
             if (candidate.family == AF_INET) { endpoint = &candidate; break; }
         }
     } else if (m_ipv6Socket >= 0) {
-        for (const auto& candidate : m_endpoints) {
+        for (const auto& candidate : endpoints) {
             if (candidate.family == AF_INET6) { endpoint = &candidate; break; }
         }
     }
@@ -515,7 +520,8 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
         DiscoveryLog(L"SSDP search ignored: invalid MAN from %hs", source.c_str());
         return;
     }
-    const NetworkEndpoint* endpoint = SelectBestEndpoint(m_endpoints, remoteAddr);
+    const auto endpoints = EndpointsSnapshot();
+    const NetworkEndpoint* endpoint = SelectBestEndpoint(endpoints, remoteAddr);
     if (!endpoint || endpoint->family != remoteAddr->sa_family) {
         DiscoveryLog(L"SSDP search ignored: no endpoint match for %hs", source.c_str());
         return;

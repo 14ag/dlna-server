@@ -21,7 +21,7 @@ public:
     ~MainWindow();
 
     bool Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless = false);
-    void SetStatus(ServerUiState state, const std::wstring& endpoint = L"");
+    void SetStatus(ServerUiState state);
     HWND GetHwnd() const { return m_hwnd; }
 
     static constexpr UINT_PTR kInitialScanPollTimerId = 1;
@@ -92,7 +92,7 @@ private:
     // AppConfig.SetRuntimeSourceOverride() + RefreshSourceList() directly
     // for the not-running case, since there is nothing to interrupt.
     void BeginSourceOverrideRestart(std::vector<MediaSource> overrideSources);
-    void CompleteServerOperation(ServerUiState finalState, const std::wstring& endpoint, bool success, const std::wstring& message);
+    void CompleteServerOperation(ServerUiState finalState, bool success, const std::wstring& message);
     bool IsShowingOverrideSources() const;
     bool IsBusy() const;
     bool IsRunning() const;
@@ -122,9 +122,11 @@ private:
 
     KeyboardCueState m_cueState;
     ServerUiState m_state;
-    std::wstring m_statusEndpoint;
+    std::wstring m_statusText;
+    bool m_lastOverrideVisible = false;
     ClosePendingState m_closePending;
     std::thread m_worker;
+    std::thread m_rescanWorker;
 
     bool m_startedHeadless;
     bool m_lastPolledScanInProgress = false;

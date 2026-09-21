@@ -3,6 +3,7 @@
 #include "log.h"
 #include "netutils.h"
 #include "scan_cancellation.h"
+#include "version.h"
 
 #include <algorithm>
 #include <cctype>
@@ -194,7 +195,7 @@ CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutS
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "DLNA-Server/1.7");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "DLNA-Server/" DLNA_SERVER_VERSION_STRING);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSeconds);
     curl_easy_setopt(curl, CURLOPT_FTP_RESPONSE_TIMEOUT, 30L);
@@ -294,28 +295,6 @@ bool CurlStream(const std::wstring& url,
 return true;
 }
 
-std::string ReadLocalTextFile(const std::wstring& path) {
-#ifdef _WIN32
-    FILE* fp = nullptr;
-    if (_wfopen_s(&fp, path.c_str(), L"rb") != 0 || !fp) return {};
-    std::string text;
-    char buffer[4096];
-    while (!std::feof(fp)) {
-        size_t readCount = std::fread(buffer, 1, sizeof(buffer), fp);
-        if (readCount > 0) text.append(buffer, readCount);
-        if (readCount < sizeof(buffer) && std::ferror(fp)) break;
-    }
-    std::fclose(fp);
-    return text;
-#else
-    std::ifstream file(WideToUtf8(path), std::ios::binary);
-    if (!file) return {};
-    std::ostringstream ss;
-    ss << file.rdbuf();
-    return ss.str();
-#endif
-}
-
 std::string ReadSourceText(const std::wstring& source, bool* ok = nullptr) {
     if (IsRemoteMediaUrl(source)) {
         RemoteFetchResult fetch = CurlCapture(source, false, false);
@@ -323,7 +302,7 @@ std::string ReadSourceText(const std::wstring& source, bool* ok = nullptr) {
         return fetch.body;
     }
     if (ok) *ok = true;
-    return ReadLocalTextFile(source);
+    return ReadWholeFileBinary(source);
 }
 
 std::wstring TitleFromEntry(const std::wstring& location) {
@@ -420,11 +399,7 @@ std::vector<PlaylistEntry> ParsePls(const std::wstring& playlistPath, const std:
         }
         if (digitsAt == std::string::npos) continue;
         int index = 0;
-        try {
-            index = std::stoi(key.substr(digitsAt));
-        } catch (...) {
-            continue;
-        }
+        if (!TryParseIntStrict(key.substr(digitsAt), index)) continue;
 
         if (index <= 0 || index > kMaxPlsIndex) {
             LogPrint(L"[remote:parse] Ignoring out-of-range PLS index %d in %ls", index, RedactUrlForLog(playlistPath).c_str());
@@ -900,14 +875,19 @@ long long ProbeRemoteContentLength(const std::wstring& url) {
         std::lock_guard<std::mutex> lock(g_probeCacheMutex);
         if (g_probeCache.find(url) == g_probeCache.end() &&
             ShouldEvictBeforeCacheInsert(g_probeCache.size(), kMaxRemoteProbeCacheEntries)) {
-            // evict whichever entry expires soonest so this cache
+            // evict whichever entries expire soonest so this cache
             // never grows past kMaxRemoteProbeCacheEntries no matter
             // how many distinct remote urls this server probes over
-            // its uptime
-            auto soonestToExpire = std::min_element(g_probeCache.begin(), g_probeCache.end(),
-                [](const auto& a, const auto& b) { return a.second.expiresAt < b.second.expiresAt; });
-            if (soonestToExpire != g_probeCache.end()) {
+            // its uptime batch-evict 64 entries per overflow to amortize
+            // the O(n) scan cost across many inserts
+            constexpr size_t kProbeCacheEvictBatch = 64;
+            size_t evicted = 0;
+            while (evicted < kProbeCacheEvictBatch && !g_probeCache.empty()) {
+                auto soonestToExpire = std::min_element(g_probeCache.begin(), g_probeCache.end(),
+                    [](const auto& a, const auto& b) { return a.second.expiresAt < b.second.expiresAt; });
+                if (soonestToExpire == g_probeCache.end()) break;
                 g_probeCache.erase(soonestToExpire);
+                ++evicted;
             }
         }
         g_probeCache[url] = ProbeCacheEntry{ length, now + kRemoteProbeCacheTtl };

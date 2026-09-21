@@ -96,15 +96,15 @@ int main(int argc, char** argv) {
                 PrintUsage(argv[0]);
                 return 2;
             }
-            AppConfig.port = port;
+            AppConfig.Mutate([&](Config& cfg) { cfg.port = port; });
             wroteConfigOverride = true;
         }
         else if (arg == "--name" && i + 1 < argc) {
-            AppConfig.serverName = Utf8ToWide(argv[++i]);
+            AppConfig.Mutate([&](Config& cfg) { cfg.serverName = Utf8ToWide(argv[++i]); });
             wroteConfigOverride = true;
         }
         else if (arg == "--uuid" && i + 1 < argc) {
-            AppConfig.deviceUUID = Utf8ToWide(argv[++i]);
+            AppConfig.Mutate([&](Config& cfg) { cfg.deviceUUID = Utf8ToWide(argv[++i]); });
             wroteConfigOverride = true;
         }
         else if (arg == "--source" && i + 1 < argc) {
@@ -883,6 +883,7 @@ int main(int argc, char** argv) {
         else if (arg == "--print-ssdp-concurrent-start-stop-safety") {
             std::wstring reason;
             bool startOk = DLNAServer.Start(reason);
+            std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
             while (DLNAServer.IsInitialScanInProgress()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
@@ -908,6 +909,7 @@ int main(int argc, char** argv) {
         else if (arg == "--print-httpserver-concurrent-start-stop-safety") {
             std::wstring reason;
             bool startOk = DLNAServer.Start(reason);
+            std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
             while (DLNAServer.IsInitialScanInProgress()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
@@ -934,12 +936,14 @@ int main(int argc, char** argv) {
         else if (arg == "--print-ssdp-bootid-persistence") {
             std::wstring reason;
             bool startOk = DLNAServer.Start(reason);
+            std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
             while (DLNAServer.IsInitialScanInProgress()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
             const unsigned int firstBootId = SSDP::Get().GetBootIdForTest();
             DLNAServer.Stop();
             bool startOk2 = DLNAServer.Start(reason);
+            std::cout << "start-ok2=" << (startOk2 ? "1" : "0") << std::endl;
             while (DLNAServer.IsInitialScanInProgress()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
@@ -951,6 +955,7 @@ int main(int argc, char** argv) {
         else if (arg == "--print-network-change-restart-coalescing") {
             std::wstring reason;
             bool startOk = DLNAServer.Start(reason);
+            std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
             while (DLNAServer.IsInitialScanInProgress()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
@@ -1160,6 +1165,11 @@ int main(int argc, char** argv) {
             PrintUsage(argv[0]);
             std::cerr.flush();
             return 0;
+        }
+        else if (!arg.empty() && arg[0] == '-') {
+            std::cerr << "Unknown option: " << arg << std::endl;
+            PrintUsage(argv[0]);
+            return 2;
         }
         else runtimeSources.push_back(Utf8ToWide(arg));
     }

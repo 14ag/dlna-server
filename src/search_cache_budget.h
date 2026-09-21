@@ -24,7 +24,10 @@ inline bool SearchCacheNeedsEviction(size_t currentContainerCount,
                                      size_t maxContainers,
                                      size_t maxTotalItems) {
     if (!containerAlreadyCached && currentContainerCount >= maxContainers) return true;
-    const size_t projectedTotal = currentTotalItems - previousItemCountForSameContainer + incomingItemCount;
+    const size_t base = currentTotalItems >= previousItemCountForSameContainer
+        ? currentTotalItems - previousItemCountForSameContainer
+        : 0;
+    const size_t projectedTotal = base + incomingItemCount;
     return projectedTotal > maxTotalItems;
 }
 

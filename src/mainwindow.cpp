@@ -67,7 +67,6 @@ HFONT SourcePromptFont(HWND hwnd) {
 struct ServerOperationResult {
     ServerUiState finalState;
     bool success;
-    std::wstring endpoint;
     std::wstring message;
 };
 
@@ -295,6 +294,9 @@ std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
         }
     }
 
+    if (getResult == -1) {
+        state.done = true;
+    }
     if (!state.done) {
         EnableOwnerAndRestoreModalFocus(state.focusSnapshot, owner);
         if (IsWindow(hwnd)) DestroyWindow(hwnd);
@@ -320,6 +322,9 @@ m_startedHeadless(false), m_scanInProgress(false), m_scanningStatusActive(false)
 MainWindow::~MainWindow() {
     if (m_worker.joinable()) {
         m_worker.join();
+    }
+    if (m_rescanWorker.joinable()) {
+        m_rescanWorker.join();
     }
     DLNAServer.Stop();
     SetThreadExecutionState(ES_CONTINUOUS);
@@ -559,14 +564,17 @@ bool MainWindow::TryHandleFunctionKey(WPARAM vkCode) {
     return false;
 }
 
-void MainWindow::SetStatus(ServerUiState state, const std::wstring& endpoint) {
+void MainWindow::SetStatus(ServerUiState state) {
     m_state = state;
-    m_statusEndpoint = endpoint;
     SendMessage(m_hBtnStartStop, WM_SETTEXT, 0, (LPARAM)(IsRunning() ? L"Stop" : L"Start"));
     SetControlsForState();
     UpdateWakeLock();
     RefreshToolbarMnemonics();
-    RefreshSourceList();
+    const bool overrideVisibleNow = IsShowingOverrideSources();
+    if (overrideVisibleNow != m_lastOverrideVisible) {
+        m_lastOverrideVisible = overrideVisibleNow;
+        RefreshSourceList();
+    }
     InvalidateRect(m_hwnd, NULL, TRUE);
 }
 
@@ -628,7 +636,6 @@ void MainWindow::BeginStartServer() {
             ServerOperationResult* result = new ServerOperationResult{
                 ok ? ServerUiState::Running : ServerUiState::Stopped,
                 ok,
-                ok ? DLNAServer.GetEndpoint() : L"",
                 ok ? L"" : message.c_str()
             };
             PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
@@ -639,12 +646,12 @@ void MainWindow::BeginStartServer() {
 void MainWindow::BeginStopServer() {
     if (IsBusy() || !IsRunning()) return;
     if (m_worker.joinable()) m_worker.join();
-    SetStatus(ServerUiState::Stopping, m_statusEndpoint);
+    SetStatus(ServerUiState::Stopping);
     HWND target = m_hwnd;
     m_worker = std::thread([target]() {
         RunGuarded(L"stop-server-worker", [target]() {
             DLNAServer.Stop();
-            ServerOperationResult* result = new ServerOperationResult{ ServerUiState::Stopped, true, L"", L"" };
+            ServerOperationResult* result = new ServerOperationResult{ ServerUiState::Stopped, true, L"" };
             PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
         });
     });
@@ -653,7 +660,7 @@ void MainWindow::BeginStopServer() {
 void MainWindow::BeginRestartServer() {
     if (IsBusy()) return;
     if (m_worker.joinable()) m_worker.join();
-    SetStatus(ServerUiState::Stopping, m_statusEndpoint);
+    SetStatus(ServerUiState::Stopping);
     HWND target = m_hwnd;
     m_worker = std::thread([target]() {
         RunGuarded(L"restart-server-worker", [target]() {
@@ -669,7 +676,6 @@ void MainWindow::BeginRestartServer() {
             ServerOperationResult* result = new ServerOperationResult{
                 ok ? ServerUiState::Running : ServerUiState::Stopped,
                 ok,
-                ok ? DLNAServer.GetEndpoint() : L"",
                 ok ? L"" : message.c_str()
             };
             PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
@@ -680,7 +686,7 @@ void MainWindow::BeginRestartServer() {
 void MainWindow::BeginSourceOverrideRestart(std::vector<MediaSource> overrideSources) {
     if (IsBusy()) return;
     if (m_worker.joinable()) m_worker.join();
-    SetStatus(ServerUiState::Stopping, m_statusEndpoint);
+    SetStatus(ServerUiState::Stopping);
     HWND target = m_hwnd;
     m_worker = std::thread([target, overrideSources = std::move(overrideSources)]() {
         RunGuarded(L"source-override-restart-worker", [target, overrideSources = std::move(overrideSources)]() mutable {
@@ -700,7 +706,6 @@ void MainWindow::BeginSourceOverrideRestart(std::vector<MediaSource> overrideSou
             ServerOperationResult* result = new ServerOperationResult{
                 ok ? ServerUiState::Running : ServerUiState::Stopped,
                 ok,
-                ok ? DLNAServer.GetEndpoint() : L"",
                 ok ? L"" : message
             };
             PostMessageW(target, WM_SERVER_OPERATION_DONE, 0, reinterpret_cast<LPARAM>(result));
@@ -708,7 +713,7 @@ void MainWindow::BeginSourceOverrideRestart(std::vector<MediaSource> overrideSou
     });
 }
 
-void MainWindow::CompleteServerOperation(ServerUiState finalState, const std::wstring& endpoint, bool success, const std::wstring& message) {
+void MainWindow::CompleteServerOperation(ServerUiState finalState, bool success, const std::wstring& message) {
     if (m_worker.joinable()) {
         m_worker.join();
     }
@@ -718,7 +723,7 @@ void MainWindow::CompleteServerOperation(ServerUiState finalState, const std::ws
         // would have seen it as in-progress
         m_lastPolledScanInProgress = true;
     }
-    SetStatus(finalState, endpoint);
+    SetStatus(finalState);
     if (!success && !message.empty()) {
         MessageBoxW(m_hwnd, message.c_str(), L"DLNA Server", MB_ICONWARNING | MB_OK);
     }
@@ -982,7 +987,7 @@ void MainWindow::RemoveSelectedSource() {
     UpdateDeleteButton();
     InvalidateRect(m_hwnd, NULL, TRUE);
 
-    std::thread([]() { RunGuarded(L"remove-source-rescan", []() { DLNAServer.Rescan(); }); }).detach();
+    BeginRescan();
 }
 
 void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
@@ -1048,7 +1053,7 @@ bool MainWindow::AddMediaSourceIfNew(const std::wstring& path) {
     }
     AppConfig.Save();
     RefreshSourceList();
-    std::thread([]() { RunGuarded(L"add-source-rescan", []() { DLNAServer.Rescan(); }); }).detach();
+    BeginRescan();
     return true;
 }
 
@@ -1076,10 +1081,13 @@ void MainWindow::BeginRescan() {
     SetControlsForState();
     InvalidateRect(m_hwnd, NULL, TRUE);
     HWND target = m_hwnd;
-    std::thread([target]() {
-        DLNAServer.Rescan();
-        PostMessageW(target, WM_SCAN_DONE, 0, 0);
-    }).detach();
+    if (m_rescanWorker.joinable()) m_rescanWorker.join();
+    m_rescanWorker = std::thread([target]() {
+        RunGuarded(L"rescan-worker", [target]() {
+            DLNAServer.Rescan();
+            PostMessageW(target, WM_SCAN_DONE, 0, 0);
+        });
+    });
 }
 
 // swallow up slash down arrow on toolbar buttons only
@@ -1211,11 +1219,6 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         
         HGDIOBJ hOldFont = SelectObject(hdc, m_hTitleFont ? m_hTitleFont : GetStockObject(DEFAULT_GUI_FONT));
         
-        int titleRight = rcClient.right - (UiTokens::kAddButtonWidth + UiTokens::kDeleteButtonWidth + UiTokens::kStartStopButtonWidth + UiTokens::kSettingsButtonWidth + UiTokens::kButtonGap * 4 + UiTokens::kGutter);
-        if (titleRight < UiTokens::kGutter) {
-            titleRight = UiTokens::kGutter;
-        }
-        RECT rcTitle = { UiTokens::kGutter, 0, titleRight, UiTokens::kToolbarHeight };
         SelectObject(hdc, hOldFont);
 
         RECT rcStatus = { 0, UiTokens::kToolbarHeight, rcClient.right, UiTokens::kToolbarHeight + UiTokens::kStatusHeight };
@@ -1367,13 +1370,13 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         return 0;
     }
     case WM_SERVER_OPERATION_PROGRESS: {
-        SetStatus(static_cast<ServerUiState>(wParam), m_statusEndpoint);
+        SetStatus(static_cast<ServerUiState>(wParam));
         return 0;
     }
     case WM_SERVER_OPERATION_DONE: {
         ServerOperationResult* result = reinterpret_cast<ServerOperationResult*>(lParam);
         if (result) {
-            CompleteServerOperation(result->finalState, result->endpoint, result->success, result->message);
+            CompleteServerOperation(result->finalState, result->success, result->message);
             delete result;
         }
         return 0;
@@ -1596,6 +1599,9 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         KillTimer(m_hwnd, kInitialScanPollTimerId);
         if (m_worker.joinable()) {
             m_worker.join();
+        }
+        if (m_rescanWorker.joinable()) {
+            m_rescanWorker.join();
         }
         if (m_hSuspendResumeNotify) {
             PowerUnregisterSuspendResumeNotification(m_hSuspendResumeNotify);

@@ -45,7 +45,6 @@ private:
     bool ShouldStartScan() const;
     void StartBackgroundScan();
     void JoinBackgroundScan();
-    void JoinBackgroundScanLocked();
     void StartWatchMode();
     void StopWatchMode();
     void WatchLoop();
@@ -80,6 +79,7 @@ private:
     std::mutex m_watchMutex;
     std::condition_variable m_watchCv;
     std::atomic<bool> m_stopWatch;
+    std::atomic<bool> m_directoryWatchActive{false};
 };
 
 #define DLNAServer Server::Get()

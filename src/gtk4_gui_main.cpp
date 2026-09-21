@@ -12,6 +12,7 @@
 #include "dlna_utils.h"
 #include "log.h"
 #include "media_source_file_types.h"
+#include "network_sources.h"
 #include "thread_guard.h"
 #include "server.h"
 #include "settings_restart.h"
@@ -83,34 +84,24 @@ void HandleTerminationSignal(int) {
     g_signalStop.store(true, std::memory_order_relaxed);
 }
 
-std::string ToUtf8(const std::wstring& value) {
-    return WideToUtf8(value);
-}
-
-std::wstring ToWide(const char* value) {
-    return Utf8ToWide(value ? value : "");
-}
-
-std::wstring ToWideString(const gchar* value) {
-    return Utf8ToWide(value ? value : "");
-}
-
 std::string TitleFromPath(const std::string& moviePath) {
-    size_t slash = moviePath.find_last_of("/\\");
-    std::string name = slash == std::string::npos ? moviePath : moviePath.substr(slash + 1);
-    size_t dot = name.find_last_of('.');
-    if (dot != std::string::npos && dot > 0) name = name.substr(0, dot);
-    return name.empty() ? "Media item" : name;
+    const std::wstring stem = SourceStemName(Utf8ToWide(moviePath));
+    return stem.empty() ? "Media item" : WideToUtf8(stem);
 }
 
 bool AppendDefaultPlaylistEntry(const std::string& moviePath, const std::string& subtitlePath) {
     if (moviePath.empty()) return false;
-    if (AppConfig.defaultPlaylistPath.empty()) AppConfig.defaultPlaylistPath = AppConfig.GetDefaultPlaylistPath();
-    std::ifstream existing(WideToUtf8(AppConfig.defaultPlaylistPath), std::ios::binary);
+    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    std::wstring playlistPath = cfg.defaultPlaylistPath;
+    if (playlistPath.empty()) {
+        playlistPath = AppConfig.GetDefaultPlaylistPath();
+        AppConfig.Mutate([&](Config& c) { c.defaultPlaylistPath = playlistPath; });
+    }
+    std::ifstream existing(WideToUtf8(playlistPath), std::ios::binary);
     bool hasContent = existing.good() && existing.peek() != std::ifstream::traits_type::eof();
     existing.close();
 
-    std::ofstream file(WideToUtf8(AppConfig.defaultPlaylistPath), std::ios::binary | std::ios::app);
+    std::ofstream file(WideToUtf8(playlistPath), std::ios::binary | std::ios::app);
     if (!file) return false;
     if (!hasContent) file << "#EXTM3U\n";
     file << "#EXTINF:-1," << TitleFromPath(moviePath) << "\n";
@@ -979,7 +970,7 @@ void ShowPlaylistEntryDialog(GtkWindow* parent) {
             if (!AppendDefaultPlaylistEntry(movie, subtitle)) {
                 MessageBoxShow(ActiveTopLevelWindow(), "Could not write default playlist.");
             } else {
-                AppConfig.defaultPlaylistEnabled = true;
+                AppConfig.Mutate([](Config& cfg) { cfg.defaultPlaylistEnabled = true; });
                 AppConfig.Save();
             }
         }
@@ -1393,9 +1384,9 @@ void RefreshDefaultPlaylistControls() {
 
 void LoadSettingsFromConfig() {
     const ConfigSnapshot cfg = AppConfig.Snapshot();
-    gtk_editable_set_text(GTK_EDITABLE(g_serverNameEntry), ToUtf8(cfg.serverName).c_str());
+    gtk_editable_set_text(GTK_EDITABLE(g_serverNameEntry), WideToUtf8(cfg.serverName).c_str());
     gtk_editable_set_text(GTK_EDITABLE(g_httpPortEntry), std::to_string(cfg.port).c_str());
-    gtk_editable_set_text(GTK_EDITABLE(g_ipWhitelistEntry), ToUtf8(cfg.ipWhiteList).c_str());
+    gtk_editable_set_text(GTK_EDITABLE(g_ipWhitelistEntry), WideToUtf8(cfg.ipWhiteList).c_str());
     gtk_check_button_set_active(GTK_CHECK_BUTTON(g_debugLogCheck), cfg.debugLog);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(g_defaultPlaylistCheck), cfg.defaultPlaylistEnabled);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(g_artistAlbumCheck), cfg.addArtistAlbumFolders);
@@ -1415,8 +1406,10 @@ bool SaveSettingsToConfig() {
         MessageBoxShow(GTK_WINDOW(g_settingsDialog), "HTTP port must be between 1 and 65535.");
         return false;
     }
-    const std::wstring serverName = ToWideString(gtk_editable_get_text(GTK_EDITABLE(g_serverNameEntry)));
-    const std::wstring ipWhiteList = ToWideString(gtk_editable_get_text(GTK_EDITABLE(g_ipWhitelistEntry)));
+    const gchar* serverNameText = gtk_editable_get_text(GTK_EDITABLE(g_serverNameEntry));
+    const gchar* ipWhiteListText = gtk_editable_get_text(GTK_EDITABLE(g_ipWhitelistEntry));
+    const std::wstring serverName = Utf8ToWide(serverNameText ? serverNameText : "");
+    const std::wstring ipWhiteList = Utf8ToWide(ipWhiteListText ? ipWhiteListText : "");
     const bool debugLog = gtk_check_button_get_active(GTK_CHECK_BUTTON(g_debugLogCheck));
     const bool defaultPlaylistEnabled = gtk_check_button_get_active(GTK_CHECK_BUTTON(g_defaultPlaylistCheck));
     const bool addArtistAlbumFolders = gtk_check_button_get_active(GTK_CHECK_BUTTON(g_artistAlbumCheck));
@@ -1457,7 +1450,7 @@ bool SaveSettingsToConfig() {
                 names += changed[i];
             }
             std::string prompt = "A server restart is needed to apply changes to: " +
-                                 ToUtf8(names) + ".\n\nRestart server?";
+                                  WideToUtf8(names) + ".\n\nRestart server?";
             g_settingsRestartRequested =
                 MessageBoxQuestion(GTK_WINDOW(g_settingsDialog), prompt);
         }
@@ -1903,7 +1896,7 @@ void RefreshSourceList() {
         ? AppConfig.GetRuntimeSourceOverride()
         : AppConfig.mediaSources;
     for (const auto& source : displayed) {
-        gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(ToUtf8(source.path)));
+        gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(WideToUtf8(source.path)));
     }
     RefreshEmptyState();
 }
@@ -1920,7 +1913,7 @@ void SaveSourcesFromList() {
         if (GTK_IS_LABEL(rowChild)) {
             const gchar* text = gtk_label_get_text(GTK_LABEL(rowChild));
             if (text != nullptr && *text != '\0') {
-                paths.push_back(ToWide(text));
+                paths.push_back(Utf8ToWide(text ? text : ""));
             }
         }
         rowWidget = gtk_widget_get_next_sibling(rowWidget);
@@ -2045,7 +2038,7 @@ void RestartServer() {
             std::string message;
             if (!ok) {
                 message = "server could not start\n";
-                if (!reason.empty()) message += ToUtf8(reason);
+                if (!reason.empty()) message += WideToUtf8(reason);
             }
             SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, message);
         });
@@ -2620,13 +2613,13 @@ GtkWidget* fixed = gtk_fixed_new();
             GFile* file = G_FILE(it->data);
             gchar* path = g_file_get_path(file);
             if (path == nullptr) continue;
-            std::wstring widePath = ToWide(path);
+            std::wstring widePath = Utf8ToWide(path ? path : "");
             g_free(path);
             // directories are always accepted files are checked against
             // the same supported extension list IsSupportedLocalMediaOrPlaylistPath
             // already implements on both platforms see dlna utils cpp
             if (IsSupportedLocalMediaOrPlaylistPath(widePath)) {
-                gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(ToUtf8(widePath)));
+                gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(WideToUtf8(widePath)));
                 addedAny = true;
             }
         }

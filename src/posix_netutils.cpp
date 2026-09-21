@@ -355,8 +355,10 @@ const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& en
     // ignored family entirely which the caller happened to catch with
     // its own separate family check but that made this function's
     // return value misleading on its own see F-DISCOVERY-01
-    for (const auto& endpoint : endpoints) {
-        if (endpoint.family == remoteAddr->sa_family) return &endpoint;
+    if (remoteAddr != nullptr) {
+        for (const auto& endpoint : endpoints) {
+            if (endpoint.family == remoteAddr->sa_family) return &endpoint;
+        }
     }
     return endpoints.empty() ? nullptr : &endpoints.front();
 }
@@ -418,21 +420,23 @@ long GetRoutableHostUrlRecomputeCountForTest() {
 }
 
 std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
-    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
-    if (!g_routableHostCacheValid || g_routableHostCachedPort != port) {
-        ++g_routableHostRecomputeCount;
-        g_routableHostCached.clear();
-        std::vector<NetworkEndpoint> endpoints;
-        if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
-            for (const auto& ep : endpoints) {
-                if (!ep.isLinkLocal) {
-                    g_routableHostCached = ep.address + ":" + std::to_string(port);
-                    break;
-                }
-            }
+    {
+        std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+        if (g_routableHostCacheValid && g_routableHostCachedPort == port) {
+            return g_routableHostCached;
         }
-        g_routableHostCachedPort = port;
-        g_routableHostCacheValid = true;
     }
+    std::string computed;
+    std::vector<NetworkEndpoint> endpoints;
+    if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
+        for (const auto& ep : endpoints) {
+            if (!ep.isLinkLocal) { computed = ep.address + ":" + std::to_string(port); break; }
+        }
+    }
+    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
+    ++g_routableHostRecomputeCount;
+    g_routableHostCached = computed;
+    g_routableHostCachedPort = port;
+    g_routableHostCacheValid = true;
     return g_routableHostCached;
 }

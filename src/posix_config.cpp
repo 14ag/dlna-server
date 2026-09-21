@@ -49,11 +49,7 @@ std::string ExecutableDirectory() {
 }
 
 std::string Trim(const std::string& value) {
-    const char* ws = " \t\r\n";
-    const size_t start = value.find_first_not_of(ws);
-    if (start == std::string::npos) return {};
-    const size_t end = value.find_last_not_of(ws);
-    std::string result = value.substr(start, end - start + 1);
+    std::string result = TrimAscii(value);
     if (result.size() >= 3 &&
         static_cast<unsigned char>(result[0]) == 0xEF &&
         static_cast<unsigned char>(result[1]) == 0xBB &&
@@ -134,12 +130,8 @@ void MigrateLegacyConfigIfPresent(const std::wstring& newConfigPath) {
 }
 
 int ParseIntOrDefault(const std::string& value, int fallback) {
-    if (value.empty()) return fallback;
-    try {
-        return std::stoi(value);
-    } catch (...) {
-        return fallback;
-    }
+    int parsed = 0;
+    return TryParseIntStrict(TrimAscii(value), parsed) ? parsed : fallback;
 }
 
 std::wstring DefaultServerName() {

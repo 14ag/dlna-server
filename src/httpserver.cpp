@@ -19,8 +19,13 @@
 #include <climits>
 #include <exception>
 #include <sstream>
+#include <mutex>
+#include <unordered_map>
 
 namespace {
+
+std::mutex g_iconCacheMutex;
+std::unordered_map<int, std::string> g_iconCache;
 
 void SendAll(SOCKET s, const char* data, int len) {
     while (len > 0) {
@@ -100,6 +105,14 @@ int IconResourceForPath(const std::string& path) {
 }
 
 bool LoadServerIconPng(int resourceId, std::string& bytes) {
+    {
+        std::lock_guard<std::mutex> lock(g_iconCacheMutex);
+        auto found = g_iconCache.find(resourceId);
+        if (found != g_iconCache.end()) {
+            bytes = found->second;
+            return true;
+        }
+    }
     HRSRC res = FindResourceW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(resourceId), RT_RCDATA);
     if (!res) return false;
     HGLOBAL loaded = LoadResource(GetModuleHandleW(NULL), res);
@@ -107,7 +120,12 @@ bool LoadServerIconPng(int resourceId, std::string& bytes) {
     DWORD size = SizeofResource(GetModuleHandleW(NULL), res);
     void* data = LockResource(loaded);
     if (!data || size == 0) return false;
-    bytes.assign(static_cast<const char*>(data), static_cast<size_t>(size));
+    std::string loadedBytes(static_cast<const char*>(data), static_cast<size_t>(size));
+    {
+        std::lock_guard<std::mutex> lock(g_iconCacheMutex);
+        g_iconCache[resourceId] = loadedBytes;
+    }
+    bytes = std::move(loadedBytes);
     return true;
 }
 
@@ -395,7 +413,10 @@ void CALLBACK HttpServer::WorkerCallback(PTP_CALLBACK_INSTANCE, PVOID Context, P
     }
     closesocket(wd->s);
     delete wd;
-    server->m_activeClientCount.fetch_sub(1, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> capacityLock(server->m_capacityMutex);
+        server->m_activeClientCount.fetch_sub(1, std::memory_order_relaxed);
+    }
     server->m_capacityCv.notify_one();
     CloseThreadpoolWork(Work);
 }
@@ -761,9 +782,9 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             return;
                         }
 
-                        TransmitFile(clientSocket, hFile.get(),
-                                     static_cast<DWORD>(totalBytes), 0,
-                                     NULL, NULL, 0);
+                        if (!TransmitFileChunked(clientSocket, hFile.get(), 0, totalBytes)) {
+                            return;
+                        }
                         return;
                     }
                 }
@@ -798,9 +819,9 @@ void HttpServer::HandleClient(SOCKET clientSocket, const std::string& clientIP) 
                             return;
                         }
 
-                        TransmitFile(clientSocket, hFile.get(),
-                                     static_cast<DWORD>(fileSize.QuadPart), 0,
-                                     NULL, NULL, 0);
+                        if (!TransmitFileChunked(clientSocket, hFile.get(), 0, fileSize.QuadPart)) {
+                            return;
+                        }
                         return;
                     }
                 }

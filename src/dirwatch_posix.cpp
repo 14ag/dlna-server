@@ -1,5 +1,5 @@
 #include "dirwatch.h"
-#include "fs_change_debounce.h"
+#include "network_change_debounce.h"
 #include "log.h"
 #include "netutils.h"
 
@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <thread>
 #include <atomic>
+#include <mutex>
 
 namespace {
 namespace fs = std::filesystem;
@@ -22,31 +23,41 @@ int g_wakeupWriteFd = -1;
 std::thread g_thread;
 std::atomic<bool> g_running(false);
 std::function<void()> g_onChange;
-FsChangeDebouncer g_debounce(std::chrono::milliseconds(2000));
+NetworkChangeDebouncer g_debounce(std::chrono::milliseconds(2000));
 std::unordered_map<int, std::string> g_watchToPath;
+std::mutex g_watchMapMutex;
 
 constexpr uint32_t kWatchMask = IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_FROM | IN_MOVED_TO | IN_CLOSE_WRITE;
 
-void AddWatchRecursive(const std::string& rootPath) {
+void AddWatchRecursive(const std::string& rootPath, int depth = 0) {
+    if (depth > 64) {
+        LogPrint(L"inotify watch depth limit reached for %hs", rootPath.c_str());
+        return;
+    }
     std::error_code ec;
     int watchDescriptor = inotify_add_watch(g_inotifyFd, rootPath.c_str(), kWatchMask);
     if (watchDescriptor < 0) {
         LogPrint(L"inotify watch registration failed for %hs; falling back to poll for this path. Check max_user_watches.", rootPath.c_str());
         return;
     }
-    g_watchToPath[watchDescriptor] = rootPath;
+    {
+        std::lock_guard<std::mutex> lock(g_watchMapMutex);
+        g_watchToPath[watchDescriptor] = rootPath;
+    }
     fs::directory_iterator it(rootPath, fs::directory_options::skip_permission_denied, ec);
     fs::directory_iterator end;
     for (; !ec && it != end; it.increment(ec)) {
         std::error_code entryEc;
         if (it->is_directory(entryEc) && !entryEc) {
-            AddWatchRecursive(it->path().string());
+            AddWatchRecursive(it->path().string(), depth + 1);
         }
     }
 }
 
 void WatchLoop() {
-    char buffer[sizeof(struct inotify_event) + 256 + 1];
+    // inotify(7): the buffer must be able to hold at least one event with a
+    // NAME_MAX-length name; a larger buffer is required to drain bursts.
+    alignas(struct inotify_event) char buffer[64 * 1024];
     while (g_running.load()) {
         struct pollfd fds[2];
         fds[0].fd = g_inotifyFd;
@@ -67,9 +78,16 @@ void WatchLoop() {
             auto* event = reinterpret_cast<struct inotify_event*>(buffer + offset);
             sawEvent = true;
             if ((event->mask & IN_ISDIR) && (event->mask & IN_CREATE)) {
-                auto found = g_watchToPath.find(event->wd);
-                if (found != g_watchToPath.end() && event->len > 0) {
-                    AddWatchRecursive(found->second + "/" + event->name);
+                std::string parentPath;
+                {
+                    std::lock_guard<std::mutex> lock(g_watchMapMutex);
+                    auto found = g_watchToPath.find(event->wd);
+                    if (found != g_watchToPath.end()) {
+                        parentPath = found->second;
+                    }
+                }
+                if (!parentPath.empty() && event->len > 0) {
+                    AddWatchRecursive(parentPath + "/" + event->name);
                 }
             }
             offset += sizeof(struct inotify_event) + event->len;
@@ -92,10 +110,13 @@ bool StartDirectoryWatch(const std::vector<std::wstring>& localFolders, std::fun
     for (const auto& wideFolder : localFolders) {
         AddWatchRecursive(WideToUtf8(wideFolder));
     }
-    if (g_watchToPath.empty()) {
-        close(g_inotifyFd);
-        g_inotifyFd = -1;
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(g_watchMapMutex);
+        if (g_watchToPath.empty()) {
+            close(g_inotifyFd);
+            g_inotifyFd = -1;
+            return false;
+        }
     }
 
     int wakeupFds[2] = { -1, -1 };
@@ -121,7 +142,10 @@ void StopDirectoryWatch() {
     if (g_thread.joinable()) g_thread.join();
     if (g_wakeupReadFd >= 0) { close(g_wakeupReadFd); g_wakeupReadFd = -1; }
     if (g_wakeupWriteFd >= 0) { close(g_wakeupWriteFd); g_wakeupWriteFd = -1; }
-    g_watchToPath.clear();
+    {
+        std::lock_guard<std::mutex> lock(g_watchMapMutex);
+        g_watchToPath.clear();
+    }
     g_onChange = nullptr;
 }
 
