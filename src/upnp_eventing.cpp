@@ -94,7 +94,7 @@ std::string MakeSystemUpdateBody(int updateId) {
 
 std::string MakeSid(unsigned long long counter) {
     static thread_local std::mt19937 generator(std::random_device{}());
-    unsigned int parts[4] = { generator(), generator(), generator(), generator() };
+    unsigned int parts[4] = { static_cast<unsigned int>(generator()), static_cast<unsigned int>(generator()), static_cast<unsigned int>(generator()), static_cast<unsigned int>(generator()) };
     std::ostringstream ss;
     ss << "uuid:" << std::hex << std::setfill('0')
        << std::setw(8) << parts[0] << "-"

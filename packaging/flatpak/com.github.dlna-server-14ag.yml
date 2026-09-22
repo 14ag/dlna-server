@@ -3,6 +3,9 @@ runtime: org.gnome.Platform
 runtime-version: "47"
 sdk: org.gnome.Sdk
 command: dlna-server-gui
+build-args:
+  - --share=network
+  - --filesystem=host
 finish-args:
   - --share=network
   - --socket=x11
