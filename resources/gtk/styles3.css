@@ -1,28 +1,3 @@
-/*
- * styles3.css
- *
- * Purpose:
- *   Shared-property patch for the existing GTK4 Win32-style implementation.
- *
- * The current code already defines these properties in its dialog/application
- * CSS. The supplied gtk.css defines the same visual concepts with different
- * values. This file records the definitions worth changing so the application
- * moves toward the supplied theme's square Windows-10-like geometry rather
- * than retaining GTK/theme-dependent rounded controls.
- *
- * Existing code locations:
- *   gtk4_gui_main.cpp loads gtk/style.css and then installs dialog CSS.
- *   The current dialog CSS defines window, label, frame, entry, source-list,
- *   toolbar-button, focus, CSD/headerbar and win10-titlebar rules.
- *
- * Source comparison:
- *   Existing code: gtk4_gui_main.cpp OnAppStartup().
- *   Reference: supplied gtk.css.
- *
- * These rules are intended to be merged into gtk/style.css / figma.css where
- * the existing Figma design permits the change. Do not paste this file after
- * figma.css blindly: selector precedence must remain intentional.
- */
 
 /* ========================================================================
  * 1. MAIN WINDOW / BACKGROUND

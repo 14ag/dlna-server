@@ -348,9 +348,7 @@ tooltip {
 }
 
 tooltip.background {
-    border-width: 1px;
-    border-style: solid;
-    border-color: #333333;
+    border-style: none;
     background-color: #191919;
 }
 

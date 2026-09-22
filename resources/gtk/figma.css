@@ -13,7 +13,7 @@ checkbutton,
 textview,
 textview text {
     font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
-    font-size: 14px;
+    font-size: 12px;
 }
 
 /* Windows 10 frame: 1 px profile border plus downward soft shadow. */
@@ -25,8 +25,7 @@ window.csd decoration:backdrop {
        snapping, and the colour is the half-strength blend of #606060. */
     border: none;
     border-radius: 0;
-    box-shadow: inset 0 0 0 1px #3f3f3f,
-                0 6px 22px 9px rgba(0, 0, 0, 0.38);
+    box-shadow: 0 6px 22px 9px rgba(0, 0, 0, 0.38);
 }
 
 .win10-titlebar,
@@ -224,7 +223,7 @@ scrolledwindow.source-list {
     background-color: #1f1f1f;
     background-image: none;
     border: none;
-    border-radius: 0;
+    border-radius: 1px;
     /* matches UiTokens::kBorderColor rgb(88,88,88) drawn by the Win32
        ListBoxProc WM_NCPAINT handler. An inset box-shadow is used instead of a
        CSS border so all four edges survive device-pixel snapping at scale 1. */
