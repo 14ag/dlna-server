@@ -1574,8 +1574,7 @@ bool ShowSettingsDialog() {
         GtkEventController* ribbonKeys = gtk_event_controller_key_new();
         gtk_event_controller_set_propagation_phase(ribbonKeys, GTK_PHASE_CAPTURE);
         gtk_widget_add_controller(g_settingsDialog, ribbonKeys);
-        g_signal_connect(ribbonKeys, "key-pressed",
-                         G_CALLBACK(+[](GtkEventController*, guint keyval, guint, GdkModifierType mods, gpointer) -> gboolean {
+        auto ribbonCb = +[](GtkEventController*, guint keyval, guint, GdkModifierType mods, gpointer) -> gboolean {
             if (g_cueState.HideAccel()) return FALSE;
             if ((mods & (GDK_CONTROL_MASK | GDK_ALT_MASK)) != 0) return FALSE;
             GtkRoot* root = g_settingsDialog ? GTK_ROOT(gtk_widget_get_root(g_settingsDialog)) : nullptr;
@@ -1593,7 +1592,8 @@ bool ShowSettingsDialog() {
                 return TRUE;
             }
             return FALSE;
-        }), nullptr);
+        };
+        g_signal_connect(ribbonKeys, "key-pressed", G_CALLBACK(ribbonCb), nullptr);
     }
 
     makeFrame("Server", UiTokensPosix::kServerGroupX, UiTokensPosix::kServerGroupY, UiTokensPosix::kServerGroupW, UiTokensPosix::kServerGroupH);
@@ -2060,12 +2060,6 @@ void DestroyMainWindowSafely() {
         gdk_display_sync(display);
     }
     InstallBadDrawableHandler();
-    if (g_sourceHoverTip != nullptr) {
-        gtk_widget_unparent(g_sourceHoverTip);
-        g_sourceHoverTip = nullptr;
-        g_sourceHoverTipLabel = nullptr;
-        g_sourceHoverTipRow = nullptr;
-    }
     gtk_window_destroy(GTK_WINDOW(toDestroy));
     UninstallBadDrawableHandler();
 }

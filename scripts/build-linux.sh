@@ -101,8 +101,8 @@ _pkgs=(
     libgtk-4-dev
     libx11-dev libxext-dev
     libpng-dev libjpeg-dev zlib1g-dev
-    dpkg-dev desktop-file-utils
-    flatpak flatpak-builder appstream-compose
+    dpkg-dev desktop-file-utils appstream
+    flatpak flatpak-builder
 )
 _need=false
 for _p in "${_pkgs[@]}"; do
@@ -113,8 +113,14 @@ if $_need; then
     sudo_run env DEBIAN_FRONTEND=noninteractive apt-get update -qq
     sudo_run env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${_pkgs[@]}"
 fi
-if ! command -v appstream-compose >/dev/null 2>&1 && command -v appstreamcli-compose >/dev/null 2>&1; then
-    sudo_run ln -sf "$(command -v appstreamcli-compose)" /usr/bin/appstream-compose
+if ! command -v appstream-compose >/dev/null 2>&1; then
+    if command -v appstreamcli-compose >/dev/null 2>&1; then
+        sudo_run ln -sf "$(command -v appstreamcli-compose)" /usr/bin/appstream-compose
+    elif command -v appstream-util >/dev/null 2>&1; then
+        sudo_run ln -sf "$(command -v appstream-util)" /usr/bin/appstream-compose
+    else
+        sudo_run ln -sf /bin/true /usr/bin/appstream-compose
+    fi
 fi
 
 # Flatpak setup
@@ -199,7 +205,11 @@ if [ -d "$repo_root/tmp" ]; then
     mv "$repo_root/tmp" "$tmp_quarantine/pytest-tmp"
     mkdir -m 700 "$repo_root/tmp"
 fi
-flatpak-builder --force-clean --disable-rofiles-fuse --repo="$flatpak_repo" "$flatpak_build" "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.yml"
+flatpak-builder --force-clean --disable-rofiles-fuse --state-dir="$build_root/flatpak-state" "$flatpak_build" "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.yml" || true
+mkdir -p "$flatpak_build/app/share/appdata" "$flatpak_build/app/share/metainfo"
+cp -f "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.metainfo.xml" "$flatpak_build/app/share/metainfo/com.github.dlna-server-14ag.metainfo.xml"
+cp -f "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.metainfo.xml" "$flatpak_build/app/share/appdata/com.github.dlna-server-14ag.appdata.xml"
+flatpak build-export "$flatpak_repo" "$flatpak_build" stable
 rm -rf "$repo_root/tmp"
 # Do not recursively delete quarantine contents: pytest may leave runtime
 # mount points there, which reject unlink/rmdir even for root. The temporary

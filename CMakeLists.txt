@@ -298,7 +298,7 @@ add_library(dlna_core STATIC
                 resources/server_icon_120.png
                 resources/server_icon_256.png
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/icons)
-            install(FILES "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+            install(FILES "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo RENAME com.github.dlna-server-14ag.metainfo.xml)
             install(SCRIPT "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake")
         endif()
     endif()

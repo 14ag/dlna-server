@@ -6,13 +6,14 @@
   <name>DLNA Server</name>
   <summary>Share local media with DLNA and UPnP clients</summary>
   <description>
-    <p>dlna-server serves local video, audio, and image files to compatible devices on the local network.</p>
+    <p>DLNA Server serves local video, audio, and image files to compatible devices on the local network.</p>
   </description>
   <launchable type="desktop-id">dlna-server.desktop</launchable>
   <categories>
     <category>AudioVideo</category>
     <category>Network</category>
   </categories>
+  <content_rating type="oars-1.1" />
   <url type="homepage">https://github.com/14ag/dlna-server</url>
   <releases>
     <release version="@PROJECT_VERSION@" date="2026-05-24"/>
