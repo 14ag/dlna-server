@@ -72,8 +72,7 @@ label.separator {
  *
  * Source: gtk.css lines 480-485.
  */
-.frame,
-frame > border {
+.frame {
     border-width: 1px;
     border-style: solid;
     border-color: #333333;
@@ -118,45 +117,13 @@ list row:selected:focus {
 }
 
 /* -------------------------------------------------------------------------
- * 5. Entry defaults
- * -------------------------------------------------------------------------
- * The supplied theme uses a one-pixel square border, 4px vertical padding,
- * and a dark #202020 field. These are useful defaults for settings fields and
- * source-entry dialogs.
- *
- * Source: gtk.css lines 390-414.
- */
-entry {
-    padding: 4px 3px;
-    border-width: 1px;
-    border-style: solid;
-    border-color: #333333;
-    border-radius: 0;
-    color: #FFFFFF;
-    caret-color: currentColor;
-    background-color: #202020;
-}
-
-entry:focus,
-entry:active {
-    border-color: #4D4D4D;
-}
-
-entry:disabled {
-    color: #8C8C8C;
-    border-color: #202020;
-    background-color: #212121;
-}
-
-/* -------------------------------------------------------------------------
- * 6. Selection blue
+ * 5. Selection blue
  * -------------------------------------------------------------------------
  * This is the Windows blue used by the supplied theme.
  *
  * Source: gtk.css lines 54-56 and 401-403.
  */
 label selection,
-entry selection,
 entry:selected,
 entry:selected:focus {
     color: #FFFFFF;
@@ -164,26 +131,19 @@ entry:selected:focus {
 }
 
 /* -------------------------------------------------------------------------
- * 7. Separators
+ * 6. Separators
  * -------------------------------------------------------------------------
  * A one-pixel separator with a neutral dark gray is a useful Win32-style
  * structural boundary and avoids theme-dependent separator thickness.
  *
  * Source: gtk.css lines 1367-1375.
  */
-separator {
-    min-width: 1px;
-    min-height: 1px;
-    border: none;
-    background-color: #333333;
-}
-
 button separator {
     margin: 4px 1px;
 }
 
 /* -------------------------------------------------------------------------
- * 8. Menus / popovers
+ * 7. Menus / popovers
  * -------------------------------------------------------------------------
  * Square menus, one-pixel borders, no shadow and compact item padding are
  * closer to the requested Windows 10/Win32 visual language than GTK's
@@ -193,31 +153,13 @@ button separator {
  */
 menu,
 .menu,
-popover,
-popover.background {
+popover {
     padding: 2px;
     border: 1px solid #333333;
     border-radius: 0;
     color: #FFFFFF;
     background-color: #191919;
     box-shadow: none;
-}
-
-menu menuitem,
-.menu menuitem {
-    min-height: 16px;
-    min-width: 40px;
-    padding: 4px;
-    border: none;
-    border-radius: 0;
-    color: #FFFFFF;
-    background-color: #191919;
-}
-
-menu menuitem:hover,
-.menu menuitem:hover {
-    color: #FFFFFF;
-    background-color: #4D4D4D;
 }
 
 menu menuitem:disabled,
@@ -227,43 +169,7 @@ menu menuitem:disabled,
 }
 
 /* -------------------------------------------------------------------------
- * 9. Scrollbars
- * -------------------------------------------------------------------------
- * These values make scrollbars square and explicit instead of inheriting a
- * distribution-specific rounded overlay scrollbar.
- *
- * Source: gtk.css lines 1272-1308.
- */
-scrollbar {
-    border: none;
-    background-color: #303030;
-}
-
-scrollbar trough {
-    border: none;
-    border-radius: 0;
-}
-
-scrollbar slider {
-    min-width: 14px;
-    min-height: 14px;
-    margin: 0;
-    border: none;
-    border-radius: 0;
-    background-clip: padding-box;
-    background-color: #757575;
-}
-
-scrollbar slider:hover {
-    background-color: #6A6A6A;
-}
-
-scrollbar slider:hover:active {
-    background-color: #A3A3A3;
-}
-
-/* -------------------------------------------------------------------------
- * 10. Progress bars
+ * 8. Progress bars
  * -------------------------------------------------------------------------
  * Square progress geometry with an explicit trough prevents the host GTK
  * theme from introducing rounded or shadowed progress controls.
@@ -295,74 +201,7 @@ progressbar.horizontal progress {
 }
 
 /* -------------------------------------------------------------------------
- * 11. Switches
- * -------------------------------------------------------------------------
- * The supplied theme explicitly uses Windows blue #0078D7 for checked
- * switches and a 42px minimum width.
- *
- * Source: gtk.css lines 1478-1527.
- */
-switch {
-    margin: 4px;
-    outline-offset: -4px;
-    border: 3px solid #FFFFFF;
-    border-radius: 16px;
-    background-color: transparent;
-    min-width: 42px;
-}
-
-switch:checked {
-    border-color: #0078D7;
-    background-color: #0078D7;
-    box-shadow: none;
-}
-
-switch:disabled {
-    border-color: #8C8C8C;
-}
-
-switch slider {
-    min-width: 12px;
-    min-height: 12px;
-    margin: 3px 4px;
-    border: none;
-    border-radius: 100%;
-    color: #FFFFFF;
-    background-color: #FFFFFF;
-}
-
-switch:checked slider {
-    background-color: #202020;
-}
-
-/* -------------------------------------------------------------------------
- * 12. Tooltips
- * -------------------------------------------------------------------------
- * GTK theme tooltips are explicitly square, one-pixel bordered and shadowless.
- *
- * Source: gtk.css lines 2092-2104.
- */
-tooltip {
-    border-radius: 0;
-    box-shadow: none;
-}
-
-tooltip.background {
-    border-style: none;
-    background-color: #191919;
-}
-
-tooltip.background label {
-    padding: 1px;
-}
-
-tooltip * {
-    background-color: transparent;
-    color: #FFFFFF;
-}
-
-/* -------------------------------------------------------------------------
- * 13. Notebook/tab defaults
+ * 9. Notebook/tab defaults
  * -------------------------------------------------------------------------
  * These are useful if the settings command ribbon or another tabbed GTK
  * surface is implemented using GtkNotebook.
@@ -405,7 +244,7 @@ notebook tab:checked {
 }
 
 /* -------------------------------------------------------------------------
- * 14. Arrow controls
+ * 10. Arrow controls
  * -------------------------------------------------------------------------
  * The theme reserves 16px for arrows. Keep this as a geometry default rather
  * than copying the GTK3 -gtk-icon-source declarations.
@@ -418,3 +257,5 @@ combobox arrow {
     min-width: 16px;
     color: rgba(255, 255, 255, 0.75);
 }
+
+</content>
