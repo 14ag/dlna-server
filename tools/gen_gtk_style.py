@@ -87,41 +87,8 @@ window.dlna-main {
     padding: 0 {{gutter}}px;
 }
 
-.toolbar-button {
-    background-color: @control_color;
-    border: none;
-    border-radius: {{corner_radius}}px;
-    color: @text_color;
-    min-height: {{button_height}}px;
-    min-width: {{add_button_width}}px;
-    outline: 1px solid @border_color;
-    outline-offset: -1px;
-    padding: 0;
-    font-family: "{{body_font_family_stack}}";
-    font-size: 12px;
-}
-
-.toolbar-button:hover {
-    background-color: @control_hover_color;
-}
-
 .toolbar-button:active {
     background-color: @control_pressed_color;
-}
-
-.toolbar-button:disabled {
-    background-color: @control_color;
-    color: @disabled_text_color;
-}
-
-.toolbar-button:focus-visible {
-    outline: {{focus_ring_thickness}}px solid @focus_color;
-    outline-offset: -4px;
-}
-
-.source-list:focus-within {
-    outline: {{focus_ring_thickness}}px solid @focus_color;
-    outline-offset: {{focus_ring_gap}}px;
 }
 
 .empty-state {
@@ -129,19 +96,8 @@ window.dlna-main {
 }
 
 frame { color: @secondary_text_color; border-radius: 0; }
-entry {
-    background-color: @page_color;
-    color: @text_color;
-    border: none;
-    border-radius: {{corner_radius}}px;
-    box-shadow: inset 0 0 0 1px @border_color;
-}
-checkbutton, textview, textview text { color: @text_color; background-color: @page_color; }
+checkbutton, textview { color: @text_color; background-color: @page_color; }
 scrolledwindow, viewport { background-color: @page_color; }
-.source-list { background-color: @page_color; border: 1px solid @border_color; border-radius: 0; }
-.source-list list { padding: 2px; background-color: @page_color; color: @text_color; }
-.source-list row { padding: 4px 6px; background-color: @page_color; color: @text_color; }
-.source-list row:selected { background-color: rgb(70,90,120); color: @text_color; }
 window.csd, window.csd decoration { border-radius: 0; box-shadow: none; }
 
 .win10-titlebar {

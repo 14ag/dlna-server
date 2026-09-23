@@ -99,17 +99,6 @@ window {
  * This is one of the clearest changes from modern rounded GTK styling to
  * classic Windows control geometry.
  */
-entry {
-    padding: 4px 3px;
-    border: 1px solid #333333;
-    border-radius: 0;
-    box-shadow: none;
-    color: #FFFFFF;
-    caret-color: currentColor;
-    background-color: #202020;
-}
-
-entry:focus,
 entry:active {
     border-color: #4D4D4D;
 }
@@ -118,11 +107,6 @@ entry:disabled {
     color: #8C8C8C;
     border-color: #202020;
     background-color: #212121;
-}
-
-entry selection {
-    color: #FFFFFF;
-    background-color: #0078D7;
 }
 
 /* ========================================================================
@@ -331,10 +315,4 @@ button {
     transition: border 100ms ease-in-out;
 }
 
-entry {
-    transition: border 100ms ease-out;
-}
-
-entry:focus {
-    transition: border 100ms ease-in;
-}
+</content>
