@@ -145,6 +145,7 @@ GtkWidget* g_status = nullptr;
 GtkWidget* g_sourcesScrolled = nullptr;
 GtkWidget* g_sources = nullptr;
 GtkWidget* g_emptyState = nullptr;
+GtkWidget* g_activeSourceContextMenu = nullptr;
 
 ServerUiState g_state = ServerUiState::Stopped;
 std::thread g_worker;
@@ -367,6 +368,7 @@ bool g_printDeleteFocusGating = false;
 bool g_printPlaylistAddSensitivity = false;
 bool g_printStoppedCloseExit = false;
 bool g_printSettingsReopen = false;
+bool g_printCloseWithContextMenuOpen = false;
 
 // Number of attempts and delay between attempts when the initial
 // stopped distro (microsoft/WSL#11958). Total worst-case wait is
@@ -483,8 +485,8 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
     gtk_widget_add_css_class(titlebar, "win10-titlebar-box");
     gtk_window_handle_set_child(GTK_WINDOW_HANDLE(handle), titlebar);
 
-    GtkWidget* leftBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_widget_set_margin_start(leftBox, 10);
+    GtkWidget* leftBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, UiTokensPosix::kTitlebarIconTitleGap);
+    gtk_widget_set_margin_start(leftBox, UiTokensPosix::kTitlebarLeftPadding);
     gtk_widget_set_valign(leftBox, GTK_ALIGN_CENTER);
 
     if (chrome == WindowChrome::Main) {
@@ -496,12 +498,14 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
         if (!iconPath.empty()) {
             icon = gtk_image_new_from_file(iconPath.c_str());
             gtk_image_set_pixel_size(GTK_IMAGE(icon), 16);
+            gtk_widget_set_name(icon, "win10-title-icon");
             gtk_box_append(GTK_BOX(leftBox), icon);
         }
     }
 
     GtkWidget* titleLabel = gtk_label_new(title);
     gtk_widget_add_css_class(titleLabel, "title");
+    gtk_widget_set_name(titleLabel, "win10-title-label");
     gtk_label_set_xalign(GTK_LABEL(titleLabel), 0.0f);
     gtk_box_append(GTK_BOX(leftBox), titleLabel);
 
@@ -513,14 +517,17 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
 
     GtkWidget* controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_add_css_class(controls, "win10-window-controls");
+    gtk_widget_set_margin_end(controls, 0);
+    gtk_widget_set_halign(controls, GTK_ALIGN_END);
     if (chrome == WindowChrome::Main) {
         gtk_box_append(GTK_BOX(controls),
                        CreateWin10WindowControl(window, "win10-minimize-control", false));
         gtk_box_append(GTK_BOX(controls),
                        CreateWin10WindowControl(window, "win10-maximize-control", false, true));
     }
-    gtk_box_append(GTK_BOX(controls),
-                   CreateWin10WindowControl(window, "win10-close-control", true));
+    GtkWidget* closeButton = CreateWin10WindowControl(window, "win10-close-control", true);
+    gtk_widget_set_name(closeButton, "win10-close-button");
+    gtk_box_append(GTK_BOX(controls), closeButton);
     gtk_box_append(GTK_BOX(titlebar), controls);
 
     TitlebarState* state = g_new0(TitlebarState, 1);
@@ -540,6 +547,7 @@ GtkWindow* CreateMessageWindow(GtkWindow* parent,
                                const char* title,
                                WindowChrome chrome) {
     GtkWindow* window = GTK_WINDOW(gtk_window_new());
+    gtk_widget_add_css_class(GTK_WIDGET(window), "dlna-dialog-window");
     gtk_window_set_modal(window, TRUE);
     gtk_window_set_resizable(window, FALSE);
     // Win32 message boxes grow to fit their text. Keep the Figma width as a
@@ -1761,12 +1769,10 @@ GtkWidget* BuildSourceRow(const std::string& pathUtf8) {
     gtk_label_set_ellipsize(GTK_LABEL(rowLabel), PANGO_ELLIPSIZE_END);
     gtk_label_set_single_line_mode(GTK_LABEL(rowLabel), TRUE);
     gtk_widget_set_hexpand(rowLabel, TRUE);
-    // Full path on hover. GTK4 has no settable tooltip delay
-    // (GtkSettings:gtk-tooltip-timeout is ignored), so the immediate-show
-    // behaviour is provided by the motion-driven popover installed in
-    // InstallSourceListHoverTip(); this tooltip text is the data source for it
-    // and the accessibility fallback.
-    gtk_widget_set_tooltip_text(rowLabel, pathUtf8.c_str());
+    // full path on hover is shown only by the custom popover installed
+    // in InstallSourceListHoverTip and driven by SourceRowClippedText
+    // the native gtk tooltip is intentionally not used here because
+    // having both active at once produced two overlapping tooltips
     gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), rowLabel);
     return row;
 }
@@ -1800,6 +1806,7 @@ void RefreshDeleteButton() {
 
 void OnSourceFocusChanged(GtkEventControllerFocus*, gpointer) {
     RefreshDeleteButton();
+    gtk_widget_add_css_class(g_sourcesScrolled, "source-list-focused");
 }
 
 void OnSourceFocusLeave(GtkEventControllerFocus*, gpointer) {
@@ -1826,6 +1833,7 @@ void OnSourceFocusLeave(GtkEventControllerFocus*, gpointer) {
     if (!gainedFocusIsDeleteButton) {
         gtk_list_box_unselect_all(GTK_LIST_BOX(g_sources));
     }
+    gtk_widget_remove_css_class(g_sourcesScrolled, "source-list-focused");
     RefreshDeleteButton();
 }
 
@@ -1884,7 +1892,15 @@ void RefreshSourceList() {
     GtkWidget* rowWidget = gtk_widget_get_first_child(g_sources);
     while (rowWidget != nullptr) {
         GtkWidget* next = gtk_widget_get_next_sibling(rowWidget);
-        gtk_list_box_remove(GTK_LIST_BOX(g_sources), rowWidget);
+        // gtk_list_box_remove only accepts a tracked GtkListBoxRow
+        // the hover tip popover and the context menu popover are
+        // attached to g_sources with gtk_widget_set_parent directly
+        // and are not rows so they must be skipped here
+        // handing a non row child to gtk_list_box_remove is what
+        // produced the tried to remove non child warning
+        if (GTK_IS_LIST_BOX_ROW(rowWidget)) {
+            gtk_list_box_remove(GTK_LIST_BOX(g_sources), rowWidget);
+        }
         rowWidget = next;
     }
     // Win32 parity (MainWindow::RefreshSourceList): while a runtime --source
@@ -2050,6 +2066,13 @@ void RestartServer() {
 // this closes the same race GDK_SYNCHRONIZE fixes for the whole process
 void DestroyMainWindowSafely() {
     if (g_mainWindow == nullptr) return;
+    // close any open source list context menu first so its own
+    // closed handler unparents it cleanly before window teardown
+    // walks the same widget tree, see task 5 of the fix workflow
+    if (g_activeSourceContextMenu != nullptr) {
+        gtk_popover_popdown(GTK_POPOVER(g_activeSourceContextMenu));
+    }
+    HideSourceHoverTip();
     GtkWidget* toDestroy = g_mainWindow;
     g_mainWindow = nullptr;
     while (g_main_context_pending(nullptr)) {
@@ -2162,8 +2185,17 @@ void ShowSourceListContextMenu(double x, double y) {
     const GdkRectangle rect = { static_cast<int>(x), static_cast<int>(y), 1, 1 };
     gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
     gtk_popover_set_has_arrow(GTK_POPOVER(popover), FALSE);
+    g_activeSourceContextMenu = popover;
     g_signal_connect(popover, "closed", G_CALLBACK(+[](GtkPopover* p, gpointer) {
-        gtk_widget_unparent(GTK_WIDGET(p));
+        // guard against a second unparent call
+        // this can fire once from a normal dismiss and again during
+        // window teardown if the popover was still open
+        if (gtk_widget_get_parent(GTK_WIDGET(p)) != nullptr) {
+            gtk_widget_unparent(GTK_WIDGET(p));
+        }
+        if (g_activeSourceContextMenu == GTK_WIDGET(p)) {
+            g_activeSourceContextMenu = nullptr;
+        }
     }), nullptr);
     gtk_popover_popup(GTK_POPOVER(popover));
 }
@@ -2476,6 +2508,7 @@ void BuildMainWindow(GtkApplication* app) {
 
     GtkWidget* window = gtk_application_window_new(app);
     g_mainWindow = window;
+    gtk_widget_add_css_class(window, "dlna-main-window");
     InstallMnemonicCueControllers(window);
     gtk_window_set_title(GTK_WINDOW(window), "DLNA Server");
 gtk_window_set_default_size(GTK_WINDOW(window),
@@ -2915,6 +2948,22 @@ void OnAppActivate(GtkApplication* app, gpointer) {
         PrintSettingsReopenAndExit(app);
         return;
     }
+    if (g_printCloseWithContextMenuOpen) {
+        // reproduces the reported sequence right click to open the
+        // source list context menu then close the window without
+        // dismissing it first see task 5 of the fix workflow
+        gtk_window_present(GTK_WINDOW(g_mainWindow));
+        for (int i = 0; i < 200 && g_state != ServerUiState::Stopped; ++i)
+            g_main_context_iteration(nullptr, TRUE);
+        ShowSourceListContextMenu(10, 10);
+        for (int i = 0; i < 50; ++i)
+            g_main_context_iteration(nullptr, TRUE);
+        RequestClose();
+        for (int i = 0; i < 300 && gtk_widget_get_realized(g_mainWindow); ++i)
+            g_main_context_iteration(nullptr, TRUE);
+        std::fflush(stdout);
+        std::_Exit(0);
+    }
     if (g_printStoppedCloseExit) {
         // Task 1: Close in the Stopped state must destroy the window and
         // exit the process cleanly instead of hiding it.
@@ -3103,6 +3152,8 @@ int main(int argc, char** argv) {
             g_printSettingsReopen = true;
         } else if (arg == "--print-stopped-close-exit") {
             g_printStoppedCloseExit = true;
+        } else if (arg == "--print-close-with-context-menu-open") {
+            g_printCloseWithContextMenuOpen = true;
         } else if (arg == "--print-delete-focus-gating") {
             g_printDeleteFocusGating = true;
         } else if (arg == "--print-playlist-add-sensitivity") {
@@ -3215,6 +3266,7 @@ int main(int argc, char** argv) {
             arg == "--dump-log-dialog-reopen" ||
             arg == "--dump-msgbox-parent" ||
             arg == "--print-stopped-close-exit" ||
+            arg == "--print-close-with-context-menu-open" ||
             arg == "--print-settings-reopen" ||
             arg == "--print-delete-focus-gating" ||
             arg == "--print-playlist-add-sensitivity") {

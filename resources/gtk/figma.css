@@ -9,11 +9,22 @@ window,
 button,
 entry,
 label,
-checkbutton,
-textview,
+checkbutton {
+    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 12px;
+}
+
+textview {
+    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-size: 12px;
+    color: #FFFFFF;
+    background-color: #202020;
+}
+
 textview text {
     font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 12px;
+    background-color: #202020;
 }
 
 /* Windows 10 frame: 1 px profile border plus downward soft shadow. */
@@ -23,7 +34,7 @@ window.csd decoration:backdrop {
     /* Half-weight profile line. Same rationale as the source list: the outline
        is drawn as an inset box-shadow so all four edges survive device-pixel
        snapping, and the colour is the half-strength blend of #606060. */
-    border: none;
+    border: 1px solid #606060;
     border-radius: 0;
     box-shadow: 0 6px 22px 9px rgba(0, 0, 0, 0.38);
 }
@@ -37,7 +48,7 @@ windowhandle.win10-titlebar {
     border-radius: 0;
     box-shadow: none;
     min-height: 32px;
-    padding: 0 8px;
+    padding: 0;
     margin: 0;
     color: #ffffff;
 }
@@ -134,6 +145,7 @@ button.win10-close-control:active {
 /* Main window outer surface */
 .dlna-main-surface {
     background-color: #1f1f1f;
+    border: none;
 }
 
 /* Main toolbar. */
@@ -328,9 +340,6 @@ button.settings-toolbar-button {
     padding: 0 8px;
     margin: 0;
     border-radius: 0;
-}
-.settings-toolbar-button,
-button.settings-toolbar-button {
     background-color: transparent;
     background-image: none;
     border: none;
@@ -490,10 +499,7 @@ button.dlna-dialog-button.suggested-action:focus {
 window.dlna-dialog-window,
 window.dlna-log-window {
     background-color: #f0f0f0;
-}
-
-.dlna-log-body {
-    background-color: #f0f0f0;
+    border: 1px solid #707070;
 }
 
 /* Log surface. */
@@ -550,4 +556,13 @@ scrollbar slider:hover {
 
 scrollbar slider:hover:active {
     background-color: #A3A3A3;
+}
+
+scrolledwindow.source-list {
+  border: 1px solid #585858;
+}
+
+scrolledwindow.source-list.source-list-focused {
+  outline: 2px solid #60A5FA;
+  outline-offset: 2px;
 }

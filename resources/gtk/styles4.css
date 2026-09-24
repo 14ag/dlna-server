@@ -46,15 +46,6 @@ button.suggested-action:hover {
 }
 
 
-textview {
-  color: #FFFFFF;
-  background-color: #202020;
-}
-
-textview text {
-  background-color: #202020;
-}
-
 textview text:selected,
 textview text selection,
 textview text:selected:focus,

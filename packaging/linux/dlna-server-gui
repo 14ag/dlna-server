@@ -9,13 +9,47 @@ set -eu
 # which does carry a token the raw command still works it may just open
 # without focus the first time
 
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+resolve_script_dir() {
+    dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || dir=""
+    if [ -n "$dir" ] && [ -x "$dir/dlna-server-gui-bin" ]; then
+        printf '%s\n' "$dir"
+        return 0
+    fi
+    # a desktop entry launcher can invoke this script indirectly so
+    # resolving the script directory from the invoking path above
+    # can point at the wrong place fall back to known install
+    # prefixes before giving up entirely
+    for candidate in /usr/bin /usr/local/bin; do
+        if [ -x "$candidate/dlna-server-gui-bin" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+log_dir="${XDG_CACHE_HOME:-$HOME/.cache}/dlna-server"
+log_file="$log_dir/gui-launch.log"
+mkdir -p "$log_dir" 2>/dev/null || true
+
+script_dir=$(resolve_script_dir) || {
+    {
+        echo "dlna-server-gui failed to resolve its own install directory"
+        echo "invoking path was $0"
+    } >> "$log_file" 2>/dev/null
+    echo "DLNA Server could not locate dlna-server-gui-bin" >&2
+    exit 1
+}
+
 server_bin=${DLNA_SERVER_BIN:-"$script_dir/dlna-server"}
 native_gui=${DLNA_SERVER_GUI_BIN:-"$script_dir/dlna-server-gui-bin"}
 
 export DLNA_SERVER_BIN="$server_bin"
 
 if [ ! -x "$native_gui" ]; then
+    {
+        echo "DLNA Server native GUI is missing or not executable: $native_gui"
+    } >> "$log_file" 2>/dev/null
     echo "DLNA Server native GUI is missing or not executable: $native_gui" >&2
     echo "Rebuild with -DDLNA_ENABLE_GTK4_GUI=ON." >&2
     exit 1
@@ -32,7 +66,11 @@ if [ -z "${DISPLAY:-}" ]; then
 fi
 
 # wait for the compositor socket before starting the GTK process
-for i in $(seq 1 20); do
+# a cold wsl boot triggered by clicking a windows start menu icon can
+# take much longer than an already running distro so this waits up
+# to one minute instead of the previous five seconds before giving
+# up and trying the launch anyway
+for i in $(seq 1 240); do
     [ -S "${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}/${WAYLAND_DISPLAY:-wayland-0}" ] && break
     sleep 0.25
 done

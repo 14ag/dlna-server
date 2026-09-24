@@ -9,6 +9,7 @@ Name=DLNA Server
 GenericName=DLNA media server
 Comment=Share local media with DLNA and UPnP clients
 Exec=${exec_path}
+TryExec=${exec_path}
 Icon=dlna-server
 Terminal=false
 Categories=AudioVideo;Network;FileTransfer;

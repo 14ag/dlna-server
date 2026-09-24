@@ -133,12 +133,6 @@ entry:disabled {
     color: #FFFFFF;
 }
 
-.source-list row {
-    padding: 2px;
-    background-color: #202020;
-    color: #FFFFFF;
-}
-
 .source-list row:hover {
     background-color: #515151;
 }
