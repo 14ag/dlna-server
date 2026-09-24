@@ -124,7 +124,7 @@ int main(int argc, char** argv) {
             }
             AppConfig.SetRuntimeSourceOverride(immediateOverride);
         }
-        else if (arg == "--kill-server" || arg == "-k") {
+        else if (arg == "--kill-server" || arg == "-k" || arg == "--kill") {
             if (!SingleInstance::SendKill()) {
                 std::cerr << "No running dlna-server instance found." << std::endl;
                 return 1;

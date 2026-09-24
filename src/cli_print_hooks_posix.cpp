@@ -104,7 +104,7 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
             }
             AppConfig.SetRuntimeSourceOverride(immediateOverride);
         }
-        else if (pre == "--kill-server" || pre == "-k") {
+        else if (pre == "--kill-server" || pre == "-k" || pre == "--kill") {
             if (!SingleInstance::SendKill()) {
                 std::cerr << "No running dlna-server instance found." << std::endl;
                 exitCode = 1;

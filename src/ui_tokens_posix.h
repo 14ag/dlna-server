@@ -13,7 +13,10 @@
 namespace UiTokensPosix {
 
 constexpr int kTitlebarHeight = 30;
-constexpr int kTitlebarLeftPadding = 10;
+// distance from the window left edge to the app icon in the titlebar
+constexpr int kTitlebarLeftPadding = 8;
+// gap between the app icon and the title label in the titlebar
+constexpr int kTitlebarIconTitleGap = 5;
 
 constexpr int kMainWindowWidth = 426;
 constexpr int kMainWindowHeight = 593;
