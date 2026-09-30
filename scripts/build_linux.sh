@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # build_linux.sh — Build core Linux binaries and stage them in output/linux
+# Usage:
+#   build_linux.sh          # binaries only
+#   build_linux.sh --deb    # binaries + .deb package in output/linux
 set -euo pipefail
 
 # Use system toolchain and libraries consistently
@@ -7,6 +10,14 @@ export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="$repo_root/output/linux"
+
+BUILD_DEB=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --deb) BUILD_DEB=1; shift ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
 
 # Keep build state in Linux filesystem (/tmp) to avoid DrvFS chmod limitations
 build_root=$(mktemp -d "${TMPDIR:-/tmp}/dlna-server-linux-build.XXXXXX")
@@ -107,3 +118,17 @@ cp -a "$install_dir/share/." "$output_dir/share/"
 
 echo "Linux binary assets built successfully in $output_dir"
 
+# Step 5 (optional): Build Debian package in the same cmake build dir
+if [ "$BUILD_DEB" = "1" ]; then
+    echo "[INFO] Building Debian package in the same build dir..."
+    cpack --config "$build_dir/CPackConfig.cmake" -B "$output_dir"
+    sudo_run rm -rf "$output_dir/_CPack_Packages" 2>/dev/null || true
+    sudo_run chown -R "$(id -u):$(id -g)" "$output_dir" 2>/dev/null || true
+
+    deb_file=$(find "$output_dir" -maxdepth 1 -type f -name 'dlna-server_*.deb' | sort -r | head -n 1)
+    if [ -z "$deb_file" ]; then
+        echo "[ERROR] Debian package generation failed." >&2
+        exit 1
+    fi
+    echo "Debian package created: $deb_file"
+fi

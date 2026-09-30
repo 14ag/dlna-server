@@ -65,15 +65,15 @@ if [ "$RELEASE" = "1" ]; then
     exit 0
 fi
 
-# Step 1: Always build core Linux binaries into output/linux
-echo "Building Linux binary assets..."
-bash "$script_dir/scripts/build_linux.sh"
-
-# Step 2: Build Debian package if requested or if installing
+# Step 1: Build core Linux binaries (and .deb in the same cmake run when needed)
+# Passing --deb here avoids a second full cmake configure+build that would occur
+# if build_deb.sh were called separately after build_linux.sh.
+_linux_args=()
 if [ "$BUILD_DEB" = "1" ] || [ "$INSTALL" = "1" ]; then
-    echo "Building Debian package (.deb)..."
-    bash "$script_dir/scripts/build_deb.sh"
+    _linux_args+=(--deb)
 fi
+echo "Building Linux binary assets..."
+bash "$script_dir/scripts/build_linux.sh" "${_linux_args[@]}"
 
 # Step 3: Build AppImage if requested
 if [ "$BUILD_APPIMAGE" = "1" ]; then
