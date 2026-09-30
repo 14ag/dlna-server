@@ -487,13 +487,17 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
 
     GtkWidget* leftBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, UiTokensPosix::kTitlebarIconTitleGap);
     gtk_widget_set_margin_start(leftBox, UiTokensPosix::kTitlebarLeftPadding);
+    gtk_widget_set_margin_start(
+        leftBox,
+        chrome == WindowChrome::Main ? UiTokensPosix::kTitlebarLeftPadding
+                                     : UiTokensPosix::kTitlebarIconTitleGap);
     gtk_widget_set_valign(leftBox, GTK_ALIGN_CENTER);
 
     if (chrome == WindowChrome::Main) {
         GtkWidget* icon = nullptr;
-        std::string iconPath = ResolveBundledResourcePath("server_icon_48.png");
+        std::string iconPath = ResolveBundledResourcePath("server_icon_16.png");
         if (iconPath.empty()) {
-            iconPath = ResolveBundledResourcePath("icons/server_icon_48.png");
+            iconPath = ResolveBundledResourcePath("icons/server_icon_16.png");
         }
         if (!iconPath.empty()) {
             icon = gtk_image_new_from_file(iconPath.c_str());
@@ -2375,9 +2379,12 @@ std::string SourceRowClippedText(GtkListBoxRow* row) {
 
 void HideSourceHoverTip() {
     g_sourceHoverTipRow = nullptr;
-    if (g_sourceHoverTip != nullptr) {
-        gtk_popover_popdown(GTK_POPOVER(g_sourceHoverTip));
-    }
+    if (g_sourceHoverTip == nullptr) return;
+    // Unparent before popdown so GTK window teardown does not encounter it
+    // as a non-child and emit the "Tried to remove non-child" warning loop.
+    gtk_widget_unparent(g_sourceHoverTip);
+    g_sourceHoverTip = nullptr;
+    g_sourceHoverTipLabel = nullptr;
 }
 
 void UpdateSourceHoverTip(double x, double y) {

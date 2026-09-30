@@ -34,7 +34,7 @@ window.csd decoration:backdrop {
     /* Half-weight profile line. Same rationale as the source list: the outline
        is drawn as an inset box-shadow so all four edges survive device-pixel
        snapping, and the colour is the half-strength blend of #606060. */
-    border: 1px solid #606060;
+    border: 1px solid #3c3c3c;
     border-radius: 0;
     box-shadow: 0 6px 22px 9px rgba(0, 0, 0, 0.38);
 }
@@ -87,6 +87,13 @@ windowhandle.win10-titlebar.win10-inactive,
     font-family: "Segoe UI", sans-serif;
     font-size: 12px;
     font-weight: 400;
+}
+
+#win10-title-icon,
+#win10-title-label {
+    margin: 0;
+    padding: 0;
+    border: 0;
 }
 
 /* Window controls: Flat Windows-style minimize and close buttons */
@@ -448,16 +455,23 @@ button.dlna-dialog-button:disabled {
 button.dlna-dialog-button.suggested-action {
     background-color: #e1e1e1;
     border: 1.5px solid #0078d7;
+    border: 1px solid #0078d7;
+    box-shadow: none;
 }
 .dlna-dialog-button.suggested-action:hover,
 button.dlna-dialog-button.suggested-action:hover {
     background-color: #e9e9e9;
     border: 1.5px solid #0078d7;
+    border: 1px solid #0078d7;
+    box-shadow: none;
 }
 .dlna-dialog-button.suggested-action:focus,
 button.dlna-dialog-button.suggested-action:focus {
     outline: 1px solid #0078d7;
     outline-offset: -1px;
+    border: 1px solid #0078d7;
+    outline: none;
+    box-shadow: none;
 }
 
 /* Warning dialog specific. */

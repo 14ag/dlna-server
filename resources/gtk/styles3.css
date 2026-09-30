@@ -201,25 +201,17 @@ menu menuitem:hover,
 }
 
 
-/* ========================================================================
- * 9. TOOLTIP
- * ========================================================================
- *
- * This matters because tooltips are often still supplied by the host GTK
- * theme even after the main window is customized.
- */
+
 tooltip {
+    border: none !important;
     border-radius: 0;
     box-shadow: none;
+    padding: 0;
 }
 
 tooltip.background {
-    border: 1px solid #333333;
     background-color: #191919;
-}
-
-tooltip.background label {
-    padding: 1px;
+    border: none !important;
 }
 
 tooltip * {

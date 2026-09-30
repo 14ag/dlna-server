@@ -261,6 +261,9 @@ add_library(dlna_core STATIC
                         "${CMAKE_SOURCE_DIR}/resources/app.ico"
                         "${DLNA_APP_BUNDLE}/Contents/Resources/app.ico"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${CMAKE_SOURCE_DIR}/resources/server_icon_16.png"
+                        "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_16.png"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         "${CMAKE_SOURCE_DIR}/resources/server_icon_48.png"
                         "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_48.png"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -289,11 +292,13 @@ add_library(dlna_core STATIC
             install(FILES resources/dlna-server.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
             # Install PNG icons into hicolor fixed-size directories so DEs
             # find the icon by name (Icon=dlna-server in .desktop files).
+            install(FILES resources/server_icon_16.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/16x16/apps   RENAME dlna-server.png)
             install(FILES resources/server_icon_48.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps   RENAME dlna-server.png)
             install(FILES resources/server_icon_120.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps RENAME dlna-server.png)
             install(FILES resources/server_icon_256.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps RENAME dlna-server.png)
             # Also keep a copy in the app-specific data dir for runtime loading
             install(FILES
+                resources/server_icon_16.png
                 resources/server_icon_48.png
                 resources/server_icon_120.png
                 resources/server_icon_256.png
