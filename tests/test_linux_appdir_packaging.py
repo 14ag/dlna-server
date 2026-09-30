@@ -21,7 +21,7 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertNotIn("DLNA_SERVER_GUI_DIR", apprun)
 
     def test_linux_build_uses_local_wsl_workspace(self):
-        build = self.read("scripts/build-linux.sh")
+        build = self.read("scripts/build_linux.sh")
         self.assertIn('mktemp -d "${TMPDIR:-/tmp}/dlna-server-linux-build.XXXXXX"', build)
         self.assertIn('build_dir="$build_root/build"', build)
         self.assertIn('release_stage_dir="$build_root/stage"', build)
