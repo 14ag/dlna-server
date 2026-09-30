@@ -26,27 +26,51 @@ Notes:
 
 ## Linux / macOS
 
-### POSIX install
+### Linux Build & Install
 
-WSL Ubuntu / Linux install now uses the repo script:
+Build commands on Linux / WSL Ubuntu:
 
-```bash
-sudo ./build.sh --install
-```
+- **Build binary assets only (testing)**:
+  ```bash
+  ./build.sh
+  ```
+  Compiles and places `dlna-server`, `dlna-server-gui`, `dlna-server-gui-bin`, and `share/` into `output/linux/`.
 
-This builds GUI assets by default, writes the `.deb` into `output/linux/`, and installs that package with `dpkg -i` so it shows up in the package database.
+- **Build Debian package (`.deb`)**:
+  ```bash
+  ./build.sh --deb
+  ```
 
-For CLI-only installs:
+- **Build AppImage bundle (`.AppImage`)**:
+  ```bash
+  ./build.sh --appimage
+  ```
 
-```bash
-sudo ./build.sh --cli --install
-```
+- **Build Flatpak bundle (`.flatpak`)**:
+  ```bash
+  ./build.sh --flatpak
+  ```
 
-For release artifact builds without installing:
+- **Install**:
+  ```bash
+  ./build.sh --install
+  ```
+  Removes existing `dlna-server` (`sudo apt remove dlna-server`) and installs the newly built package.
 
-```bash
-sudo ./build.sh
-```
+- **Publish release**:
+  ```bash
+  ./build.sh --release [--notes] [--update=<tag>]
+  ```
+
+#### Underlying modular scripts (`scripts/`)
+
+The orchestrator `build.sh` delegates to dedicated modular scripts:
+- `scripts/build_linux.sh`: Compiles and copies core binaries to `output/linux/`.
+- `scripts/build_deb.sh`: Generates the Debian `.deb` package using CPack.
+- `scripts/build_appimage.sh`: Builds the `.AppImage` bundle via `linuxdeploy`.
+- `scripts/build_flatpak.sh`: Builds the Flatpak bundle via `flatpak-builder`.
+- `scripts/install_linux.sh`: Removes previous installation and installs the `.deb` package or binaries.
+- `scripts/release-linux.sh`: Publishes built assets to GitHub Releases.
 
 Raw CMake install flow still exists for manual builds:
 

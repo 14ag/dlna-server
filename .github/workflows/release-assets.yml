@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Build Linux release assets
-        run: sudo bash build.sh
+        run: sudo bash build.sh --deb --appimage --flatpak
       - name: Publish release with Linux assets
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
