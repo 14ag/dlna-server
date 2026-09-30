@@ -8,14 +8,14 @@
 - No fallbacks when user states a requirement. Ask a yes/no question in B1 english if requirement conflict exists.
 - sudo password for wsl is in the .env file
 - Do not make proactive decisions outside user scope. Ask first.
-- no such thing as a pre-existing failiure. those must be fixed at the very end after imolementing user's requirements
+- no such thing as a pre-existing failiure. those must be fixed at the very end after implementing user's requirements
 
 ## Automation
 
 - Automate viable steps with PowerShell or batch scripts.
 - If any uncertainty exists before running a task, ask only yes/no questions.
 - If a command or dependency is missing, stop and notify user.
-- If same error appears twice, write a detailed description of the problem as if explaining to sb who wont have access to the codebase. mentionwhat you have tries and the results you got. you are asking for info and how how to apply it. write the detailed prompt in c2 english using the right term for everything signal over noise. im sending this to a researching agent. specify exactly what you need.
+- If same error appears twice, write a detailed description of the problem as if explaining to sb who wont have access to the codebase. mention what you have tried and the results you got. you are asking for info and how how to apply it. write the detailed prompt in c2 english using the right term for everything signal over noise. im sending this to a researching agent. specify exactly what you need.
 - Avoid verbose logs. Show only relevant output or error summaries.
 - If errors or inconsistencies appear, log and attempt correction.
 
@@ -23,13 +23,25 @@
 
 - never build manually. always use the build scripts. never edit the build scripts unless it has bugs
 - build windows assets using command `& .\build.bat --platform --x64 2>&1 | Select-Object -Last 30`
-- build linux assets using command `wsl.exe -d Ubuntu -- bash -lc 'DLNA_SUDO_PASSWORD=" " ./build.sh --install'` with no extra parameters.this script will handle everything (copying assets, building and installing)
+- build linux assets using command `wsl.exe -d Ubuntu -- bash -lc 'DLNA_SUDO_PASSWORD=" " ./build.sh --install'` with no extra parameters. this script will handle everything (copying assets, building and installing)
+- `build.sh --install` runs one cmake configure+build that produces both the raw binaries and the .deb package in the same temp build dir. there is no second build.
+- `build_deb.sh` is a thin wrapper that calls `build_linux.sh --deb`. do not call it directly in automation.
 - CMake requires libcurl. Do not add curl CLI or legacy IO fallback.
 - Windows build deps use vcpkg. Expected root is `$env:VCPKG_ROOT` or `$env:USERPROFILE\vcpkg`.
 - Windows curl packages: `curl:x64-windows-static` and `curl:x86-windows-static`.
 - Windows CMake must pass `-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake` and matching `-DVCPKG_TARGET_TRIPLET`.
 - POSIX/WSL build deps include `libcurl4-openssl-dev`.
 - End-user installs must not require `CURL_LIBRARY` or `CURL_INCLUDE_DIR`; those are build-machine inputs only.
+
+## WSLg Integration
+
+- The desktop file `Exec` line uses `env DLNA_SERVER_GTK_LAUNCHED=1 /usr/bin/dlna-server-gui` so the wrapper skips the gtk-launch re-entry block (gtk-launch spawns a fresh process without env inheritance, which causes an infinite loop otherwise).
+- `TryExec` points to `dlna-server-gui-bin` (the actual binary). WSLg's DVCPlugin uses `TryExec` for the Start Menu shortcut target, so the shortcut calls the binary directly via `wslg.exe`.
+- `StartupWMClass=com.github.dlna-server-14ag` matches the GTK application ID set in `gtk_application_new`. This is what WSLg uses to associate the running window with its taskbar icon.
+- Icons are installed in `/usr/share/icons/hicolor/{16x16,48x48,128x128,256x256,scalable}/apps/dlna-server.*`. The `Icon=dlna-server` key in the desktop file resolves to these.
+- `gtk_window_set_icon_name(window, "dlna-server")` in the source sets the window icon name to match the hicolor entries.
+- `output/linux/share/` files on DrvFS may be root-owned from a prior build. `build_linux.sh` uses `sudo_run rm` to clear them before staging new ones.
+
 
 ## Release Output
 
@@ -42,6 +54,7 @@
 
 ## Testing And Verification
 
+- never run tests before touching the code.
 - Use test-first workflow for implementation: failing test, implementation, passing test, refactor.
 - Do not write C++ tests. use python tests instead
 - Prefer blackbox tests for HTTP, SOAP, SSDP, GENA, media browse, playlists, remote IO, packaging, and build outputs.

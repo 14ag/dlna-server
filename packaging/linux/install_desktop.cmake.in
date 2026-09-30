@@ -1,15 +1,20 @@
 set(applications_dir "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_DATADIR@/applications")
 set(exec_path "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@/dlna-server-gui")
+set(bin_path "${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_BINDIR@/dlna-server-gui-bin")
 
 file(MAKE_DIRECTORY "${applications_dir}")
+# Exec uses env DLNA_SERVER_GTK_LAUNCHED=1 so the wrapper script skips the
+# gtk-launch re-entry block (gtk-launch spawns a fresh process without env
+# inheritance, causing an infinite launch loop).  The wrapper still handles
+# Wayland display detection and compositor readiness before calling the binary.
 file(WRITE "${applications_dir}/dlna-server.desktop"
 "[Desktop Entry]
 Type=Application
 Name=DLNA Server
 GenericName=DLNA media server
 Comment=Share local media with DLNA and UPnP clients
-Exec=${exec_path}
-TryExec=${exec_path}
+Exec=env DLNA_SERVER_GTK_LAUNCHED=1 ${exec_path}
+TryExec=${bin_path}
 Icon=dlna-server
 Terminal=false
 Categories=AudioVideo;Network;FileTransfer;
