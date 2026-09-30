@@ -89,7 +89,7 @@ build*
 temp/*
 current_workload.txt
 pre_existing_fails.txt
-
+.venv
 
 # whitelist
 !*.sh
