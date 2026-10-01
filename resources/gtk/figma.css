@@ -278,8 +278,8 @@ scrolledwindow.source-list list {
     color: #ffffff;
 }
 .dlna-hover-tip > contents {
-    background-color: #1f1f1f;
-    border: 1px solid #434343;
+    background-color: #191919;
+    border: none;
     border-radius: 0;
     box-shadow: none;
     padding: 2px 6px;
@@ -344,7 +344,7 @@ scrolledwindow.source-list list {
 button.settings-toolbar-button {
     min-height: 0;
     min-width: 0;
-    padding: 0 8px;
+    padding: 0 7px;
     margin: 0;
     border-radius: 0;
     background-color: transparent;
@@ -390,6 +390,9 @@ popover.menu modelbutton:hover {
 }
 /* Caption drawn over the group-box top stroke. The opaque background is what
    interrupts the stroke, so it must match .dlna-dialog-body exactly. */
+.dlna-dialog-body label.dlna-groupbox-caption,
+.dlna-dialog-body .dlna-groupbox-caption,
+label.dlna-groupbox-caption,
 .dlna-groupbox-caption {
     background-color: #f0f0f0;
     color: #000000;

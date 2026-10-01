@@ -146,6 +146,9 @@ GtkWidget* g_sourcesScrolled = nullptr;
 GtkWidget* g_sources = nullptr;
 GtkWidget* g_emptyState = nullptr;
 GtkWidget* g_activeSourceContextMenu = nullptr;
+GtkWidget* g_sourceHoverTip = nullptr;
+GtkWidget* g_sourceHoverTipLabel = nullptr;
+GtkListBoxRow* g_sourceHoverTipRow = nullptr;
 
 ServerUiState g_state = ServerUiState::Stopped;
 std::thread g_worker;
@@ -1542,32 +1545,23 @@ bool ShowSettingsDialog() {
     // menu bar row mirrors the win32 SetMenu Logs/Help bar that sits in
     // the non-client area so it is absent from the geometry dump and the
     // group boxes below start at the captured y coordinate of 21
-    const int kSettingsToolbarButtonWidth = 72;
-    const int kSettingsToolbarButtonHeight = UiTokensPosix::kSettingsRibbonHeight;
-    const int kSettingsToolbarTop = 0;
-
-    GtkWidget* settingsRibbon = gtk_fixed_new();
+    GtkWidget* settingsRibbon = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
     gtk_widget_set_size_request(settingsRibbon, UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsRibbonHeight);
     gtk_widget_add_css_class(settingsRibbon, "settings-ribbon");
     gtk_widget_set_overflow(settingsRibbon, GTK_OVERFLOW_HIDDEN);
     gtk_fixed_put(GTK_FIXED(fixed), settingsRibbon, 0, 0);
 
     GtkWidget* logsButton = gtk_button_new_with_label("Logs");
-    gtk_widget_set_size_request(logsButton, kSettingsToolbarButtonWidth, kSettingsToolbarButtonHeight);
-    gtk_widget_set_valign(logsButton, GTK_ALIGN_START);
-    // Parented to the ribbon, not to the dialog body, so the hover/selection
-    // rectangle is clipped to the ribbon strip (Win32 menu-bar behaviour).
-    gtk_fixed_put(GTK_FIXED(settingsRibbon), logsButton, UiTokensPosix::kSettingsRibbonLogsX,
-                  kSettingsToolbarTop);
+    gtk_widget_set_valign(logsButton, GTK_ALIGN_FILL);
+    gtk_box_append(GTK_BOX(settingsRibbon), logsButton);
     gtk_widget_add_css_class(logsButton, "settings-toolbar-button");
     g_signal_connect(logsButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ShowLogDialog(GTK_WINDOW(g_settingsDialog));
     }), nullptr);
 
     GtkWidget* helpButton = gtk_button_new_with_label("Help");
-    gtk_widget_set_size_request(helpButton, kSettingsToolbarButtonWidth, kSettingsToolbarButtonHeight);
-    gtk_widget_set_valign(helpButton, GTK_ALIGN_START);
-    gtk_fixed_put(GTK_FIXED(settingsRibbon), helpButton, UiTokensPosix::kSettingsRibbonHelpX, kSettingsToolbarTop);
+    gtk_widget_set_valign(helpButton, GTK_ALIGN_FILL);
+    gtk_box_append(GTK_BOX(settingsRibbon), helpButton);
     gtk_widget_add_css_class(helpButton, "settings-toolbar-button");
     g_signal_connect(helpButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
         ShowHelpDialog(GTK_WINDOW(g_settingsDialog));
@@ -2077,6 +2071,12 @@ void DestroyMainWindowSafely() {
         gtk_popover_popdown(GTK_POPOVER(g_activeSourceContextMenu));
     }
     HideSourceHoverTip();
+    if (g_sourceHoverTip != nullptr) {
+        gtk_widget_unparent(g_sourceHoverTip);
+        g_sourceHoverTip = nullptr;
+        g_sourceHoverTipLabel = nullptr;
+        g_sourceHoverTipRow = nullptr;
+    }
     GtkWidget* toDestroy = g_mainWindow;
     g_mainWindow = nullptr;
     while (g_main_context_pending(nullptr)) {
@@ -2360,10 +2360,6 @@ void OnTrayNotify(TrayNotifyAction action) {
     }
 }
 
-GtkWidget* g_sourceHoverTip = nullptr;
-GtkWidget* g_sourceHoverTipLabel = nullptr;
-GtkListBoxRow* g_sourceHoverTipRow = nullptr;
-
 // Returns the full path a row carries, or an empty string when the row's label
 // is not being ellipsized (i.e. the text already fits, so no tip is wanted).
 std::string SourceRowClippedText(GtkListBoxRow* row) {
@@ -2379,12 +2375,9 @@ std::string SourceRowClippedText(GtkListBoxRow* row) {
 
 void HideSourceHoverTip() {
     g_sourceHoverTipRow = nullptr;
-    if (g_sourceHoverTip == nullptr) return;
-    // Unparent before popdown so GTK window teardown does not encounter it
-    // as a non-child and emit the "Tried to remove non-child" warning loop.
-    gtk_widget_unparent(g_sourceHoverTip);
-    g_sourceHoverTip = nullptr;
-    g_sourceHoverTipLabel = nullptr;
+    if (g_sourceHoverTip != nullptr) {
+        gtk_popover_popdown(GTK_POPOVER(g_sourceHoverTip));
+    }
 }
 
 void UpdateSourceHoverTip(double x, double y) {
@@ -2404,9 +2397,11 @@ void UpdateSourceHoverTip(double x, double y) {
             static_cast<int>(bounds.origin.x), static_cast<int>(bounds.origin.y),
             static_cast<int>(bounds.size.width), static_cast<int>(bounds.size.height)
         };
+        gtk_popover_popdown(GTK_POPOVER(g_sourceHoverTip));
         gtk_popover_set_pointing_to(GTK_POPOVER(g_sourceHoverTip), &rect);
     } else {
         const GdkRectangle rect = { static_cast<int>(x), static_cast<int>(y), 1, 1 };
+        gtk_popover_popdown(GTK_POPOVER(g_sourceHoverTip));
         gtk_popover_set_pointing_to(GTK_POPOVER(g_sourceHoverTip), &rect);
     }
     gtk_popover_popup(GTK_POPOVER(g_sourceHoverTip));
