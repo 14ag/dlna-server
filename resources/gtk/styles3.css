@@ -200,25 +200,6 @@ menu menuitem:hover,
     color: #FFFFFF;
 }
 
-
-
-tooltip {
-    border: none !important;
-    border-radius: 0;
-    box-shadow: none;
-    padding: 0;
-}
-
-tooltip.background {
-    background-color: #191919;
-    border: none !important;
-}
-
-tooltip * {
-    background-color: transparent;
-    color: #FFFFFF;
-}
-
 /* ========================================================================
  * 10. SEPARATORS
  * ========================================================================
@@ -300,5 +281,3 @@ entry selection {
 button {
     transition: border 100ms ease-in-out;
 }
-
-</content>
