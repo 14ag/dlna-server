@@ -38,6 +38,9 @@
 #include <gio/gio.h>
 #include <gdk/gdk.h>
 #include <gdk/x11/gdkx.h>
+#ifdef GDK_WINDOWING_WAYLAND
+#include <gdk/wayland/gdkwayland.h>
+#endif
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
@@ -471,11 +474,24 @@ static GtkWidget* CreateWin10WindowControl(GtkWindow* window,
     return button;
 }
 
+void OnWindowMap(GtkWidget* widget, gpointer) {
+#ifdef GDK_WINDOWING_WAYLAND
+    if (!GDK_IS_WAYLAND_DISPLAY(gtk_widget_get_display(widget))) return;
+    GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(widget));
+    if (!surface || !GDK_IS_WAYLAND_TOPLEVEL(surface)) return;
+    GdkToplevel* toplevel = GDK_TOPLEVEL(surface);
+    gdk_wayland_toplevel_set_application_id(toplevel, "dlna-server-14ag");
+#else
+    (void)widget;
+#endif
+}
+
 GtkWidget* CreateWin10Titlebar(GtkWindow* window,
                                const char* title,
                                WindowChrome chrome) {
     gtk_window_set_title(window, title);
     gtk_window_set_icon_name(window, "dlna-server");
+    g_signal_connect_after(window, "map", G_CALLBACK(OnWindowMap), nullptr);
 
     GtkWidget* handle = gtk_window_handle_new();
     gtk_widget_add_css_class(handle, "win10-titlebar");
@@ -3038,6 +3054,8 @@ void OnAppStartup(GtkApplication* app, gpointer) {
 } // namespace
 
 int main(int argc, char** argv) {
+    g_set_prgname("dlna-server-14ag");
+    g_set_application_name("DLNA Server");
     std::signal(SIGPIPE, SIG_IGN);
     std::signal(SIGINT, HandleTerminationSignal);
     std::signal(SIGTERM, HandleTerminationSignal);

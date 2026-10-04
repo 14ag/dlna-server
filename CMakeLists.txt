@@ -291,11 +291,15 @@ add_library(dlna_core STATIC
             # Install SVG into hicolor scalable tree for desktop-env icon lookup
             install(FILES resources/dlna-server.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
             # Install PNG icons into hicolor fixed-size directories so DEs
-            # find the icon by name (Icon=dlna-server in .desktop files).
+            # find the icon by name (Icon=dlna-server in native .desktop files).
             install(FILES resources/server_icon_16.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/16x16/apps   RENAME dlna-server.png)
             install(FILES resources/server_icon_48.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps   RENAME dlna-server.png)
             install(FILES resources/server_icon_120.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps RENAME dlna-server.png)
+            install(FILES resources/server_icon_120.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps RENAME dlna-server)
             install(FILES resources/server_icon_256.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps RENAME dlna-server.png)
+            # WSLg checks pixmaps before its fixed hicolor icon directories.
+            install(FILES resources/server_icon_120.png DESTINATION ${CMAKE_INSTALL_DATADIR}/pixmaps RENAME dlna-server.png)
+            install(FILES resources/server_icon_120.png DESTINATION ${CMAKE_INSTALL_DATADIR}/pixmaps RENAME dlna-server)
             # Also keep a copy in the app-specific data dir for runtime loading
             install(FILES
                 resources/server_icon_16.png
@@ -324,5 +328,10 @@ if(UNIX AND NOT APPLE)
     set(CPACK_DEBIAN_PACKAGE_DEPENDS "libcurl4")
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+    if(DLNA_ENABLE_GTK4_GUI)
+        configure_file(packaging/linux/postinst.in "${CMAKE_BINARY_DIR}/postinst" @ONLY NEWLINE_STYLE UNIX)
+        file(CHMOD "${CMAKE_BINARY_DIR}/postinst" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+        set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_BINARY_DIR}/postinst")
+    endif()
     include(CPack)
 endif()
