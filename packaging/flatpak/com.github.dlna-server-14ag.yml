@@ -25,4 +25,4 @@ modules:
     post-install:
       - install -Dm644 packaging/flatpak/com.github.dlna-server-14ag.desktop /app/share/applications/com.github.dlna-server-14ag.desktop
       - install -Dm644 resources/dlna-server.svg /app/share/icons/hicolor/scalable/apps/com.github.dlna-server-14ag.svg
-      - rm -f /app/share/applications/dlna-server.desktop /app/share/metainfo/dlna-server.appdata.xml /app/share/icons/hicolor/scalable/apps/dlna-server.svg
+      - rm -f /app/share/applications/com.github.dlna-server-14ag.desktop /app/share/metainfo/dlna-server.appdata.xml /app/share/icons/hicolor/scalable/apps/dlna-server.svg

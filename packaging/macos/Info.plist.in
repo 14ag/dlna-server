@@ -10,7 +10,7 @@
   <key>CFBundleDisplayName</key>
   <string>DLNA Server</string>
   <key>CFBundleIdentifier</key>
-  <string>com.14ag.dlna-server</string>
+  <string>com.github.dlna-server-14ag</string>
   <key>CFBundleIconFile</key>
   <string>app.ico</string>
   <key>CFBundleInfoDictionaryVersion</key>

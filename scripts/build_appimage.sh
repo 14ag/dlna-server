@@ -70,9 +70,9 @@ if [ -d "$output_dir/share" ]; then
 fi
 
 cp "$repo_root/packaging/linux/AppRun" "$appdir/AppRun"
-tr -d '\r' < "$repo_root/packaging/linux/dlna-server.appimage.desktop" > "$appdir/dlna-server.desktop"
+tr -d '\r' < "$repo_root/packaging/linux/dlna-server.appimage.desktop" > "$appdir/com.github.dlna-server-14ag.desktop"
 mkdir -p "$appdir/usr/share/applications"
-tr -d '\r' < "$repo_root/packaging/linux/dlna-server.appimage.desktop" > "$appdir/usr/share/applications/dlna-server.desktop"
+tr -d '\r' < "$repo_root/packaging/linux/dlna-server.appimage.desktop" > "$appdir/usr/share/applications/com.github.dlna-server-14ag.desktop"
 cp "$repo_root/resources/dlna-server.svg" "$appdir/dlna-server.svg"
 chmod +x "$appdir/AppRun" "$appdir/usr/bin/dlna-server" "$appdir/usr/bin/dlna-server-gui" "$appdir/usr/bin/dlna-server-gui-bin"
 
@@ -83,7 +83,7 @@ fi
 chmod +x "$linuxdeploy"
 
 find "$output_dir" -maxdepth 1 -type f -name '*.AppImage' -delete
-if (cd "$output_dir" && APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" --appdir "$appdir" --desktop-file "$appdir/dlna-server.desktop" --icon-file "$appdir/dlna-server.svg" --output appimage); then
+if (cd "$output_dir" && APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" --appdir "$appdir" --desktop-file "$appdir/com.github.dlna-server-14ag.desktop" --icon-file "$appdir/dlna-server.svg" --output appimage); then
     appimage=$(find "$output_dir" -maxdepth 1 -type f -name '*.AppImage' | head -n 1)
     mv "$appimage" "$output_dir/DLNA_Server-${version}-x86_64.AppImage"
     echo "AppImage created: $output_dir/DLNA_Server-${version}-x86_64.AppImage"

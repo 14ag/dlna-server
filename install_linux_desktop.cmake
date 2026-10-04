@@ -1,14 +1,13 @@
 set(applications_dir "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/share/applications")
-set(exec_path "${CMAKE_INSTALL_PREFIX}/bin/dlna-server-gui-bin")
-
 file(MAKE_DIRECTORY "${applications_dir}")
-file(WRITE "${applications_dir}/dlna-server.desktop"
+file(WRITE "${applications_dir}/com.github.dlna-server-14ag.desktop"
 "[Desktop Entry]
 Type=Application
 Name=DLNA Server
 GenericName=DLNA media server
 Comment=Share local media with DLNA and UPnP clients
-Exec=${exec_path}
+Exec=/usr/bin/dlna-server-gui
+TryExec=/usr/bin/dlna-server-gui-bin
 Icon=dlna-server
 Terminal=false
 Categories=AudioVideo;Network;FileTransfer;

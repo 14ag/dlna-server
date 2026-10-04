@@ -8,7 +8,7 @@
   <description>
     <p>DLNA Server serves local video, audio, and image files to compatible devices on the local network.</p>
   </description>
-  <launchable type="desktop-id">dlna-server.desktop</launchable>
+  <launchable type="desktop-id">com.github.dlna-server-14ag.desktop</launchable>
   <categories>
     <category>AudioVideo</category>
     <category>Network</category>
