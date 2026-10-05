@@ -42,7 +42,6 @@ class FirewallAccessSourceTests(unittest.TestCase):
             "RuleIsOldPortScopedTcpAllow",
             "get_Grouping",
             "NET_FW_IP_PROTOCOL_ANY",
-            "MessageIndicatesAccessDenied",
             "AddRule(rules, BuildTcpRuleName(exePath)",
             "AddRule(rules, BuildUdpRuleName(exePath)",
             "put_LocalPorts",

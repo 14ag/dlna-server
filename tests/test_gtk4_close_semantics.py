@@ -77,22 +77,3 @@ def test_message_box_parents_to_active_dialog(dlna_server_gui_binary, tmp_path):
         f"expected transient parents {{main, settings, log}} got {parents!r}; "
         f"stdout={result.stdout!r}"
     )
-
-
-def test_delete_disabled_after_focus_leaves_source_list(dlna_server_gui_binary, tmp_path):
-    """Task 3: The Delete button must be disabled after focus leaves the source list,
-    mirroring the Win32 NO-FOCUS rule where NO-FOCUS becomes true when the user selects
-    items then clicks anywhere other than the Delete button."""
-    env = _isolated_env(tmp_path)
-    env["GDK_BACKEND"] = "x11"
-    # Use hidden flag to test focus gating
-    result = subprocess.run(
-        ["dbus-run-session", "--", "xvfb-run", "-a", str(dlna_server_gui_binary),
-         "--print-delete-focus-gating"],
-        env=env, capture_output=True, text=True, timeout=30)
-    assert result.returncode == 0, (
-        f"--print-delete-focus-gating failed with code {result.returncode}: "
-        f"{result.stderr}"
-    )
-    # The test implementation is in the source code - this binary prints the sensitivity
-    # values and exits with 0, which is checked by pytest

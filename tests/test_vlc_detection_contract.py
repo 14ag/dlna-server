@@ -195,19 +195,15 @@ def dlna_server_process_stoppable(dlna_binary, media_source_dir):
     _teardown_server(proc, old_config, config_ini)
 
 
-def fetch_description(location_url: str, send_host_header: bool = True) -> tuple[ET.Element, str]:
+def fetch_description(location_url: str) -> tuple[ET.Element, str]:
     parsed = urlparse(location_url)
     conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
-    headers = {}
-    if send_host_header:
-        headers["Host"] = parsed.netloc
-    conn.request("GET", parsed.path or "/description.xml", headers=headers)
+    conn.request("GET", parsed.path or "/description.xml")
     resp = conn.getresponse()
     body = resp.read()
     conn.close()
     ns = {"u": "urn:schemas-upnp-org:device-1-0"}
-    root = ET.fromstring(body)
-    return root, ns["u"]
+    return ET.fromstring(body), ns["u"]
 
 
 def find_text(root: ET.Element, tag: str, ns_uri: str) -> str | None:
@@ -304,19 +300,6 @@ def test_urlbase_matches_location_host(dlna_server_process):
     )
 
 
-def test_description_xml_without_host_header_still_resolves_locally(dlna_server_process):
-    session = dlna_server_process
-    location = _ensure_vlc_msearch_evidence(session, VLC_MEDIASERVER_ST)
-    assert location
-    root, ns_uri = fetch_description(location, send_host_header=False)
-    url_base = find_text(root, "URLBase", ns_uri)
-    assert url_base is not None
-    assert "127.0.0.1" not in url_base, (
-        "URLBase fell back to a hardcoded loopback address for a Host-header-less "
-        "request; see F-VLC-01 / src/posix_httpserver.cpp HandleClient hostUrl fallback"
-    )
-
-
 def test_description_xml_without_host_header_raw_socket(dlna_server_process):
     session = dlna_server_process
     location = _ensure_vlc_msearch_evidence(session, VLC_MEDIASERVER_ST)
@@ -386,18 +369,15 @@ def test_msearch_response_within_vlc_mx_window(dlna_server_process):
 
 def test_no_response_to_satip_search(dlna_server_process):
     session = dlna_server_process
-    # Trigger VLC M-SEARCH to confirm server SSDP is active and capable of
-    # responses. This proves any absence of SAT>IP response is intentional
-    # rather than a broken server.
-    _ensure_vlc_msearch_evidence(session, VLC_MEDIASERVER_ST)
-    # Confirm no SAT>IP response was logged. VLC does not emit a SAT>IP
-    # probe by default, so absence of "SSDP response sent: ...SatIPServer..."
-    # in the log confirms the server does not masquerade as SAT>IP.
-    log_text = _read_ssdp_log(session)
-    assert not _log_has_response_for_st(log_text, VLC_SATIP_ST), (
-        "server responded to a SAT>IP probe; this device is not a SAT>IP server "
-        "and must not be added via VLC's parseSatipServer code path"
-    )
+    _ensure_vlc_msearch_evidence(session, VLC_MEDIASERVER_ST)  # server SSDP is live
+    prev_len = len(_read_ssdp_log(session))
+    assert _probe_msearch(session, VLC_SATIP_ST)
+    time.sleep(1.5)
+    new_text = _new_log_text(session, prev_len)
+    assert _log_has_search_ignored_st(new_text, VLC_SATIP_ST), (
+        "server did not log the SAT>IP search as unsupported ST")
+    assert not _log_has_response_for_st(new_text, VLC_SATIP_ST), (
+        "server responded to a SAT>IP probe; this device is not a SAT>IP server")
 
 
 @pytest.fixture

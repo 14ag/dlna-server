@@ -32,10 +32,9 @@ class TestNetworkChangeRestartSerialization:
         assert "SSDP::Get().Stop()" not in mainwindow
         assert "RestartSsdpForNetworkChange()" in mainwindow
 
-    def test_restart_ssdp_for_network_change_defined_once_per_platform(self):
-        for path in ("src/server.cpp", "src/posix_server.cpp"):
-            source = _read(path)
-            assert source.count("void Server::RestartSsdpForNetworkChange()") == 1
+    def test_restart_ssdp_for_network_change_defined_once(self):
+        source = _read("src/server_common.cpp")
+        assert source.count("void Server::RestartSsdpForNetworkChange()") == 1
 
     def test_concurrent_restart_calls_leave_server_running_and_healthy(self, dlna_binary, tmp_path):
         # two threads calling RestartSsdpForNetworkChange within

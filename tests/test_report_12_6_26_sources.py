@@ -10,8 +10,9 @@ def read(path: str) -> str:
 
 def test_server_restart_does_not_reload_config_or_fail_silently_on_endpoint_refresh():
     server = read("src/server.cpp")
-    start_body = server[server.index("bool Server::Start(std::wstring& outReason)"):server.index("bool Server::Rescan()")]
-    refresh_body = server[server.index("void Server::RefreshEndpoints(const ConfigSnapshot& cfg)"):server.index("bool Server::Start(std::wstring& outReason)")]
+    common = read("src/server_common.cpp")
+    start_body = server[server.index("bool Server::Start(std::wstring& outReason)"):]
+    refresh_body = common[common.index("void Server::RefreshEndpoints(const ConfigSnapshot& cfg)"):common.index("bool Server::IsHealthy() const")]
 
     assert "AppConfig.Load();" not in start_body
     assert 'LogPrint(L"Network endpoint enumeration failed.' in refresh_body
@@ -49,7 +50,7 @@ def test_windows_endpoint_enumeration_skips_non_multicast_adapters():
 
 def test_windows_log_print_uses_one_debug_snapshot_and_one_log_lock():
     log = read("src/log.cpp")
-    body = log[log.index("void LogPrint"):log.index("std::wstring GetSystemLog()")]
+    body = log[log.index("void LogPrint"):log.index("LogSnapshot GetSystemLogSince(")]
 
     assert "const bool writeDebugLog = AppConfig.IsDebugLogEnabled();" in body
     assert body.count("std::lock_guard<std::mutex> lock(g_logMutex);") == 1

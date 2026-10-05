@@ -56,7 +56,6 @@ import socket
 import tempfile
 import threading
 import time
-import unittest
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -533,9 +532,6 @@ class TestSsdpDiscovery:
     unicast HTTP/1.1 200 response advertising a MediaServer:1 LOCATION.
     """
 
-    def test_receives_at_least_one_response(self, ssdp_responses):
-        assert len(ssdp_responses) >= 1
-
     def test_response_advertises_media_server_location(self, ssdp_responses, dlna_server_endpoint):
         host = dlna_server_endpoint.split(":")[0]
         matching_host = [r for r in ssdp_responses if r.location and host in r.location]
@@ -560,10 +556,6 @@ class TestSsdpDiscovery:
         response = matching[0] if matching else next(r for r in ssdp_responses if r.location)
         assert response.usn, "SSDP response missing USN header (UDA 1.1 section 1.3.3 requires it)"
         assert response.server, "SSDP response missing SERVER header"
-        # UDA 1.1 section 1.3.3 / DLNADOC 1.50: Must declare UPnP/1.x or DLNADOC
-        assert "UPnP/1." in response.server or "DLNADOC/1.50" in response.server or len(response.server) > 0, (
-            f"SERVER header missing UPnP token; got: {response.server!r}"
-        )
 
 
 @pytest.fixture(scope="module")
@@ -584,13 +576,9 @@ class TestDeviceDescription:
     Mirrors VLC's UpnpDownloadXmlDoc + description.xml parse step.
     """
 
-    def test_friendly_name_present(self, device_description):
-        assert device_description.friendly_name
-
-    def test_udn_present(self, device_description):
-        assert device_description.udn.startswith("uuid:") or len(device_description.udn) > 0
-
-    def test_content_directory_control_url_resolved(self, device_description):
+    def test_description_parsed(self, device_description):
+        # friendlyName/UDN/deviceType/controlURL presence is asserted inside fetch_device_description
+        assert device_description.udn.startswith("uuid:")
         assert device_description.content_directory_control_url.startswith("http://")
 
 
@@ -605,6 +593,27 @@ def root_browse_result(device_description):
     )
 
 
+@pytest.fixture(scope="module")
+def media_tree(device_description):
+    """One BFS of the whole catalog, shared by every test that needs the full tree."""
+    visited, queue, containers, items = set(), ["0"], [], []
+    while queue:
+        cid = queue.pop(0)
+        if cid in visited:
+            continue
+        visited.add(cid)
+        result = send_browse(
+            control_url=device_description.content_directory_control_url,
+            object_id=cid, browse_flag="BrowseDirectChildren")
+        for entry in result.items:
+            if entry.is_container:
+                containers.append(entry)
+                queue.append(entry.object_id)
+            else:
+                items.append(entry)
+    return containers, items
+
+
 class TestContentDirectoryBrowse:
     """
     Mirrors VLC's ContentDirectory Browse call and DIDL-Lite walk, the
@@ -613,7 +622,6 @@ class TestContentDirectoryBrowse:
     """
 
     def test_browse_root_returns_soap_envelope_fields(self, root_browse_result):
-        assert root_browse_result.number_returned >= 0
         assert root_browse_result.total_matches >= root_browse_result.number_returned
         assert root_browse_result.update_id >= 1
 
@@ -682,87 +690,28 @@ class TestContentDirectoryBrowse:
         assert result.items[0].object_id == "0"
 
     def test_browse_nonexistent_object_id_returns_soap_fault(self, device_description):
-        """
-        ContentDirectory:1 §2.3.1: Browse on an unknown ObjectID must
-        return UPnPError 701 ("No such object") or an empty result.
-        """
-        try:
-            res = send_browse(
+        # server returns a SOAP fault body (no <Result>); send_browse asserts on that
+        with pytest.raises(AssertionError, match="missing <Result>"):
+            send_browse(
                 control_url=device_description.content_directory_control_url,
                 object_id="nonexistent-object-id-should-701",
                 browse_flag="BrowseDirectChildren",
             )
-            assert res.number_returned == 0 and len(res.items) == 0, (
-                f"Expected SOAP fault or 0 items for unknown ObjectID, got {res.number_returned}"
-            )
-        except AssertionError:
-            pass  # SOAP fault / 500 received as expected per UPnP spec
 
-    def test_recursive_browse_discovers_media_items(self, device_description, root_browse_result):
-        """
-        Recursively walks all containers from root to verify the entire hierarchy
-        is navigable and yields leaf media items.
-        """
-        visited = set()
-        queue = ["0"]
-        discovered_items = []
-        discovered_containers = []
+    def test_recursive_browse_discovers_media_items(self, media_tree):
+        containers, items = media_tree
+        assert len(containers) >= 1, "Expected at least one container in hierarchy"
+        assert len(items) >= 1, "Expected at least one media item in hierarchy"
 
-        while queue:
-            cid = queue.pop(0)
-            if cid in visited:
-                continue
-            visited.add(cid)
-
-            result = send_browse(
-                control_url=device_description.content_directory_control_url,
-                object_id=cid,
-                browse_flag="BrowseDirectChildren",
-            )
-            for entry in result.items:
-                if entry.is_container:
-                    discovered_containers.append(entry)
-                    if entry.object_id not in visited:
-                        queue.append(entry.object_id)
-                else:
-                    discovered_items.append(entry)
-
-        assert len(discovered_containers) >= 1, "Expected at least one container in hierarchy"
-        assert len(discovered_items) >= 1, "Expected at least one media item in hierarchy"
-
-    def test_media_items_have_valid_res_url_and_metadata(self, device_description):
-        """
-        Verifies all leaf media items discovered in the tree have valid resource URLs
-        and proper UPnP class metadata.
-        """
-        visited = set()
-        queue = ["0"]
-        items = []
-
-        while queue:
-            cid = queue.pop(0)
-            if cid in visited:
-                continue
-            visited.add(cid)
-
-            result = send_browse(
-                control_url=device_description.content_directory_control_url,
-                object_id=cid,
-                browse_flag="BrowseDirectChildren",
-            )
-            for entry in result.items:
-                if entry.is_container and entry.object_id not in visited:
-                    queue.append(entry.object_id)
-                elif not entry.is_container:
-                    items.append(entry)
-
+    def test_media_items_have_valid_res_url_and_metadata(self, media_tree):
+        _, items = media_tree
         for it in items:
             assert it.title, f"Item {it.object_id} missing title"
             assert it.upnp_class.startswith("object.item"), (
                 f"Item {it.object_id} upnp:class must start with 'object.item', got {it.upnp_class!r}"
             )
             assert it.res_url, f"Item {it.object_id} ({it.title}) missing res URL"
-            assert it.res_url.startswith("http://") or it.res_url.startswith("https://"), (
+            assert it.res_url.startswith(("http://", "https://")), (
                 f"Item {it.object_id} invalid res URL: {it.res_url}"
             )
 
@@ -972,143 +921,36 @@ class TestHlsFetchFailureReturns502:
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class HlsManifestProxyFixSourceTests(unittest.TestCase):
-    def _read(self, path):
-        return (ROOT / path).read_text(encoding="utf-8")
-
-    # --- Task 1: Windows httpserver checks ---
-
-    def test_windows_hls_early_return_branch(self):
-        src = self._read("src/httpserver.cpp")
-        # HLS items are handled before IsRemoteMediaUrl check
-        idx_hls = src.find('item.mimeType == L"video/mpegurl"')
-        idx_remote = src.find("if (IsRemoteMediaUrl(item.path))")
-        self.assertGreater(idx_hls, 0, "HLS mime check not found")
-        self.assertGreater(idx_remote, 0, "IsRemoteMediaUrl not found")
-        self.assertLess(idx_hls, idx_remote,
-                        "HLS branch must appear before IsRemoteMediaUrl")
-
-    def test_windows_isHlsManifest_removed(self):
-        src = self._read("src/httpserver.cpp")
-        self.assertNotIn("isHlsManifest", src,
-                         "isHlsManifest must not exist in httpserver.cpp")
-
-    def test_windows_hls_branch_uses_fetch_and_features(self):
-        src = self._read("src/httpserver.cpp")
-        idx_hls = src.find('item.mimeType == L"video/mpegurl"')
-        self.assertGreater(idx_hls, 0)
-        region = src[idx_hls:idx_hls + 1500]
-        self.assertIn("HlsManifestFetchResult", region)
-        self.assertIn("FetchHlsManifestForServing", region)
-        self.assertIn("BuildHlsContentFeatures()", region)
-        self.assertIn("<< manifest.text.size()", region)
-        self.assertIn('Accept-Ranges: none', region)
-
-    def test_windows_non_hls_accept_ranges_bytes_preserved(self):
-        src = self._read("src/httpserver.cpp")
-        self.assertIn('Accept-Ranges: bytes', src)
-
-    def test_windows_spoofSamsung_unchanged(self):
-        src = self._read("src/httpserver.cpp")
-        self.assertIn("Content-Length: 1073741824", src)
-        self.assertIn("Accept-Ranges: none", src)
-
-    # --- Task 2: POSIX httpserver checks ---
-
-    def test_posix_hls_early_return_branch(self):
-        src = self._read("src/posix_httpserver.cpp")
-        idx_hls = src.find('item.mimeType == L"video/mpegurl"')
-        idx_remote = src.find("if (IsRemoteMediaUrl(item.path))")
-        self.assertGreater(idx_hls, 0, "HLS mime check not found")
-        self.assertGreater(idx_remote, 0, "IsRemoteMediaUrl not found")
-        self.assertLess(idx_hls, idx_remote,
-                        "HLS branch must appear before IsRemoteMediaUrl")
-
-    def test_posix_isHlsManifest_removed(self):
-        src = self._read("src/posix_httpserver.cpp")
-        self.assertNotIn("isHlsManifest", src,
-                         "isHlsManifest must not exist in posix_httpserver.cpp")
-
-    def test_posix_hls_branch_uses_fetch_and_features(self):
-        src = self._read("src/posix_httpserver.cpp")
-        idx_hls = src.find('item.mimeType == L"video/mpegurl"')
-        self.assertGreater(idx_hls, 0)
-        region = src[idx_hls:idx_hls + 1500]
-        self.assertIn("HlsManifestFetchResult", region)
-        self.assertIn("FetchHlsManifestForServing", region)
-        self.assertIn("BuildHlsContentFeatures()", region)
-        self.assertIn("<< manifest.text.size()", region)
-        self.assertIn('Accept-Ranges: none', region)
-
-    def test_posix_non_hls_accept_ranges_bytes_preserved(self):
-        src = self._read("src/posix_httpserver.cpp")
-        self.assertIn('Accept-Ranges: bytes', src)
-
-    def test_posix_spoofSamsung_unchanged(self):
-        src = self._read("src/posix_httpserver.cpp")
-        self.assertIn("Content-Length: 1073741824", src)
-        self.assertIn("Accept-Ranges: none", src)
-
-    # --- Symmetry between both files ---
-
-    def test_both_platforms_use_hls_fetch(self):
-        for path in ("src/httpserver.cpp", "src/posix_httpserver.cpp"):
-            src = self._read(path)
-            self.assertIn("HlsManifestFetchResult", src)
-            self.assertIn("FetchHlsManifestForServing", src)
-            self.assertIn('L"video/mpegurl"', src)
-
-    def test_neither_platform_has_ishlsmanifest(self):
-        for path in ("src/httpserver.cpp", "src/posix_httpserver.cpp"):
-            src = self._read(path)
-            self.assertNotIn("isHlsManifest", src,
-                             "isHlsManifest must not exist")
-
-    def test_both_platforms_spoof_value_unchanged(self):
-        for path in ("src/httpserver.cpp", "src/posix_httpserver.cpp"):
-            src = self._read(path)
-            self.assertIn("Content-Length: 1073741824", src)
-            self.assertIn("Accept-Ranges: none", src)
+HTTP_SOURCES = ("src/httpserver.cpp", "src/posix_httpserver.cpp")
 
 
-# ---------------------------------------------------------------------------
-# Source-contract tests: proxy URL uses routable IP, not localhost
-# ---------------------------------------------------------------------------
+def _read_src(path):
+    return (ROOT / path).read_text(encoding="utf-8")
 
-class ProxyUrlRoutableIpTests(unittest.TestCase):
-    def _read(self, path):
-        return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_windows_httpserver_loopback_overridden_via_GetRoutableHostUrl(self):
-        src = self._read("src/httpserver.cpp")
-        self.assertIn("GetRoutableHostUrl", src,
-                      "httpserver.cpp must call GetRoutableHostUrl")
+@pytest.mark.parametrize("path", HTTP_SOURCES)
+def test_hls_branch_precedes_remote_and_local_paths(path):
+    src = _read_src(path)
+    idx_hls = src.find('item.mimeType == L"video/mpegurl"')
+    idx_remote = src.find("if (IsRemoteMediaUrl(item.path))")
+    assert 0 < idx_hls < idx_remote, "HLS branch must appear before IsRemoteMediaUrl"
+    region = src[idx_hls:idx_hls + 1500]
+    for token in ("HlsManifestFetchResult", "FetchHlsManifestForServing",
+                  "BuildHlsContentFeatures()", "<< manifest.text.size()",
+                  "Accept-Ranges: none"):
+        assert token in region
+    assert "isHlsManifest" not in src
+    assert "Accept-Ranges: bytes" in src
+    assert "Content-Length: 1073741824" in src  # Samsung spoof unchanged
 
-    def test_posix_httpserver_loopback_overridden_via_GetRoutableHostUrl(self):
-        src = self._read("src/posix_httpserver.cpp")
-        self.assertIn("GetRoutableHostUrl", src,
-                      "posix_httpserver.cpp must call GetRoutableHostUrl")
 
-    def test_loopback_patterns_checked_in_windows(self):
-        src = self._read("src/httpserver.cpp")
-        self.assertIn('"localhost"', src)
-        self.assertIn('"127.0.0.1"', src)
-        self.assertIn('"[::1]"', src)
+@pytest.mark.parametrize("path", HTTP_SOURCES)
+def test_loopback_host_overridden_with_routable_url(path):
+    src = _read_src(path)
+    for token in ("GetRoutableHostUrl", '"localhost"', '"127.0.0.1"', '"[::1]"'):
+        assert token in src
 
-    def test_loopback_patterns_checked_in_posix(self):
-        src = self._read("src/posix_httpserver.cpp")
-        self.assertIn('"localhost"', src)
-        self.assertIn('"127.0.0.1"', src)
-        self.assertIn('"[::1]"', src)
 
-    def test_GetRoutableHostUrl_declared_in_header(self):
-        hdr = self._read("src/netutils.h")
-        self.assertIn("GetRoutableHostUrl", hdr)
-
-    def test_GetRoutableHostUrl_implemented_on_windows(self):
-        src = self._read("src/netutils.cpp")
-        self.assertIn("GetRoutableHostUrl", src)
-
-    def test_GetRoutableHostUrl_implemented_on_posix(self):
-        src = self._read("src/posix_netutils.cpp")
-        self.assertIn("GetRoutableHostUrl", src)
+@pytest.mark.parametrize("path", ("src/netutils.h", "src/netutils.cpp", "src/posix_netutils.cpp"))
+def test_get_routable_host_url_declared_or_defined(path):
+    assert "GetRoutableHostUrl" in _read_src(path)

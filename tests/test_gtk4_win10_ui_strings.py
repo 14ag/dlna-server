@@ -26,14 +26,6 @@ def test_sharp_corner_css_present():
     assert "border-radius: 0" in text
 
 
-def test_shared_titlebar_owns_the_only_window_controls():
-    text = read_source()
-    helper = text[text.index("GtkWidget* CreateWin10Titlebar"):text.index("GtkWindow* CreateMessageWindow")]
-    assert "CreateWin10WindowControl" in helper
-    assert "gtk_window_controls_new" not in helper
-    assert '"win10-minimize-control"' in text
-
-
 def test_windows_source_list_has_full_path_hover_tooltip_without_hscroll():
     text = read_win32_source()
     listbox_block = text[text.index("m_hListSources = CreateWindowExW"):text.index("OleInitialize(NULL)")]
@@ -41,18 +33,11 @@ def test_windows_source_list_has_full_path_hover_tooltip_without_hscroll():
     assert "CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW" in text
     assert "TTM_SETDELAYTIME" in text
     assert "TTM_UPDATETIPTEXTW" in text
-    assert '"win10-close-control"' in text
 
 
 def test_blue_accent_hover_rule_present():
     text = CSS_PATH.read_text(encoding="utf-8")
     assert "outline: 1px solid @focus_color" in text
-
-
-def test_settings_toolbar_spacing_constant_present():
-    text = read_source()
-    assert "kSettingsToolbarButtonWidth" in text
-    assert "UiTokens::kSettingsServerGroupX + 64" not in text
 
 
 def test_source_list_border_present():

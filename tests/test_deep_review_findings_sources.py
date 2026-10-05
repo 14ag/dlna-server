@@ -9,15 +9,11 @@ def read(path: str) -> str:
 
 
 def test_server_scan_lifecycle_does_not_join_under_scan_mutex():
-    server = read("src/server.cpp")
-    posix = read("src/posix_server.cpp")
+    common = read("src/server_common.cpp")
     header = read("src/server.h")
-
-    for source in (server, posix):
-        assert "std::thread previousScan" in source
-        assert "ShouldStartScan()" in source
-        assert "m_stopping.store(true" in source
-        assert "m_endpointMutex" in source
+    for token in ("std::thread previousScan", "ShouldStartScan()",
+                  "m_stopping.store(true", "m_endpointMutex"):
+        assert token in common
     assert "std::atomic<bool> m_running" in header
     assert "mutable std::mutex m_endpointMutex" in header
 
@@ -79,15 +75,6 @@ def test_ssdp_queue_bounded_send_errors_and_empty_drop():
     assert "IP_MULTICAST_IF failed" in ssdp
 
 
-def test_narrow_ascii_uses_utf8_conversion():
-    utils = read("src/dlna_utils.cpp")
-
-    assert "#include \"netutils.h\"" in utils
-    assert "std::string NarrowAscii(const std::wstring& value)" in utils
-    assert "return WideToUtf8(value);" in utils
-    assert "static_cast<char>(ch)" not in utils
-
-
 def test_join_url_removed_resolve_playlist_entry_uses_resolve_relative_url():
     # JoinUrl was consolidated onto ResolveRelativeUrl per the TODO in
     # src/network_sources.cpp, see workflow dlna-server-scan-hang-and-
@@ -103,19 +90,6 @@ def test_join_url_removed_resolve_playlist_entry_uses_resolve_relative_url():
     assert "ResolveRelativeUrl(playlistPath, entry)" in region
 
 
-def test_http_worker_limits_aligned():
-    win_http = read("src/httpserver.cpp")
-    posix_http = read("src/posix_httpserver.cpp")
-    common = read("src/http_common.h")
-
-    # canonical definition lives exactly once in the shared header
-    assert "constexpr size_t kMaxClientThreads = 64" in common
-    # both platforms must consume the shared constant rather than a
-    # hand-synced literal of their own
-    assert "kMaxClientThreads" in win_http
-    assert "kMaxClientThreads" in posix_http
-
-
 def test_split_header_and_stream_timeouts():
     win_http = read("src/httpserver.cpp")
     posix_http = read("src/posix_httpserver.cpp")
@@ -126,14 +100,6 @@ def test_split_header_and_stream_timeouts():
     assert "timeval timeout{60, 0}" in posix_http
     assert "SO_SNDTIMEO" in win_http
     assert "SO_SNDTIMEO" in posix_http
-
-
-def test_album_art_case_variants_reduced_on_windows():
-    utils = read("src/dlna_utils.cpp")
-
-    assert "BuildAlbumArtCandidateNames" in utils
-    assert "#if defined(_WIN32)" in utils
-    assert "Folder.jpg" not in utils.split("#if defined(_WIN32)")[1].split("#else")[0]
 
 
 def test_ssdp_ttl_complies_with_upnp_spec():

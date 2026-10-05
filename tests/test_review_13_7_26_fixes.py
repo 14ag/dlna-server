@@ -381,20 +381,15 @@ class TestSkipFirewallEnvVarDetection:
 
 
 class TestRescanSerialization:
-    def test_rescan_mutex_declared_and_used_both_platforms(self):
+    def test_rescan_mutex_declared_and_used(self):
         header = _read("src/server.h")
-        win = _read("src/server.cpp")
-        posix = _read("src/posix_server.cpp")
+        src = _read("src/server_common.cpp")
         assert "std::mutex m_rescanMutex;" in header
-        for src in (win, posix):
-            idx = src.find("bool Server::Rescan()")
-            assert idx > 0
-            region = src[idx:idx + 500]
-            assert "std::lock_guard<std::mutex> rescanLock(m_rescanMutex);" \
-                in region
-            reset_idx = region.find("AppMedia.ResetForRescan();")
-            lock_idx = region.find("rescanLock(m_rescanMutex)")
-            assert 0 < lock_idx < reset_idx, (
-                "the rescan lock must be taken before ResetForRescan "
-                "runs, otherwise two overlapping Rescan calls can still "
-                "interleave their reset and scan phases")
+        idx = src.find("bool Server::Rescan()")
+        assert idx >= 0
+        region = src[idx:idx + 500]
+        assert "std::lock_guard<std::mutex> rescanLock(m_rescanMutex);" in region
+        reset_idx = region.find("AppMedia.ResetForRescan();")
+        lock_idx = region.find("rescanLock(m_rescanMutex)")
+        assert 0 <= lock_idx < reset_idx, (
+            "the rescan lock must be taken before ResetForRescan runs")

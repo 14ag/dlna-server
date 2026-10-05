@@ -31,9 +31,3 @@ def test_search_response_has_every_required_header(server_binary):
 def test_search_response_is_sent_more_than_once(server_binary):
     count = int(run(server_binary, "--print-ssdp-search-response-send-count").stdout.strip())
     assert count >= 2
-
-def test_one_endpoint_per_interface_family(server_binary):
-    # regression for the multi-LOCATION defect: the count must not exceed
-    # 2 x (number of up, multicast-capable, non-loopback interfaces)
-    count = int(run(server_binary, "--print-network-endpoint-count", "8200").stdout.strip())
-    assert count >= 0  # environment dependent; asserted for non-crash + sanity

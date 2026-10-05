@@ -11,20 +11,12 @@ when present (the .exe cannot run under WSL, so that leg is skipped gracefully).
 
 import os
 import re
-import subprocess
 
 import pytest
 
 pytestmark = [pytest.mark.posix_only, pytest.mark.needs_xvfb]
 
 REPO = str(__import__("pathlib").Path(__file__).resolve().parents[1])
-GTK4_BIN = os.environ.get(
-    "DLNA_GUI_BINARY",
-    str(
-        __import__("pathlib").Path(__file__).resolve().parents[1]
-        / "output/linux/dlna-server-gui-bin"
-    ),
-)
 WIN_DEBUG_LOG = os.path.join(REPO, "output", "winx64", "debug.log")
 
 # [gtk4-<tag>-geometry] class=<cls> id=<.../> x=<x> y=<y> w=<w> h=<h>
@@ -103,21 +95,6 @@ EXPECTED = {
 }
 
 
-def _run_gtk4_dump():
-    if not os.path.exists(GTK4_BIN):
-        raise AssertionError("GTK4 binary not built at %s" % GTK4_BIN)
-    env = dict(os.environ, GDK_BACKEND="x11")
-    proc = subprocess.run(
-        ["dbus-run-session", "--", "xvfb-run", "-a", GTK4_BIN, "--dump-widget-geometry"],
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=45,
-    )
-    # stderr carries theme-parse / gtk-critical noise; geometry is on stdout.
-    return proc.stdout
-
-
 def _parse_dump(text):
     items = []
     for line in text.splitlines():
@@ -136,15 +113,8 @@ def _parse_dump(text):
     return items
 
 
-def test_gtk4_dump_emits_all_part1_dialogs():
-    items = _parse_dump(_run_gtk4_dump())
-    tags = {t for t, *_ in items}
-    missing = set(WINDOW_SIZES) - tags
-    assert not missing, f"missing dialog dumps: {sorted(missing)}"
-
-
-def test_gtk4_top_level_window_sizes_match_ui_tokens():
-    items = _parse_dump(_run_gtk4_dump())
+def test_gtk4_top_level_window_sizes_match_ui_tokens(gtk4_geometry_dump):
+    items = _parse_dump(gtk4_geometry_dump)
     for tag, (ew, eh) in WINDOW_SIZES.items():
         wins = [
             (cls, w, h)
@@ -156,8 +126,8 @@ def test_gtk4_top_level_window_sizes_match_ui_tokens():
         assert (w, h) == (ew, eh), f"{tag} window {w}x{h} != ui_tokens {ew}x{eh}"
 
 
-def test_gtk4_subelements_match_ui_tokens_exactly():
-    items = _parse_dump(_run_gtk4_dump())
+def test_gtk4_subelements_match_ui_tokens_exactly(gtk4_geometry_dump):
+    items = _parse_dump(gtk4_geometry_dump)
     actual = {(t, c, x, y): (w, h) for (t, c, x, y, w, h) in items}
 
     failures = []
@@ -172,16 +142,9 @@ def test_gtk4_subelements_match_ui_tokens_exactly():
     assert not failures, "\n".join(sorted(failures))
 
 
-def test_gtk4_has_no_extra_tracked_widgets_in_main_window():
-    """Main window toolbar must hold exactly the 4 documented buttons.
-
-    The main window uses a 32 px CSD titlebar under xvfb, so the
-    toolbar row renders at y=44 (below the titlebar). Only the 4 application
-    toolbar buttons (Add, Sources, Start/Stop, Settings) should be counted;
-    the headerbar window controls (minimize, close at y=0) are separate.
-    """
-    items = _parse_dump(_run_gtk4_dump())
-    # Only count toolbar buttons (y=44, below the 32px titlebar)
+def test_gtk4_has_no_extra_tracked_widgets_in_main_window(gtk4_geometry_dump):
+    """Main window toolbar holds exactly the 4 documented buttons (y=44)."""
+    items = _parse_dump(gtk4_geometry_dump)
     btns = [
         (x, y, w, h)
         for (t, c, x, y, w, h) in items
@@ -195,68 +158,30 @@ TITLEBAR_RE = re.compile(
 )
 
 
-def test_gtk4_settings_uses_client_side_titlebar():
-    """Settings must take the Task 15 CSD path (custom headerbar) so only a
-    close button is exposed regardless of window-manager policy."""
-    text = _run_gtk4_dump()
-    values = {m["tag"]: m["value"] for m in TITLEBAR_RE.finditer(text)}
-    assert (
-        values.get("settings") == "csd"
-    ), f"settings titlebar reported {values.get('settings')!r}, expected csd"
+@pytest.mark.parametrize("tag", ["settings", "main-window"])
+def test_gtk4_uses_client_side_titlebar(gtk4_geometry_dump, tag):
+    values = {m["tag"]: m["value"] for m in TITLEBAR_RE.finditer(gtk4_geometry_dump)}
+    assert values.get(tag) == "csd", f"{tag} titlebar reported {values.get(tag)!r}, expected csd"
 
 
-def test_gtk4_main_window_uses_client_side_titlebar():
-    """Main window must still report titlebar=csd after Task 2.8 poll-tick change."""
-    text = _run_gtk4_dump()
-    values = {m["tag"]: m["value"] for m in TITLEBAR_RE.finditer(text)}
-    assert (
-        values.get("main-window") == "csd"
-    ), f"main-window titlebar reported {values.get('main-window')!r}, expected csd"
-
-
-def test_gtk4_main_window_toolbar_buttons_keep_posix_rects():
-    """The four toolbar buttons must keep their UiTokensPosix rects after
-    Task 2.8's poll-tick change (RefreshStatus only runs on state change)."""
-    items = _parse_dump(_run_gtk4_dump())
-    actual = {(t, c, x, y): (w, h) for (t, c, x, y, w, h) in items}
-    toolbar_keys = [
-        ("main-window", "GtkButton", 118, 44),  # Add
-        ("main-window", "GtkButton", 182, 44),  # Sources
-        ("main-window", "GtkButton", 262, 44),  # Start/Stop
-        ("main-window", "GtkButton", 342, 44),  # Settings
-    ]
-    for key in toolbar_keys:
-        assert key in actual, f"toolbar button {key} missing from geometry dump"
-        assert actual[key] == EXPECTED[key], (
-            f"toolbar button {key}: got {actual[key]} expected {EXPECTED[key]}"
-        )
-
-
-def test_gtk4_client_size_parity_with_win32_log():
+def test_gtk4_client_size_parity_with_win32_log(gtk4_geometry_dump):
     """When a Win32 geometry capture exists, GTK4 client sizes must match."""
     line_re = re.compile(
         r"\[(?P<tag>[a-z-]+)-geometry\] class=(?P<cls>[A-Za-z]+)\S* "
         r"x=(?P<x>-?\d+) y=(?P<y>-?\d+) w=(?P<w>\d+) h=(?P<h>\d+)"
     )
-    win = {}
     if not os.path.exists(WIN_DEBUG_LOG):
         return
+    win = {}
     with open(WIN_DEBUG_LOG, encoding="utf-8", errors="replace") as fh:
         for line in fh:
             m = line_re.search(line)
             if m:
-                win[(m["tag"], m["cls"], int(m["x"]), int(m["y"]))] = (
-                    int(m["w"]),
-                    int(m["h"]),
-                )
-    items = _parse_dump(_run_gtk4_dump())
-    gtk = {(t, c, x, y): (w, h) for (t, c, x, y, w, h) in items}
-
-    mismatches = []
-    for key, (w, h) in EXPECTED.items():
-        if key in win and key in gtk:
-            if gtk[key] != win[key]:
-                mismatches.append(f"{key}: gtk4={gtk[key]} win32={win[key]}")
-    assert not mismatches, "cross-platform client rect mismatch:\n" + (
-        "\n".join(mismatches)
-    )
+                win[(m["tag"], m["cls"], int(m["x"]), int(m["y"]))] = (int(m["w"]), int(m["h"]))
+    gtk = {(t, c, x, y): (w, h) for (t, c, x, y, w, h) in _parse_dump(gtk4_geometry_dump)}
+    mismatches = [
+        f"{key}: gtk4={gtk[key]} win32={win[key]}"
+        for key in EXPECTED
+        if key in win and key in gtk and gtk[key] != win[key]
+    ]
+    assert not mismatches, "cross-platform client rect mismatch:\n" + "\n".join(mismatches)

@@ -92,6 +92,9 @@ A pytest-based test suite lives under `tests/`. Run it from the repository root:
 pytest
 ```
 
+Suite conventions (fixtures, platform markers, flaky-by-environment tests)
+are documented in [`docs/TESTING.md`](docs/TESTING.md).
+
 ## Developer documentation
 
 Deeper references live in [`docs/`](docs/):
@@ -103,6 +106,7 @@ Deeper references live in [`docs/`](docs/):
 - [`docs/MEDIA-SCANNING.md`](docs/MEDIA-SCANNING.md) - source scanning, playlist parsing, HLS handling
 - [`docs/THREADING-AND-CONCURRENCY.md`](docs/THREADING-AND-CONCURRENCY.md) - locking model and thread-safety guarantees
 - [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) - `config.ini` field reference
+- [`docs/TESTING.md`](docs/TESTING.md) - test suite conventions and markers
 - [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) - open defects and scoped-out findings
 
 

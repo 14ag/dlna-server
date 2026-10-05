@@ -42,12 +42,8 @@ def test_delete_focus_gating_sequence():
 
 
 @pytest.mark.needs_xvfb
-def test_widget_geometry_matches_figma():
-    if not os.path.exists(GUI_BINARY):
-        pytest.fail("GTK4 GUI binary not built at %s" % GUI_BINARY)
-    result = _run_dump("--dump-widget-geometry")
-    assert result.returncode == 0
-    output = result.stdout
+def test_widget_geometry_matches_figma(gtk4_geometry_dump):
+    output = gtk4_geometry_dump
 
     def find_class(tag, klass):
         for line in output.splitlines():

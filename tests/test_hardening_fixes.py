@@ -17,17 +17,13 @@ class HardeningFixSourceTests(unittest.TestCase):
         gtk4 = self.read("src/gtk4_gui_main.cpp")
         self.assertNotIn("opencode", gtk4)
 
-    def test_remove_selected_source_rescan_is_thread_guarded(self):
-        # Task 4 regression sentinel: MainWindow::RemoveSelectedSource must
-        # run its detached rescan through RunGuarded like every other
-        # detached-thread call site in mainwindow.cpp so an escaping
-        # exception is logged instead of calling std::terminate
+    def test_begin_rescan_is_thread_guarded(self):
         source = self.read("src/mainwindow.cpp")
-        start = source.index("void MainWindow::RemoveSelectedSource()")
-        end = source.index("void MainWindow::DrawToolbarButton")
+        start = source.index("void MainWindow::BeginRescan()")
+        end = source.index("// swallow up slash down arrow", start)
         body = source[start:end]
         self.assertIn("RunGuarded", body)
-        self.assertIn('L"remove-source-rescan"', body)
+        self.assertIn('L"rescan-worker"', body)
 
     def test_whitelist_and_http_shutdown_are_synchronized(self):
         whitelist_h = self.read("src/ipwhitelist.h")

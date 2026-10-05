@@ -472,6 +472,24 @@ def xvfb_env(xvfb):
     return xvfb
 
 
+@pytest.fixture(scope="session")
+def gtk4_geometry_dump(tmp_path_factory):
+    """stdout of one `--dump-widget-geometry` run, shared by every geometry test."""
+    binary = os.environ.get("DLNA_GUI_BINARY") or str(
+        Path(__file__).resolve().parent.parent / "output" / "linux" / "dlna-server-gui-bin")
+    if not Path(binary).exists():
+        pytest.fail("GTK4 binary not built at %s" % binary)
+    home = tmp_path_factory.mktemp("gtk4-dump-home")
+    runtime = tempfile.mkdtemp(prefix="dlna-gui-geom-", dir="/tmp")
+    os.chmod(runtime, 0o700)
+    env = dict(os.environ, GDK_BACKEND="x11", HOME=str(home),
+               XDG_CONFIG_HOME=str(home), XDG_RUNTIME_DIR=runtime)
+    proc = subprocess.run(
+        ["dbus-run-session", "--", "xvfb-run", "-a", binary, "--dump-widget-geometry"],
+        capture_output=True, text=True, env=env, timeout=60)
+    return proc.stdout
+
+
 def _candidate_runtime_dirs():
     """Return every XDG_RUNTIME_DIR a leftover daemon may be bound to.
 

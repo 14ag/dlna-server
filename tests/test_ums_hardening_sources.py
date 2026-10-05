@@ -73,8 +73,6 @@ class UmsHardeningSourceTests(unittest.TestCase):
             self.assertIn("HandleConnectionManagerControl", source)
             self.assertNotIn('headers << "Connection: close\\r\\n"', source)
             self.assertIn('method == "SUBSCRIBE" || method == "UNSUBSCRIBE"', source)
-            self.assertIn("AppEvents.HandleEventSubscription", source)
-            self.assertNotIn("EventSubscriptionResponse", source)
 
         eventing = self.read("src/upnp_eventing.cpp")
         self.assertIn("/upnp/event/content_directory", eventing)

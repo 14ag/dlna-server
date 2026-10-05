@@ -1,29 +1,6 @@
-import os
 import subprocess
-from pathlib import Path
 
 import pytest
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-
-
-def _find_cli_binary():
-    env_path = os.environ.get("DLNA_CLI_BINARY")
-    if env_path and Path(env_path).is_file():
-        return Path(env_path)
-    server_path = os.environ.get("DLNA_SERVER")
-    if server_path and Path(server_path).is_file():
-        return Path(server_path)
-    for candidate in (
-        REPO_ROOT / "output" / "linux" / "dlna-server",
-    ):
-        if candidate.is_file():
-            return candidate
-    return None
-
-
-CLI_BINARY = _find_cli_binary()
-_SKIP_REASON = "dlna-server cli binary not found; set DLNA_CLI_BINARY"
 
 TRAY_ID = 1
 WM_LBUTTONUP = 0x0202
@@ -38,48 +15,18 @@ def _pack(icon_id, event):
     return (icon_id << 16) | event
 
 
-def _decode(raw_lparam, expected_icon_id):
+@pytest.mark.parametrize("icon_id,event,expected", [
+    (TRAY_ID, WM_LBUTTONUP, "activate"),
+    (TRAY_ID, WM_LBUTTONDBLCLK, "activate"),
+    (TRAY_ID, NIN_SELECT, "activate"),
+    (TRAY_ID, WM_CONTEXTMENU, "showmenu"),
+    (TRAY_ID, WM_RBUTTONUP, "showmenu"),
+    (TRAY_ID, WM_MOUSEMOVE, "none"),
+    (2, WM_LBUTTONUP, "none"),  # different icon id is ignored
+])
+def test_tray_notify_decode(dlna_binary, icon_id, event, expected):
     result = subprocess.run(
-        [
-            str(CLI_BINARY),
-            "--print-tray-notify-decode",
-            hex(raw_lparam),
-            str(expected_icon_id),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+        [dlna_binary, "--print-tray-notify-decode", hex(_pack(icon_id, event)), str(TRAY_ID)],
+        capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
-    return result.stdout.strip()
-
-
-@pytest.mark.skipif(CLI_BINARY is None, reason=_SKIP_REASON)
-@pytest.mark.parametrize(
-    "event,expected",
-    [
-        (WM_LBUTTONUP, "activate"),
-        (WM_LBUTTONDBLCLK, "activate"),
-        (NIN_SELECT, "activate"),
-        (WM_CONTEXTMENU, "showmenu"),
-        (WM_RBUTTONUP, "showmenu"),
-        (WM_MOUSEMOVE, "none"),
-    ],
-)
-def test_decode_recognizes_expected_events(event, expected):
-    raw_lparam = _pack(TRAY_ID, event)
-    assert _decode(raw_lparam, TRAY_ID) == expected
-
-
-@pytest.mark.skipif(CLI_BINARY is None, reason=_SKIP_REASON)
-def test_decode_ignores_events_for_a_different_icon_id():
-    other_icon_id = 2
-    raw_lparam = _pack(other_icon_id, WM_LBUTTONUP)
-    assert _decode(raw_lparam, TRAY_ID) == "none"
-
-
-@pytest.mark.skipif(CLI_BINARY is None, reason=_SKIP_REASON)
-def test_pre_version_four_style_raw_lparam_would_have_failed_old_code():
-    raw_lparam = _pack(TRAY_ID, WM_LBUTTONUP)
-    assert raw_lparam != WM_LBUTTONUP
-    assert _decode(raw_lparam, TRAY_ID) == "activate"
+    assert result.stdout.strip() == expected

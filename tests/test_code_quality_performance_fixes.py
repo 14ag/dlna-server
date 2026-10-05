@@ -105,6 +105,9 @@ class TestMaxClientThreadsParity:
         posix_httpserver = (repo_root / "src" / "posix_httpserver.cpp").read_text(encoding="utf-8")
         header_defs = header.count("constexpr size_t kMaxClientThreads")
         assert header_defs == 1
+        assert "constexpr size_t kMaxClientThreads = 64" in header
+        assert "kMaxClientThreads" in httpserver
+        assert "kMaxClientThreads" in posix_httpserver
         # The two platform .cpp files must no longer define their own copy
         assert "constexpr size_t kMaxClientThreads" not in httpserver
         assert "constexpr size_t kMaxClientThreads" not in posix_httpserver

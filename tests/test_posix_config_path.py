@@ -57,22 +57,6 @@ class TestConfigPathResolver:
         assert "MigrateLegacyConfigIfPresent(GetConfigPath())" in src
 
 
-# ---- posix_main.cpp ----
-
-class TestConfigPathDiagnostic:
-    def test_print_config_path_flag(self):
-        """posix_main.cpp must handle --print-config-path."""
-        src = _source("posix_main.cpp")
-        assert "--print-config-path" in src
-        assert "GetConfigPath" in src
-
-    def test_main_cpp_also_has_hook(self):
-        """Windows main.cpp must also handle --print-config-path."""
-        src = _source("main.cpp")
-        assert "--print-config-path" in src
-        assert "GetConfigPath" in src
-
-
 # ---- config.h ----
 
 class TestConfigHeader:

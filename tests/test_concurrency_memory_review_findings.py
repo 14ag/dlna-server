@@ -1,4 +1,6 @@
 import re
+
+import pytest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -13,50 +15,24 @@ def test_task1_watch_thread_mutex_declared():
     assert "m_watchThreadMutex" in header
 
 
-def test_task1_watch_thread_guarded_windows():
-    src = _read("src/server.cpp")
+def test_task1_watch_thread_guarded():
+    src = _read("src/server_common.cpp")
     start = src.index("void Server::StartWatchMode()")
     stop = src.index("void Server::StopWatchMode()")
-    start_body = src[start:stop]
+    assert "m_watchThreadMutex" in src[start:stop]
     stop_body = src[stop:stop + 800]
-    assert "m_watchThreadMutex" in start_body
     assert "m_watchThreadMutex" in stop_body
     assert "threadToJoin" in stop_body
 
 
-def test_task2_watch_thread_guarded_posix():
-    src = _read("src/posix_server.cpp")
-    start = src.index("void Server::StartWatchMode()")
-    stop = src.index("void Server::StopWatchMode()")
-    start_body = src[start:stop]
-    stop_body = src[stop:stop + 800]
-    assert "m_watchThreadMutex" in start_body
-    assert "m_watchThreadMutex" in stop_body
-    assert "threadToJoin" in stop_body
-
-
-def test_task3_scan_completion_thread_not_detached_windows():
-    header = _read("src/server.h")
-    src = _read("src/server.cpp")
-    assert "m_scanCompletionThread" in header
-    start_fn = src.index("bool Server::Start(")
-    stop_fn = src.index("bool Server::Rescan(")
-    start_body = src[start_fn:stop_fn]
+@pytest.mark.parametrize("path", ["src/server.cpp", "src/posix_server.cpp"])
+def test_task3_scan_completion_thread_not_detached(path):
+    assert "m_scanCompletionThread" in _read("src/server.h")
+    start_body = _read(path)
+    start_body = start_body[start_body.index("bool Server::Start("):]
     assert ".detach()" not in start_body
     assert "m_scanCompletionThread = std::thread" in start_body
-    stop_body = src[src.index("void Server::Stop()"):]
-    assert "m_scanCompletionThread.join()" in stop_body
-
-
-def test_task4_scan_completion_thread_not_detached_posix():
-    src = _read("src/posix_server.cpp")
-    start_fn = src.index("bool Server::Start(")
-    stop_fn = src.index("bool Server::Rescan(")
-    start_body = src[start_fn:stop_fn]
-    assert ".detach()" not in start_body
-    assert "m_scanCompletionThread = std::thread" in start_body
-    stop_body = src[src.index("void Server::Stop()"):]
-    assert "m_scanCompletionThread.join()" in stop_body
+    assert "m_scanCompletionThread.join()" in _read("src/server_common.cpp")
 
 
 def test_task5_get_descendants_no_full_catalog_copy():
@@ -109,7 +85,7 @@ def test_task8_album_art_stat_calls_not_locked_for_whole_function():
     fn_start = src.index("void SetAlbumArtIfExists")
     fn_end = src.index("\n}\n", fn_start)
     body = src[fn_start:fn_end]
-    lock_count = len(re.findall(r"lock_guard<std::mutex> lock\(\*state\.mutationMutex", body))
+    lock_count = len(re.findall(r"lock_guard<std::mutex> lock\(state\.mutationMutex", body))
     assert lock_count == 3
 
 
