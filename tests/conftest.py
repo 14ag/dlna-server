@@ -1,5 +1,4 @@
 import os
-import signal
 import socket
 import subprocess
 import sys
@@ -568,28 +567,17 @@ def _hard_kill_leftover_processes():
     """Hard-stop any dlna-server / dlna-server-gui-bin process still alive.
 
     Covers daemonized children that detach and never drain the IPC kill, or
-    instances stuck in a state where the socket no longer exists. Scans
-    /proc comm names so it is independent of stale socket/lock files.
+    instances stuck in a state where the socket no longer exists.
     """
     if not sys.platform.startswith("linux"):
         return
-    targets = {"dlna-server", "dlna-server-gui-bin"}
-    proc_root = Path("/proc")
-    if not proc_root.is_dir():
-        return
-    for entry in proc_root.iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            comm = (entry / "comm").read_text().strip()
-        except OSError:
-            continue
-        if comm not in targets:
-            continue
-        try:
-            os.kill(int(entry.name), signal.SIGKILL)
-        except OSError:
-            pass
+    subprocess.run(
+        'top -b -n 1 | grep "dlna-server" | awk \'{print $1}\' | xargs kill -9',
+        shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
 
 
 def _win_clean_stale_config():
