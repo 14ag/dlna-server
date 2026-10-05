@@ -48,12 +48,12 @@ def _isolated_env(tmp_path):
 
 def _global_instance_dir():
     # /tmp directly -- NOT tempfile.gettempdir(), which conftest redirects to
-    # the repo tmp/ tree on drvfs. The C++ instance dir is /tmp/dlna-server-<uid>.
-    return Path("/tmp") / f"dlna-server-{os.getuid()}"
+    # the repo tmp/ tree on drvfs. The C++ instance dir is /tmp/com.github.dlna-server-14ag-<uid>.
+    return Path("/tmp") / f"com.github.dlna-server-14ag-{os.getuid()}"
 
 
 def _socket_path(env):
-    return _global_instance_dir() / "dlna-server.sock"
+    return _global_instance_dir() / "com.github.dlna-server-14ag.sock"
 
 
 def _wait_for(predicate, timeout_seconds):

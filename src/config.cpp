@@ -2,6 +2,7 @@
 #include "dlna_utils.h"
 #include "log.h"
 #include "netutils.h"
+#include "app_identity.h"
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <sstream>
@@ -249,12 +250,13 @@ void Config::SetRunOnBoot(bool enable) {
     HKEY hKey;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
 if (enable) {
+        RegDeleteValueW(hKey, L"dlna-server");
         wchar_t exePath[MAX_PATH];
         GetModuleFileNameW(NULL, exePath, MAX_PATH);
         std::wstring val = std::wstring(L"\"") + exePath + L"\" --headless";
-        RegSetValueExW(hKey, L"dlna-server", 0, REG_SZ, (const BYTE*)val.c_str(), (DWORD)((val.length() + 1) * sizeof(wchar_t)));
+        RegSetValueExW(hKey, DLNA_APP_ID_W, 0, REG_SZ, (const BYTE*)val.c_str(), (DWORD)((val.length() + 1) * sizeof(wchar_t)));
     } else {
-            RegDeleteValueW(hKey, L"dlna-server");
+            RegDeleteValueW(hKey, DLNA_APP_ID_W);
         }
         RegCloseKey(hKey);
     }

@@ -98,3 +98,11 @@ pre_existing_fails.txt
 posix-full-suite-log.txt
 .flatpak-builder/*
 .serena/.gitignore
+/generated/
+/Makefile
+/CMakeCache.txt
+/CMakeFiles/
+/cmake_install.cmake
+/CPack*.cmake
+/_CPack_Packages/
+/packaging/flatpak/*.stamped.yml

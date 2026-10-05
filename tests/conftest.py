@@ -32,9 +32,9 @@ _WM_KILL_SERVER_VALUE = 0x8016  # WM_APP (0x8000) + 22
 
 
 def _win_kill_by_window():
-    """On Windows: find every dlna-server_Main HWND and post WM_KILL_SERVER.
+    """On Windows: find every com.github.dlna-server-14ag.Main HWND and post WM_KILL_SERVER.
 
-    The server always registers class 'dlna-server_Main' even when started with
+    The server always registers class 'com.github.dlna-server-14ag.Main' even when started with
     --headless (it uses WS_EX_TOOLWINDOW to hide from the taskbar). PostMessage
     is fire-and-forget but that is fine: we wait for the Popen handle afterward.
     """
@@ -47,7 +47,7 @@ def _win_kill_by_window():
     buf = ctypes.create_unicode_buffer(256)
     def _cb(h, _):
         n = user32.GetClassNameW(h, buf, 256)
-        if n > 0 and buf.value == "dlna-server_Main":
+        if n > 0 and buf.value == "com.github.dlna-server-14ag.Main":
             found.append(int(h))
         return True
     user32.EnumWindows(EnumWindowsProc(_cb), 0)
@@ -492,8 +492,8 @@ def gtk4_geometry_dump(tmp_path_factory):
 def _candidate_runtime_dirs():
     """Return every XDG_RUNTIME_DIR a leftover daemon may be bound to.
 
-    The single-instance socket lives at <XDG_RUNTIME_DIR>/dlna-server.sock (or
-    the /tmp/dlna-server-<uid> fallback when unset), so a daemon survives its
+    The single-instance socket lives at <XDG_RUNTIME_DIR>/com.github.dlna-server-14ag.sock (or
+    the /tmp/com.github.dlna-server-14ag-<uid> fallback when unset), so a daemon survives its
     hard-killed parent bound to whatever runtime dir it was launched with.
     _launch_server() gives each launch a fresh /tmp/dlna-runtime-* dir, so a
     daemon from a prior run can sit under any of those plus the default fallback.
@@ -504,7 +504,7 @@ def _candidate_runtime_dirs():
     uid_fallback = ""
     if os.name != "nt":
         try:
-            uid_fallback = f"/tmp/dlna-server-{os.getuid()}"
+            uid_fallback = f"/tmp/com.github.dlna-server-14ag-{os.getuid()}"
         except (AttributeError, OSError):
             pass
     if uid_fallback:
@@ -526,12 +526,12 @@ def _kill_all_runtime_instances():
     """Kill any leftover daemon instances before each test.
 
     The POSIX single-instance lock + socket live at a fixed
-    /tmp/dlna-server-<uid> location (independent of XDG_RUNTIME_DIR), so one
+    /tmp/com.github.dlna-server-14ag-<uid> location (independent of XDG_RUNTIME_DIR), so one
     --kill-server call always reaches whatever instance is running. A
     process-level backstop then hard-stops any daemonized child that ignored
     the IPC kill, guaranteeing no more than one instance can carry over into
     the next test.
-    On Windows: post WM_KILL_SERVER to every dlna-server_Main window found,
+    On Windows: post WM_KILL_SERVER to every com.github.dlna-server-14ag.Main window found,
     then wait briefly for them to exit.
     """
     if os.name == "nt":

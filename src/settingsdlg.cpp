@@ -15,6 +15,7 @@
 #include "config.h"
 #include "log.h"
 #include "../resources/resource.h"
+#include "app_identity.h"
 #include <commctrl.h>
 #include <dwmapi.h>
 #include <shobjidl.h>
@@ -386,7 +387,7 @@ void SettingsDialog::UpdateDefaultPlaylistButton(HWND hwndDlg) {
 }
 
 void SettingsDialog::ShowPlaylistEntryForm(HWND hwndDlg) {
-    const wchar_t* className = L"dlna-server_PlaylistEntry";
+    const wchar_t* className = DLNA_APP_ID_W L".PlaylistEntry";
     static bool registered = false;
     if (!registered) {
         WNDCLASSW wc = {};

@@ -53,6 +53,7 @@
 #include <thread>
 #include <unistd.h>
 #include "cli_print_hooks_posix.h"
+#include "app_identity.h"
 
 void PrintUsage(const char* exe) {
     std::cerr << "Usage: " << exe << " [--port 8200] [--name NAME] [--uuid UUID] [--debug] [--no-debug] --source \"pathA\",\"pathB\"\n";
@@ -699,6 +700,10 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
 
             ClosePendingState neverRequested;
             std::wcout << L"never-requested-pending=" << (neverRequested.IsPending() ? 1 : 0) << std::endl;
+            exitCode = 0; return true;
+        }
+        else if (arg == "--print-app-id") {
+            std::cout << DLNA_APP_ID << std::endl;
             exitCode = 0; return true;
         }
         else if (arg == "--print-config-path") {

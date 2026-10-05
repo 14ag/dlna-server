@@ -33,6 +33,7 @@ def test_wrapper_waits_promptly_when_compositor_socket_present(tmp_path):
     env["XDG_RUNTIME_DIR"] = str(runtime)
     env["DLNA_SERVER_GUI_BIN"] = str(dummy_gui)
     env["DLNA_SERVER_BIN"] = str(dummy_gui)
+    env["DLNA_SERVER_GTK_LAUNCHED"] = "1"
 
     try:
         start = time.monotonic()

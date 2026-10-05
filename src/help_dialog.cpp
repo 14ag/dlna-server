@@ -5,6 +5,7 @@
 #include "ui_font.h"
 #include "dark_frame.h"
 #include "win_geometry_dump.h"
+#include "app_identity.h"
 #include <dwmapi.h>
 #include <string>
 #include <Richedit.h>
@@ -141,7 +142,7 @@ LRESULT CALLBACK HelpWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 }
 
 void HelpDialog::Show(HWND hParent) {
-    const wchar_t* className = L"dlna-server_HelpDialog";
+    const wchar_t* className = DLNA_APP_ID_W L".HelpDialog";
     static bool registered = false;
     if (!registered) {
         WNDCLASSW wc = {};

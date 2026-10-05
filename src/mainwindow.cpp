@@ -30,6 +30,7 @@
 #include "server.h"
 #include "log.h"
 #include "tray_notify.h"
+#include "app_identity.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "dwmapi.lib")
@@ -238,7 +239,7 @@ LRESULT CALLBACK SourcePromptProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
 }
 
 std::wstring PromptForMediaSource(HWND owner, HINSTANCE instance) {
-    const wchar_t* className = L"dlna-server_SourcePrompt";
+    const wchar_t* className = DLNA_APP_ID_W L".SourcePrompt";
     static bool registered = false;
     if (!registered) {
         WNDCLASSW wc = {};
@@ -353,7 +354,7 @@ bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless) {
     m_hInstance = hInstance;
     m_startedHeadless = startHeadless;
 
-    const wchar_t CLASS_NAME[] = L"dlna-server_Main";
+    const wchar_t CLASS_NAME[] = DLNA_MAIN_WINDOW_CLASS_W;
 
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(WNDCLASSEXW);

@@ -1,6 +1,7 @@
 #ifdef DLNA_POSIX
 
 #include "posix_single_instance.h"
+#include "app_identity.h"
 
 #include <cerrno>
 #include <chrono>
@@ -32,15 +33,15 @@ namespace {
 // between sessions and is not reliably writable for AF_UNIX sockets.
 std::string GetInstanceDir() {
     uid_t uid = getuid();
-    return std::string("/tmp/dlna-server-") + std::to_string(uid);
+    return std::string("/tmp/" DLNA_APP_ID "-") + std::to_string(uid);
 }
 
 std::string GetLockPath() {
-    return GetInstanceDir() + "/dlna-server.lock";
+    return GetInstanceDir() + "/" DLNA_APP_ID ".lock";
 }
 
 std::string GetSocketPath() {
-    return GetInstanceDir() + "/dlna-server.sock";
+    return GetInstanceDir() + "/" DLNA_APP_ID ".sock";
 }
 
 void EnsureDirExists(const std::string& path) {

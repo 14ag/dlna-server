@@ -28,11 +28,11 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn('trap \'rm -rf "$build_root"\' EXIT', build)
 
     def test_appdir_desktop_metadata_is_relative(self):
-        desktop = self.read("packaging/linux/dlna-server.appimage.desktop")
+        desktop = self.read("packaging/linux/com.github.dlna-server-14ag.appimage.desktop")
 
         self.assertIn("Name=DLNA Server", desktop)
         self.assertIn("Exec=dlna-server-gui", desktop)
-        self.assertIn("Icon=dlna-server", desktop)
+        self.assertIn("Icon=com.github.dlna-server-14ag", desktop)
         self.assertIn("StartupWMClass=com.github.dlna-server-14ag", desktop)
 
     def test_linux_desktop_installers_are_scripted(self):

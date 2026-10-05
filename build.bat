@@ -10,6 +10,7 @@ set "INSTALL_LINUX=0"
 set "RELEASE=0"
 set "NOTES=0"
 set "UPDATE="
+set "VERSION_TAG="
 
 :parse_args
 if "%~1"=="" goto :done_parse
@@ -49,6 +50,18 @@ if /I "%~1"=="--update" (
     shift
     goto :parse_args
 )
+if /I "%~1"=="--version" (
+    set "VERSION_TAG=%~2"
+    shift
+    shift
+    goto :parse_args
+)
+set "ARG=%~1"
+if /I "%ARG:~0,10%"=="--version=" (
+    set "VERSION_TAG=%ARG:~10%"
+    shift
+    goto :parse_args
+)
 :: Handle --update=TAG format
 echo "%~1" | findstr /I "--update=" >nul
 if not errorlevel 1 (
@@ -81,9 +94,17 @@ if "%INSTALL_LINUX%"=="1" (
     exit /b %ERRORLEVEL%
 )
 
+if "%VERSION_TAG%"=="" (
+    for /f "usebackq delims=" %%v in (`python "%~dp0scripts\version.py"`) do set "VERSION_TAG=%%v"
+)
+if "%VERSION_TAG%"=="" (
+    echo Could not generate a version number.
+    exit /b 1
+)
+echo Version: %VERSION_TAG%
 if "%BUILD_LINUX%"=="1" (
     echo Building Linux assets via WSL...
-    wsl.exe -d Ubuntu -- bash -lc "cd $(wslpath "$PWD") && DLNA_SUDO_PASSWORD=' ' bash scripts/build_linux.sh"
+    wsl.exe -d Ubuntu -- bash -lc "cd $(wslpath "$PWD") && DLNA_SUDO_PASSWORD=' ' DLNA_VERSION_TAG='%VERSION_TAG%' bash scripts/build_linux.sh"
     exit /b %ERRORLEVEL%
 )
 
@@ -92,5 +113,5 @@ set "ARCH_ARG=both"
 if "%BUILD_X86%"=="1" if "%BUILD_X64%"=="0" set "ARCH_ARG=Win32"
 if "%BUILD_X64%"=="1" if "%BUILD_X86%"=="0" set "ARCH_ARG=x64"
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\build-windows.ps1" -Arch %ARCH_ARG%
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\build-windows.ps1" -Arch %ARCH_ARG% -Version "%VERSION_TAG%"
 exit /b %ERRORLEVEL%

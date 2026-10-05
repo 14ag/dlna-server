@@ -5,15 +5,23 @@ set -euo pipefail
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-version=$(grep -E '^project\(dlna-server VERSION ' "$repo_root/CMakeLists.txt" | sed -E 's/.*VERSION ([0-9.]+).*/\1/')
+source "$repo_root/scripts/lib_identity.sh"
+for arg in "$@"; do
+    case "$arg" in
+        --version=*) DLNA_VERSION_TAG="${arg#*=}" ;;
+        *) echo "Unknown option: $arg" >&2; exit 1 ;;
+    esac
+done
+resolve_version
+version="$DLNA_VERSION"
 output_dir="$repo_root/output/linux"
 
 build_root=$(mktemp -d "${TMPDIR:-/tmp}/dlna-server-flatpak-build.XXXXXX")
-trap 'rm -rf "$build_root"' EXIT
+trap 'rm -rf "$build_root" "$repo_root/packaging/flatpak/${DLNA_APP_ID}.stamped.yml"' EXIT
 
 flatpak_repo="$build_root/flatpak-repo"
 flatpak_build="$build_root/flatpak-build"
-flatpak_bundle="$output_dir/dlna-server-${version}-linux-x86_64.flatpak"
+flatpak_bundle="$output_dir/${DLNA_APP_ID}-${version}-linux-x86_64.flatpak"
 
 sudo_run() {
     if [ "$(id -u)" -eq 0 ]; then
@@ -28,6 +36,11 @@ sudo_run() {
 }
 
 mkdir -p "$output_dir"
+stamped_manifest="$repo_root/packaging/flatpak/${DLNA_APP_ID}.stamped.yml"
+stamped_metainfo="$build_root/${DLNA_APP_ID}.metainfo.xml"
+release_date="$(date -u +%Y-%m-%d)"
+sed -e "s|@PROJECT_VERSION@|$version|g" "$repo_root/packaging/flatpak/${DLNA_APP_ID}.yml" > "$stamped_manifest"
+sed -e "s|@PROJECT_VERSION@|$version|g" -e "s|@DLNA_APP_ID@|$DLNA_APP_ID|g" -e "s|@DLNA_RELEASE_DATE@|$release_date|g" "$repo_root/packaging/linux/${DLNA_APP_ID}.appdata.xml" > "$stamped_metainfo"
 
 _pkgs=(flatpak flatpak-builder)
 _need=false
@@ -57,17 +70,17 @@ if [ -d "$repo_root/tmp" ]; then
     mkdir -m 700 "$repo_root/tmp"
 fi
 
-flatpak-builder --force-clean --disable-rofiles-fuse --state-dir="$build_root/flatpak-state" "$flatpak_build" "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.yml" || true
+flatpak-builder --force-clean --disable-rofiles-fuse --state-dir="$build_root/flatpak-state" "$flatpak_build" "$stamped_manifest" || true
 mkdir -p "$flatpak_build/app/share/appdata" "$flatpak_build/app/share/metainfo"
-cp -f "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.metainfo.xml" "$flatpak_build/app/share/metainfo/com.github.dlna-server-14ag.metainfo.xml"
-cp -f "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.metainfo.xml" "$flatpak_build/app/share/appdata/com.github.dlna-server-14ag.appdata.xml"
+cp -f "$stamped_metainfo" "$flatpak_build/app/share/metainfo/com.github.dlna-server-14ag.metainfo.xml"
+cp -f "$stamped_metainfo" "$flatpak_build/app/share/appdata/com.github.dlna-server-14ag.appdata.xml"
 flatpak build-export "$flatpak_repo" "$flatpak_build" stable
 
 rm -rf "$repo_root/tmp"
-install -Dm644 "$repo_root/packaging/flatpak/com.github.dlna-server-14ag.metainfo.xml" \
+install -Dm644 "$stamped_metainfo" \
     "$flatpak_build/app/share/metainfo/com.github.dlna-server-14ag.metainfo.xml"
 flatpak build-export "$flatpak_repo" "$flatpak_build" stable
-flatpak build-bundle "$flatpak_repo" "$flatpak_bundle" com.github.dlna-server-14ag stable
+flatpak build-bundle "$flatpak_repo" "$flatpak_bundle" "$DLNA_APP_ID" stable
 
 echo "Flatpak bundle created: $flatpak_bundle"
 

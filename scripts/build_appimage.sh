@@ -5,7 +5,15 @@ set -euo pipefail
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-version=$(grep -E '^project\(dlna-server VERSION ' "$repo_root/CMakeLists.txt" | sed -E 's/.*VERSION ([0-9.]+).*/\1/')
+source "$repo_root/scripts/lib_identity.sh"
+for arg in "$@"; do
+    case "$arg" in
+        --version=*) DLNA_VERSION_TAG="${arg#*=}" ;;
+        *) echo "Unknown option: $arg" >&2; exit 1 ;;
+    esac
+done
+resolve_version
+version="$DLNA_VERSION"
 output_dir="$repo_root/output/linux"
 tools_dir="$repo_root/build-release-tools/linux"
 
@@ -70,10 +78,10 @@ if [ -d "$output_dir/share" ]; then
 fi
 
 cp "$repo_root/packaging/linux/AppRun" "$appdir/AppRun"
-tr -d '\r' < "$repo_root/packaging/linux/dlna-server.appimage.desktop" > "$appdir/com.github.dlna-server-14ag.desktop"
+tr -d '\r' < "$repo_root/packaging/linux/${DLNA_APP_ID}.appimage.desktop" > "$appdir/${DLNA_APP_ID}.desktop"
 mkdir -p "$appdir/usr/share/applications"
-tr -d '\r' < "$repo_root/packaging/linux/dlna-server.appimage.desktop" > "$appdir/usr/share/applications/com.github.dlna-server-14ag.desktop"
-cp "$repo_root/resources/dlna-server.svg" "$appdir/dlna-server.svg"
+tr -d '\r' < "$repo_root/packaging/linux/${DLNA_APP_ID}.appimage.desktop" > "$appdir/usr/share/applications/${DLNA_APP_ID}.desktop"
+cp "$repo_root/resources/${DLNA_APP_ID}.svg" "$appdir/${DLNA_APP_ID}.svg"
 chmod +x "$appdir/AppRun" "$appdir/usr/bin/dlna-server" "$appdir/usr/bin/dlna-server-gui" "$appdir/usr/bin/dlna-server-gui-bin"
 
 linuxdeploy="$tools_dir/linuxdeploy-x86_64.AppImage"
@@ -83,10 +91,10 @@ fi
 chmod +x "$linuxdeploy"
 
 find "$output_dir" -maxdepth 1 -type f -name '*.AppImage' -delete
-if (cd "$output_dir" && APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" --appdir "$appdir" --desktop-file "$appdir/com.github.dlna-server-14ag.desktop" --icon-file "$appdir/dlna-server.svg" --output appimage); then
+if (cd "$output_dir" && APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" --appdir "$appdir" --desktop-file "$appdir/${DLNA_APP_ID}.desktop" --icon-file "$appdir/${DLNA_APP_ID}.svg" --output appimage); then
     appimage=$(find "$output_dir" -maxdepth 1 -type f -name '*.AppImage' | head -n 1)
-    mv "$appimage" "$output_dir/DLNA_Server-${version}-x86_64.AppImage"
-    echo "AppImage created: $output_dir/DLNA_Server-${version}-x86_64.AppImage"
+    mv "$appimage" "$output_dir/${DLNA_APP_ID}-${version}-x86_64.AppImage"
+    echo "AppImage created: $output_dir/${DLNA_APP_ID}-${version}-x86_64.AppImage"
 else
     echo "[WARN] AppImage runtime unavailable; failed to create AppImage bundle." >&2
     exit 1

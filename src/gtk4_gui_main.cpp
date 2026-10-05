@@ -33,6 +33,7 @@
 #include "function_key_action.h"
 #include "access_keys.h"
 #include "access_keys_gtk_adapter.h"
+#include "app_identity.h"
 
 #include <gtk/gtk.h>
 #include <gio/gio.h>
@@ -480,7 +481,7 @@ void OnWindowMap(GtkWidget* widget, gpointer) {
     GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(widget));
     if (!surface || !GDK_IS_WAYLAND_TOPLEVEL(surface)) return;
     GdkToplevel* toplevel = GDK_TOPLEVEL(surface);
-    gdk_wayland_toplevel_set_application_id(toplevel, "dlna-server-14ag");
+    gdk_wayland_toplevel_set_application_id(toplevel, DLNA_APP_ID);
 #else
     (void)widget;
 #endif
@@ -490,7 +491,7 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
                                const char* title,
                                WindowChrome chrome) {
     gtk_window_set_title(window, title);
-    gtk_window_set_icon_name(window, "dlna-server");
+    gtk_window_set_icon_name(window, DLNA_APP_ID);
     g_signal_connect_after(window, "map", G_CALLBACK(OnWindowMap), nullptr);
 
     GtkWidget* handle = gtk_window_handle_new();
@@ -3046,7 +3047,7 @@ void OnAppStartup(GtkApplication* app, gpointer) {
     g_menu_append(menu, "Show Window", "app.show");
     g_menu_append(menu, "Start/Stop Server", "app.startstop");
     g_menu_append(menu, "Exit", "app.quit");
-    PosixTray::Initialize(connection, "dlna-server", "DLNA Server", G_MENU_MODEL(menu),
+    PosixTray::Initialize(connection, DLNA_APP_ID, "DLNA Server", G_MENU_MODEL(menu),
                           OnTrayNotify);
     g_object_unref(menu);
 }
@@ -3054,7 +3055,7 @@ void OnAppStartup(GtkApplication* app, gpointer) {
 } // namespace
 
 int main(int argc, char** argv) {
-    g_set_prgname("dlna-server-14ag");
+    g_set_prgname(DLNA_APP_ID);
     g_set_application_name("DLNA Server");
     std::signal(SIGPIPE, SIG_IGN);
     std::signal(SIGINT, HandleTerminationSignal);
@@ -3218,9 +3219,9 @@ int main(int argc, char** argv) {
     for (int attempt = 0; attempt < kGuiStartupMaxAttempts; ++attempt) {
         // GTK requires a valid reverse-DNS/D-Bus application identifier.
 #if GLIB_CHECK_VERSION(2, 74, 0)
-        app = gtk_application_new("com.github.dlna-server-14ag", G_APPLICATION_DEFAULT_FLAGS);
+        app = gtk_application_new(DLNA_APP_ID, G_APPLICATION_DEFAULT_FLAGS);
 #else
-        app = gtk_application_new("com.github.dlna-server-14ag", G_APPLICATION_FLAGS_NONE);
+        app = gtk_application_new(DLNA_APP_ID, G_APPLICATION_FLAGS_NONE);
 #endif
         // connect before register so the startup signal emitted during
         // registration reaches OnAppStartup instead of firing into the void

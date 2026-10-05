@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>com.github.dlna-server-14ag</id>
+  <id>@DLNA_APP_ID@</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>DLNA Server</name>
@@ -8,7 +8,7 @@
   <description>
     <p>DLNA Server serves local video, audio, and image files to compatible devices on the local network.</p>
   </description>
-  <launchable type="desktop-id">com.github.dlna-server-14ag.desktop</launchable>
+  <launchable type="desktop-id">@DLNA_APP_ID@.desktop</launchable>
   <categories>
     <category>AudioVideo</category>
     <category>Network</category>
@@ -16,6 +16,6 @@
   <content_rating type="oars-1.1" />
   <url type="homepage">https://github.com/14ag/dlna-server</url>
   <releases>
-    <release version="1.7.0" date="2026-05-24"/>
+    <release version="@PROJECT_VERSION@" date="@DLNA_RELEASE_DATE@"/>
   </releases>
 </component>

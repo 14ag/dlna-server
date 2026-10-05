@@ -82,7 +82,7 @@ if [ -z "${DLNA_SERVER_GTK_LAUNCHED:-}" ] && \
    [ -S "${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}/${WAYLAND_DISPLAY:-wayland-0}" ] && \
    command -v gtk-launch >/dev/null 2>&1; then
     export DLNA_SERVER_GTK_LAUNCHED=1
-    exec gtk-launch dlna-server "$@"
+    exec gtk-launch @DLNA_APP_ID@ "$@"
 fi
 
 exec "$native_gui" "$@"

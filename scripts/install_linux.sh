@@ -3,6 +3,7 @@
 set -euo pipefail
 
 repo_root=${DLNA_REPO_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
+source "$repo_root/scripts/lib_identity.sh"
 output_dir=${DLNA_OUTPUT_DIR:-"$repo_root/output/linux"}
 package_path=${DLNA_POSIX_DEB:-}
 
@@ -39,8 +40,9 @@ stop_running_instances
 
 # Remove existing installation as requested: "first runs sudo apt remove dlna-server"
 echo "[INFO] Removing existing dlna-server installation..."
-sudo_run env DEBIAN_FRONTEND=noninteractive apt-get remove -y dlna-server || true
+sudo_run env DEBIAN_FRONTEND=noninteractive apt-get remove -y dlna-server "$DLNA_APP_ID" || true
 sudo_run dpkg -P dlna-server >/dev/null 2>&1 || true
+sudo_run dpkg -P "$DLNA_APP_ID" >/dev/null 2>&1 || true
 
 # Clean legacy manual installation paths
 sudo_run rm -f /usr/bin/dlna-server
@@ -54,7 +56,7 @@ sudo_run rm -rf /usr/local/share/dlna-server
 # Find package if not explicitly provided
 if [ -z "$package_path" ]; then
     package_path=$(
-        find "$output_dir" -maxdepth 1 -type f -name 'dlna-server_*.deb' -printf '%T@ %p\n' 2>/dev/null |
+        find "$output_dir" -maxdepth 1 -type f -name "${DLNA_APP_ID}_*.deb" -printf '%T@ %p\n' 2>/dev/null |
             sort -nr |
             awk 'NR==1 { $1=""; sub(/^ /, ""); print; exit }'
     )

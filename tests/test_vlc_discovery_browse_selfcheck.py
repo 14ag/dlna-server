@@ -12,6 +12,7 @@ All synthetic fixtures use TEST-NET addresses (RFC 5737: 192.0.2.x) and
 arbitrary port numbers -- never a real server IP or control server address.
 """
 
+import os
 import socket
 import xml.etree.ElementTree as ET
 
@@ -40,13 +41,14 @@ def test_ssdp_response_parsing_matches_real_server_output_shape():
     # Shaped exactly like SSDP::HandleSearchRequest's response construction
     # in src/ssdp.cpp / src/posix_ssdp.cpp.
     location = f"http://{_SYNTHETIC_HOST}:{_SYNTHETIC_PORT}/description.xml"
+    expected_version = os.environ.get("DLNA_EXPECTED_VERSION", "0.0.00000")
     synthetic_response = (
         "HTTP/1.1 200 OK\r\n"
         "CACHE-CONTROL: max-age=1800\r\n"
         "DATE: Wed, 19 Aug 2026 00:00:00 GMT\r\n"
         "EXT:\r\n"
         f"LOCATION: {location}\r\n"
-        "SERVER: Linux/1.0 DLNADOC/1.50 UPnP/1.0 dlna-server/1.7.0\r\n"
+        f"SERVER: Linux/1.0 DLNADOC/1.50 UPnP/1.0 dlna-server/{expected_version}\r\n"
         "ST: urn:schemas-upnp-org:device:MediaServer:1\r\n"
         "USN: uuid:abc-123::urn:schemas-upnp-org:device:MediaServer:1\r\n"
         "BOOTID.UPNP.ORG: 123\r\n"

@@ -10,14 +10,17 @@ export PATH="/usr/bin:/bin:/usr/sbin:/sbin"
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="$repo_root/output/linux"
+source "$repo_root/scripts/lib_identity.sh"
 
 BUILD_DEB=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --deb) BUILD_DEB=1; shift ;;
+        --version=*) DLNA_VERSION_TAG="${1#*=}"; shift ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
+resolve_version
 
 # Keep build state in Linux filesystem (/tmp) to avoid DrvFS chmod limitations
 build_root=$(mktemp -d "${TMPDIR:-/tmp}/dlna-server-linux-build.XXXXXX")
@@ -96,6 +99,7 @@ cmake -S "$repo_root" -B "$build_dir" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="$install_dir" \
     -DDLNA_ENABLE_GTK4_GUI=ON \
+    -DDLNA_VERSION="$DLNA_VERSION" \
     -DCMAKE_C_COMPILER=/usr/bin/gcc \
     -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
     -DCMAKE_LINKER=/usr/bin/ld
@@ -127,7 +131,7 @@ if [ "$BUILD_DEB" = "1" ]; then
     sudo_run rm -rf "$output_dir/_CPack_Packages" 2>/dev/null || true
     sudo_run chown -R "$(id -u):$(id -g)" "$output_dir" 2>/dev/null || true
 
-    deb_file=$(find "$output_dir" -maxdepth 1 -type f -name 'dlna-server_*.deb' | sort -r | head -n 1)
+    deb_file=$(find "$output_dir" -maxdepth 1 -type f -name "${DLNA_APP_ID}_*.deb" | sort -r | head -n 1)
     if [ -z "$deb_file" ]; then
         echo "[ERROR] Debian package generation failed." >&2
         exit 1

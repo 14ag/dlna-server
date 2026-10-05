@@ -8,13 +8,24 @@
     Archs to build: 'x64', 'Win32', or 'both' (default: 'both').
 #>
 param(
-    [string]$Arch = "both"
+    [string]$Arch = "both",
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $OutputDir = Join-Path $RepoRoot "output"
+$AppId = "com.github.dlna-server-14ag"
+$VersionScript = Join-Path $PSScriptRoot "version.py"
+if (-not $Version) {
+    $generated = & python $VersionScript
+    if ($LASTEXITCODE -ne 0) { throw "version script failed" }
+    $Version = ("$generated").Trim()
+}
+$numericOutput = & python $VersionScript --numeric-of $Version
+if ($LASTEXITCODE -ne 0) { throw "invalid version: $Version" }
+$VersionNumber = ("$numericOutput").Trim()
 
 function Invoke-NativeChecked {
     param(
@@ -81,7 +92,8 @@ function Build-Arch {
         "-A", $Architecture,
         "-DCMAKE_INSTALL_PREFIX=$InstallDir",
         "-DCMAKE_TOOLCHAIN_FILE=$toolchain",
-        "-DVCPKG_TARGET_TRIPLET=$triplet"
+        "-DVCPKG_TARGET_TRIPLET=$triplet",
+        "-DDLNA_VERSION=$VersionNumber"
     )
     Invoke-NativeChecked "cmake" @(
         "--build", $BuildDir,
@@ -90,14 +102,7 @@ function Build-Arch {
         "--", "/m"
     )
 
-    $cmake = Get-Content -LiteralPath (Join-Path $RepoRoot "CMakeLists.txt") -Raw
-    if ($cmake -match 'project\(dlna-server\s+VERSION\s+([0-9.]+)\)') {
-        $version = $Matches[1]
-    } else {
-        throw "Could not read version"
-    }
-
-    Compress-Archive -LiteralPath (Join-Path $InstallDir "DLNA Server.exe") -DestinationPath (Join-Path $InstallDir "dlna-server-$version-windows-$Architecture.zip") -Force
+    Compress-Archive -LiteralPath (Join-Path $InstallDir "DLNA Server.exe") -DestinationPath (Join-Path $InstallDir "$AppId-$VersionNumber-windows-$Architecture.zip") -Force
 
     Write-Host "Windows $Architecture build completed and zipped in: $InstallDir"
 }

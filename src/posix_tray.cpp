@@ -7,6 +7,7 @@
 #include <string>
 
 #include "log.h"
+#include "app_identity.h"
 
 namespace PosixTray {
 
@@ -42,7 +43,7 @@ GVariant* PropertyValue(const char* name) {
         return g_variant_new_string("ApplicationStatus");
     }
     if (g_strcmp0(name, "Id") == 0) {
-        return g_variant_new_string("dlna-server");
+        return g_variant_new_string(DLNA_APP_ID);
     }
     if (g_strcmp0(name, "Title") == 0) {
         return g_variant_new_string(g_state.title.c_str());

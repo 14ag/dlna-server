@@ -51,6 +51,7 @@
 #include "function_key_action.h"
 #include "tray_notify.h"
 #include "../resources/resource.h"
+#include "app_identity.h"
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 namespace {
@@ -158,7 +159,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     if (killServer) {
         LocalFree(argv);
-        HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
+        HWND hwndExisting = FindWindowW(DLNA_MAIN_WINDOW_CLASS_W, NULL);
         if (hwndExisting) {
             PostMessageW(hwndExisting, MainWindow::WM_KILL_SERVER, 0, 0);
         }
@@ -184,7 +185,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     if (!runtimeUUID.empty()) AppConfig.deviceUUID = runtimeUUID;
     if (debugFlag) AppConfig.debugLog = true;
     if (!runtimeSources.empty()) {
-        HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
+        HWND hwndExisting = FindWindowW(DLNA_MAIN_WINDOW_CLASS_W, NULL);
         if (hwndExisting) {
             std::wstring payload = BuildQuotedCommaList(runtimeSources);
             COPYDATASTRUCT cds{};
@@ -212,7 +213,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     // Without the WAIT_ABANDONED_0 check below, a killed/crashed process
     // permanently prevents any new instance from starting until the zombie
     // process is manually killed. See workflow: stale-mutex-remediation.
-    HANDLE hMutex = CreateMutexW(NULL, TRUE, L"dlna-server_SingleInstance_Mutex");
+    HANDLE hMutex = CreateMutexW(NULL, TRUE, DLNA_SINGLE_INSTANCE_MUTEX_W);
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         DWORD waitResult = WaitForSingleObject(hMutex, 0);
         if (waitResult != WAIT_ABANDONED_0) {
@@ -227,7 +228,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // close button) in the original bug.
             HWND hwndExisting = NULL;
             for (int attempt = 0; attempt < 25 && !hwndExisting; ++attempt) {
-                hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
+                hwndExisting = FindWindowW(DLNA_MAIN_WINDOW_CLASS_W, NULL);
                 if (!hwndExisting) Sleep(200);
             }
             if (hwndExisting) {

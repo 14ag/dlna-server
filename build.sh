@@ -10,6 +10,7 @@
 #   ./build.sh --release        # Publishes release assets using scripts/release-linux.sh
 #   ./build.sh --notes          # Auto-generates release notes with AI (used with --release)
 #   ./build.sh --update=<tag>   # Updates an existing GitHub release tag with assets
+#   ./build.sh --version=<tag> # Uses this version tag instead of generating one
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,6 +52,10 @@ while [[ $# -gt 0 ]]; do
             REL_ARGS+=("$1")
             shift
             ;;
+        --version=*)
+            DLNA_VERSION_TAG="${1#*=}"
+            shift
+            ;;
         *)
             echo "Unknown option: $1" >&2
             exit 1
@@ -68,6 +73,10 @@ fi
 # Step 1: Build core Linux binaries (and .deb in the same cmake run when needed)
 # Passing --deb here avoids a second full cmake configure+build that would occur
 # if build_deb.sh were called separately after build_linux.sh.
+source "$script_dir/scripts/lib_identity.sh"
+resolve_version
+echo "Version: $DLNA_VERSION_TAG"
+
 _linux_args=()
 if [ "$BUILD_DEB" = "1" ] || [ "$INSTALL" = "1" ]; then
     _linux_args+=(--deb)

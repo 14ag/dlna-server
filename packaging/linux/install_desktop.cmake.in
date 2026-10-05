@@ -4,7 +4,7 @@ file(MAKE_DIRECTORY "${applications_dir}")
 # gtk-launch re-entry block (gtk-launch spawns a fresh process without env
 # inheritance, causing an infinite launch loop).  The wrapper still handles
 # Wayland display detection and compositor readiness before calling the binary.
-file(WRITE "${applications_dir}/com.github.dlna-server-14ag.desktop"
+file(WRITE "${applications_dir}/@DLNA_APP_ID@.desktop"
 "[Desktop Entry]
 Type=Application
 Name=DLNA Server
@@ -12,11 +12,11 @@ GenericName=DLNA media server
 Comment=Share local media with DLNA and UPnP clients
 Exec=env DLNA_SERVER_GTK_LAUNCHED=1 /usr/bin/dlna-server-gui
 TryExec=/usr/bin/dlna-server-gui-bin
-Icon=dlna-server
+Icon=@DLNA_APP_ID@
 Terminal=false
 Categories=AudioVideo;Network;FileTransfer;
 Keywords=DLNA;UPnP;media;server;streaming;
-StartupWMClass=com.github.dlna-server-14ag
+StartupWMClass=@DLNA_APP_ID@
 StartupNotify=true
 ")
 

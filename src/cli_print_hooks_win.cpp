@@ -49,6 +49,7 @@
 #include "function_key_action.h"
 #include "tray_notify.h"
 #include "../resources/resource.h"
+#include "app_identity.h"
 
 namespace {
 
@@ -102,7 +103,7 @@ bool TryRunPrintHook(int argc, wchar_t** argv, int& exitCode) {
         exitCode = 0;
         return true;
     } else if (wcscmp(argv[i], L"--print-single-instance-lifecycle") == 0) {
-        HANDLE hMutex = CreateMutexW(NULL, TRUE, L"dlna-server_SingleInstance_Mutex");
+        HANDLE hMutex = CreateMutexW(NULL, TRUE, DLNA_SINGLE_INSTANCE_MUTEX_W);
         if (!hMutex) {
             exitCode = 1;
             return true;
@@ -490,6 +491,10 @@ bool TryRunPrintHook(int argc, wchar_t** argv, int& exitCode) {
         std::cout << kSearchResponseSendCount << std::endl;
         exitCode = 0;
         return true;
+    } else if (wcscmp(argv[i], L"--print-app-id") == 0) {
+        std::wcout << DLNA_APP_ID_W << std::endl;
+        exitCode = 0;
+        return true;
     } else if (wcscmp(argv[i], L"--print-config-path") == 0) {
         std::wcout << AppConfig.GetConfigPath() << std::endl;
         exitCode = 0;
@@ -547,7 +552,7 @@ bool TryRunPrintHook(int argc, wchar_t** argv, int& exitCode) {
         exitCode = 0;
         return true;
     } else if (wcscmp(argv[i], L"--print-effective-media-sources") == 0) {
-        HWND hwndExisting = FindWindowW(L"dlna-server_Main", NULL);
+        HWND hwndExisting = FindWindowW(DLNA_MAIN_WINDOW_CLASS_W, NULL);
         if (hwndExisting) {
             wchar_t tempPath[MAX_PATH] = {0};
             wchar_t tempFile[MAX_PATH] = {0};

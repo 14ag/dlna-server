@@ -1,5 +1,6 @@
 #include <windows.h>
 #include "resource.h"
+#include "version.h"
 
 // Icon
 IDI_APP_ICON ICON "app.ico"
@@ -8,8 +9,8 @@ IDR_SERVER_ICON_120 RCDATA "server_icon_120.png"
 IDR_SERVER_ICON_256 RCDATA "server_icon_256.png"
 
 VS_VERSION_INFO VERSIONINFO
-  FILEVERSION 1,7,0,0
-  PRODUCTVERSION 1,7,0,0
+  FILEVERSION DLNA_SERVER_VERSION_RC
+  PRODUCTVERSION DLNA_SERVER_VERSION_RC
  FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
  FILEFLAGS 0x1L
@@ -26,11 +27,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "dlna-server contributors"
             VALUE "FileDescription", "DLNA Server"
-            VALUE "FileVersion", "1.7.0"
+            VALUE "FileVersion", DLNA_SERVER_VERSION_STRING
             VALUE "InternalName", "DLNA Server"
             VALUE "OriginalFilename", "DLNA Server.exe"
             VALUE "ProductName", "DLNA Server"
-            VALUE "ProductVersion", "1.7.0"
+            VALUE "ProductVersion", DLNA_SERVER_VERSION_STRING
         END
     END
     BLOCK "VarFileInfo"
