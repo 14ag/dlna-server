@@ -21,7 +21,7 @@ The file is written UTF-8 with a BOM (`Config::Save`), and read back tolerating 
 | `DoNotShowAllMediaFolders` | bool | `0` | Reserved for hiding aggregate "all media" containers |
 | `AddArtistAlbumFolders` | bool | `0` | Mirror audio/video items under derived `Artist/Album` containers in addition to their source location |
 | `DebugLog` | bool | `0` | Enables verbose SSDP discovery logging (`DiscoveryLog` in `ssdp.cpp`) and writes all log lines to `debug.log` next to `config.ini`, in addition to the in-memory ring buffer |
-| `RunOnBoot` | bool | `0` | Windows: writes/removes a `HKCU\...\Run` registry value launching with `--headless`. POSIX: accepted but not yet wired to a service manager (`Config::SetRunOnBoot` is a no-op on POSIX) |
+| `RunOnBoot` | bool | `0` | Windows: writes/removes an `HKCU\...\Run` value named `com.github.dlna-server-14ag` launching with `--headless` (a legacy `dlna-server` value is also removed when disabling). POSIX: accepted but not yet wired to a service manager (`Config::SetRunOnBoot` is a no-op on POSIX) |
 | `DefaultPlaylistEnabled` | bool | `0` | Scan `DefaultPlaylistPath` as an additional source named "Default playlist" |
 | `DefaultPlaylistPath` | string | `<config-dir>/default.m3u` | Created empty if it doesn't exist when an entry is first appended via the GUI |
 | `IPWhiteList` | string | empty | Comma-separated list of IPv4/IPv6 addresses and/or CIDR ranges (e.g. `192.168.1.50,10.0.0.0/24,fe80::1`). Empty means all addresses are allowed — see `IPWhitelist::IsAllowed` |

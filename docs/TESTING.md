@@ -12,7 +12,7 @@ From repo root:
 pytest                       # full suite (~6 min on Windows)
 pytest -q --tb=no            # quiet, no tracebacks
 pytest -q tests/test_access_keys.py
-pytest -q --collect-only     # count only (~500 collected, ~90 deselected on Windows)
+pytest -q --collect-only     # count only (~540 collected, ~86 deselected on Windows)
 ```
 
 Filter failures only on a full run:
@@ -20,6 +20,14 @@ Filter failures only on a full run:
 ```
 python -m pytest -v --tb=no 2>&1 | Select-String -Pattern " FAILED | ERROR | SKIP "
 ```
+
+## Environment
+
+- `DLNA_EXPECTED_VERSION` — numeric version (`1.YY.DDD`) the version-aware
+  tests expect from built binaries (SSDP `SERVER:` header, metainfo,
+  `--print-app-id` output). Set it to the tag under test, e.g.
+  `DLNA_EXPECTED_VERSION=1.26.76153`. Defaults to `0.0.00000`
+  (unconfigured build) when unset.
 
 ## Conventions
 

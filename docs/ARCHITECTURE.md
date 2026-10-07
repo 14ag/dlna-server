@@ -69,4 +69,9 @@ HLS manifests are never expanded into per-segment DIDL items. `IsHlsManifestText
 - `dlna-server` — the primary executable (Win32 GUI on Windows, headless CLI on POSIX)
 - `dlna-server-gui-gtk4` (POSIX only, `DLNA_ENABLE_GTK4_GUI=ON` by default) — GTK4-based native GUI, built from its own source list rather than linking `dlna_core`, so it does not share build flags with the CLI executable
 - macOS: an `.app` bundle assembling both POSIX binaries plus icons via a custom target
-- Linux (non-Apple): CPack `DEB` generator, desktop file, AppStream metadata, icon installation
+- Linux (non-Apple): CPack `DEB` generator, desktop file, AppStream metadata, icon installation — all named after the app id `com.github.dlna-server-14ag` (see `docs/BUILD.md`)
+
+## App identity and version (`CMakeLists.txt`, `scripts/version.py`)
+
+- `DLNA_APP_ID` (`com.github.dlna-server-14ag`) is the single branding constant. CMake bakes it into the generated `app_identity.h` (from `src/app_identity.h.in`: `DLNA_APP_ID` / `DLNA_APP_ID_W`, window class, single-instance mutex) and into every installed file name (desktop entry, metainfo, icons).
+- `DLNA_VERSION` (numeric `1.YY.DDD`, resolved by `scripts/version.py` or pinned via `--version`) becomes the CMake project version and is baked into the generated `version.h` (`DLNA_SERVER_VERSION_STRING`, `DLNA_SERVER_VERSION_RC`) consumed by `app.rc` and the SSDP `SERVER:` header.

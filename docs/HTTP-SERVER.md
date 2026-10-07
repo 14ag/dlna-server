@@ -29,7 +29,7 @@ All media responses (`/media/`, `/subtitle/`, `/albumart/`) include a `transferM
 
 ## Second-instance source bypass (Windows)
 
-When a second `DLNA Server.exe` instance is launched with `--source` and an existing main window is already running (`FindWindowW("dlna-server_Main")`), the second instance sends the source list to the first instance via `WM_COPYDATA` (`kCopyDataSourceReplace = 1`) and exits immediately. The first instance receives the message in `MainWindow::HandleMessage`, sets the runtime source override, and restarts the server with the new sources. This avoids having to stop the GUI and relaunch.
+When a second `DLNA Server.exe` instance is launched with `--source` and an existing main window is already running (`FindWindowW(DLNA_MAIN_WINDOW_CLASS_W)` — `com.github.dlna-server-14ag.Main`, see `src/app_identity.h`), the second instance sends the source list to the first instance via `WM_COPYDATA` (`kCopyDataSourceReplace = 1`) and exits immediately. The first instance receives the message in `MainWindow::HandleMessage`, sets the runtime source override, and restarts the server with the new sources. This avoids having to stop the GUI and relaunch.
 
 ## Routes
 

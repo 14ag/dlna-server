@@ -55,7 +55,8 @@ Build commands on Linux / WSL Ubuntu:
   ```bash
   ./build.sh --install
   ```
-  Removes existing `dlna-server` (`sudo apt remove dlna-server`) and installs the newly built package.
+   Removes any installed `com.github.dlna-server-14ag` (plus a legacy
+   `dlna-server` package of the same files) and installs the newly built package.
 
 - **Publish release**:
   ```bash
@@ -66,11 +67,37 @@ Build commands on Linux / WSL Ubuntu:
 
 The orchestrator `build.sh` delegates to dedicated modular scripts:
 - `scripts/build_linux.sh`: Compiles and copies core binaries to `output/linux/`.
-- `scripts/build_deb.sh`: Generates the Debian `.deb` package using CPack.
+- `scripts/build_deb.sh`: thin wrapper that calls `scripts/build_linux.sh --deb`; do not call it directly in automation.
 - `scripts/build_appimage.sh`: Builds the `.AppImage` bundle via `linuxdeploy`.
 - `scripts/build_flatpak.sh`: Builds the Flatpak bundle via `flatpak-builder`.
 - `scripts/install_linux.sh`: Removes previous installation and installs the `.deb` package or binaries.
 - `scripts/release-linux.sh`: Publishes built assets to GitHub Releases.
+
+### Version and app identity
+
+`scripts/version.py` is the single source of version truth. It prints a
+tag of the form `v1.YY.DDD-buildN` (two-digit year, day-of-year,
+`buildN` prompt counter), e.g. `v1.26.76153-build7`. On an interactive
+terminal it prompts for the counter (`build? [0-99]`); elsewhere it
+defaults to `0` unless `--patch <n>` is passed. `--numeric-of <tag>`
+prints the bare numeric part (`1.26.76153`).
+
+```
+python scripts/version.py --patch 3 --now 2026-10-05T14:07   # v1.26.76153-build7
+python scripts/version.py --numeric-of v1.26.76153-build7    # 1.26.76153
+```
+
+Pass `--version <tag>` to `build.sh` / `build.bat` (forwarded to
+`scripts/build_linux.sh` / `scripts/build-windows.ps1`) to pin a build
+to an exact tag; without it the scripts resolve the version themselves.
+CMake takes it as `-DDLNA_VERSION=<numeric>` and stamps it into the
+project version, the Windows `FILEVERSION`/`PRODUCTVERSION` resources,
+and the `.deb` (`com.github.dlna-server-14ag_<numeric>_amd64.deb`) and
+Windows zip (`com.github.dlna-server-14ag-<numeric>-windows-x64.zip`)
+file names. The app id `com.github.dlna-server-14ag` (`DLNA_APP_ID` in
+`CMakeLists.txt`) is baked into `src/app_identity.h` (generated from
+`src/app_identity.h.in`) and used for the window class, mutex, registry
+value, `/tmp` paths, GTK application id, and all installed file names.
 
 Raw CMake install flow still exists for manual builds:
 
@@ -112,13 +139,21 @@ Contents/Info.plist                   <- from packaging/macos/Info.plist.in
 
 ### Linux packaging
 
-Non-Apple Unix builds with `DLNA_ENABLE_GTK4_GUI=ON` install:
+Non-Apple Unix builds with `DLNA_ENABLE_GTK4_GUI=ON` install everything
+under the app id `com.github.dlna-server-14ag` (`DLNA_APP_ID` in
+`CMakeLists.txt`):
 
 - a launcher script generated from `packaging/linux/dlna-server-gui`
-- an SVG icon into the hicolor theme
-- three PNG icons (48/120/256) into `share/dlna-server/icons`
-- AppStream metadata generated from `packaging/linux/dlna-server.appdata.xml.in`
-- desktop entry installation via `packaging/linux/install_desktop.cmake.in`
+- the desktop entry as `com.github.dlna-server-14ag.desktop` in
+  `/usr/share/applications` (written by
+  `packaging/linux/install_desktop.cmake.in`)
+- an SVG icon as `com.github.dlna-server-14ag.svg` into the hicolor
+  scalable tree, plus PNG icons as `com.github.dlna-server-14ag.png`
+  into the hicolor `16x16`/`48x48`/`128x128`/`256x256` app dirs and
+  `pixmaps`
+- AppStream metadata generated from
+  `packaging/linux/com.github.dlna-server-14ag.appdata.xml`,
+  installed as `com.github.dlna-server-14ag.metainfo.xml`
 
 CPack is configured unconditionally for `UNIX AND NOT APPLE`:
 
@@ -131,7 +166,7 @@ Produces a `.deb` with `libcurl4` as a declared dependency (`CPACK_DEBIAN_PACKAG
 
 ## Environment variables read at runtime
 
-- `DLNA_SERVER_SKIP_FIREWALL` (Windows) — if set, `Server::Start()` skips the firewall-access check entirely. Useful in CI or when firewall rules are provisioned out-of-band.
+See `docs/CONFIGURATION.md` (single list, not repeated here).
 
 ## Command-line flags (all platforms)
 
@@ -173,6 +208,7 @@ Parsed in the same way on every platform — overrides are applied after config 
 | `--print-concurrent-start-rescan-safety` | Starts the server while `Rescan()` runs concurrently; prints `start-ok` and the resulting leaf-media-item count |
 | `--print-config-load-lockstate` | Loads the config through `Config::Load()` and reports whether it completes |
 | `--print-config-path` | Prints the resolved config file path |
+| `--print-app-id` | Prints the app id (`com.github.dlna-server-14ag`) and exits |
 | `--print-debug-log-session-truncation <path>` | Reuses the debug-log handle across two writes and prints whether the same handle was reused |
 | `--print-default-playlist-path` | Prints the default playlist path resolved next to the config file |
 | `--print-dlna-server-header` | Prints the SSDP `SERVER:` header value produced by `GetDlnaServerHeader()` |

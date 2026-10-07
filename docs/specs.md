@@ -1,3 +1,8 @@
+> Historical requirement capture. Most items below are implemented in the
+> current code; this file is kept as the original spec, not as a
+> statement of missing work. Current behavior is documented in
+> `docs/ARCHITECTURE.md`, `docs/CONFIGURATION.md`, and `docs/BUILD.md`.
+
 ## windows and posix gui versions
 ### A: flags
 1. when started with the `--headless` or `-h` flag the app starts, loads the config(when there is no other argument given) then starts the server using the settings in the config, and the icon is visible in the tray but not in the taskbar. 
