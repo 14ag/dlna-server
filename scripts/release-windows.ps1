@@ -68,9 +68,22 @@ $commitText
     }
 }
 
+$versionScript = Join-Path $PSScriptRoot "version.py"
+$versionNumber = & python $versionScript --numeric-of $Tag
+if ($LASTEXITCODE -ne 0) { throw "invalid version: $Tag" }
+$versionNumber = ("$versionNumber").Trim()
+$versionPattern = "(^|[^0-9])$([regex]::Escape($versionNumber))([^0-9]|$)"
 $assets = Get-ChildItem -LiteralPath $OutputDir -Recurse -File |
-    Where-Object { $_.Extension -in @(".zip", ".deb", ".AppImage", ".flatpak") } |
+    Where-Object {
+        $_.Directory.Name -in @("winx64", "winx86") -and
+        $_.Extension -eq ".zip" -and
+        $_.Name -match $versionPattern
+    } |
     Select-Object -ExpandProperty FullName
+
+if (-not $assets) {
+    throw "No Windows release assets found for version $versionNumber."
+}
 
 if ($Update) {
     Write-Host "Updating release $Tag with assets..."

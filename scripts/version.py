@@ -4,6 +4,7 @@ import datetime
 import os
 import re
 import sys
+from pathlib import Path
 
 MAJOR = 1
 TAG_PATTERN = re.compile(r"^v?(\d+\.\d+\.\d+)(-build\d+)?$")
@@ -31,18 +32,30 @@ def read_patch(cli_value):
     raw = cli_value
     if raw is None:
         raw = os.environ.get("DLNA_PATCH")
-    if raw is None:
-        if sys.stdin.isatty():
-            sys.stderr.write("enter the patch number (0-9): ")
-            sys.stderr.flush()
-            raw = sys.stdin.readline().strip()
-        else:
-            raw = "0"
-    if raw == "":
-        raw = "0"
-    if len(raw) != 1 or not raw.isdigit():
+    if raw is None or raw == "":
         return None
+    if len(raw) != 1 or not raw.isdigit():
+        raise ValueError("patch must be one digit from 0 to 9")
     return raw
+
+
+def version_exists(version, output_dir):
+    pattern = re.compile(r"(?<!\d)" + re.escape(version) + r"(?!\d)")
+    return any(pattern.search(path.name) for path in output_dir.rglob("*"))
+
+
+def select_tag(patch, now, output_dir):
+    initial_patch = patch
+    tag = build_tag(initial_patch or "", now)
+    if not version_exists(numeric_of(tag), output_dir):
+        return tag
+
+    next_patch = int(initial_patch) + 1 if initial_patch is not None else 1
+    while True:
+        tag = build_tag(str(next_patch), now)
+        if not version_exists(numeric_of(tag), output_dir):
+            return tag
+        next_patch += 1
 
 
 def main(argv):
@@ -60,16 +73,22 @@ def main(argv):
         print(number)
         return 0
 
-    patch = read_patch(args.patch)
-    if patch is None:
-        sys.stderr.write("patch must be one digit from 0 to 9\n")
+    try:
+        patch = read_patch(args.patch)
+    except ValueError as error:
+        sys.stderr.write(str(error) + "\n")
         return 2
 
     if args.now:
         now = datetime.datetime.fromisoformat(args.now)
     else:
         now = datetime.datetime.now()
-    print(build_tag(patch, now))
+    output_dir = Path(__file__).resolve().parent.parent / "output"
+    try:
+        print(select_tag(patch, now, output_dir))
+    except ValueError as error:
+        sys.stderr.write(str(error) + "\n")
+        return 2
     return 0
 
 

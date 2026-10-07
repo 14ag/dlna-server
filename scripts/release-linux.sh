@@ -23,7 +23,7 @@ fi
 
 TAG="$UPDATE"
 if [ -z "$TAG" ]; then
-    TAG="${GITHUB_REF_NAME:-}"
+    TAG="${DLNA_RELEASE_TAG:-${GITHUB_REF_NAME:-}}"
     if [ -z "$TAG" ]; then
         TAG=$(git -C "$repo" describe --tags --exact-match HEAD 2>/dev/null || true)
     fi
@@ -70,10 +70,14 @@ ${COMMITS}"
     fi
 fi
 
+VERSION_NUMBER="$(python3 "$repo/scripts/version.py" --numeric-of "$TAG")"
+version_pattern="(^|[^0-9])${VERSION_NUMBER//./\\.}([^0-9]|$)"
 ASSETS=()
 while IFS= read -r -d '' f; do
-    ASSETS+=("$f")
-done < <(find "$output_dir" -type f \( -name "*.zip" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.flatpak" \) -print0)
+    if [[ "${f##*/}" =~ $version_pattern ]]; then
+        ASSETS+=("$f")
+    fi
+done < <(find "$output_dir/linux" -maxdepth 1 -type f \( -name "*.deb" -o -name "*.AppImage" -o -name "*.flatpak" \) -print0)
 
 if [ "${#ASSETS[@]}" -eq 0 ]; then
     echo "No release assets found." >&2

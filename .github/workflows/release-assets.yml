@@ -2,6 +2,11 @@ name: Release assets
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing version tag to build and release
+        required: true
+        type: string
   push:
     tags:
       - "v*"
@@ -12,28 +17,41 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-22.04
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.release_tag || github.ref }}
       - name: Build Linux release assets
-        run: sudo bash build.sh --deb --appimage --flatpak
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-build[0-9]+)?$ ]]
+          sudo bash build.sh --deb --appimage --flatpak --version="$RELEASE_TAG"
       - name: Publish release with Linux assets
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash build.sh --release --notes
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DLNA_RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          if [[ -n "${GEMINI_API_KEY:-}" ]]; then
+            bash build.sh --release --notes
+          else
+            bash build.sh --release
+          fi
 
   windows:
     needs: [linux]
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
       - name: Build Windows release assets
         shell: cmd
-        run: build.bat --x86 --x64
+        run: build.bat --x86 --x64 --version "%RELEASE_TAG%"
       - name: Upload Windows assets to release
         shell: cmd
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: build.bat --release --update %GITHUB_REF_NAME%
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: build.bat --release --update "%RELEASE_TAG%"
