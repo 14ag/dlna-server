@@ -10,19 +10,19 @@ button,
 entry,
 label,
 checkbutton {
-    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-family: "Selawik", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 12px;
 }
 
 textview {
-    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-family: "Selawik", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 12px;
     color: #FFFFFF;
     background-color: #202020;
 }
 
 textview text {
-    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-family: "Selawik", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 12px;
     background-color: #202020;
 }
@@ -84,7 +84,7 @@ windowhandle.win10-titlebar.win10-inactive,
 .win10-titlebar-box .title,
 .title {
     color: #ffffff;
-    font-family: "Segoe UI", sans-serif;
+    font-family: "Selawik", "Segoe UI", sans-serif;
     font-size: 12px;
     font-weight: 400;
 }
@@ -175,7 +175,7 @@ button.toolbar-button:not(:hover):not(:active) {
     border: 1px solid #3b3b3b;
     color: #ffffff;
     font-size: 14px;
-    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-family: "Selawik", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     border-radius: 0px;
     box-shadow: none;
     text-shadow: none;
@@ -270,7 +270,7 @@ scrolledwindow.source-list list {
     color: #ffffff;
 }
 .source-list row label {
-    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-family: "Selawik", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 14px;
 }
 .source-list row:selected {
@@ -286,7 +286,7 @@ scrolledwindow.source-list list {
 }
 .dlna-hover-tip label {
     color: #ffffff;
-    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-family: "Selawik", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 14px;
 }
 
@@ -294,7 +294,7 @@ scrolledwindow.source-list list {
 .dlna-dialog-body {
     background-color: #f0f0f0;
     color: #000000;
-    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-family: "Selawik", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 12px;
 }
 
@@ -524,7 +524,7 @@ window.dlna-log-window {
 textview.dlna-log-surface, textview.dlna-log-surface text {
     background-color: #ffffff;
     color: #000000;
-    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-family: "Selawik", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 14px;
 }
 
@@ -533,7 +533,7 @@ textview.dlna-log-surface, textview.dlna-log-surface text {
 textview.dlna-help-surface, textview.dlna-help-surface text {
     background-color: #f0f0f0;
     color: #000000;
-    font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    font-family: "Selawik", "Segoe UI Variable Text", "Segoe UI", sans-serif;
     font-size: 14px;
 }
 

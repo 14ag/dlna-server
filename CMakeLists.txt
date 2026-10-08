@@ -263,6 +263,19 @@ add_library(dlna_core STATIC
             "${CMAKE_SOURCE_DIR}/resources/gtk/penpot-close.svg"
             "${CMAKE_SOURCE_DIR}/resources/gtk/penpot-warning.svg"
             DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
+        # Selawik (OFL, metric-compatible with Segoe UI) backs the Linux GUI
+        # font stacks. /usr/share/fonts is picked up by fontconfig with no
+        # cache-refresh hook needed.
+        install(FILES
+            "${CMAKE_SOURCE_DIR}/resources/fonts/selawk.ttf"
+            "${CMAKE_SOURCE_DIR}/resources/fonts/selawkb.ttf"
+            "${CMAKE_SOURCE_DIR}/resources/fonts/selawkl.ttf"
+            "${CMAKE_SOURCE_DIR}/resources/fonts/selawksb.ttf"
+            "${CMAKE_SOURCE_DIR}/resources/fonts/selawksl.ttf"
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/fonts/truetype/dlna-server)
+        install(FILES
+            "${CMAKE_SOURCE_DIR}/resources/fonts/SIL Open Font License.txt"
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/dlna-server)
     endif()
 
     if(APPLE)

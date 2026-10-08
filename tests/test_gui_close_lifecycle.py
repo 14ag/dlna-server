@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import kill_process_group, spawn_wrapped_process
+
 pytestmark = [pytest.mark.posix_only, pytest.mark.needs_xvfb]
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -90,7 +92,7 @@ def test_tray_registration_result_is_logged(tmp_path):
     (config_dir / "config.ini").write_text(
         "[Settings]\nDebugLog=1\n", encoding="utf-8")
 
-    proc = subprocess.Popen(
+    proc = spawn_wrapped_process(
         ["dbus-run-session", "--", XVFB_RUN, "-a", str(GUI_BINARY)],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
@@ -109,12 +111,7 @@ def test_tray_registration_result_is_logged(tmp_path):
             f"debug.log never resolved tray registration; content={content!r}"
         )
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=3)
+        kill_process_group(proc)
 
 
 @pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
@@ -132,7 +129,7 @@ def test_no_tray_hint_is_logged_but_recovery_needs_no_tray(tmp_path):
     (config_dir / "config.ini").write_text(
         "[Settings]\nDebugLog=1\n", encoding="utf-8")
 
-    proc = subprocess.Popen(
+    proc = spawn_wrapped_process(
         ["dbus-run-session", "--", XVFB_RUN, "-a", str(GUI_BINARY)],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
@@ -149,12 +146,7 @@ def test_no_tray_hint_is_logged_but_recovery_needs_no_tray(tmp_path):
             f"debug.log never logged the no-tray recovery hint; content={content!r}"
         )
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=3)
+        kill_process_group(proc)
 
 
 @pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
@@ -165,7 +157,7 @@ def test_closing_window_before_start_does_not_abort(tmp_path, xvfb):
     env["DISPLAY"] = xvfb["DISPLAY"]
     sock_path = _socket_path(env)
 
-    proc = subprocess.Popen(
+    proc = spawn_wrapped_process(
         ["dbus-run-session", "--", str(GUI_BINARY)],
         env=env,
         stdout=subprocess.PIPE,
@@ -189,8 +181,7 @@ def test_closing_window_before_start_does_not_abort(tmp_path, xvfb):
 
         stdout, stderr = proc.communicate(timeout=20)
     except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.communicate()
+        kill_process_group(proc)
         pytest.fail("gui process did not exit after a window close request")
 
     if proc.returncode != 0:
@@ -208,12 +199,13 @@ def test_closing_window_before_start_does_not_abort(tmp_path, xvfb):
 @pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
 @pytest.mark.skipif(XVFB_RUN is None, reason="xvfb-run not installed")
 @pytest.mark.skipif(XDOTOOL is None, reason="xdotool not installed")
+@pytest.mark.needs_wm
 def test_second_launch_restores_minimized_window(tmp_path, xvfb):
     env = _isolated_env(tmp_path)
     env["DISPLAY"] = xvfb["DISPLAY"]
     sock_path = _socket_path(env)
 
-    first = subprocess.Popen(
+    first = spawn_wrapped_process(
         ["dbus-run-session", "--", str(GUI_BINARY)],
         env=env)
     try:
@@ -247,8 +239,4 @@ def test_second_launch_restores_minimized_window(tmp_path, xvfb):
                 f"window was not restored on attempt {attempt}"
             )
     finally:
-        first.terminate()
-        try:
-            first.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            first.kill()
+        kill_process_group(first)

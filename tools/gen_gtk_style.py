@@ -68,6 +68,7 @@ window,
 window.dlna-main {
     background-color: @page_color;
     color: @text_color;
+    font-family: {{body_font_family_stack}};
     margin: 0;
     padding: 0;
     border: none;
@@ -90,6 +91,16 @@ window.dlna-main {
 .toolbar-button:active {
     background-color: @control_pressed_color;
 }
+
+.source-list { background-color: @page_color; border: 1px solid @border_color; border-radius: 0; }
+
+.source-list:focus-within { outline: 1px solid @focus_color; }
+
+.source-list list { background-color: @page_color; }
+
+.source-list row { color: @text_color; }
+
+.source-list row:selected { background-color: @control_pressed_color; }
 
 .empty-state {
     color: @secondary_text_color;
@@ -119,6 +130,7 @@ window.csd, window.csd decoration { border-radius: 0; box-shadow: none; }
 
 .win10-titlebar .title {
     color: @text_color;
+    font-family: {{title_font_family_stack}};
     font-size: 12px;
     font-weight: 400;
 }

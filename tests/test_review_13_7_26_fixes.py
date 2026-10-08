@@ -340,7 +340,13 @@ class TestSkipFirewallEnvVarDetection:
         config_ini.write_text(
             "[Settings]\n"
             f"Port={port}\n"
-            f"MediaSources={media_dir}\n",
+            f"MediaSources={media_dir}\n"
+            # Foreground mode: without DebugLog the server daemonizes and
+            # the Popen handle points at the exited parent, so teardown
+            # can never kill the daemon grandchild. That stray then holds
+            # the global single-instance socket and later --print tests
+            # forward to it instead of reading their own config.
+            "DebugLog=1\n",
             encoding="utf-8-sig",
         )
         env = os.environ.copy()

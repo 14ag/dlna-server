@@ -41,8 +41,8 @@ constexpr RgbColor kSecondaryTextColor = { 200, 200, 200 };
 
 constexpr int kTitleFontSizePx = 20;
 constexpr int kBodyFontSizePx = 14;
-constexpr const char* kTitleFontFamilyStack = "Segoe UI Variable Display";
-constexpr const char* kBodyFontFamilyStack = "Segoe UI Variable Text";
+constexpr const char* kTitleFontFamilyStack = "Selawik, Segoe UI Variable Display, Segoe UI, Cantarell, Noto Sans, sans-serif";
+constexpr const char* kBodyFontFamilyStack = "Selawik, Segoe UI Variable Text, Segoe UI, Cantarell, Noto Sans, sans-serif";
 
 constexpr int kAddButtonWidth = 56;
 
@@ -88,8 +88,10 @@ def test_inlines_px_values(tmp_path):
     # the template hardcodes 12px for control text; the title font size
     # token is not referenced by any rule so no 20px line is emitted
     assert "font-size: 12px;" in css
-    assert "border-radius: 8px;" in css
-    assert "min-width: 56px;" in css
+    # flat Win10 design: square corners and 46px caption buttons, so the
+    # kCornerRadius / kAddButtonWidth tokens exist but no rule inlines them
+    assert "border-radius: 0;" in css
+    assert "min-width: 46px;" in css
 
 
 def test_inlines_font_family_strings(tmp_path):
@@ -98,7 +100,7 @@ def test_inlines_font_family_strings(tmp_path):
     css = output.read_text(encoding="utf-8")
     # only the body font stack is referenced by the template; the title
     # stack token exists in the header but no rule inlines it
-    assert '"Segoe UI Variable Text"' in css
+    assert "Selawik, Segoe UI Variable Text, Segoe UI, Cantarell, Noto Sans, sans-serif" in css
 
 
 def test_exits_nonzero_when_token_missing(tmp_path):

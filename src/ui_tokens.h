@@ -48,9 +48,9 @@ constexpr RgbColor kWin10ActiveTitlebarColor = { 49, 49, 49 };
 constexpr int kTitleFontSizePx = 20;
 constexpr int kBodyFontSizePx = 14;
 constexpr const char* kTitleFontFamilyStack =
-    "Segoe UI Variable Display, Segoe UI, Cantarell, Noto Sans, sans-serif";
+    "Selawik, Segoe UI Variable Display, Segoe UI, Cantarell, Noto Sans, sans-serif";
 constexpr const char* kBodyFontFamilyStack =
-    "Segoe UI Variable Text, Segoe UI, Cantarell, Noto Sans, sans-serif";
+    "Selawik, Segoe UI Variable Text, Segoe UI, Cantarell, Noto Sans, sans-serif";
 
 // settings dialog dimensions filled in from the settings geometry dump
 // produced by LogSettingsControlGeometryProc in settingsdlg cpp

@@ -60,7 +60,7 @@ def test_penpot_surface_tokens_and_windows_assets(repo_root):
     css = (repo_root / "resources" / "gtk" / "figma.css").read_text()
     for color in ("#191919", "#1f1f1f", "#252525", "#f0f0f0", "#333333"):
         assert color in css
-    assert 'font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;' in css
+    assert 'font-family: "Selawik", "Segoe UI Variable Text", "Segoe UI", sans-serif;' in css
 
     assets = repo_root / "resources" / "gtk"
     for name in (
@@ -117,7 +117,7 @@ def test_win10_window_chrome_uses_profile_border_shadow_and_focus_state(repo_roo
     assert '"win10-main-titlebar"' in code
     assert '"win10-dialog-titlebar"' in code
     assert '"dlna-log-workspace"' in code
-    assert "border: 1px solid #606060" in css
+    assert "border: 1px solid #3c3c3c" in css
     assert "box-shadow: 0 6px 22px 9px rgba(0, 0, 0, 0.38)" in css
     assert ".win10-titlebar.win10-inactive button.win10-minimize-control" in css
     assert ".win10-titlebar.win10-inactive button.win10-close-control" in css
@@ -137,7 +137,7 @@ def test_source_list_has_no_horizontal_scrollbar_and_full_path_tooltips(repo_roo
     # GTK4 cannot shorten the tooltip delay, so the immediate tip is a popover.
     assert "InstallSourceListHoverTip" in code
     assert "pango_layout_is_ellipsized" in code
-    assert 'font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;' in css
+    assert 'font-family: "Selawik", "Segoe UI Variable Text", "Segoe UI", sans-serif;' in css
     assert "font-size: 14px" in css
     assert ".dlna-log-body" in css
     assert "window.dlna-log-window" in css

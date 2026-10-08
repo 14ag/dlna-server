@@ -22,7 +22,7 @@
 ## Build And Dependencies
 
 - never build manually. always use the build scripts. never edit the build scripts unless it has bugs
-- build windows assets using command `& .\build.bat --platform --x64 2>&1 | Select-Object -Last 30`
+- build windows assets using command `& .\build.bat --x64 2>&1 | Select-Object -Last 30`
 - build linux assets using command `wsl.exe -d Ubuntu -- bash -lc 'DLNA_SUDO_PASSWORD=" " ./build.sh --install'` with no extra parameters. this script will handle everything (copying assets, building and installing)
 - `build.sh --install` runs one cmake configure+build that produces both the raw binaries and the .deb package in the same temp build dir. there is no second build.
 - `build_deb.sh` is a thin wrapper that calls `build_linux.sh --deb`. do not call it directly in automation.

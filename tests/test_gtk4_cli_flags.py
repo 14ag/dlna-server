@@ -1,5 +1,7 @@
+import os
 import subprocess
 import time
+from pathlib import Path
 import pytest
 
 pytestmark = pytest.mark.needs_xvfb
@@ -21,7 +23,18 @@ def test_source_override_hotswaps_running_instance(tmp_path, dlna_server_gui_bin
         env=xvfb,
     )
     try:
-        time.sleep(3)
+        # Wait until the first instance actually holds the singleton
+        # socket. A fixed sleep races slow startup: if the second
+        # process launches before the lock is held it becomes a second
+        # primary instead of forwarding, and never exits.
+        sock_path = (Path("/tmp") / f"com.github.dlna-server-14ag-{os.getuid()}"
+                     / "com.github.dlna-server-14ag.sock")
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            if sock_path.exists():
+                break
+            time.sleep(0.25)
+        assert sock_path.exists(), "first instance never took the singleton socket"
         second = subprocess.run(
             [dlna_server_gui_binary, "--source", f'"{src_b}"'],
             capture_output=True, timeout=10, env=xvfb,

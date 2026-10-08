@@ -6,7 +6,7 @@ import re
 import sys
 from pathlib import Path
 
-MAJOR = 1
+MAJOR = 2
 TAG_PATTERN = re.compile(r"^v?(\d+\.\d+\.\d+)(-build\d+)?$")
 
 

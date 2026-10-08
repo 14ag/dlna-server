@@ -32,8 +32,8 @@ def test_delete_gating_has_exactly_one_predicate(repo_root):
 @pytest.mark.posix_only
 def test_source_list_shows_runtime_override_like_win32(repo_root):
     code = (repo_root / SOURCE).read_text()
-    refresh = code[code.index("void RefreshSourceList()"):code.index("void SaveSourcesFromList()")]
+    refresh = code[code.index("void RefreshSourceList() {"):code.index("void SaveSourcesFromList() {")]
     assert "IsShowingOverrideSources()" in refresh
     assert "AppConfig.GetRuntimeSourceOverride()" in refresh
-    save = code[code.index("void SaveSourcesFromList()"):]
+    save = code[code.index("void SaveSourcesFromList() {"):]
     assert "if (IsShowingOverrideSources()) return;" in save[:400]

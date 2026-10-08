@@ -1,4 +1,5 @@
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -123,7 +124,23 @@ tempfile.tempdir = str(_repo_tmp_root())
 
 
 def pytest_sessionfinish(session, exitstatus):
-    shutil.rmtree(str(_repo_tmp_root()), ignore_errors=True)
+    try:
+        shutil.rmtree(str(_repo_tmp_root()), ignore_errors=True)
+    except OSError:
+        pass
+
+
+def _has_window_manager():
+    # Minimizing windows and querying the active window need a window
+    # manager; bare Xvfb provides none. No WM binary installed means the
+    # needs_wm tests cannot run in this environment.
+    return any(
+        shutil.which(wm) is not None
+        for wm in (
+            "openbox", "matchbox-window-manager", "mutter", "metacity",
+            "xfwm4", "kwin_x11", "icewm", "fluxbox", "compiz",
+        )
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -137,6 +154,9 @@ def pytest_collection_modifyitems(config, items):
             deselected.append(item)
             continue
         if os.name != "nt" and item.get_closest_marker("windows_only"):
+            deselected.append(item)
+            continue
+        if item.get_closest_marker("needs_wm") and not _has_window_manager():
             deselected.append(item)
             continue
         remaining.append(item)
@@ -276,16 +296,45 @@ def _launch_server(binary_path, port, media_source_dir, config_dir=None):
         env=env,
     )
 
-    deadline = time.time() + 15
-    connected = False
-    while time.time() < deadline:
+    def _wait_listen(timeout):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                with socket.create_connection(
+                        ("127.0.0.1", port), timeout=0.5):
+                    return True
+            except (ConnectionRefusedError, OSError, socket.timeout):
+                time.sleep(0.1)
+        return False
+
+    connected = _wait_listen(15)
+    if not connected and proc.poll() is not None:
+        # The process died instead of listening: typically the
+        # single-instance mutex was still held by a previous test's
+        # server that had not finished shutting down. Ask it to exit
+        # and launch once more.
         try:
-            with socket.create_connection(
-                    ("127.0.0.1", port), timeout=0.5):
-                connected = True
-                break
-        except (ConnectionRefusedError, OSError, socket.timeout):
-            time.sleep(0.1)
+            subprocess.run(
+                [str(binary_path), "--kill-server"],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+        time.sleep(3)
+        proc = subprocess.Popen(
+            [str(binary_path), "--headless"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+        )
+        connected = _wait_listen(15)
+    elif not connected:
+        # Process alive but slow (loaded machine): one more window.
+        connected = _wait_listen(15)
 
     return proc, connected, old_config, config_ini
 
@@ -334,6 +383,40 @@ def _teardown_server(proc, old_config, config_ini):
         config_ini.write_text(old_config, encoding="utf-8-sig")
     elif config_ini.exists():
         config_ini.unlink()
+
+
+def spawn_wrapped_process(args, **kwargs):
+    """Popen in its own process group. Wrapper chains (dbus-run-session,
+    xvfb-run) orphan the real app on a plain terminate(), leaking the
+    global single-instance socket into later tests; kill_process_group
+    reaps the whole group."""
+    if os.name != "nt":
+        kwargs.setdefault("start_new_session", True)
+    return subprocess.Popen(args, **kwargs)
+
+
+def kill_process_group(proc, timeout=10):
+    """SIGTERM the whole process group, SIGKILL on timeout. No-op safe
+    if the process already exited. Uses communicate() so piped stdio can
+    never deadlock the wait."""
+    if os.name != "nt":
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    else:
+        proc.terminate()
+    try:
+        proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if os.name != "nt":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        else:
+            proc.kill()
+        proc.communicate(timeout=3)
 
 
 @pytest.fixture

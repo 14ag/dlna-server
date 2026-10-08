@@ -1,4 +1,7 @@
 *.sh text eol=lf
+packaging/linux/dlna-server-gui text eol=lf
+packaging/linux/AppRun text eol=lf
+packaging/macos/dlna-server-gui text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
 *.ps1 text eol=crlf

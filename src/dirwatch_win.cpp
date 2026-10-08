@@ -45,6 +45,20 @@ void CALLBACK CompletionRoutine(DWORD, DWORD bytesTransferred, LPOVERLAPPED over
 }
 
 void WatchLoopThread() {
+    // The initial ReadDirectoryChangesW calls must be issued on THIS thread:
+    // APC completion routines run on the issuing thread, which must enter an
+    // alertable wait (SleepEx below). Issuing them on the StartDirectoryWatch
+    // caller thread meant the callback could never fire.
+    {
+        std::lock_guard<std::mutex> lock(g_foldersMutex);
+        for (auto& folder : g_folders) {
+            ReadDirectoryChangesW(folder.dirHandle, folder.buffer.data(),
+                static_cast<DWORD>(folder.buffer.size()), TRUE,
+                FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
+                FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE,
+                NULL, &folder.overlapped, CompletionRoutine);
+        }
+    }
     while (g_running.load()) {
         SleepEx(1000, TRUE);
     }
@@ -74,16 +88,6 @@ bool StartDirectoryWatch(const std::vector<std::wstring>& localFolders, std::fun
         g_thread.join();
     }
     g_running.store(true);
-    {
-        std::lock_guard<std::mutex> lock(g_foldersMutex);
-        for (auto& folder : g_folders) {
-            ReadDirectoryChangesW(folder.dirHandle, folder.buffer.data(),
-                static_cast<DWORD>(folder.buffer.size()), TRUE,
-                FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
-                FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE,
-                NULL, &folder.overlapped, CompletionRoutine);
-        }
-    }
     g_thread = std::thread(WatchLoopThread);
     return true;
 }

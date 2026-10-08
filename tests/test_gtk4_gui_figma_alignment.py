@@ -54,12 +54,10 @@ def test_widget_geometry_matches_figma(gtk4_geometry_dump):
     main_toolbar = find_class("main-window", "GtkBox")
     assert main_toolbar is not None
 
-    # spot-check the four main toolbar button size requests against Phase 1 of
-    # dlna-server-posix-gui-figma-alignment-workflow-20-08-26.md
-    # The rendered w= in the dump is size request plus the GTK4 border so it is
-    # 1px larger (57/72/72/83 under the default theme); the sr= line carries the
-    # exact size request applied by the code, which is the Figma contract.
-    for expected_sr in ("sr=55x31", "sr=71x31", "sr=82x31"):
+    # spot-check the four main toolbar button size requests against
+    # UiTokensPosix (kAddButtonW/H etc. in src/ui_tokens_posix.h); the sr=
+    # line carries the exact size request applied by the code.
+    for expected_sr in ("sr=54x30", "sr=70x30", "sr=81x30"):
         assert expected_sr in output, f"expected a button size request of {expected_sr} in geometry dump"
 
 

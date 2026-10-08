@@ -155,9 +155,13 @@ std::unordered_map<std::string, std::string> ParseSoapTags(const std::string& re
         std::string body = TrimAscii(req.substr(closeStart + 2, closeEnd - closeStart - 2));
         const size_t nameEnd = body.find_first_of(" \t\r\n");
         const std::string name = LocalXmlName(nameEnd == std::string::npos ? body : body.substr(0, nameEnd));
-        const size_t valueStart = req.find('>', closeStart);
-        if (valueStart != std::string::npos && valueStart < closeStart) {
-            tags[name] = req.substr(valueStart + 1, closeStart - valueStart - 1);
+        const std::string openTag = "<" + name;
+        const size_t openStart = req.rfind(openTag, closeStart);
+        if (openStart != std::string::npos) {
+            const size_t valueStart = req.find('>', openStart);
+            if (valueStart != std::string::npos && valueStart < closeStart) {
+                tags[name] = req.substr(valueStart + 1, closeStart - valueStart - 1);
+            }
         }
         pos = closeEnd + 1;
     }
@@ -655,7 +659,7 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         const std::string& filter = tags.count("Filter") ? tags.at("Filter") : emptyStr;
         const std::string& startingIndexStr = tags.count("StartingIndex") ? tags.at("StartingIndex") : emptyStr;
         const std::string& requestedCountStr = tags.count("RequestedCount") ? tags.at("RequestedCount") : emptyStr;
-        if (containerIdStr.empty() || searchCriteria.empty() || startingIndexStr.empty() || requestedCountStr.empty()) {
+        if (containerIdStr.empty() || startingIndexStr.empty() || requestedCountStr.empty() || tags.count("SearchCriteria") == 0) {
             return SoapFault(402, "Invalid Args");
         }
 
