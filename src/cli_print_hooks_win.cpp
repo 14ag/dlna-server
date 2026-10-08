@@ -491,6 +491,11 @@ bool TryRunPrintHook(int argc, wchar_t** argv, int& exitCode) {
         std::cout << kSearchResponseSendCount << std::endl;
         exitCode = 0;
         return true;
+    } else if (wcscmp(argv[i], L"--print-should-join-worker-for-result") == 0 && i + 1 < argc) {
+        int stateValue = _wtoi(argv[++i]);
+        std::cout << (ShouldJoinWorkerForResult(static_cast<ServerUiState>(stateValue)) ? "1" : "0") << std::endl;
+        exitCode = 0;
+        return true;
     } else if (wcscmp(argv[i], L"--print-app-id") == 0) {
         std::wcout << DLNA_APP_ID_W << std::endl;
         exitCode = 0;

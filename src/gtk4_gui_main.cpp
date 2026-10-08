@@ -15,6 +15,7 @@
 #include "network_sources.h"
 #include "thread_guard.h"
 #include "server.h"
+#include "scan_cancellation.h"
 #include "settings_restart.h"
 #include "close_pending_state.h"
 #include "server_close_policy.h"
@@ -58,24 +59,36 @@
 #include <vector>
 #include <cwctype>
 int g_ignore_baddrawable = 0;
+// x window id of the main window recorded when it is mapped
+static std::atomic<unsigned long> g_mainWindowXid{0};
 static int (*g_prev_x_error_handler)(Display*, XErrorEvent*) = nullptr;
 
 static int g_x_error_handler(Display* display, XErrorEvent* error) {
     if (g_ignore_baddrawable && error->error_code == BadDrawable) {
         return 0;
     }
+    // requests that still name the main window after the display server
+    // destroyed it are harmless because the app is already closing
+    const unsigned long mainXid = g_mainWindowXid.load(std::memory_order_acquire);
+    if (mainXid != 0 && error->resourceid == mainXid &&
+        (error->error_code == BadWindow || error->error_code == BadDrawable)) {
+        return 0;
+    }
     return g_prev_x_error_handler ? g_prev_x_error_handler(display, error) : 0;
 }
 
-void InstallBadDrawableHandler() {
-    g_ignore_baddrawable = 1;
+// installed once at startup so the handler chain never nests
+void InstallXErrorGuard() {
+    if (g_prev_x_error_handler != nullptr) return;
     g_prev_x_error_handler = XSetErrorHandler(g_x_error_handler);
 }
 
-void UninstallBadDrawableHandler() {
+void BeginIgnoreBadDrawable() {
+    g_ignore_baddrawable = 1;
+}
+
+void EndIgnoreBadDrawable() {
     g_ignore_baddrawable = 0;
-    XSetErrorHandler(g_prev_x_error_handler);
-    g_prev_x_error_handler = nullptr;
 }
 
 
@@ -169,6 +182,8 @@ int g_consecutiveUnhealthyPolls = 0;
 // WSLg can report a freshly mapped window as minimized before it has been
 // presented. Only treat minimization as a user action after one normal map.
 bool g_mainWindowWasUnminimized = false;
+// set when the display server destroyed the main window behind the app
+bool g_mainSurfaceLost = false;
 
 GtkWidget* g_sourceDialog = nullptr;
 GtkWidget* g_sourceEntry = nullptr;
@@ -376,6 +391,8 @@ bool g_printPlaylistAddSensitivity = false;
 bool g_printStoppedCloseExit = false;
 bool g_printSettingsReopen = false;
 bool g_printCloseWithContextMenuOpen = false;
+bool g_printCloseWhileStarting = false;
+bool g_printCloseWhileStartingFails = false;
 
 // Number of attempts and delay between attempts when the initial
 // stopped distro (microsoft/WSL#11958). Total worst-case wait is
@@ -476,9 +493,13 @@ static GtkWidget* CreateWin10WindowControl(GtkWindow* window,
 }
 
 void OnWindowMap(GtkWidget* widget, gpointer) {
+    GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(widget));
+    if (widget == g_mainWindow && surface != nullptr && GDK_IS_X11_SURFACE(surface)) {
+        g_mainWindowXid.store(gdk_x11_surface_get_xid(surface), std::memory_order_release);
+        g_mainSurfaceLost = false;
+    }
 #ifdef GDK_WINDOWING_WAYLAND
     if (!GDK_IS_WAYLAND_DISPLAY(gtk_widget_get_display(widget))) return;
-    GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(widget));
     if (!surface || !GDK_IS_WAYLAND_TOPLEVEL(surface)) return;
     GdkToplevel* toplevel = GDK_TOPLEVEL(surface);
     gdk_wayland_toplevel_set_application_id(toplevel, DLNA_APP_ID);
@@ -1853,6 +1874,7 @@ void OnSourceFocusLeave(GtkEventControllerFocus*, gpointer) {
 }
 
 void RefreshStatus() {
+    if (g_mainWindow == nullptr) return;
     gtk_label_set_text(GTK_LABEL(g_status), "");
 
     if (g_state == ServerUiState::Starting) {
@@ -1903,6 +1925,7 @@ void RefreshStatus() {
 }
 
 void RefreshSourceList() {
+    if (g_mainWindow == nullptr) return;
     HideSourceHoverTip();
     GtkWidget* rowWidget = gtk_widget_get_first_child(g_sources);
     while (rowWidget != nullptr) {
@@ -1998,7 +2021,7 @@ void ApplySourceOverridePayload(const std::string& payload) {
             RunGuarded(L"gtk4-source-override-restart", [forRestart]() {
                 DLNAServer.Stop();
                 AppConfig.SetRuntimeSourceOverride(forRestart);
-                SetPendingResult(ServerUiState::Stopping, true, "");
+                SetPendingResult(ServerUiState::Starting, true, "");
                 std::wstring reason;
                 bool ok = DLNAServer.Start(reason);
                 std::string message;
@@ -2103,18 +2126,26 @@ void DestroyMainWindowSafely() {
     if (display != nullptr) {
         gdk_display_sync(display);
     }
-    InstallBadDrawableHandler();
+    BeginIgnoreBadDrawable();
     gtk_window_destroy(GTK_WINDOW(toDestroy));
-    UninstallBadDrawableHandler();
+    EndIgnoreBadDrawable();
+}
+
+void HideMainWindow() {
+    if (g_mainWindow == nullptr || g_mainSurfaceLost) return;
+    gtk_widget_set_visible(g_mainWindow, FALSE);
 }
 
 void RequestClose() {
     if (g_closePending.IsPending()) return;
     if (IsBusy()) {
-        if (g_state == ServerUiState::Stopping) {
-            g_closePending.RequestCloseOnceStopped();
-        }
-        gtk_widget_set_visible(g_mainWindow, FALSE);
+        // remember the close in every busy state
+        // the worker result handler runs the stop and the teardown later
+        LogPrint(L"[close] request latched while busy state=%d", static_cast<int>(g_state));
+        g_closePending.RequestCloseOnceStopped();
+        // an in flight scan must not delay the exit
+        AppScanCancel.RequestCancel();
+        HideMainWindow();
         return;
     }
     if (ShouldCloseNow(DLNAServer.IsRunning(), false)) {
@@ -2126,10 +2157,11 @@ void RequestClose() {
         }
         return;
     }
+    LogPrint(L"[close] request stopping the running server");
     g_closePending.RequestCloseOnceStopped();
     g_state = ServerUiState::Stopping;
     RefreshStatus();
-    gtk_widget_set_visible(g_mainWindow, FALSE);
+    HideMainWindow();
     if (g_worker.joinable()) g_worker.join();
     g_worker = std::thread([]() {
         RunGuarded(L"gtk4-close-worker", []() {
@@ -2155,12 +2187,18 @@ void ApplyPendingResult() {
         }
     }
     if (!hasResult) return;
-    if (g_worker.joinable() && (state != ServerUiState::Starting || !message.empty())) {
+    if (g_worker.joinable() && ShouldJoinWorkerForResult(state)) {
         g_worker.join();
     }
     g_state = state;
     RefreshStatus();
-    if (!success && !message.empty()) MessageBoxShow(ActiveTopLevelWindow(), message);
+    if (!success && !message.empty()) {
+        if (g_closePending.IsPending()) {
+            LogPrint(L"[close] failure dialog suppressed while closing: %hs", message.c_str());
+        } else {
+            MessageBoxShow(ActiveTopLevelWindow(), message);
+        }
+    }
     if (g_closePending.ShouldCloseNowAfterOperation(state == ServerUiState::Stopped)) {
         DestroyMainWindowSafely();
         return;
@@ -2171,6 +2209,7 @@ void ApplyPendingResult() {
 }
 
 void BeginRescan() {
+    if (g_closePending.IsPending()) return;
     if (g_scanInProgress.exchange(true)) return;
     RefreshStatus();
     if (g_rescanWorker.joinable()) g_rescanWorker.join();
@@ -2273,6 +2312,7 @@ gboolean OnMainWindowCloseRequest(GtkWidget*, gpointer) {
 }
 
 gboolean OnPollTick(gpointer) {
+    if (g_mainWindow == nullptr) return G_SOURCE_REMOVE;
     if (g_signalStop.load(std::memory_order_relaxed)) {
         RequestClose();
     }
@@ -2282,8 +2322,10 @@ gboolean OnPollTick(gpointer) {
         if (ShouldTreatServerAsUnhealthy(true, healthyNow, g_consecutiveUnhealthyPolls)) {
             LogPrint(L"Server reported running but an internal worker thread has stopped unexpectedly stopping cleanly");
             StopServer();
-            MessageBoxShow(ActiveTopLevelWindow(),
-                "The server stopped unexpectedly and has been shut down\n\nPress Start to resume");
+            if (!g_closePending.IsPending()) {
+                MessageBoxShow(ActiveTopLevelWindow(),
+                    "The server stopped unexpectedly and has been shut down\n\nPress Start to resume");
+            }
         }
     } else {
         g_consecutiveUnhealthyPolls = 0;
@@ -2303,17 +2345,28 @@ gboolean OnPollTick(gpointer) {
         lastOverride = overrideNow;
         RefreshStatus();
     }
-    if (g_mainWindow != nullptr && gtk_widget_get_visible(GTK_WIDGET(g_mainWindow)) &&
-        GDK_IS_TOPLEVEL(g_mainWindow)) {
-        const GdkToplevelState state = gdk_toplevel_get_state(GDK_TOPLEVEL(g_mainWindow));
-        if ((state & GDK_TOPLEVEL_STATE_MINIMIZED) == 0) {
-            g_mainWindowWasUnminimized = true;
-        } else if (g_mainWindowWasUnminimized) {
-            gtk_widget_set_visible(GTK_WIDGET(g_mainWindow), FALSE);
-        } else {
-            // Initial WSLg launch: keep requesting presentation until Weston
-            // has completed the first map instead of permanently hiding it.
-            gtk_window_present(GTK_WINDOW(g_mainWindow));
+    if (g_mainWindow != nullptr && gtk_widget_get_visible(GTK_WIDGET(g_mainWindow))) {
+        GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(g_mainWindow));
+        // a visible window with a recorded x id but no live surface was destroyed externally
+        const bool surfaceGone = g_mainWindowXid.load(std::memory_order_acquire) != 0 &&
+                                 (surface == nullptr || gdk_surface_is_destroyed(surface));
+        if (surfaceGone) {
+            LogPrint(L"[close] main window surface was destroyed externally");
+            g_mainSurfaceLost = true;
+            RequestClose();
+            return G_SOURCE_CONTINUE;
+        }
+        if (surface != nullptr && GDK_IS_TOPLEVEL(surface)) {
+            const GdkToplevelState state = gdk_toplevel_get_state(GDK_TOPLEVEL(surface));
+            if ((state & GDK_TOPLEVEL_STATE_MINIMIZED) == 0) {
+                g_mainWindowWasUnminimized = true;
+            } else if (g_mainWindowWasUnminimized) {
+                gtk_widget_set_visible(GTK_WIDGET(g_mainWindow), FALSE);
+            } else {
+                // initial wslg launch keep requesting presentation until
+                // the compositor has completed the first map
+                gtk_window_present(GTK_WINDOW(g_mainWindow));
+            }
         }
     }
     return G_SOURCE_CONTINUE;
@@ -2983,6 +3036,21 @@ void OnAppActivate(GtkApplication* app, gpointer) {
         std::fflush(stdout);
         std::_Exit(0);
     }
+    if (g_printCloseWhileStarting || g_printCloseWhileStartingFails) {
+        // simulate a close while a start is in flight then let the normal
+        // poll tick finish the sequence and exit the process
+        gtk_window_present(GTK_WINDOW(g_mainWindow));
+        g_state = ServerUiState::Starting;
+        RequestClose();
+        std::printf("pending-after-request=%d\n", g_closePending.IsPending() ? 1 : 0);
+        std::fflush(stdout);
+        if (g_printCloseWhileStartingFails) {
+            SetPendingResult(ServerUiState::Stopped, false, "forced failure");
+        } else {
+            SetPendingResult(ServerUiState::Running, true, "");
+        }
+        return;
+    }
     if (g_printStoppedCloseExit) {
         // Task 1: Close in the Stopped state must destroy the window and
         // exit the process cleanly instead of hiding it.
@@ -2999,6 +3067,8 @@ void OnAppActivate(GtkApplication* app, gpointer) {
 
 void OnAppStartup(GtkApplication* app, gpointer) {
     GdkDisplay* display = gdk_display_get_default();
+    // the display is open here because the class handler of startup ran first
+    InstallXErrorGuard();
     const std::string cssPath = ResolveBundledResourcePath("gtk/style.css");
     if (!cssPath.empty()) {
         GtkCssProvider* provider = gtk_css_provider_new();
@@ -3117,6 +3187,12 @@ int main(int argc, char** argv) {
         } else if (arg == "--print-playlist-add-sensitivity") {
             // handled later by the existing hidden flag stripping loop
             continue;
+        } else if (arg == "--print-close-while-starting") {
+            // handled later by the existing hidden flag stripping loop
+            continue;
+        } else if (arg == "--print-close-while-starting-fails") {
+            // handled later by the existing hidden flag stripping loop
+            continue;
         } else if (!arg.empty() && arg[0] != '-') {
             // bare positional argument dropped onto the exe or passed by a
             // context menu integration is a source path on its own see the
@@ -3179,6 +3255,10 @@ int main(int argc, char** argv) {
             g_printDeleteFocusGating = true;
         } else if (arg == "--print-playlist-add-sensitivity") {
             g_printPlaylistAddSensitivity = true;
+        } else if (arg == "--print-close-while-starting") {
+            g_printCloseWhileStarting = true;
+        } else if (arg == "--print-close-while-starting-fails") {
+            g_printCloseWhileStartingFails = true;
         }
     }
 
@@ -3187,8 +3267,11 @@ int main(int argc, char** argv) {
 
     // skip the single-instance handshake for dump/test flags so headless
     // geometry dumps run regardless of whether another instance holds the lock
-    if (!g_dumpGeometry && !g_dumpLogDialogReopen && !g_dumpMsgBoxParent &&
-        !g_printStoppedCloseExit && !g_printDeleteFocusGating && !g_printSettingsReopen) {
+    const bool anyTestHook = g_dumpGeometry || g_dumpLogDialogReopen || g_dumpMsgBoxParent ||
+        g_printStoppedCloseExit || g_printDeleteFocusGating || g_printSettingsReopen ||
+        g_printCloseWithContextMenuOpen || g_printPlaylistAddSensitivity ||
+        g_printCloseWhileStarting || g_printCloseWhileStartingFails;
+    if (!anyTestHook) {
         if (!SingleInstance::TryAcquireLock()) {
             if (!sourcePayload.empty()) {
                 // a running instance already exists forward the override instead
@@ -3213,6 +3296,9 @@ int main(int argc, char** argv) {
     // gradients and button colors that fight user-priority CSS providers.
     // "Default" is GTK4's minimal built-in theme with no decorative overrides.
     g_setenv("GTK_THEME", "Default", FALSE);
+    // the window is flat css so use the cairo renderer
+    // it never attaches an egl surface that can outlive a foreign destroy
+    g_setenv("GSK_RENDERER", "cairo", FALSE);
 
     GtkApplication* app = nullptr;
     int result = 1;
@@ -3290,7 +3376,9 @@ int main(int argc, char** argv) {
             arg == "--print-close-with-context-menu-open" ||
             arg == "--print-settings-reopen" ||
             arg == "--print-delete-focus-gating" ||
-            arg == "--print-playlist-add-sensitivity") {
+            arg == "--print-playlist-add-sensitivity" ||
+            arg == "--print-close-while-starting" ||
+            arg == "--print-close-while-starting-fails") {
             continue;
         }
         if (arg == "--source" && i + 1 < argc) {

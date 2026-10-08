@@ -54,6 +54,7 @@
 #include <unistd.h>
 #include "cli_print_hooks_posix.h"
 #include "app_identity.h"
+#include "server_ui_state.h"
 
 void PrintUsage(const char* exe) {
     std::cerr << "Usage: " << exe << " [--port 8200] [--name NAME] [--uuid UUID] [--debug] [--no-debug] --source \"pathA\",\"pathB\"\n";
@@ -700,6 +701,11 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
 
             ClosePendingState neverRequested;
             std::wcout << L"never-requested-pending=" << (neverRequested.IsPending() ? 1 : 0) << std::endl;
+            exitCode = 0; return true;
+        }
+        else if (arg == "--print-should-join-worker-for-result" && i + 1 < argc) {
+            int stateValue = std::atoi(argv[++i]);
+            std::cout << (ShouldJoinWorkerForResult(static_cast<ServerUiState>(stateValue)) ? "1" : "0") << std::endl;
             exitCode = 0; return true;
         }
         else if (arg == "--print-app-id") {
