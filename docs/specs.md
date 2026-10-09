@@ -57,7 +57,7 @@ remove the view logs button from the settings.
 
 17. when user presses 'Stop' to stop server, all pending and ongoing media scans are stopped. every process that was trigerred with 'start' is actively stopped.
 
-18. com.github.dlna_server_14ag is supposed to be the internal name that ids the app. user should see dlna-server.exe for the windows gui and cli, dlna-server for the linux cli and dlna-server-gui or dlna-server-gui-bin to launch or work with the gui enabled version of the linux app. the point is to just not make the user use com.github.dlna_server_14ag to operate with the app.
+18. dlna_server_14ag is supposed to be the internal name that ids the app. user should see dlna-server.exe for the windows gui and cli, dlna-server for the linux cli and dlna-server-gui or dlna-server-gui-bin to launch or work with the gui enabled version of the linux app. the point is to just not make the user use dlna_server_14ag to operate with the app. whenever the reverse dns like name is required, it should use com.app.dlna_server_14ag
 
 
 

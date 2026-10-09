@@ -1,5 +1,6 @@
 # DLNA Server Agent Rules
 
+- use git mv for rename
 - never compress this file
 - never read or edit any file in the .vscode folder. always ask first
 - never use absolute paths in this repo. always use relative paths
