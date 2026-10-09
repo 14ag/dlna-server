@@ -71,11 +71,7 @@ BOOL WINAPI HeadlessConsoleCtrlHandler(DWORD ctrlType) {
 }
 
 void PrintUsage() {
-    std::wcerr << L"Usage: DLNA Server.exe [--help]\n";
-    std::wcerr << L"       DLNA Server.exe [OPTIONS...] --source \"pathA\",\"pathB\"\n";
-    for (auto& entry : GetCliFlagTable()) {
-        std::wcerr << L"  " << entry.flag << L"  " << entry.meaning << L"\n";
-    }
+    std::wcerr << BuildHelpText(DLNA_WIN_NAME_W);
 }
 
 } // namespace

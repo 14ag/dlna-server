@@ -10,9 +10,7 @@
 #include <sstream>
 #include <vector>
 
-#ifdef DLNA_HAS_LIBCURL
 #include <curl/curl.h>
-#endif
 
 namespace {
 constexpr int kDefaultTimeoutSeconds = 1800;
@@ -354,8 +352,17 @@ void UpnpEventManager::WorkerLoop() {
     }
 }
 
+namespace {
+// owns one easy handle per worker thread and releases it when the thread exits
+struct ThreadCurlHandle {
+    CURL* handle = curl_easy_init();
+    ~ThreadCurlHandle() { if (handle) curl_easy_cleanup(handle); }
+};
+}
+
 void UpnpEventManager::SendNotifyJob(const NotifyJob& job) {
-    static thread_local CURL* curl = curl_easy_init();
+    static thread_local ThreadCurlHandle threadCurl;
+    CURL* curl = threadCurl.handle;
     if (!curl) {
         LogPrint(L"GENA notify failed: libcurl handle creation failed.");
         return;

@@ -56,9 +56,8 @@
 #include "app_identity.h"
 #include "server_ui_state.h"
 
-void PrintUsage(const char* exe) {
-    std::cerr << "Usage: " << exe << " [--port 8200] [--name NAME] [--uuid UUID] [--debug] [--no-debug] --source \"pathA\",\"pathB\"\n";
-    std::cerr << "Sources can be folders, playlist files (.m3u, .m3u8, .pls), smb:// URLs, or ftp:// URLs.\n";
+void PrintUsage(std::ostream& out) {
+    out << WideToUtf8(BuildHelpText(DLNA_CLI_NAME_W));
 }
 
 namespace {
@@ -81,7 +80,7 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
         if (pre == "--port" && i + 1 < argc) {
             int port = 0;
             if (!TryParsePortStrict(argv[++i], port)) {
-                PrintUsage(argv[0]);
+                PrintUsage(std::cerr);
                 exitCode = 2;
                 return true;
             }
@@ -125,8 +124,8 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
             AppConfig.debugLog = true;
         }
         else if (pre == "--help") {
-            PrintUsage(argv[0]);
-            std::cerr.flush();
+            PrintUsage(std::cout);
+            std::cout.flush();
             exitCode = 0;
             return true;
         }
@@ -135,7 +134,7 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
         }
         else if (!pre.empty() && pre[0] == '-') {
             std::cerr << "Unknown option: " << pre << std::endl;
-            PrintUsage(argv[0]);
+            PrintUsage(std::cerr);
             exitCode = 2;
             return true;
         }
@@ -1104,6 +1103,14 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
             std::wcout << L"after-rescan-cache-size=" << AppContent.GetSearchCacheSizeForTest() << std::endl;
             std::wcout << L"after-rescan-total-items=" << AppContent.GetSearchCacheTotalItemsForTest() << std::endl;
             DLNAServer.Stop();
+            exitCode = 0; return true;
+        }
+        else if (arg == "--print-initial-scan-flag-after-failed-start") {
+            std::wstring reason;
+            const bool startOk = DLNAServer.Start(reason);
+            std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
+            std::cout << "scan-in-progress=" << (DLNAServer.IsInitialScanInProgress() ? "1" : "0") << std::endl;
+            if (startOk) DLNAServer.Stop();
             exitCode = 0; return true;
         }
         else if (arg == "--print-thread-guard-behavior") {

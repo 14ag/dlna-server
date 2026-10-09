@@ -49,3 +49,32 @@ def test_wrapper_waits_promptly_when_compositor_socket_present(tmp_path):
     # the full wait loop would be 20 * 0.25s = 5s
     # a present socket must short-circuit so the wrapper exits promptly
     assert elapsed < 2.0, f"wrapper took {elapsed:.2f}s, expected prompt exit"
+
+
+def test_wrapper_provides_session_bus_when_start_menu_does_not(tmp_path):
+    runtime = Path(tempfile.mkdtemp(prefix="dlna-wrapper-bus-", dir="/tmp"))
+    sock_path = runtime / "wayland-0"
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(str(sock_path))
+
+    dummy_gui = tmp_path / "native-gui"
+    dummy_gui.write_text('#!/bin/sh\ntest -n "${DBUS_SESSION_BUS_ADDRESS:-}"\n')
+    dummy_gui.chmod(0o755)
+
+    env = dict(os.environ)
+    env.pop("DBUS_SESSION_BUS_ADDRESS", None)
+    env["WAYLAND_DISPLAY"] = "wayland-0"
+    env["XDG_RUNTIME_DIR"] = str(runtime)
+    env["DISPLAY"] = ":0"
+    env["DLNA_SERVER_GUI_BIN"] = str(dummy_gui)
+    env["DLNA_SERVER_BIN"] = str(dummy_gui)
+
+    try:
+        proc = subprocess.run(
+            ["sh", str(WRAPPER)], env=env, capture_output=True, text=True, timeout=15
+        )
+    finally:
+        sock.close()
+        shutil.rmtree(runtime, ignore_errors=True)
+
+    assert proc.returncode == 0, proc.stderr

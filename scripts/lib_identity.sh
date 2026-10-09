@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-DLNA_APP_ID="com.github.dlna-server-14ag"
+DLNA_APP_ID="dlna_server_14ag"
 
 resolve_version() {
     local lib_dir

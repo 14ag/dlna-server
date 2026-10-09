@@ -90,7 +90,7 @@ if "%RELEASE%"=="1" (
 
 if "%INSTALL_LINUX%"=="1" (
     echo Installing Linux app via WSL...
-    wsl.exe -d Ubuntu -- bash -lc "cd $(wslpath "$PWD") && bash scripts/install_linux.sh"
+    wsl.exe -d Ubuntu -- bash -lc 'bash scripts/install_linux.sh'
     exit /b %ERRORLEVEL%
 )
 
@@ -104,7 +104,7 @@ if "%VERSION_TAG%"=="" (
 echo Version: %VERSION_TAG%
 if "%BUILD_LINUX%"=="1" (
     echo Building Linux assets via WSL...
-    wsl.exe -d Ubuntu -- bash -lc "cd $(wslpath "$PWD") && DLNA_SUDO_PASSWORD=' ' DLNA_VERSION_TAG='%VERSION_TAG%' bash scripts/build_linux.sh"
+    wsl.exe -d Ubuntu -- bash -lc 'DLNA_SUDO_PASSWORD=" " DLNA_VERSION_TAG='%VERSION_TAG%' bash scripts/build_linux.sh'
     exit /b %ERRORLEVEL%
 )
 

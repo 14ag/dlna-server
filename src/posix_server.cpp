@@ -93,12 +93,14 @@ bool Server::Start(std::wstring& outReason) {
     if (!HttpServer::Get().Start(cfg.port)) {
         LogPrint(L"Failed to start HTTP server.");
         outReason = L"Failed to start HTTP server on port " + std::to_wstring(cfg.port);
+        m_initialScanInProgress.store(false, std::memory_order_release);
         return false;
     }
     if (!SSDP::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
         LogPrint(L"Failed to start SSDP.");
         outReason = L"Failed to start SSDP discovery";
         HttpServer::Get().Stop();
+        m_initialScanInProgress.store(false, std::memory_order_release);
         return false;
     }
     m_running.store(true, std::memory_order_release);

@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 
-set(DLNA_APP_ID "com.github.dlna-server-14ag")
+set(DLNA_APP_ID "dlna_server_14ag")
+set(DLNA_APP_ICON "${DLNA_APP_ID}")
+set(DLNA_WSLG_APP_ID "${DLNA_APP_ID}")
+set(DLNA_GTK_APP_ID "com.github.dlna_server_14ag")
 
 # version comes from the build scripts through the version script
 # a direct cmake run without it gets a development placeholder
@@ -60,7 +63,8 @@ set(SOURCES
          src/dark_frame.cpp
           src/server.cpp
           src/server_common.cpp
-          src/netutils.cpp
+           src/netutils.cpp
+         src/netutils_common.cpp
          src/httpserver.cpp
          src/http_common.cpp
          src/contentdirectory.cpp
@@ -166,7 +170,7 @@ target_link_libraries(dlna_core PUBLIC
 
     add_executable(dlna-server WIN32 src/main.cpp resources/app.rc)
     target_link_libraries(dlna-server PRIVATE dlna_core)
-    set_target_properties(dlna-server PROPERTIES OUTPUT_NAME "DLNA Server")
+    set_target_properties(dlna-server PROPERTIES OUTPUT_NAME "dlna-server")
     set_property(TARGET dlna-server PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
     install(TARGETS dlna-server RUNTIME DESTINATION .)
@@ -188,7 +192,8 @@ add_library(dlna_core STATIC
          src/media_sources_common.cpp
          src/scan_cancellation.cpp
          src/fs_backend_posix.cpp
-         src/posix_netutils.cpp
+          src/posix_netutils.cpp
+         src/netutils_common.cpp
          src/posix_config.cpp
          src/posix_log.cpp
          src/ipwhitelist.cpp
@@ -327,15 +332,15 @@ add_library(dlna_core STATIC
             configure_file(packaging/linux/install_desktop.cmake.in "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake" @ONLY)
             configure_file(packaging/linux/${DLNA_APP_ID}.appdata.xml "${CMAKE_BINARY_DIR}/${DLNA_APP_ID}.appdata.xml" @ONLY)
             # Install SVG into hicolor scalable tree for desktop-env icon lookup
-            install(FILES resources/${DLNA_APP_ID}.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+            install(FILES resources/${DLNA_APP_ID}.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps RENAME ${DLNA_APP_ICON}.svg)
             # Install PNG icons into hicolor fixed-size directories so DEs
-            # find the icon by name (Icon=dlna-server in native .desktop files).
-            install(FILES resources/server_icon_16.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/16x16/apps   RENAME ${DLNA_APP_ID}.png)
-            install(FILES resources/server_icon_48.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps   RENAME ${DLNA_APP_ID}.png)
-            install(FILES resources/server_icon_120.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps RENAME ${DLNA_APP_ID}.png)
-            install(FILES resources/server_icon_256.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps RENAME ${DLNA_APP_ID}.png)
+            # find the icon by the internal ID requested by WSLg.
+            install(FILES resources/server_icon_16.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/16x16/apps   RENAME ${DLNA_APP_ICON}.png)
+            install(FILES resources/server_icon_48.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps   RENAME ${DLNA_APP_ICON}.png)
+            install(FILES resources/server_icon_120.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps RENAME ${DLNA_APP_ICON}.png)
+            install(FILES resources/server_icon_256.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps RENAME ${DLNA_APP_ICON}.png)
             # WSLg checks pixmaps before its fixed hicolor icon directories.
-            install(FILES resources/server_icon_120.png DESTINATION ${CMAKE_INSTALL_DATADIR}/pixmaps RENAME ${DLNA_APP_ID}.png)
+            install(FILES resources/server_icon_120.png DESTINATION ${CMAKE_INSTALL_DATADIR}/pixmaps RENAME ${DLNA_APP_ICON}.png)
             # Also keep a copy in the app-specific data dir for runtime loading
             install(FILES
                 resources/server_icon_16.png

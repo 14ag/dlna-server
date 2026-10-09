@@ -1,3 +1,4 @@
+import ctypes
 import os
 import shutil
 import subprocess
@@ -50,12 +51,12 @@ def _isolated_env(tmp_path):
 
 def _global_instance_dir():
     # /tmp directly -- NOT tempfile.gettempdir(), which conftest redirects to
-    # the repo tmp/ tree on drvfs. The C++ instance dir is /tmp/com.github.dlna-server-14ag-<uid>.
-    return Path("/tmp") / f"com.github.dlna-server-14ag-{os.getuid()}"
+    # the repo tmp/ tree on drvfs. The C++ instance dir is /tmp/com.github.dlna_server_14ag-<uid>.
+    return Path("/tmp") / f"com.github.dlna_server_14ag-{os.getuid()}"
 
 
 def _socket_path(env):
-    return _global_instance_dir() / "com.github.dlna-server-14ag.sock"
+    return _global_instance_dir() / "com.github.dlna_server_14ag.sock"
 
 
 def _wait_for(predicate, timeout_seconds):
@@ -75,6 +76,107 @@ def _window_exists(env):
         text=True,
     )
     return result.returncode == 0 and result.stdout.strip() != ""
+
+
+class _XClientMessageEvent(ctypes.Structure):
+    _fields_ = [
+        ("type", ctypes.c_int),
+        ("serial", ctypes.c_ulong),
+        ("send_event", ctypes.c_int),
+        ("display", ctypes.c_void_p),
+        ("window", ctypes.c_ulong),
+        ("message_type", ctypes.c_ulong),
+        ("format", ctypes.c_int),
+        ("data", ctypes.c_long * 5),
+    ]
+
+
+class _XEvent(ctypes.Union):
+    _fields_ = [
+        ("type", ctypes.c_int),
+        ("xclient", _XClientMessageEvent),
+        ("pad", ctypes.c_long * 24),
+    ]
+
+
+def _main_window_id(env):
+    # choose the largest visible matching window so the hidden helper
+    # window is ignored and an unmapped main window is never picked
+    result = subprocess.run(
+        [XDOTOOL, "search", "--onlyvisible", "--name", "DLNA Server"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    best_id = None
+    best_area = 0
+    for line in result.stdout.splitlines():
+        window = line.strip()
+        if not window.isdigit():
+            continue
+        geometry = subprocess.run(
+            [XDOTOOL, "getwindowgeometry", "--shell", window],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if geometry.returncode != 0:
+            continue
+        width = 0
+        height = 0
+        for entry in geometry.stdout.splitlines():
+            if entry.startswith("WIDTH="):
+                width = int(entry.partition("=")[2] or 0)
+            elif entry.startswith("HEIGHT="):
+                height = int(entry.partition("=")[2] or 0)
+        if width * height > best_area:
+            best_id = window
+            best_area = width * height
+    return best_id
+
+
+def _send_close_request(env, window_id):
+    # xdotool windowclose destroys the X window directly
+    # send the window manager close message instead
+    x11 = ctypes.CDLL("libX11.so.6")
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+    x11.XInternAtom.restype = ctypes.c_ulong
+    x11.XSendEvent.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_ulong,
+        ctypes.c_int,
+        ctypes.c_long,
+        ctypes.c_void_p,
+    ]
+    x11.XSendEvent.restype = ctypes.c_int
+    x11.XFlush.argtypes = [ctypes.c_void_p]
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    display = x11.XOpenDisplay(env["DISPLAY"].encode("ascii"))
+    if not display:
+        return False
+    try:
+        wm_protocols = x11.XInternAtom(display, b"WM_PROTOCOLS", 0)
+        wm_delete = x11.XInternAtom(display, b"WM_DELETE_WINDOW", 0)
+        event = _XEvent()
+        event.xclient.type = 33
+        event.xclient.send_event = 1
+        event.xclient.display = display
+        event.xclient.window = int(window_id)
+        event.xclient.message_type = wm_protocols
+        event.xclient.format = 32
+        event.xclient.data[0] = wm_delete
+        event.xclient.data[1] = 0
+        sent = x11.XSendEvent(
+            display, int(window_id), 0, 0, ctypes.byref(event)
+        )
+        x11.XFlush(display)
+        return sent != 0
+    finally:
+        x11.XCloseDisplay(display)
 
 
 @pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
@@ -172,14 +274,29 @@ def test_closing_window_before_start_does_not_abort(tmp_path, xvfb):
             "main window never appeared"
         )
 
-        subprocess.run(
-            [XDOTOOL, "search", "--name", "DLNA Server", "windowclose"],
-            env=env,
-            capture_output=True,
-            text=True,
-        )
-
-        stdout, stderr = proc.communicate(timeout=20)
+        window_id = None
+        assert _wait_for(
+            lambda: _main_window_id(env) is not None, 15,
+        ), "main window id never appeared"
+        window_id = _main_window_id(env)
+        assert window_id is not None, "main window id never appeared"
+        stdout = ""
+        stderr = ""
+        for _ in range(3):
+            assert _send_close_request(env, window_id), (
+                "window manager close request was not sent"
+            )
+            try:
+                stdout, stderr = proc.communicate(timeout=10)
+                break
+            except subprocess.TimeoutExpired:
+                window_id = _main_window_id(env)
+                if window_id is None:
+                    stdout, stderr = proc.communicate(timeout=10)
+                    break
+        else:
+            kill_process_group(proc)
+            pytest.fail("gui process did not exit after a window close request")
     except subprocess.TimeoutExpired:
         kill_process_group(proc)
         pytest.fail("gui process did not exit after a window close request")

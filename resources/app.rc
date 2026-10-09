@@ -28,8 +28,8 @@ BEGIN
             VALUE "CompanyName", "dlna-server contributors"
             VALUE "FileDescription", "DLNA Server"
             VALUE "FileVersion", DLNA_SERVER_VERSION_STRING
-            VALUE "InternalName", "DLNA Server"
-            VALUE "OriginalFilename", "DLNA Server.exe"
+            VALUE "InternalName", "dlna-server"
+            VALUE "OriginalFilename", "dlna-server.exe"
             VALUE "ProductName", "DLNA Server"
             VALUE "ProductVersion", DLNA_SERVER_VERSION_STRING
         END

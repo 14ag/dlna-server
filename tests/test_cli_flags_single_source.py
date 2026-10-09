@@ -21,7 +21,7 @@ class TestCliFlagsSingleSource:
             capture_output=True, text=True, timeout=10)
         assert result.returncode == 0, result.stderr
         output = result.stdout + result.stderr
-        assert "DLNA Server.exe [--help]" in output
+        assert "dlna-server.exe [OPTION...]" in output
 
     def test_get_cli_flag_table_defined_in_header(self):
         src_dir = Path(__file__).resolve().parent.parent / "src"

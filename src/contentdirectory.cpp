@@ -9,12 +9,9 @@
 #include "browse_page_cap.h"
 #include <algorithm>
 #include <atomic>
-#include <filesystem>
 #include <sstream>
 #include <vector>
 #include <cwctype>
-
-namespace fs = std::filesystem;
 
 namespace {
 std::atomic<long> g_searchRecomputeCount{0};

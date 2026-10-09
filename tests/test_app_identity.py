@@ -2,7 +2,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
-APP_ID = "com.github.dlna-server-14ag"
+APP_ID = "com.github.dlna_server_14ag"
 
 OLD_LITERALS = [
     'L"dlna-server_Main"',
@@ -69,5 +69,5 @@ def test_startup_commands_are_not_branded():
     cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
     assert "add_executable(dlna-server " in cmake
     assert "OUTPUT_NAME dlna-server-gui-bin" in cmake
-    assert 'OUTPUT_NAME "DLNA Server"' in cmake
+    assert 'OUTPUT_NAME "dlna-server"' in cmake
     assert APP_ID in cmake

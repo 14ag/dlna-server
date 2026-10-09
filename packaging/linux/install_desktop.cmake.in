@@ -1,9 +1,7 @@
 set(applications_dir "$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/@CMAKE_INSTALL_DATADIR@/applications")
 file(MAKE_DIRECTORY "${applications_dir}")
-# Exec uses env DLNA_SERVER_GTK_LAUNCHED=1 so the wrapper script skips the
-# gtk-launch re-entry block (gtk-launch spawns a fresh process without env
-# inheritance, causing an infinite launch loop).  The wrapper still handles
-# Wayland display detection and compositor readiness before calling the binary.
+# Launch the public wrapper; it configures the WSLg display session and executes
+# the native GTK binary without exposing the internal app ID to users.
 file(WRITE "${applications_dir}/@DLNA_APP_ID@.desktop"
 "[Desktop Entry]
 Type=Application
@@ -11,12 +9,12 @@ Name=DLNA Server
 GenericName=DLNA media server
 Comment=Share local media with DLNA and UPnP clients
 Exec=env DLNA_SERVER_GTK_LAUNCHED=1 /usr/bin/dlna-server-gui
-TryExec=/usr/bin/dlna-server-gui-bin
-Icon=@DLNA_APP_ID@
+TryExec=/usr/bin/dlna-server-gui
+Icon=/usr/share/pixmaps/@DLNA_APP_ICON@.png
 Terminal=false
 Categories=AudioVideo;Network;FileTransfer;
 Keywords=DLNA;UPnP;media;server;streaming;
-StartupWMClass=@DLNA_APP_ID@
+StartupWMClass=@DLNA_WSLG_APP_ID@
 StartupNotify=true
 ")
 

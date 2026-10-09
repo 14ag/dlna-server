@@ -95,7 +95,7 @@ int main(int argc, char** argv) {
         if (arg == "--port" && i + 1 < argc) {
             int port = 0;
             if (!TryParsePortStrict(argv[++i], port)) {
-                PrintUsage(argv[0]);
+                PrintUsage(std::cerr);
                 return 2;
             }
             AppConfig.Mutate([&](Config& cfg) { cfg.port = port; });
@@ -149,13 +149,13 @@ int main(int argc, char** argv) {
             wroteConfigOverride = true;
         }
         else if (arg == "--help") {
-            PrintUsage(argv[0]);
-            std::cerr.flush();
+            PrintUsage(std::cout);
+            std::cout.flush();
             return 0;
         }
         else if (!arg.empty() && arg[0] == '-') {
             std::cerr << "Unknown option: " << arg << std::endl;
-            PrintUsage(argv[0]);
+            PrintUsage(std::cerr);
             return 2;
         }
         else runtimeSources.push_back(Utf8ToWide(arg));

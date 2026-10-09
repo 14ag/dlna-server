@@ -951,6 +951,6 @@ def test_loopback_host_overridden_with_routable_url(path):
         assert token in src
 
 
-@pytest.mark.parametrize("path", ("src/netutils.h", "src/netutils.cpp", "src/posix_netutils.cpp"))
+@pytest.mark.parametrize("path", ("src/netutils.h", "src/netutils_common.cpp"))
 def test_get_routable_host_url_declared_or_defined(path):
     assert "GetRoutableHostUrl" in _read_src(path)

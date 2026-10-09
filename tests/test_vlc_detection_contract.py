@@ -45,7 +45,7 @@ class ServerSession:
 
     @property
     def binary(self):
-        name = "DLNA Server.exe" if os.name == "nt" else "dlna-server"
+        name = "dlna-server.exe" if os.name == "nt" else "dlna-server"
         return self.binary_dir / name
 
 

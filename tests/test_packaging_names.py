@@ -1,7 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-APP_ID = "com.github.dlna-server-14ag"
+APP_ID = "com.github.dlna_server_14ag"
 LINUX = ROOT / "packaging" / "linux"
 
 
@@ -19,7 +19,7 @@ def test_old_names_are_gone():
     for rel in ["packaging/linux/dlna-server.appdata.xml.in",
                 "packaging/linux/dlna-server.appimage.desktop",
                 "resources/dlna-server.svg",
-                "packaging/flatpak/com.github.dlna-server-14ag.metainfo.xml"]:
+                "packaging/flatpak/com.github.dlna_server_14ag.metainfo.xml"]:
         assert not (ROOT / rel).exists(), rel
 
 
@@ -51,14 +51,15 @@ def test_cmake_uses_branded_names_and_keeps_startup_commands():
 def test_install_templates_use_app_id():
     desktop = read("packaging/linux/install_desktop.cmake.in")
     assert "@DLNA_APP_ID@.desktop" in desktop
-    assert "Icon=@DLNA_APP_ID@" in desktop
-    assert "StartupWMClass=@DLNA_APP_ID@" in desktop
+    assert "Icon=@DLNA_APP_ICON@" in desktop
+    assert "StartupWMClass=@DLNA_WSLG_APP_ID@" in desktop
+    assert "Exec=/usr/bin/dlna-server-gui" in desktop
     assert "@DLNA_APP_ID@.desktop" in read("packaging/linux/postinst.in")
-    assert "gtk-launch @DLNA_APP_ID@" in read("packaging/linux/dlna-server-gui")
+    assert 'exec "$native_gui" "$@"' in read("packaging/linux/dlna-server-gui")
 
 
 def test_flatpak_manifest_is_a_version_template():
-    text = read("packaging/flatpak/com.github.dlna-server-14ag.yml")
+    text = read("packaging/flatpak/com.github.dlna_server_14ag.yml")
     assert "-DDLNA_VERSION=@PROJECT_VERSION@" in text
     assert "rm -f /app/share/applications" not in text
     assert "resources/dlna-server.svg" not in text

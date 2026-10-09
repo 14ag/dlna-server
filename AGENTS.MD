@@ -1,6 +1,7 @@
 # DLNA Server Agent Rules
 
 - never compress this file
+- never read or edit any file in the .vscode folder. always ask first
 - never use absolute paths in this repo. always use relative paths
 - Always use caveman skill in this repo.
 - Use `git` for git tasks. Use `gh` for GitHub tasks. that the user explicitly approves. never create a branch, never commit
@@ -33,14 +34,6 @@
 - POSIX/WSL build deps include `libcurl4-openssl-dev`.
 - End-user installs must not require `CURL_LIBRARY` or `CURL_INCLUDE_DIR`; those are build-machine inputs only.
 
-## WSLg Integration
-
-- The desktop file `Exec` line uses `env DLNA_SERVER_GTK_LAUNCHED=1 /usr/bin/dlna-server-gui` so the wrapper skips the gtk-launch re-entry block (gtk-launch spawns a fresh process without env inheritance, which causes an infinite loop otherwise).
-- `TryExec` points to `dlna-server-gui-bin` (the actual binary). WSLg's DVCPlugin uses `TryExec` for the Start Menu shortcut target, so the shortcut calls the binary directly via `wslg.exe`.
-- `StartupWMClass=com.github.dlna-server-14ag` matches the GTK application ID set in `gtk_application_new`. This is what WSLg uses to associate the running window with its taskbar icon.
-- Icons are installed in `/usr/share/icons/hicolor/{16x16,48x48,128x128,256x256,scalable}/apps/dlna-server.*`. The `Icon=dlna-server` key in the desktop file resolves to these.
-- `gtk_window_set_icon_name(window, "dlna-server")` in the source sets the window icon name to match the hicolor entries.
-- `output/linux/share/` files on DrvFS may be root-owned from a prior build. `build_linux.sh` uses `sudo_run rm` to clear them before staging new ones.
 
 
 ## Release Output

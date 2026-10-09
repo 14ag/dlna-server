@@ -666,8 +666,15 @@ class TestContentDirectorySearchCache:
             _teardown_server(proc, old_config, config_ini)
 
     def test_catalog_change_invalidates_search_cache(self, dlna_binary, media_source_dir):
+        # The watcher is inotify based so the watched dir must live on a
+        # filesystem that raises inotify events. media_source_dir is under
+        # the repo tmp tree which is drvfs on WSL and never fires. Use an
+        # ext4 /tmp dir as the watched source instead. Config still lives
+        # next to media_source_dir.
+        watch_dir = Path(tempfile.mkdtemp(prefix="dlna-watch-", dir="/tmp"))
+        (watch_dir / "seed.mp4").write_text("x", encoding="utf-8")
         proc, old_config, config_ini, client = self._launch(
-            dlna_binary, media_source_dir, background_scan=True)
+            dlna_binary, watch_dir, background_scan=True)
         try:
             self._wait_initial_scan_settled(config_ini, client)
             baseline_id = client.soap_get_system_update_id()
@@ -678,7 +685,7 @@ class TestContentDirectorySearchCache:
             # Mutate the catalog: create a new file inside the watched media
             # source. The inotify watcher debounces then auto-rescans, which
             # bumps SystemUpdateID and must invalidate the search cache.
-            (media_source_dir / "new_movie.mp4").write_text("x", encoding="utf-8")
+            (watch_dir / "new_movie.mp4").write_text("x", encoding="utf-8")
             deadline = time.time() + 60
             changed = False
             while time.time() < deadline:

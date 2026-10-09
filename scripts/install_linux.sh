@@ -38,11 +38,12 @@ stop_running_instances() {
 # Stop running instances first
 stop_running_instances
 
-# Remove existing installation as requested: "first runs sudo apt remove dlna-server"
+# Remove existing installation as requested: "first runs sudo apt remove"
 echo "[INFO] Removing existing dlna-server installation..."
-sudo_run env DEBIAN_FRONTEND=noninteractive apt-get remove -y dlna-server "$DLNA_APP_ID" || true
+sudo_run env DEBIAN_FRONTEND=noninteractive apt-get remove -y "$DLNA_APP_ID" com.github.dlna_server_14ag dlna-server || true
 sudo_run dpkg -P dlna-server >/dev/null 2>&1 || true
 sudo_run dpkg -P "$DLNA_APP_ID" >/dev/null 2>&1 || true
+sudo_run dpkg -P com.github.dlna_server_14ag >/dev/null 2>&1 || true
 
 # Clean legacy manual installation paths
 sudo_run rm -f /usr/bin/dlna-server
@@ -52,6 +53,36 @@ sudo_run rm -f /usr/local/bin/dlna-server
 sudo_run rm -f /usr/local/bin/dlna-server-gui
 sudo_run rm -f /usr/local/bin/dlna-server-gui-bin
 sudo_run rm -rf /usr/local/share/dlna-server
+# Remove stale desktop entries and icons left by old manual installs so
+# WSLg DVCPlugin does not pick them up alongside the canonical deb-installed
+# entry and generate a duplicate/wrong shortcut.
+sudo_run rm -f /usr/local/share/applications/dlna-server.desktop
+sudo_run rm -f /usr/local/share/applications/"$DLNA_APP_ID".desktop
+sudo_run rm -f /usr/local/share/applications/com.github.dlna_server_14ag.desktop
+sudo_run rm -f /usr/share/applications/dlna-server.desktop
+sudo_run rm -f /usr/share/applications/"$DLNA_APP_ID".desktop
+sudo_run rm -f /usr/share/applications/com.github.dlna_server_14ag.desktop
+sudo_run rm -f /usr/share/pixmaps/dlna_server_14ag.png
+sudo_run rm -f /usr/share/pixmaps/com.github.dlna_server_14ag.png
+sudo_run rm -rf /usr/local/share/icons/hicolor/128x128/apps/dlna-server.png
+sudo_run rm -rf /usr/local/share/icons/hicolor/128x128/apps/com.github.dlna_server_14ag.png
+sudo_run rm -rf /usr/local/share/icons/hicolor/256x256/apps/dlna-server.png
+sudo_run rm -rf /usr/local/share/icons/hicolor/256x256/apps/com.github.dlna_server_14ag.png
+sudo_run rm -rf /usr/local/share/icons/hicolor/48x48/apps/dlna-server.png
+sudo_run rm -rf /usr/local/share/icons/hicolor/48x48/apps/com.github.dlna_server_14ag.png
+sudo_run rm -rf /usr/local/share/icons/hicolor/scalable/apps/dlna-server.svg
+sudo_run rm -rf /usr/local/share/icons/hicolor/scalable/apps/com.github.dlna_server_14ag.svg
+sudo_run rm -rf /usr/share/icons/hicolor/16x16/apps/com.github.dlna_server_14ag.png
+sudo_run rm -rf /usr/share/icons/hicolor/48x48/apps/com.github.dlna_server_14ag.png
+sudo_run rm -rf /usr/share/icons/hicolor/128x128/apps/com.github.dlna_server_14ag.png
+sudo_run rm -rf /usr/share/icons/hicolor/256x256/apps/com.github.dlna_server_14ag.png
+sudo_run rm -rf /usr/share/icons/hicolor/scalable/apps/com.github.dlna_server_14ag.svg
+sudo_run rm -rf /usr/share/icons/hicolor/16x16/apps/dlna_server_14ag.png
+sudo_run rm -rf /usr/share/icons/hicolor/48x48/apps/dlna_server_14ag.png
+sudo_run rm -rf /usr/share/icons/hicolor/128x128/apps/dlna_server_14ag.png
+sudo_run rm -rf /usr/share/icons/hicolor/256x256/apps/dlna_server_14ag.png
+sudo_run rm -rf /usr/share/icons/hicolor/scalable/apps/dlna_server_14ag.svg
+sudo_run update-desktop-database /usr/share/applications 2>/dev/null || true
 
 # Find package if not explicitly provided
 if [ -z "$package_path" ]; then

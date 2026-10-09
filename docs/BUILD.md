@@ -18,7 +18,7 @@ cmake --install build
 
 Notes:
 
-- The executable target is `dlna-server`, built `WIN32` (no console window), with output name `DLNA Server.exe` (`set_target_properties(... OUTPUT_NAME "DLNA Server")`).
+- The executable target is `dlna-server`, built `WIN32` (no console window), with output name `dlna-server.exe` (`set_target_properties(... OUTPUT_NAME "dlna-server")`).
 - `dlna_core` sets `MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"` — static CRT, matching the executable's runtime library setting. Don't change one without the other; a mismatch is a link error, not a runtime bug.
 - Windows-only compile definitions: `UNICODE`, `_UNICODE`, `WINVER=0x0A00`, `_WIN32_WINNT=0x0A00`, `WIN32_LEAN_AND_MEAN`.
 - Linked system libraries: `ws2_32 shell32 ole32 oleaut32 uuid comctl32 shlwapi dwmapi rpcrt4 iphlpapi`.
@@ -55,7 +55,7 @@ Build commands on Linux / WSL Ubuntu:
   ```bash
   ./build.sh --install
   ```
-   Removes any installed `com.github.dlna-server-14ag` (plus a legacy
+   Removes any installed `com.github.dlna_server_14ag` (plus a legacy
    `dlna-server` package of the same files) and installs the newly built package.
 
 - **Publish release**:
@@ -92,9 +92,9 @@ Pass `--version <tag>` to `build.sh` / `build.bat` (forwarded to
 to an exact tag; without it the scripts resolve the version themselves.
 CMake takes it as `-DDLNA_VERSION=<numeric>` and stamps it into the
 project version, the Windows `FILEVERSION`/`PRODUCTVERSION` resources,
-and the `.deb` (`com.github.dlna-server-14ag_<numeric>_amd64.deb`) and
-Windows zip (`com.github.dlna-server-14ag-<numeric>-windows-x64.zip`)
-file names. The app id `com.github.dlna-server-14ag` (`DLNA_APP_ID` in
+and the `.deb` (`com.github.dlna_server_14ag_<numeric>_amd64.deb`) and
+Windows zip (`com.github.dlna_server_14ag-<numeric>-windows-x64.zip`)
+file names. The app id `com.github.dlna_server_14ag` (`DLNA_APP_ID` in
 `CMakeLists.txt`) is baked into `src/app_identity.h` (generated from
 `src/app_identity.h.in`) and used for the window class, mutex, registry
 value, `/tmp` paths, GTK application id, and all installed file names.
@@ -140,20 +140,20 @@ Contents/Info.plist                   <- from packaging/macos/Info.plist.in
 ### Linux packaging
 
 Non-Apple Unix builds with `DLNA_ENABLE_GTK4_GUI=ON` install everything
-under the app id `com.github.dlna-server-14ag` (`DLNA_APP_ID` in
+under the app id `com.github.dlna_server_14ag` (`DLNA_APP_ID` in
 `CMakeLists.txt`):
 
 - a launcher script generated from `packaging/linux/dlna-server-gui`
-- the desktop entry as `com.github.dlna-server-14ag.desktop` in
+- the desktop entry as `com.github.dlna_server_14ag.desktop` in
   `/usr/share/applications` (written by
   `packaging/linux/install_desktop.cmake.in`)
-- an SVG icon as `com.github.dlna-server-14ag.svg` into the hicolor
-  scalable tree, plus PNG icons as `com.github.dlna-server-14ag.png`
+- an SVG icon as `com.github.dlna_server_14ag.svg` into the hicolor
+  scalable tree, plus PNG icons as `com.github.dlna_server_14ag.png`
   into the hicolor `16x16`/`48x48`/`128x128`/`256x256` app dirs and
   `pixmaps`
 - AppStream metadata generated from
-  `packaging/linux/com.github.dlna-server-14ag.appdata.xml`,
-  installed as `com.github.dlna-server-14ag.metainfo.xml`
+  `packaging/linux/com.github.dlna_server_14ag.appdata.xml`,
+  installed as `com.github.dlna_server_14ag.metainfo.xml`
 
 CPack is configured unconditionally for `UNIX AND NOT APPLE`:
 
@@ -208,7 +208,7 @@ Parsed in the same way on every platform — overrides are applied after config 
 | `--print-concurrent-start-rescan-safety` | Starts the server while `Rescan()` runs concurrently; prints `start-ok` and the resulting leaf-media-item count |
 | `--print-config-load-lockstate` | Loads the config through `Config::Load()` and reports whether it completes |
 | `--print-config-path` | Prints the resolved config file path |
-| `--print-app-id` | Prints the app id (`com.github.dlna-server-14ag`) and exits |
+| `--print-app-id` | Prints the app id (`com.github.dlna_server_14ag`) and exits |
 | `--print-debug-log-session-truncation <path>` | Reuses the debug-log handle across two writes and prints whether the same handle was reused |
 | `--print-default-playlist-path` | Prints the default playlist path resolved next to the config file |
 | `--print-dlna-server-header` | Prints the SSDP `SERVER:` header value produced by `GetDlnaServerHeader()` |

@@ -81,10 +81,9 @@ private:
     std::thread m_worker;
     bool m_stopping = false;
     bool m_workerStarted = false;
-    // Bounded so a burst of subscribers cannot spawn unbounded concurrent
-    // outbound HTTP NOTIFY requests; sized to kMaxUpnpSubscriptions since
-    // that is already the hard cap on how many jobs could ever be in
-    // flight at once in the worst case (one per subscriber).
+    // Bounded to kMaxUpnpNotifyWorkers threads so a burst of subscribers cannot
+    // spawn unbounded concurrent outbound HTTP NOTIFY requests. Pending jobs
+    // are coalesced per SID in m_queue.
     std::unique_ptr<BoundedThreadPool> m_notifyPool;
     // Atomic, not plain int: NotifySystemUpdateId()'s fast path (see Task 6
     // of dlna-server-concurrency-memory-fix-workflow-17-7-26.md) writes

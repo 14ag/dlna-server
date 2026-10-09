@@ -63,8 +63,12 @@ stop_running_instances() {
 # Step 0: Stop old running instances
 stop_running_instances
 
-# Step 1: Check and install required build dependencies
+# Step 1: Clean the platform output directory so stale legacy packages and
+# desktop metadata cannot be picked up by a later install step.
 mkdir -p "$output_dir" "$release_stage_dir"
+find "$output_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+
+# Step 2: Check and install required build dependencies
 
 _pkgs=(
     build-essential cmake pkg-config git

@@ -36,14 +36,14 @@ The desktop GUI starts by default on every platform. Use the Settings dialog to 
 
 ## Usage
 
-**Windows** - launch `DLNA Server.exe`, add a folder, playlist, or network URL as a source, and click Start. A tray icon keeps it running in the background. Pass `--headless` to start with tray icon only and no window.
+**Windows** - launch `dlna-server.exe`, add a folder, playlist, or network URL as a source, and click Start. A tray icon keeps it running in the background. Pass `--headless` to start with tray icon only and no window.
 
 **Linux / macOS desktop** - launch `dlna-server-gui-bin` (AppImage starts it automatically). Use the Settings dialog to configure sources and server options.
 
 **Headless / CLI (all platforms):**
 
 ```
-DLNA Server.exe --port 8200 --source C:\media
+dlna-server.exe --port 8200 --source C:\media
 dlna-server --port 8200 --source /path/to/media --source ftp://user:pass@host/media
 ```
 

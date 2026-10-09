@@ -283,6 +283,7 @@ scrolledwindow.source-list list {
     border-radius: 0;
     box-shadow: none;
     padding: 2px 6px;
+    margin-top: -24px;
 }
 .dlna-hover-tip label {
     color: #ffffff;

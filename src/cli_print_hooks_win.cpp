@@ -887,6 +887,14 @@ bool TryRunPrintHook(int argc, wchar_t** argv, int& exitCode) {
         DLNAServer.Stop();
         exitCode = 0;
         return true;
+    } else if (wcscmp(argv[i], L"--print-initial-scan-flag-after-failed-start") == 0) {
+        std::wstring reason;
+        const bool startOk = DLNAServer.Start(reason);
+        std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
+        std::cout << "scan-in-progress=" << (DLNAServer.IsInitialScanInProgress() ? "1" : "0") << std::endl;
+        if (startOk) DLNAServer.Stop();
+        exitCode = 0;
+        return true;
     } else if (wcscmp(argv[i], L"--print-thread-guard-behavior") == 0) {
         RunGuarded(L"test-thread", []() {
             throw std::runtime_error("synthetic-test-exception");

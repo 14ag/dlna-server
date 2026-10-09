@@ -233,15 +233,6 @@ void ApplyMnemonicLabel(GtkWidget* button, const std::wstring& plainLabel, wchar
     gtk_button_set_use_underline(GTK_BUTTON(button), TRUE);
 }
 
-// Same, for a plain GtkLabel (used by static text such as group-box
-// titles that are not buttons but still carry an access key in a menu
-// or ribbon-item context).
-[[maybe_unused]] void ApplyMnemonicLabelText(GtkWidget* label, const std::wstring& plainLabel, wchar_t mnemonic) {
-    const std::wstring markedWide = InsertMnemonicMarker(plainLabel, mnemonic);
-    const std::wstring underscoreWide = ConvertAmpersandMnemonicToUnderscore(markedWide);
-    gtk_label_set_text_with_mnemonic(GTK_LABEL(label), WideToUtf8(underscoreWide).c_str());
-}
-
 // Applies the current KeyboardCueState visibility to a specific
 // top-level window. Call this once per top-level immediately after
 // KeyboardCueState changes (see the key/button controllers installed
@@ -502,7 +493,7 @@ void OnWindowMap(GtkWidget* widget, gpointer) {
     if (!GDK_IS_WAYLAND_DISPLAY(gtk_widget_get_display(widget))) return;
     if (!surface || !GDK_IS_WAYLAND_TOPLEVEL(surface)) return;
     GdkToplevel* toplevel = GDK_TOPLEVEL(surface);
-    gdk_wayland_toplevel_set_application_id(toplevel, DLNA_APP_ID);
+    gdk_wayland_toplevel_set_application_id(toplevel, DLNA_WSLG_APP_ID);
 #else
     (void)widget;
 #endif
@@ -512,7 +503,7 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
                                const char* title,
                                WindowChrome chrome) {
     gtk_window_set_title(window, title);
-    gtk_window_set_icon_name(window, DLNA_APP_ID);
+    gtk_window_set_icon_name(window, DLNA_APP_ICON);
     g_signal_connect_after(window, "map", G_CALLBACK(OnWindowMap), nullptr);
 
     GtkWidget* handle = gtk_window_handle_new();
@@ -527,7 +518,6 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
     gtk_window_handle_set_child(GTK_WINDOW_HANDLE(handle), titlebar);
 
     GtkWidget* leftBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, UiTokensPosix::kTitlebarIconTitleGap);
-    gtk_widget_set_margin_start(leftBox, UiTokensPosix::kTitlebarLeftPadding);
     gtk_widget_set_margin_start(
         leftBox,
         chrome == WindowChrome::Main ? UiTokensPosix::kTitlebarLeftPadding
@@ -800,6 +790,7 @@ void ShowFileChooserNativeImpl(GtkWindow* parent, GtkFileChooserAction action,
         title, parent, action, "Select", "Cancel");
     if (filter != nullptr) {
         gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), filter);
+        g_object_unref(filter);
     }
     gtk_native_dialog_show(GTK_NATIVE_DIALOG(chooser));
     g_signal_connect(chooser, "response", G_CALLBACK(+[](GtkNativeDialog* dialog, int response, gpointer data) {
@@ -815,6 +806,7 @@ void ShowFileChooserNativeImpl(GtkWindow* parent, GtkFileChooserAction action,
             }
         }
         gtk_native_dialog_destroy(dialog);
+        g_object_unref(dialog);
     }), entry);
 }
 
@@ -1904,9 +1896,6 @@ void RefreshStatus() {
         g_startStopButton,
         !transition);
     ApplyMnemonicLabel(g_startStopButton, g_state == ServerUiState::Running ? L"Stop" : L"Start", g_toolbarMnemonics[2]);
-    gtk_widget_set_tooltip_text(
-        g_startStopButton,
-        g_state == ServerUiState::Running ? "Stop server" : "Start server");
 
     gtk_widget_set_sensitive(
         g_addButton,
@@ -2621,28 +2610,24 @@ GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_set_size_request(g_addButton, UiTokensPosix::kAddButtonW, UiTokensPosix::kAddButtonH);
     gtk_fixed_put(GTK_FIXED(fixed), g_addButton, 0, 0);
     gtk_widget_add_css_class(g_addButton, "toolbar-button");
-    gtk_widget_set_tooltip_text(g_addButton, "Add media source");
     g_signal_connect(g_addButton, "clicked", G_CALLBACK(OnAddButtonClicked), nullptr);
 
     g_removeButton = gtk_button_new_with_label("Delete");
     gtk_widget_set_size_request(g_removeButton, UiTokensPosix::kDeleteButtonW, UiTokensPosix::kDeleteButtonH);
     gtk_fixed_put(GTK_FIXED(fixed), g_removeButton, 0, 0);
     gtk_widget_add_css_class(g_removeButton, "toolbar-button");
-    gtk_widget_set_tooltip_text(g_removeButton, "Delete selected source");
     g_signal_connect(g_removeButton, "clicked", G_CALLBACK(OnRemoveButtonClicked), nullptr);
 
     g_startStopButton = gtk_button_new_with_label("Start");
     gtk_widget_set_size_request(g_startStopButton, UiTokensPosix::kStartStopButtonW, UiTokensPosix::kStartStopButtonH);
     gtk_fixed_put(GTK_FIXED(fixed), g_startStopButton, 0, 0);
     gtk_widget_add_css_class(g_startStopButton, "toolbar-button");
-    gtk_widget_set_tooltip_text(g_startStopButton, "Start server");
     g_signal_connect(g_startStopButton, "clicked", G_CALLBACK(OnStartStopButtonClicked), nullptr);
 
     g_settingsButton = gtk_button_new_with_label("Settings");
     gtk_widget_set_size_request(g_settingsButton, UiTokensPosix::kSettingsButtonW, UiTokensPosix::kSettingsButtonH);
     gtk_fixed_put(GTK_FIXED(fixed), g_settingsButton, 0, 0);
     gtk_widget_add_css_class(g_settingsButton, "toolbar-button");
-    gtk_widget_set_tooltip_text(g_settingsButton, "Settings");
     g_signal_connect(g_settingsButton, "clicked", G_CALLBACK(OnSettingsButtonClicked), nullptr);
 
     {
@@ -2782,6 +2767,16 @@ GtkWidget* fixed = gtk_fixed_new();
     RefreshStatus();
 
     g_timeout_add(250, OnPollTick, nullptr);
+
+#ifdef GDK_WINDOWING_WAYLAND
+    if (GDK_IS_WAYLAND_DISPLAY(gtk_widget_get_display(window))) {
+        GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(window));
+        if (surface != nullptr && GDK_IS_WAYLAND_TOPLEVEL(surface)) {
+            GdkToplevel* toplevel = GDK_TOPLEVEL(surface);
+            gdk_wayland_toplevel_set_application_id(toplevel, DLNA_WSLG_APP_ID);
+        }
+    }
+#endif
 
     gtk_window_unmaximize(GTK_WINDOW(window));
     gtk_window_present(GTK_WINDOW(window));
@@ -3117,16 +3112,56 @@ void OnAppStartup(GtkApplication* app, gpointer) {
     g_menu_append(menu, "Show Window", "app.show");
     g_menu_append(menu, "Start/Stop Server", "app.startstop");
     g_menu_append(menu, "Exit", "app.quit");
-    PosixTray::Initialize(connection, DLNA_APP_ID, "DLNA Server", G_MENU_MODEL(menu),
+    PosixTray::Initialize(connection, DLNA_APP_ICON, "DLNA Server", G_MENU_MODEL(menu),
                           OnTrayNotify);
     g_object_unref(menu);
 }
 
 } // namespace
 
+// Appends flag to a comma separated environment list unless already present
+static void AppendEnvListFlag(const char* name, const char* flag) {
+    const char* existing = g_getenv(name);
+    std::string value = existing ? existing : "";
+    if (("," + value + ",").find("," + std::string(flag) + ",") != std::string::npos) return;
+    if (!value.empty()) value += ",";
+    value += flag;
+    g_setenv(name, value.c_str(), TRUE);
+}
+
+// Must run before GTK/GDK initialise. GDK_DEBUG/GDK_DISABLE are read once at
+// display open. gl disabled means no GdkGLContext and therefore no EGL native
+// window attached to the surface, so an external DestroyNotify cannot trip the
+// egl_native_window assertion in _gdk_surface_destroy_hierarchy.
+static void ConfigureGdkEnvironment() {
+    // Disable Adwaita so our CSS has sole control over widget styling
+    g_setenv("GTK_THEME", "Default", FALSE);
+    // flat css window: cairo renderer is sufficient
+    g_setenv("GSK_RENDERER", "cairo", FALSE);
+    // GTK 4.16 moved the disable flags from GDK_DEBUG to GDK_DISABLE
+    if (gtk_check_version(4, 16, 0) == nullptr) {
+        AppendEnvListFlag("GDK_DISABLE", "gl");
+    } else {
+        AppendEnvListFlag("GDK_DEBUG", "gl-disable");
+    }
+}
+
 int main(int argc, char** argv) {
-    g_set_prgname(DLNA_APP_ID);
+    g_set_prgname(DLNA_WSLG_APP_ID);
     g_set_application_name("DLNA Server");
+    ConfigureGdkEnvironment();
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--print-gdk-environment") {
+            const char* debugValue = g_getenv("GDK_DEBUG");
+            const char* disableValue = g_getenv("GDK_DISABLE");
+            const char* rendererValue = g_getenv("GSK_RENDERER");
+            std::printf("GDK_DEBUG=%s\nGDK_DISABLE=%s\nGSK_RENDERER=%s\n",
+                        debugValue ? debugValue : "",
+                        disableValue ? disableValue : "",
+                        rendererValue ? rendererValue : "");
+            return 0;
+        }
+    }
     std::signal(SIGPIPE, SIG_IGN);
     std::signal(SIGINT, HandleTerminationSignal);
     std::signal(SIGTERM, HandleTerminationSignal);
@@ -3172,31 +3207,19 @@ int main(int argc, char** argv) {
             } else {
                 for (auto& p : parsed) runtimeSources.push_back(p);
             }
-        } else if (arg == "--dump-msgbox-parent") {
-            // handled later by the existing hidden flag stripping loop
-            continue;
-        } else if (arg == "--print-settings-reopen") {
-            // handled later by the existing hidden flag stripping loop
-            continue;
-        } else if (arg == "--print-stopped-close-exit") {
-            // handled later by the existing hidden flag stripping loop
-            continue;
-        } else if (arg == "--print-delete-focus-gating") {
-            // handled later by the existing hidden flag stripping loop
-            continue;
-        } else if (arg == "--print-playlist-add-sensitivity") {
-            // handled later by the existing hidden flag stripping loop
-            continue;
-        } else if (arg == "--print-close-while-starting") {
-            // handled later by the existing hidden flag stripping loop
-            continue;
-        } else if (arg == "--print-close-while-starting-fails") {
-            // handled later by the existing hidden flag stripping loop
-            continue;
-        } else if (!arg.empty() && arg[0] != '-') {
-            // bare positional argument dropped onto the exe or passed by a
-            // context menu integration is a source path on its own see the
-            // both section source flag requirement in the workflow doc
+        } else if (arg == "--no-debug") {
+            AppConfig.Mutate([](Config& cfg) { cfg.debugLog = false; });
+        } else if (arg == "--help") {
+            std::cout << WideToUtf8(BuildHelpText(DLNA_GUI_NAME_W));
+            return 0;
+        } else if (IsTestOnlyFlag(arg)) {
+            // hidden test hooks are parsed by the dedicated loop below
+        } else if (!arg.empty() && arg[0] == '-') {
+            std::cerr << "Unknown option: " << arg << std::endl;
+            std::cerr << WideToUtf8(BuildHelpText(DLNA_GUI_NAME_W));
+            return 2;
+        } else if (!arg.empty()) {
+            // bare positional argument is a source path on its own
             runtimeSources.push_back(Utf8ToWide(argv[i]));
         }
     }
@@ -3262,8 +3285,9 @@ int main(int argc, char** argv) {
         }
     }
 
-    // Ensure the lock is released even if the app exits due to an X error
-    std::atexit([]() { SingleInstance::ReleaseLock(); });
+    // No atexit ReleaseLock here: secondary --kill-server and --source
+    // forward processes exit through the returns below without ever
+    // owning the lock and ReleaseLock unlinks the socket path
 
     // skip the single-instance handshake for dump/test flags so headless
     // geometry dumps run regardless of whether another instance holds the lock
@@ -3285,29 +3309,24 @@ int main(int argc, char** argv) {
             if (!SingleInstance::SendShowWithRetry()) {
                 LogPrint(L"Another instance appears to be starting or is unreachable; exiting without action.");
                 std::cerr << "dlna-server-gui: another instance appears to be "
-                             "starting or is unreachable; exiting without action." << std::endl;
+                              "starting or is unreachable; exiting without action." << std::endl;
             }
             return 0;
         }
+        // This process now owns the single instance lock so release it at
+        // exit even when the app dies to an X error. Secondary processes
+        // returned above and never reach here.
+        std::atexit([]() { SingleInstance::ReleaseLock(); });
     }
-
-    // Disable Adwaita before GTK initializes so our CSS has sole control
-    // over all widget styling.  Adwaita hardcodes headerbar background
-    // gradients and button colors that fight user-priority CSS providers.
-    // "Default" is GTK4's minimal built-in theme with no decorative overrides.
-    g_setenv("GTK_THEME", "Default", FALSE);
-    // the window is flat css so use the cairo renderer
-    // it never attaches an egl surface that can outlive a foreign destroy
-    g_setenv("GSK_RENDERER", "cairo", FALSE);
 
     GtkApplication* app = nullptr;
     int result = 1;
     for (int attempt = 0; attempt < kGuiStartupMaxAttempts; ++attempt) {
         // GTK requires a valid reverse-DNS/D-Bus application identifier.
 #if GLIB_CHECK_VERSION(2, 74, 0)
-        app = gtk_application_new(DLNA_APP_ID, G_APPLICATION_DEFAULT_FLAGS);
+        app = gtk_application_new(DLNA_GTK_APP_ID, G_APPLICATION_DEFAULT_FLAGS);
 #else
-        app = gtk_application_new(DLNA_APP_ID, G_APPLICATION_FLAGS_NONE);
+        app = gtk_application_new(DLNA_GTK_APP_ID, G_APPLICATION_FLAGS_NONE);
 #endif
         // connect before register so the startup signal emitted during
         // registration reaches OnAppStartup instead of firing into the void
@@ -3363,33 +3382,12 @@ int main(int argc, char** argv) {
         return out;
     });
 
-    // strip hidden and manual-parse flags from argv so g_application_run's
-    // option parser does not reject them (they were already parsed above
-    // before the single-instance handshake).
-    int argcKept = 0;
-    for (int i = 0; i < argc; ++i) {
-        std::string arg = argv[i];
-        if (arg == "--dump-widget-geometry" ||
-            arg == "--dump-log-dialog-reopen" ||
-            arg == "--dump-msgbox-parent" ||
-            arg == "--print-stopped-close-exit" ||
-            arg == "--print-close-with-context-menu-open" ||
-            arg == "--print-settings-reopen" ||
-            arg == "--print-delete-focus-gating" ||
-            arg == "--print-playlist-add-sensitivity" ||
-            arg == "--print-close-while-starting" ||
-            arg == "--print-close-while-starting-fails") {
-            continue;
-        }
-        if (arg == "--source" && i + 1 < argc) {
-            ++i; // skip the source payload argument too
-            continue;
-        }
-        argv[argcKept++] = argv[i];
-    }
-    argc = argcKept;
-
-    result = g_application_run(G_APPLICATION(app), argc, argv);
+    // Every option is parsed by the loop at the top of main(). Passing the
+    // user's argv to g_application_run would make GApplication parse it again:
+    // "-h" would print GApplication's own help and unknown options would be
+    // rejected. Only the program name is passed.
+    char* appArgv[] = { argv[0], nullptr };
+    result = g_application_run(G_APPLICATION(app), 1, appArgv);
 
     PosixTray::Shutdown();
     if (g_worker.joinable()) g_worker.join();

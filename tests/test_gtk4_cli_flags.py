@@ -27,8 +27,8 @@ def test_source_override_hotswaps_running_instance(tmp_path, dlna_server_gui_bin
         # socket. A fixed sleep races slow startup: if the second
         # process launches before the lock is held it becomes a second
         # primary instead of forwarding, and never exits.
-        sock_path = (Path("/tmp") / f"com.github.dlna-server-14ag-{os.getuid()}"
-                     / "com.github.dlna-server-14ag.sock")
+        sock_path = (Path("/tmp") / f"com.github.dlna_server_14ag-{os.getuid()}"
+                     / "com.github.dlna_server_14ag.sock")
         deadline = time.time() + 20
         while time.time() < deadline:
             if sock_path.exists():

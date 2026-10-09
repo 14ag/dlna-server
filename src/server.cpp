@@ -139,6 +139,7 @@ bool Server::Start(std::wstring& outReason) {
     if (!HttpServer::Get().Start(cfg.port)) {
         LogPrint(L"Failed to start HTTP server.");
         outReason = L"Failed to start HTTP server on port " + std::to_wstring(cfg.port);
+        m_initialScanInProgress.store(false, std::memory_order_release);
         return false;
     }
 
@@ -146,6 +147,7 @@ bool Server::Start(std::wstring& outReason) {
         LogPrint(L"Failed to start SSDP.");
         outReason = L"Failed to start SSDP discovery";
         HttpServer::Get().Stop();
+        m_initialScanInProgress.store(false, std::memory_order_release);
         return false;
     }
 

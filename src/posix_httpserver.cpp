@@ -300,10 +300,13 @@ void HttpServer::Stop() {
         const ssize_t sent = write(m_wakeupWriteFd, &byte, 1);
         (void)sent;
     }
-    if (m_listenSocketV4 >= 0) { shutdown(m_listenSocketV4, SHUT_RDWR); close(m_listenSocketV4); m_listenSocketV4 = -1; }
-    if (m_listenSocketV6 >= 0) { shutdown(m_listenSocketV6, SHUT_RDWR); close(m_listenSocketV6); m_listenSocketV6 = -1; }
+    if (m_listenSocketV4 >= 0) shutdown(m_listenSocketV4, SHUT_RDWR);
+    if (m_listenSocketV6 >= 0) shutdown(m_listenSocketV6, SHUT_RDWR);
     for (auto& thread : m_threads) if (thread.joinable()) thread.join();
     m_threads.clear();
+    // close only after every thread that polls these fds has exited
+    if (m_listenSocketV4 >= 0) { close(m_listenSocketV4); m_listenSocketV4 = -1; }
+    if (m_listenSocketV6 >= 0) { close(m_listenSocketV6); m_listenSocketV6 = -1; }
     // BoundedThreadPool's destructor signals stop and joins every worker.
     m_clientPool.reset();
     if (m_wakeupReadFd >= 0) { close(m_wakeupReadFd); m_wakeupReadFd = -1; }
@@ -325,11 +328,10 @@ void HttpServer::AcceptLoop(int listenSocket) {
             if (errno == EINTR) continue;
             break;
         }
-        if (fds[1].revents & POLLIN) {
-            char buf[64];
-            while (read(m_wakeupReadFd, buf, sizeof(buf)) > 0) {}
-            continue;
-        }
+        // Only Stop writes this pipe. The byte is left unread so every accept
+        // loop sees it and exits. Stop closes the pipe and
+        // Start recreates it, so no stale byte survives a restart.
+        if (fds[1].revents & POLLIN) break;
         if (!(fds[0].revents & POLLIN)) continue;
         sockaddr_storage remote{};
         socklen_t len = sizeof(remote);
@@ -613,7 +615,10 @@ ScopedFd client(clientSocket);
                         headers << "Content-Length: " << bodyLength << "\r\n"
                                 << "Accept-Ranges: bytes\r\n";
                     } else {
-                        headers << "Accept-Ranges: none\r\n";
+                        // zero-byte file: an explicit length is required on a persistent
+                        // connection or the client waits for more bytes (RFC 7230 3.3.3)
+                        headers << "Content-Length: 0\r\n"
+                                << "Accept-Ranges: none\r\n";
                     }
                     headers << ConnectionHeader(keepAlive)
                             << "transferMode.dlna.org: Streaming\r\n"

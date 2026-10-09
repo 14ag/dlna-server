@@ -1,13 +1,8 @@
 #!/bin/sh
 set -eu
 
-# on wslg a direct wslg exe -- usr bin dlna dash server dash gui invocation
-# carries no wayland xdg activation token so the compositor is not required
-# to raise or focus the new window per the xdg activation v1 protocol
-# prefer launching through the installed desktop entry for example
-# wslg exe -d ubuntu -- gtk-launch dlna-server
-# which does carry a token the raw command still works it may just open
-# without focus the first time
+# WSLg uses this wrapper as the Start Menu target so it can prepare the
+# display and session bus before starting the native GTK application.
 
 resolve_script_dir() {
     dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || dir=""
@@ -46,6 +41,14 @@ native_gui=${DLNA_SERVER_GUI_BIN:-"$script_dir/dlna-server-gui-bin"}
 
 export DLNA_SERVER_BIN="$server_bin"
 
+# WSLg launches the desktop entry via gtk-launch, which spawns a fresh child
+# that drops the original environment. The desktop file exports
+# DLNA_SERVER_GTK_LAUNCHED=1 so this wrapper can short-circuit the GTK-launch
+# re-entry path instead of recursively relaunching itself.
+if [ "${DLNA_SERVER_GTK_LAUNCHED:-}" = "1" ]; then
+    exec "$native_gui" "$@"
+fi
+
 if [ ! -x "$native_gui" ]; then
     {
         echo "DLNA Server native GUI is missing or not executable: $native_gui"
@@ -54,6 +57,13 @@ if [ ! -x "$native_gui" ]; then
     echo "Rebuild with -DDLNA_ENABLE_GTK4_GUI=ON." >&2
     exit 1
 fi
+
+# options that never open a window must not wait for a compositor
+for arg in "$@"; do
+    case "$arg" in
+        --help|--kill-server|-k) exec "$native_gui" "$@" ;;
+    esac
+done
 
 # WSLg shortcuts run in a non login shell so the distro profile may not
 # inject these variables yet fall back to the documented WSLg default paths
@@ -75,14 +85,12 @@ for i in $(seq 1 240); do
     sleep 0.25
 done
 
-# Direct WSLg shortcuts bypass the desktop entry, so WSLg cannot associate the
-# window with its icon. Re-enter through the installed desktop entry; this
-# supplies WSLg's launch metadata and startup notification.
-if [ -z "${DLNA_SERVER_GTK_LAUNCHED:-}" ] && \
-   [ -S "${XDG_RUNTIME_DIR:-/mnt/wslg/runtime-dir}/${WAYLAND_DISPLAY:-wayland-0}" ] && \
-   command -v gtk-launch >/dev/null 2>&1; then
-    export DLNA_SERVER_GTK_LAUNCHED=1
-    exec gtk-launch @DLNA_APP_ID@ "$@"
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+    if command -v dbus-run-session >/dev/null 2>&1; then
+        exec dbus-run-session -- "$native_gui" "$@"
+    fi
+    echo "DLNA Server could not start: no session bus and dbus-run-session is unavailable." >&2
+    exit 1
 fi
 
 exec "$native_gui" "$@"

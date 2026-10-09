@@ -76,10 +76,12 @@ std::FILE* GetDebugLogFile() {
 }
 
 void LogPrint(const wchar_t* fmt, ...) {
-    wchar_t buffer[2048];
+    wchar_t buffer[2048] = {};
     va_list args;
     va_start(args, fmt);
-    vswprintf(buffer, sizeof(buffer) / sizeof(buffer[0]), fmt, args);
+    if (vswprintf(buffer, sizeof(buffer) / sizeof(buffer[0]), fmt, args) < 0) {
+        buffer[(sizeof(buffer) / sizeof(buffer[0])) - 1] = L'\0';
+    }
     va_end(args);
 
     std::wstring line = TimestampPrefix() + buffer;

@@ -72,13 +72,13 @@ fi
 
 flatpak-builder --force-clean --disable-rofiles-fuse --state-dir="$build_root/flatpak-state" "$flatpak_build" "$stamped_manifest" || true
 mkdir -p "$flatpak_build/app/share/appdata" "$flatpak_build/app/share/metainfo"
-cp -f "$stamped_metainfo" "$flatpak_build/app/share/metainfo/com.github.dlna-server-14ag.metainfo.xml"
-cp -f "$stamped_metainfo" "$flatpak_build/app/share/appdata/com.github.dlna-server-14ag.appdata.xml"
+cp -f "$stamped_metainfo" "$flatpak_build/app/share/metainfo/${DLNA_APP_ID}.metainfo.xml"
+cp -f "$stamped_metainfo" "$flatpak_build/app/share/appdata/${DLNA_APP_ID}.appdata.xml"
 flatpak build-export "$flatpak_repo" "$flatpak_build" stable
 
 rm -rf "$repo_root/tmp"
 install -Dm644 "$stamped_metainfo" \
-    "$flatpak_build/app/share/metainfo/com.github.dlna-server-14ag.metainfo.xml"
+    "$flatpak_build/app/share/metainfo/${DLNA_APP_ID}.metainfo.xml"
 flatpak build-export "$flatpak_repo" "$flatpak_build" stable
 flatpak build-bundle "$flatpak_repo" "$flatpak_bundle" "$DLNA_APP_ID" stable
 

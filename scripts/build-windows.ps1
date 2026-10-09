@@ -16,7 +16,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $OutputDir = Join-Path $RepoRoot "output"
-$AppId = "com.github.dlna-server-14ag"
+$AppId = "com.github.dlna_server_14ag"
 $VersionScript = Join-Path $PSScriptRoot "version.py"
 if (-not $Version) {
     $generated = & python $VersionScript
@@ -102,7 +102,7 @@ function Build-Arch {
         "--", "/m"
     )
 
-    Compress-Archive -LiteralPath (Join-Path $InstallDir "DLNA Server.exe") -DestinationPath (Join-Path $InstallDir "$AppId-$VersionNumber-windows-$Architecture.zip") -Force
+    Compress-Archive -LiteralPath (Join-Path $InstallDir "dlna-server.exe") -DestinationPath (Join-Path $InstallDir "$AppId-$VersionNumber-windows-$Architecture.zip") -Force
 
     Write-Host "Windows $Architecture build completed and zipped in: $InstallDir"
 }

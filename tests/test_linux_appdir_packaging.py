@@ -28,24 +28,24 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn('trap \'rm -rf "$build_root"\' EXIT', build)
 
     def test_appdir_desktop_metadata_is_relative(self):
-        desktop = self.read("packaging/linux/com.github.dlna-server-14ag.appimage.desktop")
+        desktop = self.read("packaging/linux/com.github.dlna_server_14ag.appimage.desktop")
 
         self.assertIn("Name=DLNA Server", desktop)
         self.assertIn("Exec=dlna-server-gui", desktop)
-        self.assertIn("Icon=com.github.dlna-server-14ag", desktop)
-        self.assertIn("StartupWMClass=com.github.dlna-server-14ag", desktop)
+        self.assertIn("Icon=com.github.dlna_server_14ag", desktop)
+        self.assertIn("StartupWMClass=com.github.dlna_server_14ag", desktop)
 
     def test_linux_desktop_installers_are_scripted(self):
         cmake = self.read("CMakeLists.txt")
         gitattributes = self.read(".gitattributes")
-        flatpak = self.read("packaging/flatpak/com.github.dlna-server-14ag.yml")
-        desktop = self.read("packaging/flatpak/com.github.dlna-server-14ag.desktop")
+        flatpak = self.read("packaging/flatpak/com.github.dlna_server_14ag.yml")
+        desktop = self.read("packaging/flatpak/com.github.dlna_server_14ag.desktop")
 
         self.assertIn('set(CPACK_GENERATOR "DEB")', cmake)
         self.assertIn("CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON", cmake)
         self.assertIn("*.sh text eol=lf", gitattributes)
         self.assertIn("*.yml text eol=lf", gitattributes)
-        self.assertIn("app-id: com.github.dlna-server-14ag", flatpak)
+        self.assertIn("app-id: com.github.dlna_server_14ag", flatpak)
         self.assertIn("--share=network", flatpak)
         self.assertIn("--filesystem=home", flatpak)
         self.assertIn("Name=DLNA Server", desktop)

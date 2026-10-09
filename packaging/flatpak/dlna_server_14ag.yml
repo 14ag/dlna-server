@@ -1,4 +1,4 @@
-app-id: com.github.dlna-server-14ag
+app-id: com.github.dlna_server_14ag
 runtime: org.gnome.Platform
 runtime-version: "47"
 sdk: org.gnome.Sdk
@@ -24,4 +24,4 @@ modules:
       - type: dir
         path: ../..
     post-install:
-      - install -Dm644 packaging/flatpak/com.github.dlna-server-14ag.desktop /app/share/applications/com.github.dlna-server-14ag.desktop
+      - install -Dm644 packaging/flatpak/dlna_server_14ag.desktop /app/share/applications/com.github.dlna_server_14ag.desktop

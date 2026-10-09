@@ -1,7 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-APP_ID = "com.github.dlna-server-14ag"
+APP_ID = "com.github.dlna_server_14ag"
 
 
 def read(rel):
@@ -78,7 +78,7 @@ def test_flatpak_script_stamps_version_and_uses_shared_template():
     text = read("scripts/build_flatpak.sh")
     assert "project\\(dlna-server VERSION" not in text
     assert ".stamped.yml" in text
-    assert "packaging/flatpak/com.github.dlna-server-14ag.metainfo.xml" not in text
+    assert "packaging/flatpak/com.github.dlna_server_14ag.metainfo.xml" not in text
     assert "@PROJECT_VERSION@" in text
     assert "@DLNA_RELEASE_DATE@" in text
     assert "${DLNA_APP_ID}-${version}-linux-x86_64.flatpak" in text
