@@ -50,6 +50,8 @@ from __future__ import annotations
 import dataclasses
 import difflib
 import json
+import difflib
+import json
 import html as _html_mod
 import http.client
 import os
@@ -62,6 +64,7 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from urllib.parse import urlsplit
+from urllib.parse import urlsplit
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -73,6 +76,7 @@ from tests.conftest import (
     _free_port,
     _get_lan_ip,
     _launch_server,
+    _resolve_dlna_binary,
     _resolve_dlna_binary,
     _teardown_server,
     server_config_ini_path,
@@ -400,7 +404,16 @@ def browse_didl_root(control_url: str,
                      starting_index: int = 0,
                      requested_count: int = 0,
                      timeout: float = 5.0):
+def browse_didl_root(control_url: str,
+                     object_id: str,
+                     browse_flag: str = "BrowseDirectChildren",
+                     starting_index: int = 0,
+                     requested_count: int = 0,
+                     timeout: float = 5.0):
     """
+    POSTs a Browse SOAP action with the SOAPACTION header libupnp/VLC sends,
+    unescapes <Result> (an XML-escaped DIDL-Lite document per ContentDirectory:1
+    section 2.3.1) and returns (didl_root, NumberReturned, TotalMatches, UpdateID).
     POSTs a Browse SOAP action with the SOAPACTION header libupnp/VLC sends,
     unescapes <Result> (an XML-escaped DIDL-Lite document per ContentDirectory:1
     section 2.3.1) and returns (didl_root, NumberReturned, TotalMatches, UpdateID).
@@ -434,13 +447,32 @@ def browse_didl_root(control_url: str,
     root = ET.fromstring(response_body)
     # namespace-agnostic: servers differ on whether <Result> carries a prefix
     result_el = next((el for el in root.iter() if el.tag.rsplit("}", 1)[-1] == "Result"), None)
+    # namespace-agnostic: servers differ on whether <Result> carries a prefix
+    result_el = next((el for el in root.iter() if el.tag.rsplit("}", 1)[-1] == "Result"), None)
     assert result_el is not None and result_el.text, "BrowseResponse missing <Result>"
 
+    def find_int(tag: str) -> int:
     def find_int(tag: str) -> int:
         for el in root.iter():
             if el.tag.rsplit("}", 1)[-1] == tag:
                 return int(el.text) if el.text else 0
         return 0
+                return int(el.text) if el.text else 0
+        return 0
+
+    return (ET.fromstring(result_el.text), find_int("NumberReturned"),
+            find_int("TotalMatches"), find_int("UpdateID"))
+
+
+def send_browse(control_url: str,
+                object_id: str,
+                browse_flag: str = "BrowseDirectChildren",
+                starting_index: int = 0,
+                requested_count: int = 0,
+                timeout: float = 5.0) -> BrowseResult:
+    """Browse and reduce the DIDL-Lite to containers/items, as VLC's DIDL walk does."""
+    didl_root, number_returned, total_matches, update_id = browse_didl_root(
+        control_url, object_id, browse_flag, starting_index, requested_count, timeout)
 
     return (ET.fromstring(result_el.text), find_int("NumberReturned"),
             find_int("TotalMatches"), find_int("UpdateID"))
