@@ -429,7 +429,7 @@ class TestSubtitleLookupCaching:
                 "[Settings]\n"
                 f"Port={port}\n"
                 f"MediaSources={playlist_url}\n"
-                f"DebugLog=0\n",
+                f"DebugLog=1\n",
                 encoding="utf-8-sig")
 
             env = os.environ.copy()

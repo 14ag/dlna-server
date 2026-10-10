@@ -1,7 +1,8 @@
 from pathlib import Path
 
+from tests.identity import APP_ID
+
 ROOT = Path(__file__).resolve().parent.parent
-APP_ID = "com.github.dlna_server_14ag"
 
 
 def read(rel):
@@ -10,7 +11,8 @@ def read(rel):
 
 def test_identity_library():
     text = read("scripts/lib_identity.sh")
-    assert f'DLNA_APP_ID="{APP_ID}"' in text
+    assert "identity.env" in text
+    assert "DLNA_GTK_APP_ID" in text
     assert "resolve_version()" in text
     assert "--numeric-of" in text
 
@@ -27,13 +29,13 @@ def test_build_linux_passes_version_to_cmake():
     assert '-DDLNA_VERSION="$DLNA_VERSION"' in text
     assert "resolve_version" in text
     assert "dlna-server_*.deb" not in text
-    assert "${DLNA_APP_ID}_*.deb" in text
+    assert "${DLNA_PRODUCT_NAME}_*.deb" in text
 
 
 def test_install_script_handles_old_and_new_package_name():
     text = read("scripts/install_linux.sh")
     assert "dlna-server_*.deb" not in text
-    assert "${DLNA_APP_ID}_*.deb" in text
+    assert "${DLNA_PRODUCT_NAME}_*.deb" in text
     assert 'dpkg -P "$DLNA_APP_ID"' in text
     assert "dpkg -P dlna-server " in text
 
@@ -54,14 +56,14 @@ def test_windows_script_receives_version_and_brands_zip():
     assert '[string]$Version = ""' in text
     assert "-DDLNA_VERSION=$VersionNumber" in text
     assert "Could not read version" not in text
-    assert "$AppId-$VersionNumber-windows-$Architecture.zip" in text
-    assert f'$AppId = "{APP_ID}"' in text
+    assert "$ProductName-$VersionNumber-windows-$Architecture.zip" in text
+    assert "identity.env" in text
     assert all(ord(c) < 128 for c in text)
 
 
 def test_app_id_is_identical_in_every_script_and_cmake():
     for rel in ["CMakeLists.txt", "scripts/lib_identity.sh", "scripts/build-windows.ps1"]:
-        assert APP_ID in read(rel), rel
+        assert "identity.env" in read(rel), rel
 
 
 def test_appimage_script_is_branded_and_version_driven():
@@ -71,17 +73,17 @@ def test_appimage_script_is_branded_and_version_driven():
     assert "dlna-server.appimage.desktop" not in text
     assert "dlna-server.svg" not in text
     assert "DLNA_Server-" not in text
-    assert "${DLNA_APP_ID}.appimage.desktop" in text
+    assert "${DLNA_GTK_APP_ID}.desktop" in text
 
 
 def test_flatpak_script_stamps_version_and_uses_shared_template():
     text = read("scripts/build_flatpak.sh")
     assert "project\\(dlna-server VERSION" not in text
     assert ".stamped.yml" in text
-    assert "packaging/flatpak/com.github.dlna_server_14ag.metainfo.xml" not in text
+    assert f"packaging/flatpak/{APP_ID}.metainfo.xml" not in text
     assert "@PROJECT_VERSION@" in text
     assert "@DLNA_RELEASE_DATE@" in text
-    assert "${DLNA_APP_ID}-${version}-linux-x86_64.flatpak" in text
+    assert "${DLNA_PRODUCT_NAME}-${version}-linux-x86_64.flatpak" in text
 
 
 def test_release_workflow_builds_all_supported_assets_for_selected_tag():

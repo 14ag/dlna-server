@@ -16,7 +16,11 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $OutputDir = Join-Path $RepoRoot "output"
-$AppId = "com.github.dlna_server_14ag"
+# identity values come from the identity env file
+$Identity = @{}
+Get-Content -LiteralPath (Join-Path $RepoRoot "identity.env") | Where-Object { $_ -match '^[A-Z_]+=' } | ForEach-Object { $pair = $_ -split '=', 2; $Identity[$pair[0]] = $pair[1].Trim() }
+$ProductName = $Identity["DLNA_PRODUCT_NAME"]
+if (-not $ProductName) { throw "identity.env is missing DLNA_PRODUCT_NAME" }
 $VersionScript = Join-Path $PSScriptRoot "version.py"
 if (-not $Version) {
     $generated = & python $VersionScript
@@ -102,7 +106,7 @@ function Build-Arch {
         "--", "/m"
     )
 
-    Compress-Archive -LiteralPath (Join-Path $InstallDir "dlna-server.exe") -DestinationPath (Join-Path $InstallDir "$AppId-$VersionNumber-windows-$Architecture.zip") -Force
+    Compress-Archive -LiteralPath (Join-Path $InstallDir "dlna-server.exe") -DestinationPath (Join-Path $InstallDir "$ProductName-$VersionNumber-windows-$Architecture.zip") -Force
 
     Write-Host "Windows $Architecture build completed and zipped in: $InstallDir"
 }

@@ -40,9 +40,6 @@
 #include <gio/gio.h>
 #include <gdk/gdk.h>
 #include <gdk/x11/gdkx.h>
-#ifdef GDK_WINDOWING_WAYLAND
-#include <gdk/wayland/gdkwayland.h>
-#endif
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
@@ -489,21 +486,13 @@ void OnWindowMap(GtkWidget* widget, gpointer) {
         g_mainWindowXid.store(gdk_x11_surface_get_xid(surface), std::memory_order_release);
         g_mainSurfaceLost = false;
     }
-#ifdef GDK_WINDOWING_WAYLAND
-    if (!GDK_IS_WAYLAND_DISPLAY(gtk_widget_get_display(widget))) return;
-    if (!surface || !GDK_IS_WAYLAND_TOPLEVEL(surface)) return;
-    GdkToplevel* toplevel = GDK_TOPLEVEL(surface);
-    gdk_wayland_toplevel_set_application_id(toplevel, DLNA_WSLG_APP_ID);
-#else
-    (void)widget;
-#endif
 }
 
 GtkWidget* CreateWin10Titlebar(GtkWindow* window,
                                const char* title,
                                WindowChrome chrome) {
     gtk_window_set_title(window, title);
-    gtk_window_set_icon_name(window, DLNA_APP_ICON);
+    gtk_window_set_icon_name(window, DLNA_GTK_APP_ID);
     g_signal_connect_after(window, "map", G_CALLBACK(OnWindowMap), nullptr);
 
     GtkWidget* handle = gtk_window_handle_new();
@@ -2768,16 +2757,6 @@ GtkWidget* fixed = gtk_fixed_new();
 
     g_timeout_add(250, OnPollTick, nullptr);
 
-#ifdef GDK_WINDOWING_WAYLAND
-    if (GDK_IS_WAYLAND_DISPLAY(gtk_widget_get_display(window))) {
-        GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(window));
-        if (surface != nullptr && GDK_IS_WAYLAND_TOPLEVEL(surface)) {
-            GdkToplevel* toplevel = GDK_TOPLEVEL(surface);
-            gdk_wayland_toplevel_set_application_id(toplevel, DLNA_WSLG_APP_ID);
-        }
-    }
-#endif
-
     gtk_window_unmaximize(GTK_WINDOW(window));
     gtk_window_present(GTK_WINDOW(window));
 }
@@ -3112,7 +3091,7 @@ void OnAppStartup(GtkApplication* app, gpointer) {
     g_menu_append(menu, "Show Window", "app.show");
     g_menu_append(menu, "Start/Stop Server", "app.startstop");
     g_menu_append(menu, "Exit", "app.quit");
-    PosixTray::Initialize(connection, DLNA_APP_ICON, "DLNA Server", G_MENU_MODEL(menu),
+    PosixTray::Initialize(connection, DLNA_GTK_APP_ID, "DLNA Server", G_MENU_MODEL(menu),
                           OnTrayNotify);
     g_object_unref(menu);
 }
@@ -3147,10 +3126,22 @@ static void ConfigureGdkEnvironment() {
 }
 
 int main(int argc, char** argv) {
-    g_set_prgname(DLNA_WSLG_APP_ID);
+    // prgname must equal the gtk app id
+    // wslg matches the window app id to the desktop file name
+    g_set_prgname(DLNA_GTK_APP_ID);
     g_set_application_name("DLNA Server");
     ConfigureGdkEnvironment();
     for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--print-gtk-identity") {
+            const char* prgName = g_get_prgname();
+            // program class removed in gtk4 reuse app id
+            const char* programClass = DLNA_GTK_APP_ID;
+            std::printf("PRGNAME=%s\nPROGRAM_CLASS=%s\nGTK_APP_ID=%s\n",
+                        prgName ? prgName : "",
+                        programClass ? programClass : "",
+                        DLNA_GTK_APP_ID);
+            return 0;
+        }
         if (std::string(argv[i]) == "--print-gdk-environment") {
             const char* debugValue = g_getenv("GDK_DEBUG");
             const char* disableValue = g_getenv("GDK_DISABLE");

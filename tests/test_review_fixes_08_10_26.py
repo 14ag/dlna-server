@@ -10,6 +10,7 @@ import pytest
 
 from tests.conftest import _free_port
 from tests.fixtures.soap_client import build_search_envelope
+from tests.identity import APP_ID, GTK_APP_ID
 
 
 def _isolated_env(tmp_path, **extra):
@@ -31,7 +32,8 @@ def test_cli_help_uses_user_facing_name(dlna_binary, tmp_path):
     proc = _run([dlna_binary, "--help"], tmp_path)
     assert proc.returncode == 0
     assert proc.stdout.startswith("Usage:\n  dlna-server [OPTION…]\n")
-    assert "com.github" not in proc.stdout + proc.stderr
+    assert APP_ID not in proc.stdout + proc.stderr
+    assert GTK_APP_ID not in proc.stdout + proc.stderr
     assert "--kill-server, -k" in proc.stdout
     assert "smb://" not in proc.stdout
 
@@ -42,7 +44,8 @@ def test_gui_help_uses_user_facing_name(dlna_server_gui_binary, tmp_path):
     proc = _run([dlna_server_gui_binary, "--help"], tmp_path)
     assert proc.returncode == 0
     assert proc.stdout.startswith("Usage:\n  dlna-server-gui [OPTION…]\n")
-    assert "com.github" not in proc.stdout + proc.stderr
+    assert APP_ID not in proc.stdout + proc.stderr
+    assert GTK_APP_ID not in proc.stdout + proc.stderr
 
 
 @pytest.mark.posix_only

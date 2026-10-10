@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-APP_ID = "com.github.dlna_server_14ag"
+from tests.identity import APP_ID
 
 
 def run_hook(binary, flag):

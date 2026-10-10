@@ -1,9 +1,18 @@
 cmake_minimum_required(VERSION 3.20)
 
-set(DLNA_APP_ID "dlna_server_14ag")
-set(DLNA_APP_ICON "${DLNA_APP_ID}")
-set(DLNA_WSLG_APP_ID "${DLNA_APP_ID}")
-set(DLNA_GTK_APP_ID "com.github.dlna_server_14ag")
+# identity values come from the identity env file only
+file(STRINGS "${CMAKE_SOURCE_DIR}/identity.env" DLNA_IDENTITY_LINES REGEX "^[A-Z_]+=")
+foreach(DLNA_IDENTITY_LINE IN LISTS DLNA_IDENTITY_LINES)
+    string(REGEX MATCH "^([A-Z_]+)=(.*)$" DLNA_IDENTITY_UNUSED "${DLNA_IDENTITY_LINE}")
+    set(${CMAKE_MATCH_1} "${CMAKE_MATCH_2}")
+endforeach()
+if(NOT DLNA_APP_ID OR NOT DLNA_REVERSE_DNS_PREFIX OR NOT DLNA_PRODUCT_NAME)
+    message(FATAL_ERROR "identity.env is missing a required key")
+endif()
+string(CONCAT DLNA_GTK_APP_ID "${DLNA_REVERSE_DNS_PREFIX}" "." "${DLNA_APP_ID}")
+# macos bundle ids allow hyphens but not underscores
+string(REPLACE "_" "-" DLNA_BUNDLE_ID "${DLNA_GTK_APP_ID}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/identity.env")
 
 # version comes from the build scripts through the version script
 # a direct cmake run without it gets a development placeholder
@@ -330,17 +339,17 @@ add_library(dlna_core STATIC
     else()
         if(DLNA_ENABLE_GTK4_GUI)
             configure_file(packaging/linux/install_desktop.cmake.in "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake" @ONLY)
-            configure_file(packaging/linux/${DLNA_APP_ID}.appdata.xml "${CMAKE_BINARY_DIR}/${DLNA_APP_ID}.appdata.xml" @ONLY)
+            configure_file(packaging/linux/metainfo.xml.in "${CMAKE_BINARY_DIR}/${DLNA_GTK_APP_ID}.metainfo.xml" @ONLY)
             # Install SVG into hicolor scalable tree for desktop-env icon lookup
-            install(FILES resources/${DLNA_APP_ID}.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps RENAME ${DLNA_APP_ICON}.svg)
+            install(FILES resources/${DLNA_APP_ID}.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps RENAME ${DLNA_GTK_APP_ID}.svg)
             # Install PNG icons into hicolor fixed-size directories so DEs
             # find the icon by the internal ID requested by WSLg.
-            install(FILES resources/server_icon_16.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/16x16/apps   RENAME ${DLNA_APP_ICON}.png)
-            install(FILES resources/server_icon_48.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps   RENAME ${DLNA_APP_ICON}.png)
-            install(FILES resources/server_icon_120.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps RENAME ${DLNA_APP_ICON}.png)
-            install(FILES resources/server_icon_256.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps RENAME ${DLNA_APP_ICON}.png)
+            install(FILES resources/server_icon_16.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/16x16/apps   RENAME ${DLNA_GTK_APP_ID}.png)
+            install(FILES resources/server_icon_48.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps   RENAME ${DLNA_GTK_APP_ID}.png)
+            install(FILES resources/server_icon_120.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps RENAME ${DLNA_GTK_APP_ID}.png)
+            install(FILES resources/server_icon_256.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps RENAME ${DLNA_GTK_APP_ID}.png)
             # WSLg checks pixmaps before its fixed hicolor icon directories.
-            install(FILES resources/server_icon_120.png DESTINATION ${CMAKE_INSTALL_DATADIR}/pixmaps RENAME ${DLNA_APP_ICON}.png)
+            install(FILES resources/server_icon_120.png DESTINATION ${CMAKE_INSTALL_DATADIR}/pixmaps RENAME ${DLNA_GTK_APP_ID}.png)
             # Also keep a copy in the app-specific data dir for runtime loading
             install(FILES
                 resources/server_icon_16.png
@@ -348,7 +357,7 @@ add_library(dlna_core STATIC
                 resources/server_icon_120.png
                 resources/server_icon_256.png
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/icons)
-            install(FILES "${CMAKE_BINARY_DIR}/${DLNA_APP_ID}.appdata.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo RENAME ${DLNA_APP_ID}.metainfo.xml)
+            install(FILES "${CMAKE_BINARY_DIR}/${DLNA_GTK_APP_ID}.metainfo.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
             install(SCRIPT "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake")
         endif()
     endif()
@@ -356,7 +365,7 @@ endif()
 
 if(UNIX AND NOT APPLE)
     set(CPACK_GENERATOR "DEB")
-    set(CPACK_PACKAGE_NAME "${DLNA_APP_ID}")
+    set(CPACK_PACKAGE_NAME "${DLNA_PRODUCT_NAME}")
     set(CPACK_PACKAGE_VENDOR "dlna-server contributors")
     set(CPACK_PACKAGE_CONTACT "https://github.com/14ag/dlna-server/issues")
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "DLNA media server")
@@ -367,8 +376,8 @@ if(UNIX AND NOT APPLE)
     set(CPACK_DEBIAN_PACKAGE_SECTION "net")
     set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/14ag/dlna-server")
     set(CPACK_DEBIAN_PACKAGE_DEPENDS "libcurl4")
-    set(CPACK_DEBIAN_PACKAGE_REPLACES "dlna-server")
-    set(CPACK_DEBIAN_PACKAGE_CONFLICTS "dlna-server")
+    set(CPACK_DEBIAN_PACKAGE_REPLACES "${DLNA_APP_ID}")
+    set(CPACK_DEBIAN_PACKAGE_CONFLICTS "${DLNA_APP_ID}")
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
     if(DLNA_ENABLE_GTK4_GUI)

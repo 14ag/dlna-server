@@ -1,8 +1,9 @@
 from pathlib import Path
 
+from tests.identity import APP_ID, GTK_APP_ID
+
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
-APP_ID = "com.github.dlna_server_14ag"
 
 OLD_LITERALS = [
     'L"dlna-server_Main"',
@@ -14,7 +15,7 @@ OLD_LITERALS = [
     '"/tmp/dlna-server-"',
     '"/dlna-server.lock"',
     '"/dlna-server.sock"',
-    'gtk_application_new("com.github',
+    'gtk_application_new("com.',
     'g_variant_new_string("dlna-server")',
     'gtk_window_set_icon_name(window, "dlna-server")',
 ]
@@ -70,4 +71,4 @@ def test_startup_commands_are_not_branded():
     assert "add_executable(dlna-server " in cmake
     assert "OUTPUT_NAME dlna-server-gui-bin" in cmake
     assert 'OUTPUT_NAME "dlna-server"' in cmake
-    assert APP_ID in cmake
+    assert "identity.env" in cmake

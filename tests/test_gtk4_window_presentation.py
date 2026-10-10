@@ -1,6 +1,8 @@
 import re
 import pytest
 
+from tests.identity import GTK_APP_ID
+
 SOURCE = "src/gtk4_gui_main.cpp"
 
 @pytest.mark.posix_only
@@ -20,7 +22,7 @@ def test_gapplication_id_matches_desktop_file(repo_root):
     code_match = re.search(r'gtk_application_new\(\s*(?:"([^"]+)"|DLNA_GTK_APP_ID|DLNA_APP_ID)', code)
     wmclass_match = re.search(r"StartupWMClass=([A-Za-z0-9_.\-@]+)", desktop_cmake)
     assert code_match and wmclass_match
-    assert wmclass_match.group(1) in ("@DLNA_WSLG_APP_ID@", "@DLNA_GTK_APP_ID@", "@DLNA_APP_ID@", "com.github.dlna_server_14ag")
+    assert wmclass_match.group(1) in ("@DLNA_GTK_APP_ID@", GTK_APP_ID)
 
 
 @pytest.mark.posix_only
@@ -28,7 +30,7 @@ def test_win10_titlebar_contract(repo_root):
     code = (repo_root / SOURCE).read_text()
     css = (repo_root / "resources" / "gtk" / "style.css").read_text()
     helper = code[code.index("GtkWidget* CreateWin10Titlebar"):code.index("GtkWindow* CreateMessageWindow")]
-    assert ('gtk_window_set_icon_name(window, DLNA_APP_ICON)' in helper or
+    assert ('gtk_window_set_icon_name(window, DLNA_GTK_APP_ID)' in helper or
             'gtk_window_set_icon_name(window, DLNA_APP_ID)' in helper)
     assert 'background-color: @win10_active_titlebar_color;' in css
     assert 'background-color: @win10_inactive_titlebar_color;' in css

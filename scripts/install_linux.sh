@@ -82,12 +82,15 @@ sudo_run rm -rf /usr/share/icons/hicolor/48x48/apps/dlna_server_14ag.png
 sudo_run rm -rf /usr/share/icons/hicolor/128x128/apps/dlna_server_14ag.png
 sudo_run rm -rf /usr/share/icons/hicolor/256x256/apps/dlna_server_14ag.png
 sudo_run rm -rf /usr/share/icons/hicolor/scalable/apps/dlna_server_14ag.svg
+sudo_run rm -f "/usr/share/applications/$DLNA_GTK_APP_ID.desktop" "/usr/share/pixmaps/$DLNA_GTK_APP_ID.png"
+sudo_run find /usr/share/icons/hicolor -name "$DLNA_GTK_APP_ID.*" -delete
+sudo_run rm -f "/usr/share/metainfo/$DLNA_APP_ID.metainfo.xml"
 sudo_run update-desktop-database /usr/share/applications 2>/dev/null || true
 
 # Find package if not explicitly provided
 if [ -z "$package_path" ]; then
     package_path=$(
-        find "$output_dir" -maxdepth 1 -type f -name "${DLNA_APP_ID}_*.deb" -printf '%T@ %p\n' 2>/dev/null |
+        find "$output_dir" -maxdepth 1 -type f -name "${DLNA_PRODUCT_NAME}_*.deb" -printf '%T@ %p\n' 2>/dev/null |
             sort -nr |
             awk 'NR==1 { $1=""; sub(/^ /, ""); print; exit }'
     )

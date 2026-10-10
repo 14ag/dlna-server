@@ -135,7 +135,7 @@ if [ "$BUILD_DEB" = "1" ]; then
     sudo_run rm -rf "$output_dir/_CPack_Packages" 2>/dev/null || true
     sudo_run chown -R "$(id -u):$(id -g)" "$output_dir" 2>/dev/null || true
 
-    deb_file=$(find "$output_dir" -maxdepth 1 -type f -name "${DLNA_APP_ID}_*.deb" | sort -r | head -n 1)
+    deb_file=$(find "$output_dir" -maxdepth 1 -type f -name "${DLNA_PRODUCT_NAME}_*.deb" | sort -r | head -n 1)
     if [ -z "$deb_file" ]; then
         echo "[ERROR] Debian package generation failed." >&2
         exit 1

@@ -22,27 +22,24 @@ from pathlib import Path
 
 import pytest
 
+from tests.identity import APP_ID
+
 pytestmark = pytest.mark.posix_only
 
 
 # ---- Helpers matching the C++ implementation ----
 
 def _global_instance_dir() -> str:
-    """The fixed per-user instance dir used by the C++ single-instance code
-    (posix_single_instance.cpp GetInstanceDir): /tmp/com.github.dlna_server_14ag-<uid>.
-
-    Uses /tmp directly -- NOT tempfile.gettempdir() -- because conftest.py
-    redirects tempfile.tempdir to the repo's tmp/ tree, which may live on a
-    drvfs/9p mount where the C++ instance dir is /tmp regardless."""
-    return os.path.join("/tmp", "com.github.dlna_server_14ag-" + str(os.getuid()))
+    """The fixed per-user instance dir used by the C++ single-instance code"""
+    return os.path.join("/tmp", APP_ID + "-" + str(os.getuid()))
 
 
 def _lock_file_path(rundir: str) -> str:
-    return os.path.join(rundir, "com.github.dlna_server_14ag.lock")
+    return os.path.join(rundir, APP_ID + ".lock")
 
 
 def _socket_path(rundir: str) -> str:
-    return os.path.join(rundir, "com.github.dlna_server_14ag.sock")
+    return os.path.join(rundir, APP_ID + ".sock")
 
 
 # ---- Tests ----
@@ -315,7 +312,7 @@ class TestSecondLaunchSupersedesFirst:
         try:
             # A acquires the fixed global lock before StartListening() binds
             # its socket; wait for the socket so B reliably finds A.
-            sock_path = Path(_global_instance_dir()) / "com.github.dlna_server_14ag.sock"
+            sock_path = Path(_global_instance_dir()) / (APP_ID + ".sock")
             deadline = time.time() + 10
             while not sock_path.exists():
                 if proc_a.poll() is not None:

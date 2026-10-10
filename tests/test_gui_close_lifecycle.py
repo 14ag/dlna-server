@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from conftest import kill_process_group, spawn_wrapped_process
+from tests.identity import APP_ID
 
 pytestmark = [pytest.mark.posix_only, pytest.mark.needs_xvfb]
 
@@ -50,13 +51,13 @@ def _isolated_env(tmp_path):
 
 
 def _global_instance_dir():
-    # /tmp directly -- NOT tempfile.gettempdir(), which conftest redirects to
-    # the repo tmp/ tree on drvfs. The C++ instance dir is /tmp/com.github.dlna_server_14ag-<uid>.
-    return Path("/tmp") / f"com.github.dlna_server_14ag-{os.getuid()}"
+    # tmp directly not tempfile gettempdir which conftest redirects
+    # the repo tmp tree on drvfs
+    return Path("/tmp") / f"{APP_ID}-{os.getuid()}"
 
 
 def _socket_path(env):
-    return _global_instance_dir() / "com.github.dlna_server_14ag.sock"
+    return _global_instance_dir() / f"{APP_ID}.sock"
 
 
 def _wait_for(predicate, timeout_seconds):

@@ -10,7 +10,7 @@
   <key>CFBundleDisplayName</key>
   <string>DLNA Server</string>
   <key>CFBundleIdentifier</key>
-  <string>@DLNA_APP_ID@</string>
+  <string>@DLNA_BUNDLE_ID@</string>
   <key>CFBundleIconFile</key>
   <string>app.ico</string>
   <key>CFBundleInfoDictionaryVersion</key>

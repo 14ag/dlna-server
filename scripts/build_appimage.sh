@@ -78,10 +78,10 @@ if [ -d "$output_dir/share" ]; then
 fi
 
 cp "$repo_root/packaging/linux/AppRun" "$appdir/AppRun"
-tr -d '\r' < "$repo_root/packaging/linux/${DLNA_APP_ID}.appimage.desktop" > "$appdir/${DLNA_APP_ID}.desktop"
 mkdir -p "$appdir/usr/share/applications"
-tr -d '\r' < "$repo_root/packaging/linux/${DLNA_APP_ID}.appimage.desktop" > "$appdir/usr/share/applications/${DLNA_APP_ID}.desktop"
-cp "$repo_root/resources/${DLNA_APP_ID}.svg" "$appdir/${DLNA_APP_ID}.svg"
+stamp_identity "$repo_root/packaging/linux/portable.desktop.in" | tr -d '\r' > "$appdir/${DLNA_GTK_APP_ID}.desktop"
+cp "$appdir/${DLNA_GTK_APP_ID}.desktop" "$appdir/usr/share/applications/${DLNA_GTK_APP_ID}.desktop"
+cp "$repo_root/resources/${DLNA_APP_ID}.svg" "$appdir/${DLNA_GTK_APP_ID}.svg"
 chmod +x "$appdir/AppRun" "$appdir/usr/bin/dlna-server" "$appdir/usr/bin/dlna-server-gui" "$appdir/usr/bin/dlna-server-gui-bin"
 
 linuxdeploy="$tools_dir/linuxdeploy-x86_64.AppImage"
@@ -91,10 +91,10 @@ fi
 chmod +x "$linuxdeploy"
 
 find "$output_dir" -maxdepth 1 -type f -name '*.AppImage' -delete
-if (cd "$output_dir" && APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" --appdir "$appdir" --desktop-file "$appdir/${DLNA_APP_ID}.desktop" --icon-file "$appdir/${DLNA_APP_ID}.svg" --output appimage); then
+if (cd "$output_dir" && APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" --appdir "$appdir" --desktop-file "$appdir/${DLNA_GTK_APP_ID}.desktop" --icon-file "$appdir/${DLNA_GTK_APP_ID}.svg" --output appimage); then
     appimage=$(find "$output_dir" -maxdepth 1 -type f -name '*.AppImage' | head -n 1)
-    mv "$appimage" "$output_dir/${DLNA_APP_ID}-${version}-x86_64.AppImage"
-    echo "AppImage created: $output_dir/${DLNA_APP_ID}-${version}-x86_64.AppImage"
+    mv "$appimage" "$output_dir/${DLNA_PRODUCT_NAME}-${version}-x86_64.AppImage"
+    echo "AppImage created: $output_dir/${DLNA_PRODUCT_NAME}-${version}-x86_64.AppImage"
 else
     echo "[WARN] AppImage runtime unavailable; failed to create AppImage bundle." >&2
     exit 1
