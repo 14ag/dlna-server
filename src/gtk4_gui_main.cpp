@@ -40,6 +40,9 @@
 #include <gio/gio.h>
 #include <gdk/gdk.h>
 #include <gdk/x11/gdkx.h>
+#ifdef GDK_WINDOWING_WAYLAND
+#include <gdk/wayland/gdkwayland.h>
+#endif
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
@@ -482,10 +485,18 @@ static GtkWidget* CreateWin10WindowControl(GtkWindow* window,
 
 void OnWindowMap(GtkWidget* widget, gpointer) {
     GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(widget));
-    if (widget == g_mainWindow && surface != nullptr && GDK_IS_X11_SURFACE(surface)) {
+    if (surface == nullptr) return;
+    if (widget == g_mainWindow && GDK_IS_X11_SURFACE(surface)) {
         g_mainWindowXid.store(gdk_x11_surface_get_xid(surface), std::memory_order_release);
         g_mainSurfaceLost = false;
     }
+#ifdef GDK_WINDOWING_WAYLAND
+    if (widget == g_mainWindow && GDK_IS_WAYLAND_SURFACE(surface)) {
+        // WSLg cuts the app list key at the last dot
+        // so the live window carries the short id to match the entry
+        gdk_wayland_toplevel_set_application_id(GDK_TOPLEVEL(surface), DLNA_APP_ID);
+    }
+#endif
 }
 
 GtkWidget* CreateWin10Titlebar(GtkWindow* window,
@@ -494,6 +505,9 @@ GtkWidget* CreateWin10Titlebar(GtkWindow* window,
     gtk_window_set_title(window, title);
     gtk_window_set_icon_name(window, DLNA_GTK_APP_ID);
     g_signal_connect_after(window, "map", G_CALLBACK(OnWindowMap), nullptr);
+    // realize runs before the compositor sees the window
+    // so the short wayland id is set before the first commit
+    g_signal_connect(window, "realize", G_CALLBACK(OnWindowMap), nullptr);
 
     GtkWidget* handle = gtk_window_handle_new();
     gtk_widget_add_css_class(handle, "win10-titlebar");
@@ -3127,15 +3141,16 @@ static void ConfigureGdkEnvironment() {
 
 int main(int argc, char** argv) {
     // prgname must equal the gtk app id
-    // wslg matches the window app id to the desktop file name
+    // the live wayland window carries the short id instead
+    // because wslg cuts the app list key at the last dot
     g_set_prgname(DLNA_GTK_APP_ID);
     g_set_application_name("DLNA Server");
     ConfigureGdkEnvironment();
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--print-gtk-identity") {
             const char* prgName = g_get_prgname();
-            // program class removed in gtk4 reuse app id
-            const char* programClass = DLNA_GTK_APP_ID;
+            // program class removed in gtk4 the live window reuses the short id
+            const char* programClass = DLNA_APP_ID;
             std::printf("PRGNAME=%s\nPROGRAM_CLASS=%s\nGTK_APP_ID=%s\n",
                         prgName ? prgName : "",
                         programClass ? programClass : "",
