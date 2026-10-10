@@ -12,6 +12,7 @@
 #include "netchange_watch.h"
 #include "dirwatch.h"
 #include "network_sources.h"
+#include "fs_backend.h"
 #include "ipwhitelist.h"
 
 #include <chrono>
@@ -77,7 +78,7 @@ std::vector<std::wstring> Server::LocalWatchFolders() const {
     ConfigSnapshot cfg = AppConfig.Snapshot();
     std::vector<std::wstring> folders;
     for (const auto& source : cfg.effectiveMediaSources) {
-        if (!IsRemoteMediaUrl(source.path)) {
+        if (!IsRemoteMediaUrl(source.path) && FsExists(source.path)) {
             folders.push_back(source.path);
         }
     }

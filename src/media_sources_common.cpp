@@ -41,6 +41,12 @@ bool DefaultPlaylistFileExists(const std::wstring& path) {
     return FsIsRegularFile(path);
 }
 
+// a lone local media file is published straight under the root; a source container
+// around it made clients render a folder holding one item
+bool IsSingleLocalFileSource(const std::wstring& path) {
+    return !IsRemoteMediaUrl(path) && !IsPlaylistSourcePath(path) && FsIsRegularFile(path);
+}
+
 std::wstring CanonicalMediaKey(const std::wstring& path) {
     if (IsRemoteMediaUrl(path)) return ToLowerWide(path);
     return ToLowerWide(path);
@@ -250,6 +256,7 @@ void MediaSources::Scan() {
         std::shared_ptr<PlaylistScanContext> ctx;
         MediaSource source;
         int containerId;
+        bool singleFile;
     };
     std::vector<SourceJob> jobs;
 
@@ -266,12 +273,15 @@ void MediaSources::Scan() {
                 continue;
             }
         }
-        const int containerId = PublishContainer(database.get(), 0, SourceDisplayName(src.path), src.path, g_canonicalize);
+        const bool singleFile = IsSingleLocalFileSource(src.path);
+        const int containerId = singleFile
+            ? 0
+            : PublishContainer(database.get(), 0, SourceDisplayName(src.path), src.path, g_canonicalize);
 
         auto ctx = std::make_shared<PlaylistScanContext>();
         ctx->cfg = cfg;
         ctx->state.mediaDatabase = database.get();
-        jobs.push_back({ctx, src, containerId});
+        jobs.push_back({ctx, src, containerId, singleFile});
     }
 
     if (!cfg.hasRuntimeSourceOverride && cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty() && DefaultPlaylistFileExists(cfg.defaultPlaylistPath)) {
@@ -279,7 +289,7 @@ void MediaSources::Scan() {
         auto ctx = std::make_shared<PlaylistScanContext>();
         ctx->cfg = cfg;
         ctx->state.mediaDatabase = database.get();
-        jobs.push_back({ctx, MediaSource{cfg.defaultPlaylistPath}, containerId});
+        jobs.push_back({ctx, MediaSource{cfg.defaultPlaylistPath}, containerId, false});
     }
 
     // Each top-level source job runs on its own SourceScanPool task, never on
@@ -306,7 +316,7 @@ void MediaSources::Scan() {
                     ScanPlaylistTree(job.ctx, job.source.path, job.containerId);
                 } else if (IsNetworkShareUrl(job.source.path)) {
                     ScanNetworkFolder(job.ctx, job.source.path, job.containerId, 0);
-                } else if (!IsRemoteMediaUrl(job.source.path) && FsIsRegularFile(job.source.path)) {
+                } else if (job.singleFile) {
                     // A configured source that is a single local file (not
                     // a directory) used to fall into the ScanFolder()
                     // branch below, which calls FsListDirectory(rootPath,

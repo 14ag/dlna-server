@@ -48,6 +48,8 @@ fallback path is provided for CI containers where multicast is filtered).
 from __future__ import annotations
 
 import dataclasses
+import difflib
+import json
 import html as _html_mod
 import http.client
 import os
@@ -59,6 +61,7 @@ import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from urllib.parse import urlsplit
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -70,6 +73,7 @@ from tests.conftest import (
     _free_port,
     _get_lan_ip,
     _launch_server,
+    _resolve_dlna_binary,
     _teardown_server,
     server_config_ini_path,
 )
@@ -390,20 +394,16 @@ class BrowseResult:
     update_id: int
 
 
-def send_browse(control_url: str,
-                 object_id: str,
-                 browse_flag: str = "BrowseDirectChildren",
-                 starting_index: int = 0,
-                 requested_count: int = 0,
-                 timeout: float = 5.0) -> BrowseResult:
+def browse_didl_root(control_url: str,
+                     object_id: str,
+                     browse_flag: str = "BrowseDirectChildren",
+                     starting_index: int = 0,
+                     requested_count: int = 0,
+                     timeout: float = 5.0):
     """
-    POSTs the Browse SOAP action to control_url with the exact
-    SOAPACTION header VLC/libupnp sends (a double-quoted string literal,
-    not a bare token -- see the captured traces in the docstring), then
-    parses the SOAP response the way VLC's Access::Browse /
-    parseBrowseResult callback does: unescape the <Result> element (which
-    is itself an XML-escaped DIDL-Lite document per ContentDirectory:1
-    section 2.3.1), then walk <container>/<item> children.
+    POSTs a Browse SOAP action with the SOAPACTION header libupnp/VLC sends,
+    unescapes <Result> (an XML-escaped DIDL-Lite document per ContentDirectory:1
+    section 2.3.1) and returns (didl_root, NumberReturned, TotalMatches, UpdateID).
     """
     body = build_browse_soap_envelope(
         object_id=object_id,
@@ -432,29 +432,30 @@ def send_browse(control_url: str,
         conn.close()
 
     root = ET.fromstring(response_body)
-    result_el = root.find(".//{urn:schemas-upnp-org:service:ContentDirectory:1}Result")
-    if result_el is None:
-        # SOAP servers vary on whether Result carries the namespace prefix;
-        # fall back to a namespace-agnostic search the same way a tolerant
-        # control point (VLC included) does when parsing a real server's
-        # response.
-        for el in root.iter():
-            if el.tag.rsplit("}", 1)[-1] == "Result":
-                result_el = el
-                break
+    # namespace-agnostic: servers differ on whether <Result> carries a prefix
+    result_el = next((el for el in root.iter() if el.tag.rsplit("}", 1)[-1] == "Result"), None)
     assert result_el is not None and result_el.text, "BrowseResponse missing <Result>"
 
-    def find_int(tag: str, default: int = 0) -> int:
+    def find_int(tag: str) -> int:
         for el in root.iter():
             if el.tag.rsplit("}", 1)[-1] == tag:
-                return int(el.text) if el.text else default
-        return default
+                return int(el.text) if el.text else 0
+        return 0
 
-    number_returned = find_int("NumberReturned")
-    total_matches = find_int("TotalMatches")
-    update_id = find_int("UpdateID")
+    return (ET.fromstring(result_el.text), find_int("NumberReturned"),
+            find_int("TotalMatches"), find_int("UpdateID"))
 
-    didl_root = ET.fromstring(result_el.text)
+
+def send_browse(control_url: str,
+                object_id: str,
+                browse_flag: str = "BrowseDirectChildren",
+                starting_index: int = 0,
+                requested_count: int = 0,
+                timeout: float = 5.0) -> BrowseResult:
+    """Browse and reduce the DIDL-Lite to containers/items, as VLC's DIDL walk does."""
+    didl_root, number_returned, total_matches, update_id = browse_didl_root(
+        control_url, object_id, browse_flag, starting_index, requested_count, timeout)
+
     items = []
     for container_el in didl_root.findall("didl:container", DIDL_NS):
         title_el = container_el.find("dc:title", DIDL_NS)
@@ -954,3 +955,243 @@ def test_loopback_host_overridden_with_routable_url(path):
 @pytest.mark.parametrize("path", ("src/netutils.h", "src/netutils_common.cpp"))
 def test_get_routable_host_url_declared_or_defined(path):
     assert "GetRoutableHostUrl" in _read_src(path)
+
+
+# ---------------------------------------------------------------------------
+# Single-video sitemap: Windows output is the source of truth for POSIX
+#
+# Launches the binary with tests/test media/test-clip.mp4 as the only source and
+# records everything a control point fetches to list and play that one video.
+# Volatile values (host, ids, UUID, name, file size) are replaced by
+# placeholders. Regenerate the golden ONLY from the Windows binary:
+#   PowerShell: $env:DLNA_UPDATE_GOLDEN="1"; python -m pytest tests/test_vlc_discovery_browse.py -k single_video_sitemap_matches
+# ---------------------------------------------------------------------------
+
+SINGLE_VIDEO = ROOT / "tests" / "test media" / "test-clip.mp4"
+GOLDEN_PATH = ROOT / "tests" / "fixtures" / "golden" / "single_video_sitemap.json"
+CONNECTION_MANAGER_SERVICE_TYPE = "urn:schemas-upnp-org:service:ConnectionManager:1"
+SCPD_NS = {"s": "urn:schemas-upnp-org:service-1-0"}
+DLNA_DEVICE_NS = "{urn:schemas-dlna-org:device-1-0}"
+_PROBE_HEADERS = ("content-type", "content-length", "content-range", "accept-ranges",
+                  "transfermode.dlna.org", "contentfeatures.dlna.org")
+
+
+def _http_request(base_url, method, path, headers=None, body=None, timeout=10.0):
+    parts = urlsplit(base_url)
+    conn = http.client.HTTPConnection(parts.hostname, parts.port, timeout=timeout)
+    try:
+        conn.request(method, path, body=body, headers=headers or {})
+        resp = conn.getresponse()
+        return resp.status, {k.lower(): v for k, v in resp.getheaders()}, resp.read()
+    finally:
+        conn.close()
+
+
+def _local(tag):
+    return tag.rsplit("}", 1)[-1]
+
+
+def _xml_shape(el, prefix=""):
+    path = f"{prefix}/{_local(el.tag)}"
+    paths = {path}
+    for child in el:
+        paths |= _xml_shape(child, path)
+    return paths
+
+
+def _normalize_url(url):
+    url = re.sub(r"^https?://[^/]+", "{HOST}", url or "")
+    return re.sub(r"/(media|albumart|subtitle)/\d+", r"/\1/{ID}", url)
+
+
+def _normalize_didl_entry(el, file_size):
+    def norm_id(value):
+        return value if value in ("0", "-1") else "{ID}"
+
+    entry = {
+        "kind": _local(el.tag),
+        "id": norm_id(el.get("id")),
+        "parentID": norm_id(el.get("parentID")),
+        "attributes": sorted(el.attrib),
+        "restricted": el.get("restricted"),
+        "childCount": el.get("childCount"),
+        "child_elements": sorted(_local(c.tag) for c in el),
+        "title": el.findtext("dc:title", namespaces=DIDL_NS),
+        "class": el.findtext("upnp:class", namespaces=DIDL_NS),
+    }
+    res = el.find("didl:res", DIDL_NS)
+    if res is not None:
+        entry["res"] = {
+            "protocolInfo": res.get("protocolInfo"),
+            "size": "{FILE_SIZE}" if res.get("size") == str(file_size) else res.get("size"),
+            "url": _normalize_url(res.text),
+        }
+    return entry
+
+
+def _crawl_container(control_url, object_id, file_size, found_items, depth=0):
+    didl_root, _, _, _ = browse_didl_root(control_url, object_id)
+    children = []
+    for el in didl_root:
+        entry = _normalize_didl_entry(el, file_size)
+        if entry["kind"] == "container" and depth < 3:
+            entry["children"] = _crawl_container(
+                control_url, el.get("id"), file_size, found_items, depth + 1)
+        res = el.find("didl:res", DIDL_NS)
+        if res is not None and res.text:
+            found_items.append((el.get("id"), res.text))
+        children.append(entry)
+    return children
+
+
+def _crawl_stable(control_url, file_size, timeout=30.0):
+    """Scan is asynchronous: repeat until two crawls match and contain an item."""
+    deadline = time.monotonic() + timeout
+    previous = None
+    while True:
+        found = []
+        tree = _crawl_container(control_url, "0", file_size, found)
+        if found and tree == previous:
+            return tree, found
+        previous = tree
+        if time.monotonic() > deadline:
+            pytest.fail("catalog did not stabilise with an item within 30s")
+        time.sleep(0.5)
+
+
+def _pick_headers(headers, file_size):
+    return {k: headers[k].replace(str(file_size), "{FILE_SIZE}")
+            for k in _PROBE_HEADERS if k in headers}
+
+
+def build_single_video_sitemap(base_url, video_path):
+    file_size = video_path.stat().st_size
+
+    status, _, body = _http_request(base_url, "GET", "/description.xml")
+    assert status == 200, f"description.xml -> {status}"
+    desc_root = ET.fromstring(body)
+    device = desc_root.find("d:device", DEVICE_NS)
+    assert device is not None, "description.xml missing <device>"
+    assert device.findtext("d:friendlyName", namespaces=DEVICE_NS), "missing <friendlyName>"
+    assert (device.findtext("d:UDN", namespaces=DEVICE_NS) or "").startswith("uuid:")
+    services = [{
+        name: svc.findtext(f"d:{name}", namespaces=DEVICE_NS)
+        for name in ("serviceType", "SCPDURL", "controlURL", "eventSubURL")
+    } for svc in device.findall(".//d:service", DEVICE_NS)]
+    by_type = {s["serviceType"]: s for s in services}
+    cd = by_type[CONTENT_DIRECTORY_SERVICE_TYPE]
+    cm = by_type[CONNECTION_MANAGER_SERVICE_TYPE]
+    icons = [{
+        name: icon.findtext(f"d:{name}", namespaces=DEVICE_NS)
+        for name in ("mimetype", "width", "height", "depth", "url")
+    } for icon in device.findall(".//d:icon", DEVICE_NS)]
+    icon_probe = {}
+    for icon in icons:
+        st, hdrs, _ = _http_request(base_url, "GET", icon["url"])
+        icon_probe[icon["url"]] = {"status": st, "content-type": hdrs.get("content-type")}
+
+    scpd_actions = {}
+    for label, svc in (("ContentDirectory", cd), ("ConnectionManager", cm)):
+        st, _, scpd_body = _http_request(base_url, "GET", svc["SCPDURL"])
+        assert st == 200, f"{svc['SCPDURL']} -> {st}"
+        scpd_actions[label] = sorted(
+            el.text for el in ET.fromstring(scpd_body).findall(".//s:action/s:name", SCPD_NS))
+
+    control_url = base_url + cd["controlURL"]
+    tree, found = _crawl_stable(control_url, file_size)
+    root_didl, _, _, _ = browse_didl_root(control_url, "0", "BrowseMetadata")
+    item_id, res_url = found[0]
+    item_didl, _, _, _ = browse_didl_root(control_url, item_id, "BrowseMetadata")
+
+    media_path = urlsplit(res_url).path
+    head_status, head_headers, _ = _http_request(base_url, "HEAD", media_path)
+    rng_status, rng_headers, rng_body = _http_request(
+        base_url, "GET", media_path, headers={"Range": "bytes=0-1"})
+
+    envelope = (
+        '<?xml version="1.0"?>'
+        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
+        's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body>'
+        f'<u:GetProtocolInfo xmlns:u="{CONNECTION_MANAGER_SERVICE_TYPE}"/>'
+        '</s:Body></s:Envelope>')
+    st, _, cm_body = _http_request(
+        base_url, "POST", cm["controlURL"],
+        headers={"Content-Type": 'text/xml; charset="utf-8"',
+                 "SOAPACTION": f'"{CONNECTION_MANAGER_SERVICE_TYPE}#GetProtocolInfo"'},
+        body=envelope.encode("utf-8"))
+    assert st == 200, f"GetProtocolInfo -> {st}"
+    source = next(el.text for el in ET.fromstring(cm_body).iter() if _local(el.tag) == "Source")
+
+    return {
+        "description": {
+            "shape": sorted(_xml_shape(desc_root)),
+            "deviceType": device.findtext("d:deviceType", namespaces=DEVICE_NS),
+            "manufacturer": device.findtext("d:manufacturer", namespaces=DEVICE_NS),
+            "modelName": device.findtext("d:modelName", namespaces=DEVICE_NS),
+            "presentationURL": device.findtext("d:presentationURL", namespaces=DEVICE_NS),
+            "X_DLNADOC": device.findtext(f"{DLNA_DEVICE_NS}X_DLNADOC"),
+            "URLBase": _normalize_url(desc_root.findtext("d:URLBase", namespaces=DEVICE_NS)),
+            "services": services,
+            "icons": icons,
+        },
+        "icon_probe": icon_probe,
+        "scpd_actions": scpd_actions,
+        "root_metadata": _normalize_didl_entry(root_didl[0], file_size),
+        "root_children": tree,
+        "item_metadata": _normalize_didl_entry(item_didl[0], file_size),
+        "media_probe": {
+            "head": {"status": head_status, "headers": _pick_headers(head_headers, file_size)},
+            "range_0_1": {"status": rng_status, "body_bytes": len(rng_body),
+                          "headers": _pick_headers(rng_headers, file_size)},
+        },
+        "connection_manager_mp4_source_protocol_info": sorted(
+            e for e in source.split(",") if ":video/mp4:" in e),
+    }
+
+
+@pytest.fixture(scope="module")
+def single_video_sitemap(tmp_path_factory):
+    binary = _resolve_dlna_binary()
+    if not binary:
+        pytest.fail("dlna-server binary not found (set DLNA_SERVER)")
+    if not SINGLE_VIDEO.is_file():
+        pytest.fail(f"test video missing: {SINGLE_VIDEO}")
+    port = _free_port()
+    proc, ok, old, ini = _launch_server(
+        Path(binary), port, str(SINGLE_VIDEO),
+        config_dir=tmp_path_factory.mktemp("dlna-single-video"))
+    try:
+        if not ok:
+            pytest.fail(f"server did not listen on {port}")
+        return build_single_video_sitemap(f"http://127.0.0.1:{port}", SINGLE_VIDEO)
+    finally:
+        _teardown_server(proc, old, ini)
+
+
+def test_single_video_source_is_root_item_not_container(single_video_sitemap):
+    children = single_video_sitemap["root_children"]
+    assert len(children) == 1, f"expected exactly one root entry, got {children}"
+    only = children[0]
+    assert only["kind"] == "item", f"single video source rendered as {only['kind']}"
+    assert only["parentID"] == "0"
+    assert only["class"] == "object.item.videoItem"
+    assert only["title"] == "test-clip.mp4"
+    assert "res" in only and only["res"]["url"] == "{HOST}/media/{ID}.mp4"
+
+
+def test_single_video_sitemap_matches_windows_golden(single_video_sitemap):
+    if os.environ.get("DLNA_UPDATE_GOLDEN") == "1":
+        if os.name != "nt":
+            pytest.fail("golden may only be regenerated from the Windows binary")
+        GOLDEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        GOLDEN_PATH.write_text(
+            json.dumps(single_video_sitemap, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return
+    if not GOLDEN_PATH.is_file():
+        pytest.fail(f"golden missing: {GOLDEN_PATH}; generate on Windows with DLNA_UPDATE_GOLDEN=1")
+    expected = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+    actual = json.loads(json.dumps(single_video_sitemap))
+    assert actual == expected, "\n".join(difflib.unified_diff(
+        json.dumps(expected, indent=2, sort_keys=True).splitlines(),
+        json.dumps(actual, indent=2, sort_keys=True).splitlines(),
+        "windows-golden", "this-build", lineterm=""))

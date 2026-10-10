@@ -40,4 +40,10 @@ std::string BuildSearchResponseMessage(const SsdpSearchResponseFields& fields);
 
 inline constexpr int kSearchResponseSendCount = 2;
 
+// NOTIFY datagrams (this host's own multicast loopback plus peer devices) are
+// advertisements, not searches; callers drop them without logging
+inline bool IsSsdpNotifyStartLine(const std::string& firstLine) {
+    return firstLine.compare(0, 7, "NOTIFY ") == 0;
+}
+
 #endif // SSDP_COMMON_H
