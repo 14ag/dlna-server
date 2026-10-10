@@ -10,6 +10,6 @@ def test_focus_ring_class_wired_in_cpp():
 
 
 def test_focus_ring_css_present():
-    figma_css = (REPO_ROOT / "resources/gtk/figma.css").read_text(encoding="utf-8")
+    figma_css = (REPO_ROOT / "resources/gtk/styles0.css").read_text(encoding="utf-8")
     assert "scrolledwindow.source-list" in figma_css
     assert "source-list-focused" in figma_css

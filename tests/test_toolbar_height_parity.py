@@ -10,7 +10,7 @@ def _const(text, name):
 def test_posix_toolbar_height_matches_win32(repo_root):
     win = (repo_root / "src" / "ui_tokens.h").read_text()
     posix = (repo_root / "src" / "ui_tokens_posix.h").read_text()
-    figma = (repo_root / "resources" / "gtk" / "figma.css").read_text()
+    figma = (repo_root / "resources" / "gtk" / "styles0.css").read_text()
 
     win_height = _const(win, "kToolbarHeight")
     posix_height = _const(posix, "kMainToolbarHeight")
@@ -19,7 +19,7 @@ def test_posix_toolbar_height_matches_win32(repo_root):
     # GTK takes max(size_request, CSS min-height); both must agree or the
     # rendered toolbar silently grows.
     match = re.search(r"box\.toolbar\s*\{[^}]*min-height:\s*(\d+)px", figma, re.S)
-    assert match, "box.toolbar min-height not found in figma.css"
+    assert match, "box.toolbar min-height not found in styles0.css"
     assert int(match.group(1)) == win_height
 
 

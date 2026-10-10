@@ -5,11 +5,11 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CSS_FILES = [
-    "resources/gtk/style.css",
+    "resources/gtk/styles1.css",
     "resources/gtk/styles2.css",
     "resources/gtk/styles3.css",
     "resources/gtk/styles4.css",
-    "resources/gtk/figma.css",
+    "resources/gtk/styles0.css",
 ]
 
 
@@ -38,7 +38,7 @@ def test_no_duplicate_css_selectors_across_sheets():
 
 
 def test_border_707070_applied_to_all_windows():
-    figma_css = (REPO_ROOT / "resources/gtk/figma.css").read_text(encoding="utf-8")
+    figma_css = (REPO_ROOT / "resources/gtk/styles0.css").read_text(encoding="utf-8")
     assert "707070" in figma_css
     assert "dlna-main-surface" in figma_css
     assert "dlna-dialog-window" in figma_css

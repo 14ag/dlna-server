@@ -4,7 +4,7 @@ import pytest
 pytestmark = pytest.mark.posix_only
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "gtk4_gui_main.cpp"
-CSS = pathlib.Path(__file__).resolve().parents[1] / "resources" / "gtk" / "style.css"
+CSS = pathlib.Path(__file__).resolve().parents[1] / "resources" / "gtk" / "styles1.css"
 
 
 def _read_css() -> str:

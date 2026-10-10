@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate resources/gtk/style.css from src/ui_tokens.h.
+"""Generate resources/gtk/styles1.css from src/ui_tokens.h.
 
 Dependency-free Python. Regex-extracts every constexpr int / RgbColor /
 const char* from the token header and renders a fixed CSS template. Every
@@ -195,13 +195,13 @@ def default_paths():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root = os.path.dirname(script_dir)
     header = os.path.join(repo_root, "src", "ui_tokens.h")
-    output = os.path.join(repo_root, "resources", "gtk", "style.css")
+    output = os.path.join(repo_root, "resources", "gtk", "styles1.css")
     return header, output
 
 
 def main(argv):
     if len(argv) > 2:
-        print("usage: gen_gtk_style.py [ui_tokens.h] [style.css]", file=sys.stderr)
+        print("usage: gen_gtk_style.py [ui_tokens.h] [styles1.css]", file=sys.stderr)
         sys.exit(2)
     header_path, output_path = default_paths()
     if len(argv) >= 1:

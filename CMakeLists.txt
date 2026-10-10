@@ -246,12 +246,12 @@ add_library(dlna_core STATIC
         pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
 
         add_custom_command(
-            OUTPUT "${CMAKE_SOURCE_DIR}/resources/gtk/style.css"
+            OUTPUT "${CMAKE_SOURCE_DIR}/resources/gtk/styles1.css"
             COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_gtk_style.py"
             DEPENDS "${CMAKE_SOURCE_DIR}/src/ui_tokens.h" "${CMAKE_SOURCE_DIR}/tools/gen_gtk_style.py"
             COMMENT "Generating GTK4 stylesheet from ui_tokens.h"
         )
-        add_custom_target(dlna_gtk_style ALL DEPENDS "${CMAKE_SOURCE_DIR}/resources/gtk/style.css")
+        add_custom_target(dlna_gtk_style ALL DEPENDS "${CMAKE_SOURCE_DIR}/resources/gtk/styles1.css")
 
         add_executable(dlna-server-gui-gtk4 src/gtk4_gui_main.cpp src/posix_tray.cpp)
         add_dependencies(dlna-server-gui-gtk4 dlna_gtk_style)
@@ -264,8 +264,8 @@ add_library(dlna_core STATIC
         target_link_libraries(dlna-server-gui-gtk4 PRIVATE dlna_core PkgConfig::GTK4 PkgConfig::X11 Threads::Threads)
         install(TARGETS dlna-server-gui-gtk4 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
-        install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/style.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
-        install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/figma.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
+        install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/styles1.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
+        install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/styles0.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
         install(FILES
             "${CMAKE_SOURCE_DIR}/resources/gtk/styles2.css"
             "${CMAKE_SOURCE_DIR}/resources/gtk/styles3.css"

@@ -3057,7 +3057,7 @@ void OnAppStartup(GtkApplication* app, gpointer) {
     GdkDisplay* display = gdk_display_get_default();
     // the display is open here because the class handler of startup ran first
     InstallXErrorGuard();
-    const std::string cssPath = ResolveBundledResourcePath("gtk/style.css");
+    const std::string cssPath = ResolveBundledResourcePath("gtk/styles1.css");
     if (!cssPath.empty()) {
         GtkCssProvider* provider = gtk_css_provider_new();
         gtk_css_provider_load_from_path(provider, cssPath.c_str());
@@ -3067,8 +3067,8 @@ void OnAppStartup(GtkApplication* app, gpointer) {
     }
     // Win32 look-and-feel base layer. These three sheets are derived from the
     // Windows-10-Dark GTK theme and audited against the Win32 sources; they sit
-    // ABOVE the generated style.css (so they can replace GTK/desktop-theme
-    // defaults) and BELOW figma.css (so any property the Figma design owns
+    // ABOVE the generated styles1.css (so they can replace GTK/desktop-theme
+    // defaults) and BELOW styles0.css (so any property the Figma design owns
     // still wins). Order within the layer is 2 -> 3 -> 4: 2 is generic theme
     // geometry, 3 is shared-property overrides, 4 is the Win32-verified subset.
     for (const char* sheet : { "gtk/styles2.css", "gtk/styles3.css", "gtk/styles4.css" }) {
@@ -3084,10 +3084,10 @@ void OnAppStartup(GtkApplication* app, gpointer) {
         g_object_unref(sheetProvider);
     }
 
-    // Figma overlay, loaded after style.css so its rules win at equal
+    // Figma overlay, loaded after styles1.css so its rules win at equal
     // selector specificity for the classes it defines. See Section 1,
     // Conflict B of dlna-server-posix-gui-figma-alignment-workflow-20-08-26.md.
-    const std::string figmaCssPath = ResolveBundledResourcePath("gtk/figma.css");
+    const std::string figmaCssPath = ResolveBundledResourcePath("gtk/styles0.css");
     if (!figmaCssPath.empty()) {
         GtkCssProvider* figmaProvider = gtk_css_provider_new();
         gtk_css_provider_load_from_path(figmaProvider, figmaCssPath.c_str());
@@ -3095,7 +3095,7 @@ void OnAppStartup(GtkApplication* app, gpointer) {
                                                    GTK_STYLE_PROVIDER_PRIORITY_USER + 2);
         g_object_unref(figmaProvider);
     } else {
-        LogPrint(L"figma.css not found via ResolveBundledResourcePath; Figma overlay styling will be missing.");
+        LogPrint(L"styles0.css not found via ResolveBundledResourcePath; Figma overlay styling will be missing.");
     }
 
     // tray icon registers with org.kde.StatusNotifierWatcher when present

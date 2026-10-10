@@ -59,7 +59,7 @@ constexpr RgbColor kWin10ActiveTitlebarColor = { 49, 49, 49 };
 def run_generator(tmp_path, header_text):
     header = tmp_path / "ui_tokens.h"
     header.write_text(header_text, encoding="utf-8")
-    output = tmp_path / "style.css"
+    output = tmp_path / "styles1.css"
     result = subprocess.run(
         [sys.executable, str(TOOLS), str(header), str(output)],
         capture_output=True,

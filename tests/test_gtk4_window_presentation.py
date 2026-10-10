@@ -28,7 +28,7 @@ def test_gapplication_id_matches_desktop_file(repo_root):
 @pytest.mark.posix_only
 def test_win10_titlebar_contract(repo_root):
     code = (repo_root / SOURCE).read_text()
-    css = (repo_root / "resources" / "gtk" / "style.css").read_text()
+    css = (repo_root / "resources" / "gtk" / "styles1.css").read_text()
     helper = code[code.index("GtkWidget* CreateWin10Titlebar"):code.index("GtkWindow* CreateMessageWindow")]
     assert ('gtk_window_set_icon_name(window, DLNA_GTK_APP_ID)' in helper or
             'gtk_window_set_icon_name(window, DLNA_APP_ID)' in helper)
@@ -48,7 +48,7 @@ def test_titlebar_uses_custom_windows_controls(repo_root):
     assert '"win10-close-control"' in code
     assert '"win10-maximize-control"' in code
 
-    css = (repo_root / "resources" / "gtk" / "figma.css").read_text()
+    css = (repo_root / "resources" / "gtk" / "styles0.css").read_text()
     assert "penpot-minimize.svg" in css
     assert "penpot-close.svg" in css
     assert "penpot-maximize.svg" in css
@@ -56,7 +56,7 @@ def test_titlebar_uses_custom_windows_controls(repo_root):
 
 @pytest.mark.posix_only
 def test_penpot_surface_tokens_and_windows_assets(repo_root):
-    css = (repo_root / "resources" / "gtk" / "figma.css").read_text()
+    css = (repo_root / "resources" / "gtk" / "styles0.css").read_text()
     for color in ("#191919", "#1f1f1f", "#252525", "#f0f0f0", "#333333"):
         assert color in css
     assert 'font-family: "Selawik", "Segoe UI Variable Text", "Segoe UI", sans-serif;' in css
@@ -75,7 +75,7 @@ def test_penpot_surface_tokens_and_windows_assets(repo_root):
 def test_main_window_chrome_matches_penpot_without_gtk_chrome(repo_root):
     code = (repo_root / SOURCE).read_text()
     header = (repo_root / "src" / "ui_tokens_posix.h").read_text()
-    css = (repo_root / "resources" / "gtk" / "figma.css").read_text()
+    css = (repo_root / "resources" / "gtk" / "styles0.css").read_text()
 
     assert "kMainWindowBodyHeight = 563" in header
     assert "gtk_window_set_decorated(window, FALSE);" not in code
@@ -111,7 +111,7 @@ def test_remaining_window_bounds_match_penpot(repo_root):
 @pytest.mark.posix_only
 def test_win10_window_chrome_uses_profile_border_shadow_and_focus_state(repo_root):
     code = (repo_root / SOURCE).read_text()
-    css = (repo_root / "resources" / "gtk" / "figma.css").read_text()
+    css = (repo_root / "resources" / "gtk" / "styles0.css").read_text()
 
     assert '"win10-main-titlebar"' in code
     assert '"win10-dialog-titlebar"' in code
@@ -127,7 +127,7 @@ def test_win10_window_chrome_uses_profile_border_shadow_and_focus_state(repo_roo
 @pytest.mark.posix_only
 def test_source_list_has_no_horizontal_scrollbar_and_full_path_tooltips(repo_root):
     code = (repo_root / SOURCE).read_text()
-    css = (repo_root / "resources" / "gtk" / "figma.css").read_text()
+    css = (repo_root / "resources" / "gtk" / "styles0.css").read_text()
 
     assert "GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC" in code
     # One construction point for every source row.

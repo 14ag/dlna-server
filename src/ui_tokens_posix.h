@@ -22,8 +22,8 @@ constexpr int kMainWindowWidth = 426;
 constexpr int kMainWindowHeight = 593;
 constexpr int kMainWindowBodyHeight = 563;
 // Must equal UiTokens::kToolbarHeight (56). GTK takes max(size_request,
-// CSS min-height), so resources/gtk/figma.css `box.toolbar { min-height }`
-// and resources/gtk/style.css `.toolbar { min-height }` must also be 56px
+// CSS min-height), so resources/gtk/styles0.css `box.toolbar { min-height }`
+// and resources/gtk/styles1.css `.toolbar { min-height }` must also be 56px
 // or the rendered toolbar silently grows.
 constexpr int kMainToolbarHeight = 56;
 constexpr int kMainSourceListX = 21;

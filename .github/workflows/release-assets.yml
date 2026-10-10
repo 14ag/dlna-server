@@ -28,6 +28,11 @@ jobs:
         run: |
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-build[0-9]+)?$ ]]
           sudo bash build.sh --deb --appimage --flatpak --version="$RELEASE_TAG"
+      - name: Dump src diff for release notes
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 "${RELEASE_TAG}^" 2>/dev/null || true)
+          bash scripts/release-diff.sh "$PREV_TAG" "$RELEASE_TAG" "$RUNNER_TEMP/src-diff.txt"
+          echo "SRC_DIFF_FILE=$RUNNER_TEMP/src-diff.txt" >> "$GITHUB_ENV"
       - name: Publish release with Linux assets
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

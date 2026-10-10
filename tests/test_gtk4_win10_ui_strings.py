@@ -2,7 +2,7 @@ import pathlib
 
 SOURCE_PATH = pathlib.Path(__file__).resolve().parent.parent / "src" / "gtk4_gui_main.cpp"
 WIN32_SOURCE_PATH = pathlib.Path(__file__).resolve().parent.parent / "src" / "mainwindow.cpp"
-CSS_PATH = pathlib.Path(__file__).resolve().parent.parent / "resources" / "gtk" / "style.css"
+CSS_PATH = pathlib.Path(__file__).resolve().parent.parent / "resources" / "gtk" / "styles1.css"
 
 
 def read_source():

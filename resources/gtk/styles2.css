@@ -14,12 +14,12 @@
  *   -GtkWidget-*, -gtk-icon-source, -GtkScrollbar-* and image assets.
  *
  * Codebase context:
- *   gtk4_gui_main.cpp loads gtk/style.css at application startup and then
+ *   gtk4_gui_main.cpp loads gtk/styles1.css at application startup and then
  *   installs additional application CSS for the dialogs. The current dialog
  *   CSS already defines several of these properties explicitly.
  *
  * Patch rule:
- *   Add these rules to the real gtk/style.css only after checking that the
+ *   Add these rules to the real gtk/styles1.css only after checking that the
  *   corresponding Figma-specific rule is not intentionally controlling the
  *   same property.
  */

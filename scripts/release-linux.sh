@@ -47,6 +47,10 @@ if [ "$NOTES" = "1" ]; then
         COMMITS=$(git -C "$repo" log --oneline "${PREV_TAG}..${TAG}")
     fi
     [ -z "$COMMITS" ] && COMMITS="No commits found."
+    SRC_DIFF=""
+    if [ -n "${SRC_DIFF_FILE:-}" ] && [ -f "$SRC_DIFF_FILE" ]; then
+        SRC_DIFF=$(cat "$SRC_DIFF_FILE")
+    fi
     
     PROMPT="You are a technical writer. Given the following git commit log for release ${TAG} of DLNA Server (a C++ UPnP/DLNA media server), write concise GitHub release notes in markdown.
 Rules:
@@ -56,7 +60,7 @@ Rules:
 Commit log:
 ${COMMITS}"
 
-    REQUEST_BODY=$(jq -n --arg prompt "$PROMPT" '{contents:[{parts:[{text:$prompt}]}]}')
+    REQUEST_BODY=$(jq -n --arg prompt "$PROMPT" --arg diff "$SRC_DIFF" '{contents:[{parts:[{text:$prompt},{text:$diff}]}]}')
     RESPONSE=$(curl -sf -X POST \
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}" \
         -H "Content-Type: application/json" \
