@@ -541,6 +541,7 @@ void SSDP::HandleSearchRequest(SOCKET socket, const SOCKADDR* remoteAddr, int re
     }
 
     std::string firstLine = request.substr(0, firstLineEnd);
+    if (IsSsdpNotifyStartLine(firstLine)) return;
     if (ToLowerAscii(firstLine) != "m-search * http/1.1") {
         DiscoveryLog(L"SSDP request ignored: start line=%hs", firstLine.c_str());
         return;

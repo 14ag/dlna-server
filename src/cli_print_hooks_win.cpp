@@ -487,6 +487,10 @@ bool TryRunPrintHook(int argc, wchar_t** argv, int& exitCode) {
         std::cout << BuildSearchResponseMessage(fields);
         exitCode = 0;
         return true;
+    } else if (wcscmp(argv[i], L"--print-is-ssdp-notify-start-line") == 0 && i + 1 < argc) {
+        std::wcout << (IsSsdpNotifyStartLine(WideToUtf8(argv[++i])) ? L"1" : L"0") << std::endl;
+        exitCode = 0;
+        return true;
     } else if (wcscmp(argv[i], L"--print-ssdp-search-response-send-count") == 0) {
         std::cout << kSearchResponseSendCount << std::endl;
         exitCode = 0;

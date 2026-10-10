@@ -1,0 +1,205 @@
+{
+  "connection_manager_mp4_source_protocol_info": [
+    "http-get:*:video/mp4:DLNA.ORG_PN=AVC_MP4_MP_SD_AAC_MULT5;DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000"
+  ],
+  "description": {
+    "URLBase": "{HOST}",
+    "X_DLNADOC": "DMS-1.50",
+    "deviceType": "urn:schemas-upnp-org:device:MediaServer:1",
+    "icons": [
+      {
+        "depth": "24",
+        "height": "48",
+        "mimetype": "image/png",
+        "url": "/icons/server_icon_48.png",
+        "width": "48"
+      },
+      {
+        "depth": "24",
+        "height": "120",
+        "mimetype": "image/png",
+        "url": "/icons/server_icon_120.png",
+        "width": "120"
+      },
+      {
+        "depth": "24",
+        "height": "256",
+        "mimetype": "image/png",
+        "url": "/icons/server_icon_256.png",
+        "width": "256"
+      }
+    ],
+    "manufacturer": "dlna-server contributors",
+    "modelName": "dlna-server",
+    "presentationURL": "/",
+    "services": [
+      {
+        "SCPDURL": "/ContentDirectory.xml",
+        "controlURL": "/upnp/control/content_directory",
+        "eventSubURL": "/upnp/event/content_directory",
+        "serviceType": "urn:schemas-upnp-org:service:ContentDirectory:1"
+      },
+      {
+        "SCPDURL": "/ConnectionManager.xml",
+        "controlURL": "/upnp/control/connection_manager",
+        "eventSubURL": "/upnp/event/connection_manager",
+        "serviceType": "urn:schemas-upnp-org:service:ConnectionManager:1"
+      }
+    ],
+    "shape": [
+      "/root",
+      "/root/URLBase",
+      "/root/device",
+      "/root/device/UDN",
+      "/root/device/UPC",
+      "/root/device/X_DLNADOC",
+      "/root/device/deviceType",
+      "/root/device/friendlyName",
+      "/root/device/iconList",
+      "/root/device/iconList/icon",
+      "/root/device/iconList/icon/depth",
+      "/root/device/iconList/icon/height",
+      "/root/device/iconList/icon/mimetype",
+      "/root/device/iconList/icon/url",
+      "/root/device/iconList/icon/width",
+      "/root/device/manufacturer",
+      "/root/device/manufacturerURL",
+      "/root/device/modelName",
+      "/root/device/modelNumber",
+      "/root/device/modelURL",
+      "/root/device/presentationURL",
+      "/root/device/serialNumber",
+      "/root/device/serviceList",
+      "/root/device/serviceList/service",
+      "/root/device/serviceList/service/SCPDURL",
+      "/root/device/serviceList/service/controlURL",
+      "/root/device/serviceList/service/eventSubURL",
+      "/root/device/serviceList/service/serviceId",
+      "/root/device/serviceList/service/serviceType",
+      "/root/device/specVersion",
+      "/root/device/specVersion/major",
+      "/root/device/specVersion/minor"
+    ]
+  },
+  "icon_probe": {
+    "/icons/server_icon_120.png": {
+      "content-type": "image/png",
+      "status": 200
+    },
+    "/icons/server_icon_256.png": {
+      "content-type": "image/png",
+      "status": 200
+    },
+    "/icons/server_icon_48.png": {
+      "content-type": "image/png",
+      "status": 200
+    }
+  },
+  "item_metadata": {
+    "attributes": [
+      "id",
+      "parentID",
+      "restricted"
+    ],
+    "childCount": null,
+    "child_elements": [
+      "class",
+      "res",
+      "title"
+    ],
+    "class": "object.item.videoItem",
+    "id": "{ID}",
+    "kind": "item",
+    "parentID": "0",
+    "res": {
+      "protocolInfo": "http-get:*:video/mp4:DLNA.ORG_PN=AVC_MP4_MP_SD_AAC_MULT5;DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000",
+      "size": "{FILE_SIZE}",
+      "url": "{HOST}/media/{ID}.mp4"
+    },
+    "restricted": "1",
+    "title": "test.mp4"
+  },
+  "media_probe": {
+    "head": {
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "{FILE_SIZE}",
+        "content-type": "video/mp4",
+        "contentfeatures.dlna.org": "DLNA.ORG_PN=AVC_MP4_MP_SD_AAC_MULT5;DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000",
+        "transfermode.dlna.org": "Streaming"
+      },
+      "status": 200
+    },
+    "range_0_1": {
+      "body_bytes": 2,
+      "headers": {
+        "accept-ranges": "bytes",
+        "content-length": "2",
+        "content-range": "bytes 0-1/{FILE_SIZE}",
+        "content-type": "video/mp4",
+        "contentfeatures.dlna.org": "DLNA.ORG_PN=AVC_MP4_MP_SD_AAC_MULT5;DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000",
+        "transfermode.dlna.org": "Streaming"
+      },
+      "status": 206
+    }
+  },
+  "root_children": [
+    {
+      "attributes": [
+        "id",
+        "parentID",
+        "restricted"
+      ],
+      "childCount": null,
+      "child_elements": [
+        "class",
+        "res",
+        "title"
+      ],
+      "class": "object.item.videoItem",
+      "id": "{ID}",
+      "kind": "item",
+      "parentID": "0",
+      "res": {
+        "protocolInfo": "http-get:*:video/mp4:DLNA.ORG_PN=AVC_MP4_MP_SD_AAC_MULT5;DLNA.ORG_OP=01;DLNA.ORG_FLAGS=01700000000000000000000000000000",
+        "size": "{FILE_SIZE}",
+        "url": "{HOST}/media/{ID}.mp4"
+      },
+      "restricted": "1",
+      "title": "test.mp4"
+    }
+  ],
+  "root_metadata": {
+    "attributes": [
+      "childCount",
+      "id",
+      "parentID",
+      "restricted"
+    ],
+    "childCount": "1",
+    "child_elements": [
+      "class",
+      "title"
+    ],
+    "class": "object.container.storageFolder",
+    "id": "0",
+    "kind": "container",
+    "parentID": "-1",
+    "restricted": "1",
+    "title": "Root"
+  },
+  "scpd_actions": {
+    "ConnectionManager": [
+      "GetCurrentConnectionIDs",
+      "GetCurrentConnectionInfo",
+      "GetProtocolInfo"
+    ],
+    "ContentDirectory": [
+      "Browse",
+      "GetSearchCapabilities",
+      "GetSortCapabilities",
+      "GetSystemUpdateID",
+      "Search"
+    ]
+  }
+}

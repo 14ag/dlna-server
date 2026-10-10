@@ -528,6 +528,10 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
             std::cout << BuildSearchResponseMessage(fields);
             exitCode = 0; return true;
         }
+        else if (arg == "--print-is-ssdp-notify-start-line" && i + 1 < argc) {
+            std::cout << (IsSsdpNotifyStartLine(argv[++i]) ? "1" : "0") << std::endl;
+            exitCode = 0; return true;
+        }
         else if (arg == "--print-ssdp-search-response-send-count") {
             std::cout << kSearchResponseSendCount << std::endl;
             exitCode = 0; return true;

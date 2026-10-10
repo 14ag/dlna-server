@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <poll.h>
 #include <fcntl.h>
+#include <cerrno>
+#include <cstring>
 #include <filesystem>
 #include <unordered_map>
 #include <thread>
@@ -37,7 +39,10 @@ void AddWatchRecursive(const std::string& rootPath, int depth = 0) {
     std::error_code ec;
     int watchDescriptor = inotify_add_watch(g_inotifyFd, rootPath.c_str(), kWatchMask);
     if (watchDescriptor < 0) {
-        LogPrint(L"inotify watch registration failed for %hs; falling back to poll for this path. Check max_user_watches.", rootPath.c_str());
+        const int err = errno;
+        LogPrint(L"inotify watch registration failed for %hs (%hs); falling back to poll for this path.%ls",
+                 rootPath.c_str(), std::strerror(err),
+                 err == ENOSPC ? L" Raise fs.inotify.max_user_watches." : L"");
         return;
     }
     {

@@ -622,7 +622,8 @@ ScopedFd client(clientSocket);
                     }
                     headers << ConnectionHeader(keepAlive)
                             << "transferMode.dlna.org: Streaming\r\n"
-                            << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n";
+                            << "contentFeatures.dlna.org: " << BuildContentFeaturesForExtension(SourceExtension(item.path), item.mimeType, true) << "\r\n"
+                            << "\r\n";
                     SendAll(clientSocket, headers.str());
                     if (!sendBody) {
                         // head request the headers above are the full
