@@ -57,9 +57,17 @@ def _ssdp_log_path(session):
 
 def _read_ssdp_log(session):
     p = _ssdp_log_path(session)
-    if p.exists():
+    for _ in range(5):
+        try:
+            return p.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            return ""
+        except OSError:
+            time.sleep(0.05)
+    try:
         return p.read_text(encoding="utf-8", errors="replace")
-    return ""
+    except OSError:
+        return ""
 
 
 def _log_has_response_for_st(log_text, st):
@@ -197,7 +205,7 @@ def dlna_server_process_stoppable(dlna_binary, media_source_dir):
 
 def fetch_description(location_url: str) -> tuple[ET.Element, str]:
     parsed = urlparse(location_url)
-    conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+    conn = http.client.HTTPConnection(parsed.hostname or "", parsed.port, timeout=5)
     conn.request("GET", parsed.path or "/description.xml")
     resp = conn.getresponse()
     body = resp.read()
