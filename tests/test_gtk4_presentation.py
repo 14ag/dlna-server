@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.identity import GTK_APP_ID
+from tests.identity import APP_ID, GTK_APP_ID
 
 ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_TEMPLATES = (
@@ -76,14 +76,20 @@ def test_gtk_source_sets_one_identity_before_gtk_starts():
     assert "PosixTray::Initialize(connection, DLNA_GTK_APP_ID," in GTK_SOURCE
 
 
-def test_gtk_source_has_no_late_app_id_override():
+def test_gtk_source_sets_short_wayland_window_id():
+    # WSLg cuts the app list key at the last dot
+    # so the live Wayland window must carry the short id
+    # to match the Start Menu entry and its taskbar icon
     for removed in (
         "DLNA_WSLG_APP_ID",
         "DLNA_APP_ICON",
-        "gdk_wayland_toplevel_set_application_id",
-        "gdkwayland.h",
     ):
         assert removed not in GTK_SOURCE
+    assert "gdk_wayland_toplevel_set_application_id" in GTK_SOURCE
+    assert "gdkwayland.h" in GTK_SOURCE
+    call = GTK_SOURCE.split("gdk_wayland_toplevel_set_application_id(")[1].split(";")[0]
+    assert "DLNA_APP_ID" in call
+    assert "DLNA_GTK_APP_ID" not in call
 
 
 def test_start_menu_launch_contract():
@@ -104,6 +110,22 @@ def test_gui_binary_reports_one_identity(dlna_server_gui_binary):
     values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
     assert values == {
         "PRGNAME": GTK_APP_ID,
-        "PROGRAM_CLASS": GTK_APP_ID,
+        "PROGRAM_CLASS": APP_ID,
         "GTK_APP_ID": GTK_APP_ID,
     }
+
+@pytest.mark.posix_only
+def test_wslg_weston_icon_contract():
+    weston_log = Path("/mnt/wslg/weston.log")
+    if not weston_log.exists():
+        return
+    text = weston_log.read_text(encoding="utf-8", errors="ignore")
+    # the associate notify always carries appIcon nil
+    # the real signal is the loadIconEvent entry and image match
+    matches = re.findall(r"loadIconEvent is signalled\. (\S+)[\s\S]{0,200}?entry (\S+), image (\S+)", text)
+    dlna_icons = [(entry.strip(), image.strip()) for app, entry, image in matches if "dlna" in app.lower()]
+    if dlna_icons:
+        latest_entry, latest_image = dlna_icons[-1]
+        assert latest_entry != "(nil)", f"WSLg weston.log shows entry is (nil): {latest_entry}"
+        assert latest_image != "(nil)", f"WSLg weston.log shows image is (nil): {latest_image}"
+

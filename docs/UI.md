@@ -33,42 +33,64 @@ Titles below are the window captions used in the codebase.
 
 ## WSLg icon and launch identity
 
-The app uses separate values for its internal identity, WSLg window identity,
-icon file, and user-visible name. Keep these mappings in sync:
+WSLg shows the app in two places: the Start Menu and the taskbar.
+They use two different channels. Both channels must agree on one short id.
 
-| Value | Required match | Current value |
+### Start Menu icon channel
+
+WSLg reads the desktop file at
+`/usr/share/applications/com.app.dlna_server_14ag.desktop`.
+It takes the file name, removes `.desktop`, and cuts everything up to
+the last dot. The key becomes `dlna_server_14ag`.
+It reads the `Icon` name and finds the PNG file.
+Then it publishes an app list entry with the key and the icon.
+This entry is what you see in the Start Menu.
+You can check it in `/mnt/wslg/weston.log`:
+
+- `Icon name:com.app.dlna_server_14ag`
+- `Icon file:/usr/share/pixmaps/com.app.dlna_server_14ag.png`
+- `app list entry updated: Key:dlna_server_14ag`
+
+### Start Menu launch process
+
+When you click the Start Menu entry, WSLg runs the `Exec` line:
+
+- `Exec=env DLNA_SERVER_GTK_LAUNCHED=1 /usr/bin/dlna-server-gui`
+
+`/usr/bin/dlna-server-gui` is a small wrapper script.
+It starts the real binary `dlna-server-gui-bin`.
+The binary takes the single-instance lock.
+If a copy is already running, the new copy sends a show
+request to it and then exits. So only one window exists.
+The GUI window appears only when the main loop runs and
+pumps the Wayland socket. A window with no live process
+behind it is dead and cannot move or take clicks.
+
+### Taskbar icon channel
+
+When the live window opens, it sends its Wayland app id.
+WSLg compares this id with the app list key.
+The window must send the short id `dlna_server_14ag`.
+Then WSLg finds the entry and the image:
+
+- `loadIconEvent is signalled. dlna_server_14ag`
+- `entry 0x..., image 0x...` (real pointers, not nil)
+
+Note: the associate line in the log always shows `appIcon: (nil)`.
+That is normal. The entry and image match is the real proof.
+
+### Values that must be equal
+
+| Place | Value | Must equal |
 |---|---|---|
-| Internal GTK app ID | Valid reverse-DNS ID passed to `gtk_application_new` | `com.github.dlna_server_14ag` |
-| WSLg app ID | Desktop `StartupWMClass` and Wayland toplevel app ID | `dlna_server_14ag` |
-| Icon | Desktop `Icon` name and installed PNG basename | `dlna_server_14ag` |
-| Display name | Desktop `Name` shown to the user | `DLNA Server` |
-| Start Menu target | Desktop `TryExec` must point to the public GUI wrapper | `/usr/bin/dlna-server-gui` |
+| Desktop file name | `com.app.dlna_server_14ag.desktop` | Key `dlna_server_14ag` after WSLg cuts at the last dot |
+| Desktop `Icon` name | `com.app.dlna_server_14ag` | PNG file `/usr/share/pixmaps/com.app.dlna_server_14ag.png` |
+| Live Wayland window id | `dlna_server_14ag` | App list key `dlna_server_14ag` |
+| `PROGRAM_CLASS` from `--print-gtk-identity` | `dlna_server_14ag` | Live Wayland window id |
+| Desktop `StartupWMClass` | `com.app.dlna_server_14ag` | X11 window class (X11 fallback only) |
+| `PRGNAME` and `GTK_APP_ID` | `com.app.dlna_server_14ag` | GtkApplication id and D-Bus name |
 
-The GTK application ID must also be valid for D-Bus. CMake derives
-`DLNA_GTK_APP_ID` from the internal app ID by replacing hyphens with
-underscores. With the current internal ID, both values are the same.
+If the window sends the full id with dots, WSLg finds no
+entry and the taskbar shows a generic icon. The Start Menu
+icon still works because it uses the desktop file channel.
 
-### WSLg Start Menu launch
-
-WSLg reads the desktop entry from `/usr/share/applications`. For the Start Menu
-item to appear and launch:
-
-1. The installed desktop file must be named
-	`dlna_server_14ag.desktop` and contain the matching `Name`,
-	`Icon`, `StartupWMClass`, `Exec`, and `TryExec` values above.
-2. `/usr/bin/dlna-server-gui` must exist and be executable. WSLg uses this
-	`TryExec` target when it starts the app from Windows. The wrapper checks for
-	the native GUI binary before launch.
-3. The referenced PNG icon must exist and be readable. WSLg uses this icon for
-	the Start Menu item and for the running taskbar entry.
-4. WSLg must provide a running Wayland session and a session D-Bus. The GTK
-	application ID must be valid for D-Bus so the app can register. The window's
-	Wayland app ID must match `StartupWMClass`, so WSLg can attach the running
-	window to the same Start Menu entry.
-
-The desktop `Exec` and `TryExec` commands both use `/usr/bin/dlna-server-gui`.
-This public wrapper sets fallback WSLg display variables, waits for the Wayland
-socket, and starts a session bus with `dbus-run-session` if WSLg did not provide
-one. It then starts the native GUI binary. The names shown to users remain `DLNA Server`,
-`dlna-server`, and `dlna-server-gui`; users do not need to enter the internal
-app ID.
