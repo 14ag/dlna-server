@@ -1,118 +1,142 @@
 # Changelog
 
-## [Unreleased]
+- The Windows program is now called `dlna-server.exe`. It was `DLNA Server.exe`.
+- On Linux, the commands are `dlna-server` (CLI), `dlna-server-gui` and `dlna-server-gui-bin` (GUI).
+- Installed files now use the internal app id `com.github.dlna_server_14ag`. This includes the desktop entry, icons, and the `.deb` file name.
+- The Windows "Run on startup" entry now uses the new app id. When you turn it off, the old `dlna-server` entry is also removed.
+- The version number is now in the file names of the `.deb` and the Windows `.zip`.
 
-### Changed
-- Media indexing now builds lookup maps off-lock and swaps completed scans into place.
-- Server startup now begins HTTP and SSDP before the background media scan completes.
-- Running servers now watch local media sources and rescan after file changes without a manual restart.
-- Media scans now persist stable file IDs, scan errors, and metadata cache records in `media-cache.tsv` beside `config.ini`.
-- GENA ContentDirectory subscribers now receive async `SystemUpdateID` `NOTIFY` callbacks after successful scan swaps.
-- Remote media access now uses an optional `libcurl` backend instead of spawning `curl` per request.
-- SSDP M-SEARCH MX delays now run on response workers instead of blocking receive loops.
-- Scan, HTTP, SSDP, and description workers now read immutable config snapshots for request-time behavior.
-- Existing media organization settings now apply more consistently across local folders, playlists, and SMB/FTP sources.
-- Playlist order is preserved unless title sorting is enabled or requested by the DLNA client.
-- `FileServerPort` remains accepted in `config.ini`; media file serving uses `Port`.
-- The native POSIX GUI has switched from FLTK to GTK4. `DLNA_ENABLE_FLTK_GUI` is removed; `DLNA_ENABLE_GTK4_GUI` (default `ON`) replaces it. `src/fltk_gui_main.cpp` is deleted; `src/gtk4_gui_main.cpp` is the GTK4 front end.
+New version format: `v1.YY.DDD-buildN` (for example `v1.26.76153-build7`). The old fixed version was `1.7.0`.
 
-### Fixed
-- FTP-hosted playlists now recurse into nested `.m3u8` manifests, log rejected entries, and redact credentials in remote URL logs.
-- POSIX endpoint discovery now skips APIPA IPv4 addresses; Windows advertises all usable IPv4 aliases.
-- Device description metadata can now be configured, including manufacturer, model name, and presentation URL.
-- SOAP control dispatch now uses action-element matching and bounded POST body reads.
-- Windows media, subtitle, and album-art streaming now uses scoped file handles.
-- IP whitelist checks now support CIDR ranges and exact-match hash lookup.
-- POSIX HTTP client threads and in-memory logs are bounded.
-- Remote source failures now produce clearer logs, companion album art lookup covers `thumb` names, and Browse no longer advertises missing album art.
-- Background rescans are now serialized so watch-triggered and manual rescans cannot race on the scan thread handle.
-- Watch mode now reads current config snapshots each poll so source changes are monitored without restart.
-- Watch mode no longer ignores local media entries after a fixed scan-signature cap.
-- Remote content-length probing now uses a concurrency limiter to bound parallel network requests during media scans.
+---
 
-## [1.4.0] - 2026-05-29
+# Highlights
 
-### Added
-- Windows keeps the PC awake while the DLNA server is starting, running, or stopping.
-- Settings now include default playlist entry creation with browse buttons for movie and subtitle paths.
-- DLNA device descriptions now advertise bundled 48, 120, and 256 px PNG icons.
-- Windows and GTK4 source lists now support a text-labeled **Delete** button and keyboard `Delete`.
-- DLNA service handling now includes ConnectionManager SOAP responses, ContentDirectory Search, and companion album-art serving.
-- Advertised UPnP event URLs now accept GENA subscribe and unsubscribe requests.
-- POSIX SSDP now supports IPv6 sockets, M-SEARCH responses, and periodic `ssdp:alive` refreshes.
-- Android VLC smoke tests now cover both the Windows app and the POSIX WSL server path.
-- CI now runs Python tests plus CMake builds on Windows and Linux.
+## Windows app
 
-### Changed
-- Start, stop, and restart now run outside the UI thread and show busy status text.
-- Main toolbar buttons now use text labels, Windows-style spacing, and a dark Windows title bar/frame.
-- Removed disabled thumbnail placeholder controls from desktop settings.
-- Media protocol metadata is now generated from a shared DLNA format table for Browse, HTTP streaming, and ConnectionManager responses.
-- Release scripts now verify downloaded packaging inputs, avoid stale AppImage reuse, and publish Windows assets from GitHub Actions.
-- Added a PDF-derived DLNA framework upgrade blueprint for future protocol hardening work.
-- POSIX desktop builds now use the native GTK4 GUI only. `DLNA_ENABLE_GTK4_GUI=OFF` builds the headless server and skips the GUI launcher.
-- Remote SMB and FTP fetching now launches `curl` without a shell.
-- Config, CLI, and desktop settings now reject invalid ports before the server binds or advertises them.
+- The main window can no longer be resized.
+- Long source paths now show a full-path tooltip when you hover over them. The tooltip has no delay. It only shows when the path is cut off.
+- If you click the main window while a dialog is open, the dialog now flashes and comes to the front. Before, nothing happened.
+- The Help window can no longer be minimized.
+- If a core part of the server stops by itself (HTTP or discovery), the app now stops the server safely and shows this message: "The server stopped unexpectedly and has been shut down. Press Start to resume". It waits for 4 bad checks in a row first, so short restarts do not trigger it.
+- When you change the **Default playlist** setting while the server is running, the app now asks you to restart the server.
+- The app no longer repeats the Windows Firewall check on every start. This makes Start faster after the first time.
+- A very large file (over 2 GB) is now sent correctly to the player. Before, the file size could wrap around and break playback.
+- The "Debug log" no longer writes the control sizes of the Settings window. A new hidden flag does that now.
 
-### Fixed
-- Windows modal sub-windows now preserve quit messages and use the dark DWM frame consistently.
-- IP whitelist reloads are synchronized with HTTP workers.
-- POSIX HTTP workers are tracked and joined during shutdown, with receive and send timeouts applied.
-- POSIX media scanning continues through unreadable directory entries.
+## Linux app (GTK4)
 
-### Removed
-- Removed the Python/Tk POSIX GUI fallback and its packaging paths.
+- New look that matches the Windows 10 dark style: custom title bar with minimize and close buttons, new colors, and the Selawik font.
+- The window now has a 16 px icon in the title bar. A new 16 px icon is installed for the desktop.
+- Dialogs now block the main window. Clicking the main window flashes the dialog.
+- Press **Esc** to close any dialog. Press **Backspace** to close it when you are not typing in a text field.
+- Hovering over a cut-off source path shows a popup with the full path.
+- Message boxes now open on top of the dialog that is open (for example, on top of Settings).
+- Underlined access keys (mnemonics) now work on buttons in the main window and in the dialogs.
+- Closing the window while the server is starting or stopping now works correctly. The app finishes the stop and then exits.
+- The WSLg Start Menu and taskbar icon now use one matching short id. The launcher script `dlna-server-gui` finds the real program more reliably and writes a log to `~/.cache/dlna-server/gui-launch.log` when it fails.
+- New package formats: **AppImage** and **Flatpak** (besides `.deb`).
+- A new `postinst` step for the `.deb` package.
 
-### Security
-- Removed shell command construction from remote media fetching to block command injection through remote URLs.
-- Rejected out-of-range ports consistently across supported configuration paths.
+## Command line
 
-## [1.3.0] - 2026-05-24
+- `--help` now prints a full, aligned help text with a usage line. The program name is correct for each platform.
+- New flag `--no-debug`: turns off debug logging for this run only. It does not change your saved config.
+- Plain paths without a flag (`dlna-server PATH...`) work the same as `--source`. This is now in the help.
+- `--configure-firewall` and the "Run on Windows startup" setting are only shown on Windows.
+- An unknown option now prints "Unknown option" and the help, and exits with code 2.
+- `--print-app-id` prints the app id.
+- If a second app is started with `--source`, the first one switches to the new sources. You can read the current sources with `--print-effective-media-sources`. It now also works on Windows.
+- On Linux, the single-instance lock and socket are in `/tmp/com.github.dlna_server_14ag-<uid>/`. If the lock cannot be opened, a second app does not start (it fails closed).
 
-### Changed
-- Windows and Linux desktop menus now show the app as **DLNA Server**.
-- DLNA Server now accepts `.m3u`, `.m3u8`, and `.pls` playlist files as media sources.
-- DLNA Server can read media from SMB and FTP shares such as `smb://user:pass@server/share` and `ftp://user:pass@server:21/media`.
-- Windows, Linux, and macOS desktop screens now let you add folders, playlist files, and network shares as media sources.
-- Linux keeps the command names `dlna-server` and `dlna-server-gui`, so existing shortcuts and scripts keep working.
-- If the server name is blank, DLNA Server now uses the computer hostname. A name saved in `config.ini` still takes priority.
-- Linux desktop installs now include richer app details for desktop software centers and app launchers.
+## Finding the server (discovery) and playing media
 
-### Fixed
-- The Linux desktop app opens more reliably under WSLg.
+These changes make the server easier to find and more reliable for players.
 
-## [1.2.0] - 2026-05-21
+- **Faster discovery after start.** The server now sends "alive" announcements at 0, 1, 3, 8, and 20 seconds after start. Before, it sent one short burst.
+- **More frequent refresh.** The server now repeats its announcements every 4 to 6 minutes. It was 12 to 14.5 minutes. Players with a short discovery window find it more often.
+- **Replies to searches are more reliable.** Each reply is sent twice, has `Content-Length: 0`, and is never delayed more than 1 second. Some players (for example VLC) stop waiting for a reply after a short time.
+- **One address per network card.** The server now advertises one address for each adapter. Before, a second address on the same adapter could replace a good address on the player and break the connection.
+- **Better address choice on IPv6.** The server now picks the right network card for link-local IPv6 devices.
+- **Search replies on Linux use the right network card.** The unicast interface option was in the wrong byte order and did nothing. It is fixed.
+- **No restart storms.** When the network changes (cable, Wi-Fi, sleep and resume), the server waits a short time and restarts discovery only if the real address list changed. Rapid changes are joined into one restart.
+- **Stable boot id.** The server keeps the same `BOOTID` and `CONFIGID` while the app runs. Players do not reload the device description after each restart.
+- **Goodbye messages and last replies.** On stop, the server sends pending search replies that are due, then sends "byebye".
+- **Link-local IPv6 is dropped** when a better address exists. Phones with Wi-Fi and mobile data work better this way.
+- **Virtual network cards are skipped**, unless they have a default gateway (for example, a bridged VM card). Real LAN bridges still work.
+- **Zero-byte files** now get `Content-Length: 0` on Linux. Before, the player could wait forever.
+- **Browse requests with `RequestedCount=0`** now return at most 16,000 items per answer. Players page the rest.
+- **Search** with a title or class filter is faster and uses a memory limit (256 folders and 200,000 items).
+- **Playlist subtitles and remote files** are handled in the same way on both platforms.
+- The server icon is read once and kept in memory.
 
-### Added
-- Linux, macOS, and other POSIX systems can now run DLNA Server from the command line.
-- Linux now has a native desktop app with folder management, settings, logs, and start/stop controls.
-- DLNA Server can enforce an IP whitelist on POSIX systems.
-- Companion subtitle files are now discovered and advertised to compatible Samsung DLNA clients.
-- Media responses now include better byte-range support for seeking.
-- The server now handles more Browse requests through `ContentDirectory:1`.
+## Folders, scanning, and the library
 
-### Changed
-- Configuration now lives beside the app as `config.ini`.
-- Windows and POSIX builds now use the same behavior for byte ranges, `HEAD` requests, subtitles, and invalid request bodies.
-- Media scanning now skips hidden, system, and unreadable files. It also avoids symlink and reparse loops.
-- Linux AppImage downloads now use the native Linux desktop app.
+- A rescan no longer makes media disappear while it runs. Old items stay playable until the scan finishes. Then only the items that are really gone are removed.
+- Stopping the server now stops all running scans.
+- Scanning is faster and uses fewer threads: each source runs in a limited thread pool. Subtitles and cover art are found with one folder listing, not many file checks.
+- Folder watching (automatic rescan) now works on Windows. Before, the change message could never arrive. On Linux, it handles deep folders (limit 64 levels) and busy folders better.
+- Item IDs are reused after cleanup, so the ID space does not run out on long runs.
+- Cover art file names are now matched without case problems (`Folder.JPG`, `cover.jpg`, and so on).
+- A source that is one single media file now shows the file directly under the root. It does not make a folder around it.
 
-### Fixed
-- Empty-file byte-range requests now return the correct `416` response.
-- Malformed Browse requests now return a DLNA SOAP fault instead of breaking the request.
-- Bad `Content-Length` requests are now rejected more consistently.
+---
 
-## [1.0.0] - 2026-04-10
 
-### Added
-- Native Windows app for managing media folders and server settings.
-- System tray support with startup minimization.
-- Media streaming over HTTP with byte-range seeking.
-- Multicast SSDP discovery for local DLNA and UPnP devices.
-- `ContentDirectory:1` Browse support.
-- Directory scanning with flat-folder browsing.
-- Support for common video, audio, and image files, including MP4, MKV, AVI, TS, MP3, FLAC, and JPG.
-- Device access control by IP address.
-- User-configurable server name, ports, and media settings.
-- Artist and album grouping for audio folders.
-- Optional start-on-boot support on Windows.
+## Crashes and data races
+
+- An error inside a worker thread no longer ends the whole app. The thread pool and the Windows thread pool now catch and log errors.
+- Closing the app or using `--kill-server` while the server starts or stops no longer leaks memory or loses the result message.
+- The server `Start` and `Stop` calls, and the HTTP and SSDP `Start` and `Stop` calls, now reject a second call at the same time. This removes a race.
+- `Start` and `Rescan` use one lock, so a rescan cannot wipe the library while the server starts.
+- The thread pool runs leftover tasks on exit. A waiting scan can no longer hang forever.
+- The Windows dialogs now handle a failed message loop (`GetMessage` returns -1) safely.
+- Config values are read and saved safely from many threads. The config file is written without holding the lock.
+- Messages received from another app (`WM_COPYDATA`) are checked for a valid size before use.
+- Number parsing is now strict. Wrong numbers no longer throw errors.
+
+## Memory and speed
+
+- The log file path is calculated once. The log file is written outside the main log lock, so one slow write cannot block all threads.
+- The IP address and settings caches have limits. They use batch removal where needed.
+- Search memory has a total item limit.
+- The catalog list reserves memory from the size of the last scan.
+- GENA event delivery reuses one curl handle per worker thread.
+- IPv4 and IPv6 sends use separate locks.
+- Moved shared code into common files (`server_common.cpp`, `netutils_common.cpp`, `fs_backend`) so both platforms run the same logic.
+- Removed old and unused code: `fs_change_debounce.h`, the old Windows firewall helpers, and the old startup scripts.
+
+---
+
+# Part 3: For developers and maintainers
+
+## Build and release
+
+- One new identity file, `identity.env`, holds the app id, the reverse DNS prefix, and the product name. CMake builds `app_identity.h` from it.
+- New `scripts/version.py` creates the version. It no longer asks questions. It adds a build number when that version already exists in `output/`.
+- New scripts: `build_linux.sh`, `build_deb.sh`, `build_appimage.sh`, `build_flatpak.sh`, `install_linux.sh`, `lib_identity.sh`. Old scripts `build-linux.sh` and `install-dlna-server-linux.sh` are removed.
+- `build.sh` options: `--deb`, `--appimage`, `--flatpak`, `--install`, `--release [--notes] [--update=<tag>]`, `--version=<tag>`. `build.bat` accepts `--version`.
+- The GitHub release workflow now needs a tag when it is started by hand. It checks that the tag has the form `vX.Y.Z` or `vX.Y.Z-buildN`. It uses `GH_TOKEN`. It uses Gemini release notes only when `GEMINI_API_KEY` is set.
+- The release publish step only selects files that match the version and the platform.
+- The CMake zlib search code was removed. The Windows resource version is now split into the 4 fields the resource compiler needs.
+- The GTK app now links with X11.
+- The generated files `generated/version.h`, the old Flatpak files, and test logs were removed from the repository. New `.gitignore` entries cover them.
+- `.gitattributes` forces LF line endings for the Linux and macOS launcher scripts.
+- Agent tool files moved or changed: `.opencode/opencode.json`, `.codex/config.toml`, `AGENTS.MD`, `UI/AGENT.md`.
+
+## Tests
+
+- Tests use Python (`pytest`). `pytest.ini` has new platform markers. The test folder under `tmp/` is cleaned after each session.
+- Many new hidden `--print-*` flags let tests check logic without a GUI. They are split into `cli_print_hooks_win.cpp` and `cli_print_hooks_posix.cpp`. Examples: health check, close pending state, modal stack, SSDP search response, SSDP boot id, search cache budget, icon cache, interface policy.
+- `--dump-widget-geometry` (and the matching GTK flag) prints control positions and sizes for UI comparison.
+
+## Documentation
+
+- New: `docs/TESTING.md`, `docs/UI.md`, `docs/gtk4_windows10_ui_design_guide.md`, `docs/release-pipeline-white-box-report.md`.
+- Updated: `README.md`, `docs/BUILD.md`, `docs/ARCHITECTURE.md`, `docs/CONFIGURATION.md`, `docs/HTTP-SERVER.md`, `docs/specs.md`.
+- The README credits the B00merang-Project Windows 10 theme.
+- The font Selawik (SIL Open Font License) is now included.
+
+## Known risks (from the release report)
+
+- The hosted Linux build (AppImage, Flatpak, apt packages) still needs a real GitHub Actions run to confirm it works.

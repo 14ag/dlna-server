@@ -1,53 +1,144 @@
-# Configuration Reference
+# Configuration
 
-Settings persist to `config.ini`, a single `[Settings]` section, key=value per line. Location:
+This page lists every setting, command-line option, environment variable and file the app uses.
 
-- Windows: next to the executable (`GetModuleFileNameW` directory)
-- POSIX: next to the running binary, resolved via `/proc/self/exe` (Linux) or `_NSGetExecutablePath` (macOS)
+## Where files live
 
-The file is written UTF-8 with a BOM (`Config::Save`), and read back tolerating both UTF-8-with-BOM and UTF-16LE-with-BOM input (`ReadConfigFile` in `config.cpp` handles the `0xFF 0xFE` marker explicitly — a config file hand-edited in a Windows text editor that defaults to UTF-16 will still load).
+| File | Windows | Linux |
+|---|---|---|
+| `config.ini` | Next to the program file. | `$XDG_CONFIG_HOME/dlna-server/config.ini` if that variable is set to an absolute path. Otherwise `~/.config/dlna-server/config.ini`. If no home folder is found, `/tmp` is used. |
+| `debug.log` | Next to `config.ini`. | Next to `config.ini`. |
+| `default.m3u` | Next to `config.ini`. | Next to `config.ini`. |
+| `media-cache.tsv` | Next to `config.ini`. | Next to `config.ini`. |
 
-## Fields
+On Linux, if no `config.ini` exists at the new place but one exists next to the program, the app copies it once.
 
-| Key | Type | Default | Notes |
-|---|---|---|---|
-| `ServerName` | string | hostname | UPnP friendly name |
-| `Port` | int | `8200` | HTTP port; validated 1–65535 (`TryParsePortStrict`) |
-| `FileServerPort` | int | `8201` | Deprecated — if it differs from `Port`, a log line notes media is served on `Port` instead |
-| `FlatFolderStyle` | bool (`0`/`1`) | `0` | Merge subfolder contents into the parent container instead of creating nested containers |
-| `ShowFileNamesInsteadOfTitles` | bool | `0` | Use the raw filename as the DIDL title instead of the derived stem/playlist title |
-| `ProxyStreams` | bool | `0` | Force all remote `<res>` URLs through this server's `/media/{id}` proxy instead of exposing the origin URL directly (see `ShouldProxyRemoteUrl` in `contentdirectory.cpp` — URLs with embedded credentials are always proxied regardless of this setting) |
-| `SortByTitle` | bool | `0` | Sort children by natural-order title instead of scan order; used as the default `SortCriteria` when a `Browse`/`Search` request supplies none |
-| `DoNotShowAllMediaFolders` | bool | `0` | Reserved for hiding aggregate "all media" containers |
-| `AddArtistAlbumFolders` | bool | `0` | Mirror audio/video items under derived `Artist/Album` containers in addition to their source location |
-| `DebugLog` | bool | `0` | Enables verbose SSDP discovery logging (`DiscoveryLog` in `ssdp.cpp`) and writes all log lines to `debug.log` next to `config.ini`, in addition to the in-memory ring buffer |
-| `RunOnBoot` | bool | `0` | Windows: writes/removes an `HKCU\...\Run` value named `com.github.dlna_server_14ag` launching with `--headless` (a legacy `dlna-server` value is also removed when disabling). POSIX: accepted but not yet wired to a service manager (`Config::SetRunOnBoot` is a no-op on POSIX) |
-| `DefaultPlaylistEnabled` | bool | `0` | Scan `DefaultPlaylistPath` as an additional source named "Default playlist" |
-| `DefaultPlaylistPath` | string | `<config-dir>/default.m3u` | Created empty if it doesn't exist when an entry is first appended via the GUI |
-| `IPWhiteList` | string | empty | Comma-separated list of IPv4/IPv6 addresses and/or CIDR ranges (e.g. `192.168.1.50,10.0.0.0/24,fe80::1`). Empty means all addresses are allowed — see `IPWhitelist::IsAllowed` |
-| `DeviceUUID` | string | generated on first run | UPnP device UUID; generated once and persisted, not regenerated on subsequent loads |
-| `DeviceManufacturer` | string | `dlna-server contributors` | `<manufacturer>` in `description.xml` |
-| `DeviceModelName` | string | `dlna-server` | `<modelName>` in `description.xml` |
-| `PresentationURL` | string | `/` | `<presentationURL>` in `description.xml` |
-| `BackgroundScanEnabled` | bool (`0`/`1`) | `0` | Watch media folders for filesystem changes and trigger rescans automatically. Poll-based, 5‑second interval — see `source_watcher.cpp` |
-| `NetworkInterfaceAllowList` | string | empty | Comma-separated list of network adapter names to use for SSDP and HTTP. Empty means all adapters are eligible. Matching is case-insensitive substring match against the adapter's friendly name (Windows) or interface name (POSIX) — filtering is applied in `EnumerateNetworkEndpoints()` each time endpoints are refreshed |
-| `MediaSources` | string (quoted-comma list) | empty | Comma-separated list of source paths/URLs; each entry is double-quoted, embedded quotes are doubled (`""`). Written by `BuildQuotedCommaList`, parsed by `ParseQuotedCommaList`. Config files predating the comma format (legacy pipe-delimited, `|` separator with `\`-escaping) are still read via `DecodeLegacyPipeDelimitedSources` and silently upgraded on first save |
+`debug.log` is written only when **Debug log** is on. The app empties it the first time it opens it in each run.
 
-## Media source types
+## config.ini format
 
-Each `MediaSources` entry is classified at scan time, not at config-parse time:
+The file is UTF-8 with a byte order mark, with one `[Settings]` section. Lines outside `[Settings]` are ignored. Lines that start with `;` or `#` are comments. The Windows app also reads UTF-16 LE files.
 
-- **Local folder** — any path that isn't a playlist extension or FTP/FTPS URL
-- **Playlist file** — path ends in `.m3u`, `.m3u8`, or `.pls` (`IsPlaylistSourcePath`)
-- **Network folder** — `ftp://` or `ftps://` URL (`IsNetworkShareUrl`); directory listing is attempted, individual files and nested playlists inside are scanned
-- **Removed (SMB)** — `smb://`/`smbs://` entries are recognized and logged as unsupported rather than silently ignored, so an old config doesn't look like it lost a source for no reason
+The app writes the whole file when you save in the app. It rewrites comments and unknown keys away. Edit the file only while the app is closed.
 
-`http://`/`https://` single-file sources are supported as playlist entries and as direct `--source` values, but are not walked as directories (no HTTP directory-listing support — see `ListRemoteDirectory` in `network_sources.cpp`).
+```ini
+[Settings]
+ServerName=MY-PC
+Port=8200
+MediaSources="D:\Media","E:\Video"
+```
 
-## Environment variable
+### Keys
 
-- `DLNA_SERVER_SKIP_FIREWALL` (Windows) — if set (to any value, including empty), `Server::Start()` skips the interactive firewall-access check. Useful in CI or when firewall rules are provisioned out-of-band.
+| Key | Type | Default | Needs restart | Meaning |
+|---|---|---|---|---|
+| `ServerName` | text | Computer name | Yes | Name players show. An empty value uses the default. |
+| `Port` | 1-65535 | `8200` | Yes | HTTP port. An invalid value uses `8200`. |
+| `IPWhiteList` | text | empty | Yes | Comma-separated IP addresses or CIDR ranges. See [IP whitelist](#ip-whitelist). |
+| `MediaSources` | list | empty | No | Your sources. See [MediaSources format](#mediasources-format). |
+| `FlatFolderStyle` | 0/1 | `0` | Yes | Merge subfolders into the source folder. |
+| `ShowFileNamesInsteadOfTitles` | 0/1 | `0` | Yes | Use the file name as the title. |
+| `ProxyStreams` | 0/1 | `0` | Yes | Always proxy remote media. |
+| `SortByTitle` | 0/1 | `0` | Yes | Sort items by title. |
+| `DoNotShowAllMediaFolders` | 0/1 | `0` | Yes | Stored. Not read when the catalog is built. |
+| `AddArtistAlbumFolders` | 0/1 | `0` | Yes | Add artist and album folders for audio and video. |
+| `BackgroundScanEnabled` | 0/1 | `0` | Yes | Scan again when local folders change. |
+| `DefaultPlaylistEnabled` | 0/1 | `0` | Yes | Share the default playlist. |
+| `DefaultPlaylistPath` | path | `default.m3u` next to `config.ini` | No | File used as the default playlist. No Settings field. |
+| `DebugLog` | 0/1 | `0` | Yes | Write `debug.log`. |
+| `RunOnBoot` | 0/1 | `0` | No | Windows only. Adds the app to the current user's Run list with `--headless`. Saved but ignored on Linux. |
+| `DeviceUUID` | UUID | Generated | No | Device identity. Created on first run and saved. Keep it stable. |
+| `DeviceManufacturer` | text | `dlna-server contributors` | No | Shown in the device description. |
+| `DeviceModelName` | text | `dlna-server` | No | Shown in the device description. |
+| `PresentationURL` | text | `/` | No | Presentation URL in the device description. |
+| `NetworkInterfaceAllowList` | list | empty | No | Network adapters to use. No Settings field. See [Network adapters](#network-adapters). |
+| `FileServerPort` | number | none | n/a | Old key. Read and ignored. It is not written again. |
 
-## Runtime overrides
+"Needs restart" means the server reads the value once when it starts. After you change it in Settings, the app asks to restart a running server. Keys marked "No" are not part of that check; edit them with the server stopped.
 
-Command-line flags (`--port`, `--name`, `--uuid`, `--source`, `--debug`) apply on top of the loaded config for that process instance and are not written back to `config.ini` unless the GUI's Settings dialog is used, which calls `Config::Save()` explicitly. These flags work the same way on Windows (headless mode or regular window) and on POSIX (both the desktop GUI and the command-line binary).
+### MediaSources format
+
+Each path is in double quotes. Paths are separated by commas. A double quote inside a path is written twice.
+
+```ini
+MediaSources="D:\Media","ftp://user:pass@nas/media","D:\Playlists\road trip.m3u8"
+```
+
+A single unquoted path without a comma is also accepted. An old file that uses `|` between paths is converted on the next load and saved in the new format.
+
+### IP whitelist
+
+A comma-separated list. Each item is one IP address (IPv4 or IPv6) or a CIDR range such as `192.168.1.0/24` or `fd00::/8`.
+
+- An empty list allows every address.
+- The check runs when a client connects to the HTTP port. Blocked clients get `403 Forbidden`.
+- IPv6 zone IDs (`%eth0`) are ignored.
+- The list does not filter SSDP discovery messages.
+
+### Network adapters
+
+By default the server advertises on every active adapter, except adapters that look virtual and have no default gateway. Set `NetworkInterfaceAllowList` to choose adapters yourself.
+
+```ini
+NetworkInterfaceAllowList=Ethernet,Wi-Fi
+```
+
+- Items are separated by commas. An item matches when it appears anywhere in the adapter name.
+- Windows ignores letter case. Linux does not.
+- When the list is not empty, only matching adapters are used. The virtual-adapter rule is not applied.
+
+See [Discovery Deep Dive](Discovery.md) for how adapters are chosen.
+
+## Command-line options
+
+| Option | Meaning |
+|---|---|
+| `--headless`, `-h` | Windows: start without a window (tray icon only). Linux: accepted and ignored. |
+| `--port N` | HTTP port, 1-65535. |
+| `--name NAME` | Server name. |
+| `--uuid UUID` | Device UUID. |
+| `--source "A","B"` | Use these sources for this run. Replaces the sources in `config.ini` for this run. Not saved. |
+| `PATH...` | Same as `--source` for each path. |
+| `--kill-server`, `-k` | Stop the running instance and close it. |
+| `--debug` | Turn on the debug log. |
+| `--no-debug` | Turn off the debug log for this run. |
+| `--configure-firewall` | Windows only. Adds the firewall rules and exits. Needs administrator rights. Use with `--port N`. |
+| `--help` | Show the option list. |
+
+An unknown option that starts with `-` prints the option list and exits with code 2.
+
+Options starting with `--print-` or `--dump-` are hidden test hooks. They are not part of the product.
+
+### Which options are saved
+
+| Option | Windows | Linux |
+|---|---|---|
+| `--port`, `--name`, `--uuid`, `--debug` | Used for this run. A later save from the app writes them to `config.ini`. | Saved to `config.ini` at start. |
+| `--no-debug` | This run only. | This run only. |
+| `--source`, `PATH` | This run only. | This run only. |
+
+### How sources from the command line behave
+
+- While they are active, the app ignores the sources in `config.ini` and the default playlist.
+- When the server stops, they are cleared.
+- If the app already runs, the new instance sends its sources to the running one. The running instance restarts its server with those sources.
+- On Windows, giving any source also implies `--headless`.
+- Linux `dlna-server` command: a second launch stops the first instance and takes over.
+
+## Environment variables
+
+| Variable | Used by | Effect |
+|---|---|---|
+| `DLNA_SERVER_SKIP_FIREWALL` | Windows app | Any value, even empty, skips the firewall check when the server starts. |
+| `XDG_CONFIG_HOME` | Linux app | Base folder for `config.ini` if it is an absolute path. |
+| `HOME` | Linux app | Used when `XDG_CONFIG_HOME` is not usable. |
+| `DLNA_SERVER_BIN`, `DLNA_SERVER_GUI_BIN` | Linux launcher | Overrides the path of the `dlna-server` and `dlna-server-gui-bin` programs. |
+
+Build-time variables are in the [Development Guide](Development-Guide.md).
+
+## Files the app writes
+
+- `config.ini`: settings and sources.
+- `default.m3u`: written by **Add...** in Settings. Standard M3U with `#EXTINF`, `#DLNA-SUBTITLE:` and `#EXTVLCOPT:sub-file=` lines.
+- `media-cache.tsv`: object IDs. See [Media Library Deep Dive](Media-Library.md). It is safe to delete. IDs change after that.
+- `debug.log`: log lines when **Debug log** is on.
