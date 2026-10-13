@@ -41,7 +41,7 @@ stamped_desktop="$repo_root/packaging/flatpak/${DLNA_GTK_APP_ID}.stamped.desktop
 stamped_metainfo="$build_root/${DLNA_GTK_APP_ID}.metainfo.xml"
 release_date="$(date -u +%Y-%m-%d)"
 stamp_identity "$repo_root/packaging/flatpak/manifest.yml.in" | sed -e "s|@PROJECT_VERSION@|$version|g" > "$stamped_manifest"
-stamp_identity "$repo_root/packaging/linux/portable.desktop.in" > "$stamped_desktop"
+stamp_identity "$repo_root/packaging/linux/portable.desktop.in" | tr -d '\r' > "$stamped_desktop"
 stamp_identity "$repo_root/packaging/linux/metainfo.xml.in" | sed -e "s|@PROJECT_VERSION@|$version|g" -e "s|@DLNA_RELEASE_DATE@|$release_date|g" > "$stamped_metainfo"
 
 _pkgs=(flatpak flatpak-builder)
@@ -72,7 +72,7 @@ if [ -d "$repo_root/tmp" ]; then
     mkdir -m 700 "$repo_root/tmp"
 fi
 
-flatpak-builder --force-clean --disable-rofiles-fuse --state-dir="$build_root/flatpak-state" "$flatpak_build" "$stamped_manifest" || true
+flatpak-builder --force-clean --disable-rofiles-fuse --state-dir="$build_root/flatpak-state" "$flatpak_build" "$stamped_manifest"
 mkdir -p "$flatpak_build/app/share/appdata" "$flatpak_build/app/share/metainfo"
 cp -f "$stamped_metainfo" "$flatpak_build/app/share/metainfo/${DLNA_GTK_APP_ID}.metainfo.xml"
 cp -f "$stamped_metainfo" "$flatpak_build/app/share/appdata/${DLNA_GTK_APP_ID}.appdata.xml"
@@ -85,4 +85,3 @@ flatpak build-export "$flatpak_repo" "$flatpak_build" stable
 flatpak build-bundle "$flatpak_repo" "$flatpak_bundle" "$DLNA_GTK_APP_ID" stable
 
 echo "Flatpak bundle created: $flatpak_bundle"
-
