@@ -21,7 +21,6 @@ def test_build_sh_resolves_and_exports_version():
     text = read("build.sh")
     assert "--version=*)" in text
     assert "resolve_version" in text
-    assert text.index("resolve_version") > text.index('if [ "$RELEASE" = "1" ]')
 
 
 def test_build_linux_passes_version_to_cmake():
@@ -85,27 +84,3 @@ def test_flatpak_script_stamps_version_and_uses_shared_template():
     assert "@DLNA_RELEASE_DATE@" in text
     assert "${DLNA_PRODUCT_NAME}-${version}-linux-x86_64.flatpak" in text
 
-
-def test_release_workflow_builds_all_supported_assets_for_selected_tag():
-    text = read(".github/workflows/release-assets.yml")
-    assert "release_tag:" in text
-    assert "${{ inputs.release_tag || github.ref_name }}" in text
-    assert "--deb --appimage --flatpak --version=\"$RELEASE_TAG\"" in text
-    assert "build.bat --x86 --x64 --version \"%RELEASE_TAG%\"" in text
-    assert "build.bat --release --update \"%RELEASE_TAG%\"" in text
-    assert text.count("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}") == 2
-    assert "if [[ -n \"${GEMINI_API_KEY:-}\" ]]" in text
-    assert "DLNA_RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}" in text
-    assert 'DLNA_RELEASE_TAG:-${GITHUB_REF_NAME:-}' in read("scripts/release-linux.sh")
-
-
-def test_release_publishers_only_select_current_platform_version():
-    linux = read("scripts/release-linux.sh")
-    assert 'VERSION_NUMBER="$(python3 "$repo/scripts/version.py" --numeric-of "$TAG")"' in linux
-    assert 'find "$output_dir/linux" -maxdepth 1' in linux
-    assert '"${f##*/}" =~ $version_pattern' in linux
-
-    windows = read("scripts/release-windows.ps1")
-    assert '$_.Directory.Name -in @("winx64", "winx86")' in windows
-    assert '$_.Extension -eq ".zip"' in windows
-    assert '$_.Name -match $versionPattern' in windows

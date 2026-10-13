@@ -1,0 +1,75 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build:
+        description: optional number appended to the version tag as build N
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DLNA_BUILD: ${{ inputs.build }}
+        run: |
+          # existing release tags become marker files so version.py bumps the patch digit itself
+          mkdir -p output
+          gh release list --limit 200 --json tagName --jq '.[].tagName' | while read -r t; do : > "output/$t"; done
+          echo "tag=$(python3 scripts/version.py)" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: version
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      version: ${{ needs.version.outputs.tag }}
+
+  linux:
+    needs: version
+    uses: ./.github/workflows/build-linux.yml
+    with:
+      version: ${{ needs.version.outputs.tag }}
+
+  publish:
+    needs: [version, windows, linux]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: output
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: output/linux
+      - run: >
+          gh release create "$TAG"
+          --target "$GITHUB_SHA"
+          --title "$TAG"
+          --notes "Release assets build."
+          output/winx64/*.zip output/winx86/*.zip output/linux/*
+
+  notes:
+    needs: [version, publish]
+    uses: ./.github/workflows/release-notes.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+    secrets: inherit

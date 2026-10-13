@@ -1,0 +1,36 @@
+name: release-notes
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+    secrets:
+      GEMINI_API_KEY:
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: release tag or blank for the latest release
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  notes:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: |
+          TAG="${TAG:-$(gh release view --json tagName --jq .tagName)}"
+          bash scripts/release-notes.sh "$TAG" > notes.md
+          gh release edit "$TAG" --notes-file notes.md

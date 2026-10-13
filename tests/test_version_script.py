@@ -48,22 +48,22 @@ def isolated_script(tmp_path):
 def test_october_example(tmp_path):
     result = run("--patch", "3", "--now", "2026-10-05T14:07", script=isolated_script(tmp_path))
     assert result.returncode == 0
-    assert result.stdout == f"v{MAJOR}.26.76153-build7\n"
+    assert result.stdout == f"v{MAJOR}.26.76153\n"
 
 
 def test_first_of_january_pads_to_two_digits(tmp_path):
     result = run("--patch", "0", "--now", "2026-01-01T00:00", script=isolated_script(tmp_path))
-    assert result.stdout == f"v{MAJOR}.26.07030-build0\n"
+    assert result.stdout == f"v{MAJOR}.26.07030\n"
 
 
 def test_last_day_of_year_stays_five_digits(tmp_path):
     result = run("--patch", "9", "--now", "2026-12-31T23:59", script=isolated_script(tmp_path))
-    assert result.stdout == f"v{MAJOR}.26.92969-build59\n"
+    assert result.stdout == f"v{MAJOR}.26.92969\n"
 
 
 def test_default_version_has_no_patch_suffix_when_unused(tmp_path):
     result = run("--now", "2026-10-05T14:07", script=isolated_script(tmp_path))
-    assert result.stdout == f"v{MAJOR}.26.7615-build7\n"
+    assert result.stdout == f"v{MAJOR}.26.7615\n"
     assert result.stderr == ""
 
 
@@ -76,7 +76,7 @@ def test_patch_increments_until_version_is_unused(tmp_path):
 
     result = run("--now", "2026-10-05T14:07", script=script)
     assert result.returncode == 0
-    assert result.stdout == f"v{MAJOR}.26.76152-build7\n"
+    assert result.stdout == f"v{MAJOR}.26.76152\n"
 
 
 def test_patch_increments_past_single_digits(tmp_path):
@@ -89,12 +89,12 @@ def test_patch_increments_past_single_digits(tmp_path):
 
     result = run("--now", "2026-10-05T14:07", script=script)
     assert result.returncode == 0
-    assert result.stdout == f"v{MAJOR}.26.761510-build7\n"
+    assert result.stdout == f"v{MAJOR}.26.761510\n"
 
 
 def test_patch_from_environment(tmp_path):
     result = run("--now", "2026-10-05T14:07", env_extra={"DLNA_PATCH": "5"}, script=isolated_script(tmp_path))
-    assert result.stdout == f"v{MAJOR}.26.76155-build7\n"
+    assert result.stdout == f"v{MAJOR}.26.76155\n"
 
 
 def test_prompt_never_reaches_stdout():
