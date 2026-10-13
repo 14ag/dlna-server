@@ -1,4 +1,4 @@
-name: release-notes
+name: Add release notes
 
 on:
   workflow_call:
