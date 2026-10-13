@@ -1,4 +1,4 @@
-name: build-linux
+name: build deb-flatpak-appimage
 
 on:
   workflow_call:
