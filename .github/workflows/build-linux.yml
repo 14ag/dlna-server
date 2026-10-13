@@ -1,0 +1,27 @@
+name: build-linux
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+
+jobs:
+  build:
+    # 22.04 keeps the gtk 4 6 baseline and the older glibc for the deb
+    # runner image is unsupported from 2027-04-17 so move to ubuntu-24.04 before then
+    runs-on: ubuntu-22.04
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - run: bash build.sh --deb --appimage --flatpak --version="$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            output/linux/*.deb
+            output/linux/*.AppImage
+            output/linux/*.flatpak
+          if-no-files-found: error

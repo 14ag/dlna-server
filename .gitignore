@@ -85,7 +85,7 @@ AGENTS.MD
 .codex/config.toml
 *.m3u8
 *.m3u
-build*
+./build*
 temp/*
 current_workload.txt
 pre_existing_fails.txt

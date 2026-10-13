@@ -1,0 +1,31 @@
+name: build-windows
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+    steps:
+      - uses: actions/checkout@v5
+      - run: New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('scripts/build-windows.ps1') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+      - run: .\build.bat --version $env:VERSION
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            output/winx64/*.zip
+            output/winx86/*.zip
+          if-no-files-found: error
