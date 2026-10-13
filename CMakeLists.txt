@@ -357,7 +357,9 @@ add_library(dlna_core STATIC
                 resources/server_icon_120.png
                 resources/server_icon_256.png
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/icons)
-            install(FILES "${CMAKE_BINARY_DIR}/${DLNA_GTK_APP_ID}.metainfo.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+            if(NOT DLNA_FLATPAK_BUILD)
+                install(FILES "${CMAKE_BINARY_DIR}/${DLNA_GTK_APP_ID}.metainfo.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+            endif()
             install(SCRIPT "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake")
         endif()
     endif()
