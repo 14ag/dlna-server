@@ -91,10 +91,6 @@ current_workload.txt
 pre_existing_fails.txt
 .venv
 
-# whitelist
-!*.sh
-!*.bat
-!*.ps1
 posix-full-suite-log.txt
 .flatpak-builder/*
 .serena/.gitignore
@@ -106,3 +102,9 @@ posix-full-suite-log.txt
 /CPack*.cmake
 /_CPack_Packages/
 /packaging/flatpak/*.stamped.yml
+
+# whitelist
+!*.sh
+!*.bat
+!*.ps1
+!identity.env
