@@ -7,9 +7,6 @@ set "BUILD_X86=0"
 set "BUILD_X64=0"
 set "BUILD_LINUX=0"
 set "INSTALL_LINUX=0"
-set "RELEASE=0"
-set "NOTES=0"
-set "UPDATE="
 set "VERSION_TAG="
 
 :parse_args
@@ -34,18 +31,8 @@ if /I "%~1"=="--install" (
     shift
     goto :parse_args
 )
-if /I "%~1"=="--release" (
-    set "RELEASE=1"
-    shift
-    goto :parse_args
-)
-if /I "%~1"=="--notes" (
-    set "NOTES=1"
-    shift
-    goto :parse_args
-)
-if /I "%~1"=="--update" (
-    set "UPDATE=%~2"
+if /I "%~1"=="--build" (
+    set "DLNA_BUILD=%~2"
     shift
     shift
     goto :parse_args
@@ -62,31 +49,10 @@ if /I "%ARG:~0,10%"=="--version=" (
     shift
     goto :parse_args
 )
-:: Handle --update=TAG format
-echo "%~1" | findstr /I "--update=" >nul
-if not errorlevel 1 (
-    for /f "tokens=2 delims==" %%i in ("%~1") do set "UPDATE=%%i"
-    shift
-    goto :parse_args
-)
 shift
 goto :parse_args
 
 :done_parse
-
-:: Default if no platform specified is x64
-set "HAS_WIN_ARCH=0"
-if "%BUILD_X86%"=="1" set "HAS_WIN_ARCH=1"
-if "%BUILD_X64%"=="1" set "HAS_WIN_ARCH=1"
-
-if "%RELEASE%"=="1" (
-    echo Releasing assets...
-    set "REL_ARGS="
-    if "%NOTES%"=="1" set "REL_ARGS=-Notes"
-    if not "%UPDATE%"=="" set "REL_ARGS=%REL_ARGS% -Update %UPDATE%"
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\release-windows.ps1" %REL_ARGS%
-    exit /b %ERRORLEVEL%
-)
 
 if "%INSTALL_LINUX%"=="1" (
     echo Installing Linux app via WSL...

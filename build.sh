@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build.sh — Linux orchestrator entry point
+# build.sh - Linux orchestrator entry point
 #
 # Usage:
 #   ./build.sh                  # Builds raw binaries into output/linux/ (dlna-server, dlna-server-gui, dlna-server-gui-bin)
@@ -7,20 +7,16 @@
 #   ./build.sh --appimage       # Builds the .AppImage bundle into output/linux/
 #   ./build.sh --flatpak        # Builds the Flatpak bundle into output/linux/
 #   ./build.sh --install        # Removes existing dlna-server and installs the newly built package
-#   ./build.sh --release        # Publishes release assets using scripts/release-linux.sh
-#   ./build.sh --notes          # Auto-generates release notes with AI (used with --release)
-#   ./build.sh --update=<tag>   # Updates an existing GitHub release tag with assets
-#   ./build.sh --version=<tag> # Uses this version tag instead of generating one
+#   ./build.sh --version=<tag>  # Uses this version tag instead of generating one
+#   ./build.sh --build <N>      # Appends -build<N> to the generated version tag
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 INSTALL=0
-RELEASE=0
 BUILD_DEB=0
 BUILD_APPIMAGE=0
 BUILD_FLATPAK=0
-REL_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -40,16 +36,12 @@ while [[ $# -gt 0 ]]; do
             BUILD_FLATPAK=1
             shift
             ;;
-        --release)
-            RELEASE=1
-            shift
+        --build)
+            export DLNA_BUILD="${2:?--build needs a number}"
+            shift 2
             ;;
-        --notes)
-            REL_ARGS+=("--notes")
-            shift
-            ;;
-        --update=*)
-            REL_ARGS+=("$1")
+        --build=*)
+            export DLNA_BUILD="${1#*=}"
             shift
             ;;
         --version=*)
@@ -62,13 +54,6 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
-
-# If --release is requested, dispatch directly to release-linux.sh
-if [ "$RELEASE" = "1" ]; then
-    echo "Releasing Linux assets..."
-    bash "$script_dir/scripts/release-linux.sh" "${REL_ARGS[@]:+${REL_ARGS[@]}}"
-    exit 0
-fi
 
 # Step 1: Build core Linux binaries (and .deb in the same cmake run when needed)
 # Passing --deb here avoids a second full cmake configure+build that would occur
