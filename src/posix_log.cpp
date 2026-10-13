@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <ctime>
+#include <atomic>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -34,10 +35,17 @@ std::wstring TimestampPrefix() {
                   ts.tv_nsec / 1000000);
     return buffer;
 }
-}
 
 std::FILE* g_debugLogFile = nullptr;
 std::string g_debugLogPath;
+std::mutex g_debugFileMutex;
+}
+
+std::atomic<bool> g_consoleEchoEnabled(false);
+
+void SetConsoleEchoEnabled(bool enabled) {
+    g_consoleEchoEnabled.store(enabled, std::memory_order_relaxed);
+}
 
 std::FILE* OpenOrReuseDebugLogFile(const std::string& path) {
     if (g_debugLogFile && g_debugLogPath == path) {
@@ -68,39 +76,42 @@ std::FILE* GetDebugLogFile() {
 }
 
 void LogPrint(const wchar_t* fmt, ...) {
-    wchar_t buffer[2048];
+    wchar_t buffer[2048] = {};
     va_list args;
     va_start(args, fmt);
-    vswprintf(buffer, sizeof(buffer) / sizeof(buffer[0]), fmt, args);
+    if (vswprintf(buffer, sizeof(buffer) / sizeof(buffer[0]), fmt, args) < 0) {
+        buffer[(sizeof(buffer) / sizeof(buffer[0])) - 1] = L'\0';
+    }
     va_end(args);
 
     std::wstring line = TimestampPrefix() + buffer;
     const bool writeDebugLog = AppConfig.IsDebugLogEnabled();
 
-std::lock_guard<std::mutex> lock(g_logMutex);
-    g_lines.emplace_back(g_nextSeq++, line);
-    if (g_lines.size() > kMaxLogLines) {
-        g_lines.pop_front();
+    {
+        std::lock_guard<std::mutex> lock(g_logMutex);
+        g_lines.emplace_back(g_nextSeq++, line);
+        if (g_lines.size() > kMaxLogLines) {
+            g_lines.pop_front();
+        }
     }
-    std::fwprintf(stderr, L"%ls\n", line.c_str());
+    // File and stderr I/O deliberately happen outside g_logMutex: a
+    // blocked write on a full pipe (test harnesses capture stderr through
+    // an undrained PIPE) must never pin the log mutex and stall every
+    // other logging thread. See the concurrency deadlock where 8 HTTP
+    // workers stalled in LogPrint while the echo thread was blocked in
+    // fflush(stderr).
+    if (g_consoleEchoEnabled.load(std::memory_order_relaxed)) {
+        std::fwprintf(stdout, L"%ls\n", line.c_str());
+        std::fflush(stdout);
+    }
     if (writeDebugLog) {
+        std::lock_guard<std::mutex> fileLock(g_debugFileMutex);
         std::FILE* file = GetDebugLogFile();
         if (file) {
             std::fprintf(file, "%s\n", WideToUtf8(line).c_str());
             std::fflush(file);
         }
     }
-}
-
-std::wstring GetSystemLog() {
-    std::lock_guard<std::mutex> lock(g_logMutex);
-    std::wstring result;
-    result.reserve(g_lines.size() * 128);
-    for (const auto& entry : g_lines) {
-        result += entry.second;
-        result += L"\n";
-    }
-    return result;
 }
 
 LogSnapshot GetSystemLogSince(unsigned long long sinceSequence) {

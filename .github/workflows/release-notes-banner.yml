@@ -1,4 +1,4 @@
-name: Update Latest Release Notes
+name: Add release notes banner
 
 on:
   release:

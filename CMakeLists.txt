@@ -1,7 +1,44 @@
 cmake_minimum_required(VERSION 3.20)
-project(dlna-server VERSION 1.7.0)
+
+# identity values come from the identity env file only
+file(STRINGS "${CMAKE_SOURCE_DIR}/identity.env" DLNA_IDENTITY_LINES REGEX "^[A-Z_]+=")
+foreach(DLNA_IDENTITY_LINE IN LISTS DLNA_IDENTITY_LINES)
+    string(REGEX MATCH "^([A-Z_]+)=(.*)$" DLNA_IDENTITY_UNUSED "${DLNA_IDENTITY_LINE}")
+    set(${CMAKE_MATCH_1} "${CMAKE_MATCH_2}")
+endforeach()
+if(NOT DLNA_APP_ID OR NOT DLNA_REVERSE_DNS_PREFIX OR NOT DLNA_PRODUCT_NAME)
+    message(FATAL_ERROR "identity.env is missing a required key")
+endif()
+string(CONCAT DLNA_GTK_APP_ID "${DLNA_REVERSE_DNS_PREFIX}" "." "${DLNA_APP_ID}")
+# macos bundle ids allow hyphens but not underscores
+string(REPLACE "_" "-" DLNA_BUNDLE_ID "${DLNA_GTK_APP_ID}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/identity.env")
+
+# version comes from the build scripts through the version script
+# a direct cmake run without it gets a development placeholder
+if(NOT DLNA_VERSION)
+    set(DLNA_VERSION "0.0.00000")
+endif()
+
+project(dlna-server VERSION ${DLNA_VERSION})
+
+string(TIMESTAMP DLNA_RELEASE_DATE "%Y-%m-%d" UTC)
+
+# split the version for the windows resource compiler
+# each field must fit in 16 bits and must not start with a zero
+set(DLNA_RC_B "${PROJECT_VERSION_MINOR}")
+string(REGEX MATCH "^([0-9]*)([0-9])$" DLNA_RC_MATCHED "${PROJECT_VERSION_PATCH}")
+set(DLNA_RC_C "${CMAKE_MATCH_1}")
+set(DLNA_RC_D "${CMAKE_MATCH_2}")
+if("${DLNA_RC_C}" STREQUAL "")
+    set(DLNA_RC_C "0")
+endif()
+foreach(part DLNA_RC_B DLNA_RC_C)
+    string(REGEX REPLACE "^0+([0-9])" "\\1" ${part} "${${part}}")
+endforeach()
 
 configure_file(${CMAKE_SOURCE_DIR}/src/version.h.in ${CMAKE_BINARY_DIR}/generated/version.h @ONLY)
+configure_file(${CMAKE_SOURCE_DIR}/src/app_identity.h.in ${CMAKE_BINARY_DIR}/generated/app_identity.h @ONLY)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -14,46 +51,6 @@ function(dlna_enable_warnings target_name)
     endif()
 endfunction()
 
-find_package(ZLIB)
-
-# Some CMake configurations provide ZLIB via imported targets instead of
-# setting ZLIB_FOUND. Treat either as success.
-if(NOT (ZLIB_FOUND OR TARGET ZLIB::ZLIB))
-    # Try to locate zlib in common vcpkg locations (helpful on Windows)
-    if(DEFINED ENV{VCPKG_ROOT})
-        set(_vcpkg_root $ENV{VCPKG_ROOT})
-    elseif(EXISTS "${CMAKE_SOURCE_DIR}/../vcpkg")
-        set(_vcpkg_root "${CMAKE_SOURCE_DIR}/../vcpkg")
-    elseif(EXISTS "C:/vcpkg")
-        set(_vcpkg_root "C:/vcpkg")
-    endif()
-
-    if(DEFINED _vcpkg_root)
-        file(GLOB _zlibs "${_vcpkg_root}/installed/*/lib/zlib.lib" "${_vcpkg_root}/installed/*/lib/zlibstatic.lib")
-        if(_zlibs)
-            list(GET _zlibs 0 _zlib_lib)
-            get_filename_component(_triplet_dir "${_zlib_lib}" DIRECTORY)
-            get_filename_component(_triplet_name "${_triplet_dir}" NAME)
-            set(ZLIB_LIBRARY "${_zlib_lib}")
-            set(ZLIB_INCLUDE_DIR "${_vcpkg_root}/installed/${_triplet_name}/include")
-            find_package(ZLIB REQUIRED)
-        endif()
-    endif()
-
-    if(NOT ZLIB_FOUND)
-        message(FATAL_ERROR "Could NOT find ZLIB (missing: ZLIB_LIBRARY ZLIB_INCLUDE_DIR)\n\n"
-            "Common fixes:\n"
-            "  - If you use vcpkg (recommended), install zlib for your triplet and re-run CMake:\n"
-            "      from vcpkg root: .\\vcpkg install zlib:x64-windows\n"
-            "      then configure CMake with the vcpkg toolchain file:\n"
-            "      cmake -S . -B build -A x64 -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake\n\n"
-            "  - Or point CMake directly to an installed zlib:\n"
-            "      -DZLIB_INCLUDE_DIR=\"C:/path/to/zlib/include\" -DZLIB_LIBRARY=\"C:/path/to/zlib/lib/zlib.lib\"\n")
-    endif()
-endif()
-if(TARGET ZLIB::ZLIBSTATIC AND NOT TARGET ZLIB::ZLIB)
-    add_library(ZLIB::ZLIB ALIAS ZLIB::ZLIBSTATIC)
-endif()
 find_package(CURL REQUIRED)
 
 function(dlna_link_required_curl target_name)
@@ -66,14 +63,17 @@ set(SOURCES
          src/access_keys.cpp
          src/tray_notify.cpp
          src/access_key_hook.cpp
-         src/mainwindow.cpp
-         src/settingsdlg.cpp
+          src/mainwindow.cpp
+          src/cli_print_hooks_win.cpp
+          src/settingsdlg.cpp
          src/logdlg.cpp
          src/help_dialog.cpp
          src/ui_font.cpp
          src/dark_frame.cpp
-         src/server.cpp
-         src/netutils.cpp
+          src/server.cpp
+          src/server_common.cpp
+           src/netutils.cpp
+         src/netutils_common.cpp
          src/httpserver.cpp
          src/http_common.cpp
          src/contentdirectory.cpp
@@ -104,8 +104,9 @@ set(SOURCES
 set(HEADERS
          src/access_keys.h
          src/tray_notify.h
-         src/cli_flags.h
-         src/settings_help.h
+          src/cli_flags.h
+          src/cli_print_hooks_win.h
+          src/settings_help.h
          src/mainwindow.h
          src/settingsdlg.h
          src/logdlg.h
@@ -118,6 +119,7 @@ set(HEADERS
          src/transmitfile_chunking.h
          src/http_common.h
          src/contentdirectory.h
+         src/search_cache_budget.h
          src/upnp_eventing.h
          src/ssdp.h
          src/ssdp_common.h
@@ -136,7 +138,10 @@ set(HEADERS
           src/scan_cancellation.h
           src/input_gate.h
           src/modal_focus.h
+          src/modal_stack.h
           src/thread_guard.h
+          src/health_check_policy.h
+          src/geometry_dump_policy.h
          src/config.h
          src/ipwhitelist.h
           src/firewall_access.h
@@ -150,14 +155,18 @@ set(HEADERS
             src/ui_font.h
             src/dark_frame.h
              src/log.h
-             src/network_change_debounce.h
-             src/netchange_watch.h
-             src/fs_change_debounce.h
-             src/dirwatch.h
+              src/network_change_debounce.h
+              src/netchange_watch.h
+              src/dirwatch.h
+            src/copydata_validation.h
+            src/browse_page_cap.h
+            src/access_key_hook.h
+            src/win_geometry_dump.h
+            src/server_ui_state.h
+            src/media_sources.h
            resources/resource.h
      )
 
-    list(REMOVE_ITEM SOURCES src/main.cpp)
     add_library(dlna_core STATIC ${SOURCES} ${HEADERS})
     set_property(TARGET dlna_core PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     dlna_enable_warnings(dlna_core)
@@ -170,28 +179,30 @@ target_link_libraries(dlna_core PUBLIC
 
     add_executable(dlna-server WIN32 src/main.cpp resources/app.rc)
     target_link_libraries(dlna-server PRIVATE dlna_core)
-    set_target_properties(dlna-server PROPERTIES OUTPUT_NAME "DLNA Server")
+    set_target_properties(dlna-server PROPERTIES OUTPUT_NAME "dlna-server")
     set_property(TARGET dlna-server PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
     install(TARGETS dlna-server RUNTIME DESTINATION .)
 else()
     include(GNUInstallDirs)
-    include(FetchContent)
-    option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" ON)
-    set(DLNA_FLTK_VERSION "release-1.4.5" CACHE STRING "FLTK git tag used when system FLTK is unavailable")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    option(DLNA_ENABLE_GTK4_GUI "Build the native GTK4 Linux GUI" ON)
+    option(DLNA_FLATPAK_BUILD "Use the flatpak specific GApplication id" OFF)
 
 add_library(dlna_core STATIC
          src/access_keys.cpp
          src/tray_notify.cpp
-         src/posix_server.cpp
-         src/posix_ssdp.cpp
+          src/posix_server.cpp
+          src/server_common.cpp
+          src/posix_ssdp.cpp
          src/ssdp_common.cpp
          src/posix_httpserver.cpp
          src/http_common.cpp
          src/media_sources_common.cpp
          src/scan_cancellation.cpp
          src/fs_backend_posix.cpp
-         src/posix_netutils.cpp
+          src/posix_netutils.cpp
+         src/netutils_common.cpp
          src/posix_config.cpp
          src/posix_log.cpp
          src/ipwhitelist.cpp
@@ -206,9 +217,11 @@ add_library(dlna_core STATIC
          src/playlist_scan_concurrency.cpp
          src/settings_restart.cpp
          src/posix_single_instance.cpp
-         src/netchange_watch_posix.cpp
-         src/dirwatch_posix.cpp
-     )
+         src/posix_daemonize.cpp
+          src/netchange_watch_posix.cpp
+          src/dirwatch_posix.cpp
+          src/cli_print_hooks_posix.cpp
+      )
     dlna_enable_warnings(dlna_core)
     dlna_link_required_curl(dlna_core)
     target_include_directories(dlna_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
@@ -226,47 +239,61 @@ add_library(dlna_core STATIC
 
     install(TARGETS dlna-server RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-    if(DLNA_ENABLE_FLTK_GUI)
+    if(DLNA_ENABLE_GTK4_GUI)
         configure_file(packaging/linux/dlna-server-gui "${CMAKE_BINARY_DIR}/dlna-server-gui" @ONLY NEWLINE_STYLE UNIX)
-        find_package(FLTK QUIET)
-        if(NOT FLTK_FOUND)
-            FetchContent_Declare(
-                fltk
-                GIT_REPOSITORY https://github.com/fltk/fltk.git
-                GIT_TAG ${DLNA_FLTK_VERSION}
-                GIT_SHALLOW TRUE
-            )
-            set(FLTK_BUILD_TEST OFF CACHE BOOL "" FORCE)
-            set(FLTK_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-            set(FLTK_BUILD_FLUID OFF CACHE BOOL "" FORCE)
-            set(FLTK_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-            FetchContent_GetProperties(fltk)
-            if(NOT fltk_POPULATED)
-                FetchContent_Populate(fltk)
-                add_subdirectory(${fltk_SOURCE_DIR} ${fltk_BINARY_DIR} EXCLUDE_FROM_ALL)
-            endif()
-            set(DLNA_FLTK_TARGET fltk fltk_images)
-        else()
-            set(DLNA_FLTK_TARGET ${FLTK_LIBRARIES})
+        find_package(PkgConfig REQUIRED)
+        pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
+        pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
+
+        add_custom_command(
+            OUTPUT "${CMAKE_SOURCE_DIR}/resources/gtk/styles1.css"
+            COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_gtk_style.py"
+            DEPENDS "${CMAKE_SOURCE_DIR}/src/ui_tokens.h" "${CMAKE_SOURCE_DIR}/tools/gen_gtk_style.py"
+            COMMENT "Generating GTK4 stylesheet from ui_tokens.h"
+        )
+        add_custom_target(dlna_gtk_style ALL DEPENDS "${CMAKE_SOURCE_DIR}/resources/gtk/styles1.css")
+
+        add_executable(dlna-server-gui-gtk4 src/gtk4_gui_main.cpp src/posix_tray.cpp)
+        add_dependencies(dlna-server-gui-gtk4 dlna_gtk_style)
+        set_target_properties(dlna-server-gui-gtk4 PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
+        dlna_enable_warnings(dlna-server-gui-gtk4)
+        target_compile_definitions(dlna-server-gui-gtk4 PRIVATE DLNA_POSIX_GUI=1)
+        if(DLNA_FLATPAK_BUILD)
+            target_compile_definitions(dlna-server-gui-gtk4 PRIVATE DLNA_FLATPAK_BUILD=1)
         endif()
-        # Fl_PNG_Image requires fltk_images; ensure it is linked for
-        # both system-FLTK and FetchContent builds.
-        if(NOT DLNA_FLTK_TARGET MATCHES "fltk_images")
-            list(APPEND DLNA_FLTK_TARGET fltk_images)
-        endif()
-        add_executable(dlna-server-gui-native src/fltk_gui_main.cpp)
-        set_target_properties(dlna-server-gui-native PROPERTIES OUTPUT_NAME dlna-server-gui-bin)
-        dlna_enable_warnings(dlna-server-gui-native)
-        if(FLTK_FOUND)
-            target_include_directories(dlna-server-gui-native PRIVATE ${FLTK_INCLUDE_DIR})
-        endif()
-        target_link_libraries(dlna-server-gui-native PRIVATE dlna_core ${DLNA_FLTK_TARGET} Threads::Threads)
-        install(TARGETS dlna-server-gui-native RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+        target_link_libraries(dlna-server-gui-gtk4 PRIVATE dlna_core PkgConfig::GTK4 PkgConfig::X11 Threads::Threads)
+        install(TARGETS dlna-server-gui-gtk4 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
         install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui" DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/styles1.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
+        install(FILES "${CMAKE_SOURCE_DIR}/resources/gtk/styles0.css" DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
+        install(FILES
+            "${CMAKE_SOURCE_DIR}/resources/gtk/styles2.css"
+            "${CMAKE_SOURCE_DIR}/resources/gtk/styles3.css"
+            "${CMAKE_SOURCE_DIR}/resources/gtk/styles4.css"
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
+        install(FILES
+            "${CMAKE_SOURCE_DIR}/resources/gtk/penpot-minimize.svg"
+            "${CMAKE_SOURCE_DIR}/resources/gtk/penpot-maximize.svg"
+            "${CMAKE_SOURCE_DIR}/resources/gtk/penpot-close.svg"
+            "${CMAKE_SOURCE_DIR}/resources/gtk/penpot-warning.svg"
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/gtk)
+        # Selawik (OFL, metric-compatible with Segoe UI) backs the Linux GUI
+        # font stacks. /usr/share/fonts is picked up by fontconfig with no
+        # cache-refresh hook needed.
+        install(FILES
+            "${CMAKE_SOURCE_DIR}/resources/fonts/selawk.ttf"
+            "${CMAKE_SOURCE_DIR}/resources/fonts/selawkb.ttf"
+            "${CMAKE_SOURCE_DIR}/resources/fonts/selawkl.ttf"
+            "${CMAKE_SOURCE_DIR}/resources/fonts/selawksb.ttf"
+            "${CMAKE_SOURCE_DIR}/resources/fonts/selawksl.ttf"
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/fonts/truetype/dlna-server)
+        install(FILES
+            "${CMAKE_SOURCE_DIR}/resources/fonts/SIL Open Font License.txt"
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/dlna-server)
     endif()
 
     if(APPLE)
-        if(DLNA_ENABLE_FLTK_GUI)
+        if(DLNA_ENABLE_GTK4_GUI)
             set(DLNA_APP_BUNDLE "${CMAKE_BINARY_DIR}/DLNA Server.app")
             configure_file(packaging/macos/Info.plist.in "${CMAKE_BINARY_DIR}/Info.plist" @ONLY)
             add_custom_target(DLNAServerApp ALL
@@ -280,11 +307,14 @@ add_library(dlna_core STATIC
                         "${CMAKE_SOURCE_DIR}/packaging/macos/dlna-server-gui"
                         "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "$<TARGET_FILE:dlna-server-gui-native>"
+                        "$<TARGET_FILE:dlna-server-gui-gtk4>"
                         "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui-bin"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         "${CMAKE_SOURCE_DIR}/resources/app.ico"
                         "${DLNA_APP_BUNDLE}/Contents/Resources/app.ico"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${CMAKE_SOURCE_DIR}/resources/server_icon_16.png"
+                        "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_16.png"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                         "${CMAKE_SOURCE_DIR}/resources/server_icon_48.png"
                         "${DLNA_APP_BUNDLE}/Contents/Resources/server_icon_48.png"
@@ -301,96 +331,43 @@ add_library(dlna_core STATIC
                         "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server"
                         "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui"
                         "${DLNA_APP_BUNDLE}/Contents/MacOS/dlna-server-gui-bin"
-                DEPENDS dlna-server dlna-server-gui-native
+                DEPENDS dlna-server dlna-server-gui-gtk4
                 COMMENT "Assembling DLNA Server.app"
             )
             install(DIRECTORY "${DLNA_APP_BUNDLE}" DESTINATION . USE_SOURCE_PERMISSIONS)
         endif()
     else()
-        if(DLNA_ENABLE_FLTK_GUI)
+        if(DLNA_ENABLE_GTK4_GUI)
             configure_file(packaging/linux/install_desktop.cmake.in "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake" @ONLY)
-            configure_file(packaging/linux/dlna-server.appdata.xml.in "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" @ONLY)
+            configure_file(packaging/linux/metainfo.xml.in "${CMAKE_BINARY_DIR}/${DLNA_GTK_APP_ID}.metainfo.xml" @ONLY)
             # Install SVG into hicolor scalable tree for desktop-env icon lookup
-            install(FILES resources/dlna-server.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+            install(FILES resources/${DLNA_APP_ID}.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps RENAME ${DLNA_GTK_APP_ID}.svg)
             # Install PNG icons into hicolor fixed-size directories so DEs
-            # find the icon by name (Icon=dlna-server in .desktop files).
-            install(FILES resources/server_icon_48.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps   RENAME dlna-server.png)
-            install(FILES resources/server_icon_120.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps RENAME dlna-server.png)
-            install(FILES resources/server_icon_256.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps RENAME dlna-server.png)
+            # find the icon by the internal ID requested by WSLg.
+            install(FILES resources/server_icon_16.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/16x16/apps   RENAME ${DLNA_GTK_APP_ID}.png)
+            install(FILES resources/server_icon_48.png   DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps   RENAME ${DLNA_GTK_APP_ID}.png)
+            install(FILES resources/server_icon_120.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/128x128/apps RENAME ${DLNA_GTK_APP_ID}.png)
+            install(FILES resources/server_icon_256.png  DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps RENAME ${DLNA_GTK_APP_ID}.png)
+            # WSLg checks pixmaps before its fixed hicolor icon directories.
+            install(FILES resources/server_icon_120.png DESTINATION ${CMAKE_INSTALL_DATADIR}/pixmaps RENAME ${DLNA_GTK_APP_ID}.png)
             # Also keep a copy in the app-specific data dir for runtime loading
             install(FILES
+                resources/server_icon_16.png
                 resources/server_icon_48.png
                 resources/server_icon_120.png
                 resources/server_icon_256.png
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/dlna-server/icons)
-            install(FILES "${CMAKE_BINARY_DIR}/dlna-server.appdata.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+            if(NOT DLNA_FLATPAK_BUILD)
+                install(FILES "${CMAKE_BINARY_DIR}/${DLNA_GTK_APP_ID}.metainfo.xml" DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+            endif()
             install(SCRIPT "${CMAKE_BINARY_DIR}/install_linux_desktop.cmake")
         endif()
     endif()
 endif()
 
-include(FetchContent)
-option(DLNA_BUILD_TESTS "Build GoogleTest-based test binary" OFF)
-if(DLNA_BUILD_TESTS)
-    FetchContent_Declare(
-        googletest
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG v1.15.2
-        GIT_SHALLOW TRUE
-        CMAKE_ARGS -Dgtest_force_shared_crt=OFF -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
-    )
-    set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
-    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
-    FetchContent_MakeAvailable(googletest)
-    include(GoogleTest)
-
-    if(WIN32)
-        set(DLNA_TEST_SOURCES ${SOURCES})
-        list(REMOVE_ITEM DLNA_TEST_SOURCES src/mainwindow.cpp src/settingsdlg.cpp src/logdlg.cpp src/modal_focus.cpp src/firewall_access_win.cpp)
-        add_executable(dlna-test ${DLNA_TEST_SOURCES} ${HEADERS})
-        set_property(TARGET dlna-test PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-        target_link_libraries(dlna-test PRIVATE dlna_core GTest::gtest_main)
-        target_include_directories(dlna-test PRIVATE src)
-        target_compile_definitions(dlna-test PRIVATE UNICODE _UNICODE WINVER=0x0A00 _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN DLNA_HAS_LIBCURL=1)
-        target_link_libraries(dlna-test PRIVATE ws2_32 shell32 ole32 oleaut32 uuid comctl32 shlwapi dwmapi rpcrt4 iphlpapi)
-        target_link_options(dlna-test PRIVATE /WHOLEARCHIVE:legacy_stdio_definitions.lib legacy_stdio_wide_specifiers.lib)
-        dlna_enable_warnings(dlna-test)
-        gtest_discover_tests(dlna-test)
-    else()
-        add_executable(dlna-test
-            src/posix_server.cpp
-            src/posix_ssdp.cpp
-            src/posix_httpserver.cpp
-            src/posix_netutils.cpp
-            src/posix_media_sources.cpp
-            src/posix_config.cpp
-            src/posix_log.cpp
-            src/ipwhitelist.cpp
-            src/contentdirectory.cpp
-            src/upnp_eventing.cpp
-            src/dlna_utils.cpp
-            src/network_sources.cpp
-            src/source_watcher.cpp
-            src/media_database.cpp
-src/media_scan_common.cpp
-          src/media_sources_common.cpp
-          src/scan_cancellation.cpp
-          src/bounded_thread_pool.cpp
-            src/playlist_scan_concurrency.cpp
-        )
-        target_link_libraries(dlna-test PRIVATE dlna_core GTest::gtest_main)
-        target_include_directories(dlna-test PRIVATE src)
-        target_compile_definitions(dlna-test PRIVATE DLNA_POSIX=1 DLNA_RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources")
-        find_package(Threads REQUIRED)
-        target_link_libraries(dlna-test PRIVATE Threads::Threads)
-        dlna_enable_warnings(dlna-test)
-        gtest_discover_tests(dlna-test)
-    endif()
-endif()
-
 if(UNIX AND NOT APPLE)
     set(CPACK_GENERATOR "DEB")
-    set(CPACK_PACKAGE_NAME "dlna-server")
+    set(CPACK_PACKAGE_NAME "${DLNA_PRODUCT_NAME}")
     set(CPACK_PACKAGE_VENDOR "dlna-server contributors")
     set(CPACK_PACKAGE_CONTACT "https://github.com/14ag/dlna-server/issues")
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "DLNA media server")
@@ -401,7 +378,14 @@ if(UNIX AND NOT APPLE)
     set(CPACK_DEBIAN_PACKAGE_SECTION "net")
     set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/14ag/dlna-server")
     set(CPACK_DEBIAN_PACKAGE_DEPENDS "libcurl4")
+    set(CPACK_DEBIAN_PACKAGE_REPLACES "${DLNA_APP_ID}")
+    set(CPACK_DEBIAN_PACKAGE_CONFLICTS "${DLNA_APP_ID}")
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+    if(DLNA_ENABLE_GTK4_GUI)
+        configure_file(packaging/linux/postinst.in "${CMAKE_BINARY_DIR}/postinst" @ONLY NEWLINE_STYLE UNIX)
+        file(CHMOD "${CMAKE_BINARY_DIR}/postinst" PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+        set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_BINARY_DIR}/postinst")
+    endif()
     include(CPack)
 endif()

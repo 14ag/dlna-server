@@ -15,8 +15,35 @@ std::vector<SSDPTarget> BuildAdvertisedTargets(const std::string& uuid);
 // sending a near-duplicate response burst for one M-SEARCH.
 bool CoalesceDelayedResponse(std::deque<DelayedSearchResponse>& queue, DelayedSearchResponse&& response);
 
+// pure ceiling calculation for ComputeDelayMilliseconds see that
+// function for the full citation trail on why this is narrower than
+// the full mx second window exposed separately so it can be tested
+// with no random number generator involved
+unsigned int ComputeMaxDelayMilliseconds(int mxSeconds);
+
 // UDA-required randomized M-SEARCH response delay: uniform over
-// [0, min(mxSeconds, 5)] seconds, 0 if that bound rounds to zero.
+// [0, ComputeMaxDelayMilliseconds(mxSeconds)] milliseconds, 0 if that
+// bound rounds to zero.
 unsigned int ComputeDelayMilliseconds(int mxSeconds);
+
+struct SsdpSearchResponseFields {
+    std::string date;
+    std::string serverHeader;
+    std::string locationUrl;
+    std::string st;
+    std::string usn;
+    unsigned int bootId = 0;
+    unsigned int configId = 1;
+};
+
+std::string BuildSearchResponseMessage(const SsdpSearchResponseFields& fields);
+
+inline constexpr int kSearchResponseSendCount = 2;
+
+// NOTIFY datagrams (this host's own multicast loopback plus peer devices) are
+// advertisements, not searches; callers drop them without logging
+inline bool IsSsdpNotifyStartLine(const std::string& firstLine) {
+    return firstLine.compare(0, 7, "NOTIFY ") == 0;
+}
 
 #endif // SSDP_COMMON_H

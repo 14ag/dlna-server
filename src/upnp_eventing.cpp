@@ -10,9 +10,7 @@
 #include <sstream>
 #include <vector>
 
-#ifdef DLNA_HAS_LIBCURL
 #include <curl/curl.h>
-#endif
 
 namespace {
 constexpr int kDefaultTimeoutSeconds = 1800;
@@ -93,8 +91,8 @@ std::string MakeSystemUpdateBody(int updateId) {
 }
 
 std::string MakeSid(unsigned long long counter) {
-    std::random_device random;
-    unsigned int parts[4] = { random(), random(), random(), random() };
+    static thread_local std::mt19937 generator(std::random_device{}());
+    unsigned int parts[4] = { static_cast<unsigned int>(generator()), static_cast<unsigned int>(generator()), static_cast<unsigned int>(generator()), static_cast<unsigned int>(generator()) };
     std::ostringstream ss;
     ss << "uuid:" << std::hex << std::setfill('0')
        << std::setw(8) << parts[0] << "-"
@@ -106,10 +104,6 @@ std::string MakeSid(unsigned long long counter) {
     return ss.str();
 }
 
-struct CurlGlobalInit {
-    CurlGlobalInit() { curl_global_init(CURL_GLOBAL_DEFAULT); }
-    ~CurlGlobalInit() { curl_global_cleanup(); }
-};
 }
 
 UpnpEventManager& UpnpEventManager::Get() {
@@ -358,15 +352,22 @@ void UpnpEventManager::WorkerLoop() {
     }
 }
 
-void UpnpEventManager::SendNotifyJob(const NotifyJob& job) {
-    static CurlGlobalInit init;
-    (void)init;
+namespace {
+// owns one easy handle per worker thread and releases it when the thread exits
+struct ThreadCurlHandle {
+    CURL* handle = curl_easy_init();
+    ~ThreadCurlHandle() { if (handle) curl_easy_cleanup(handle); }
+};
+}
 
-    CURL* curl = curl_easy_init();
+void UpnpEventManager::SendNotifyJob(const NotifyJob& job) {
+    static thread_local ThreadCurlHandle threadCurl;
+    CURL* curl = threadCurl.handle;
     if (!curl) {
         LogPrint(L"GENA notify failed: libcurl handle creation failed.");
         return;
     }
+    curl_easy_reset(curl);
 
     struct curl_slist* headers = nullptr;
     const std::string contentType = "Content-Type: text/xml; charset=\"utf-8\"";
@@ -402,5 +403,4 @@ void UpnpEventManager::SendNotifyJob(const NotifyJob& job) {
         ExpireSubscription(job.sid);
     }
     curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
 }

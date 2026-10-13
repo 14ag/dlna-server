@@ -1,1 +1,1 @@
-wsl -d Ubuntu bash -c "/home/linuxbrew/.linuxbrew/bin/opencode --continue"
+wsl -d Ubuntu bash -lc "opencode web"

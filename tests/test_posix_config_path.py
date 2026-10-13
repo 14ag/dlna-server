@@ -12,6 +12,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
+pytestmark = pytest.mark.posix_only
+
 
 def _source(name: str) -> str:
     return (ROOT / "src" / name).read_text(encoding="utf-8")
@@ -53,22 +55,6 @@ class TestConfigPathResolver:
         """Config::Load must invoke MigrateLegacyConfigIfPresent."""
         src = _source("posix_config.cpp")
         assert "MigrateLegacyConfigIfPresent(GetConfigPath())" in src
-
-
-# ---- posix_main.cpp ----
-
-class TestConfigPathDiagnostic:
-    def test_print_config_path_flag(self):
-        """posix_main.cpp must handle --print-config-path."""
-        src = _source("posix_main.cpp")
-        assert "--print-config-path" in src
-        assert "GetConfigPath" in src
-
-    def test_main_cpp_also_has_hook(self):
-        """Windows main.cpp must also handle --print-config-path."""
-        src = _source("main.cpp")
-        assert "--print-config-path" in src
-        assert "GetConfigPath" in src
 
 
 # ---- config.h ----

@@ -9,17 +9,11 @@
 #include "source_list_focus.h"
 #include "hover_focus_state.h"
 #include "config.h"
+#include "server_ui_state.h"
 #include <string>
 #include <thread>
 #include <atomic>
 #include <unordered_map>
-
-enum class ServerUiState {
-    Stopped,
-    Starting,
-    Running,
-    Stopping
-};
 
 class MainWindow {
 public:
@@ -27,7 +21,7 @@ public:
     ~MainWindow();
 
     bool Create(HINSTANCE hInstance, int nCmdShow, bool startHeadless = false);
-    void SetStatus(ServerUiState state, const std::wstring& endpoint = L"");
+    void SetStatus(ServerUiState state);
     HWND GetHwnd() const { return m_hwnd; }
 
     static constexpr UINT_PTR kInitialScanPollTimerId = 1;
@@ -48,6 +42,10 @@ public:
     // dwData discriminator used on the wm copydata messages this app sends
     // to itself from a second process see main cpp for the sender side
     static constexpr ULONG_PTR kCopyDataSourceReplace = 1;
+    // query discriminator: the second process sends a temp-file path in
+    // lpData and the running instance writes its effective media sources
+    // (one per line, UTF-8) into that file before returning.
+    static constexpr ULONG_PTR kCopyDataQueryEffectiveSources = 2;
 
     bool TryHandleAccessKeyChar(wchar_t ch);
     bool TryHandleFunctionKey(WPARAM vkCode);
@@ -80,6 +78,7 @@ private:
     void UpdateControlFocus(int controlId, bool gained);
     void RepaintHighlightTransition(int before, int after);
     void UpdateListLayout(int width, int height);
+    void UpdateSourceListTooltip(POINT point);
     int SelectedSourceIndex() const;
     HFONT CreateUiFont(int pixelSize, int weight, const wchar_t* faceName);
     void DrawToolbarButton(const DRAWITEMSTRUCT* drawItem);
@@ -93,7 +92,7 @@ private:
     // AppConfig.SetRuntimeSourceOverride() + RefreshSourceList() directly
     // for the not-running case, since there is nothing to interrupt.
     void BeginSourceOverrideRestart(std::vector<MediaSource> overrideSources);
-    void CompleteServerOperation(ServerUiState finalState, const std::wstring& endpoint, bool success, const std::wstring& message);
+    void CompleteServerOperation(ServerUiState finalState, bool success, const std::wstring& message);
     bool IsShowingOverrideSources() const;
     bool IsBusy() const;
     bool IsRunning() const;
@@ -114,21 +113,27 @@ private:
     HWND m_hBtnStartStop;
     HWND m_hBtnSettings;
     HWND m_hListSources;
+    HWND m_hListTooltip;
+    int m_listTooltipItem = -1;
+    std::wstring m_listTooltipText;
     std::vector<wchar_t> m_lastMnemonics;
     WNDPROC m_listOldProc;
     WNDPROC m_toolbarOldProc;
 
     KeyboardCueState m_cueState;
     ServerUiState m_state;
-    std::wstring m_statusEndpoint;
+    std::wstring m_statusText;
+    bool m_lastOverrideVisible = false;
     ClosePendingState m_closePending;
     std::thread m_worker;
+    std::thread m_rescanWorker;
 
     bool m_startedHeadless;
     bool m_lastPolledScanInProgress = false;
     RECT m_statusRect = {0, 0, 0, 0};
     std::atomic<bool> m_scanInProgress;
     std::atomic<bool> m_scanningStatusActive;
+    int m_consecutiveUnhealthyPolls = 0;
     SourceListFocusState m_focusState;
     HoverFocusState m_hoverFocusState;
     RECT m_listRingRect = {0, 0, 0, 0};

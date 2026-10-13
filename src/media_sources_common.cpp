@@ -25,6 +25,12 @@
 
 namespace {
 
+#ifdef _WIN32
+constexpr wchar_t kPathSeparator = L'\\';
+#else
+constexpr wchar_t kPathSeparator = L'/';
+#endif
+
 constexpr const wchar_t* kScanDepthLogCode = L"[media:scan-depth]";
 // Initial reserve for MediaSources::m_items, set in ResetForRescan. See
 // Task 7 of dlna-server-concurrency-memory-fix-workflow-17-7-26.md for why
@@ -33,6 +39,12 @@ constexpr size_t kInitialCatalogReserve = 4096;
 
 bool DefaultPlaylistFileExists(const std::wstring& path) {
     return FsIsRegularFile(path);
+}
+
+// a lone local media file is published straight under the root; a source container
+// around it made clients render a folder holding one item
+bool IsSingleLocalFileSource(const std::wstring& path) {
+    return !IsRemoteMediaUrl(path) && !IsPlaylistSourcePath(path) && FsIsRegularFile(path);
 }
 
 std::wstring CanonicalMediaKey(const std::wstring& path) {
@@ -82,8 +94,10 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
     std::pair<std::wstring, std::wstring> stemCacheValue;
     bool folderCacheKnown = false;
     std::pair<std::wstring, std::wstring> folderCacheValue;
+    bool namesKnown = false;
+    std::unordered_set<std::wstring> namesCopy;
     {
-        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        std::lock_guard<std::mutex> lock(state.mutationMutex);
         auto stemCached = state.perStemAlbumArt.find(stemKey);
         if (stemCached != state.perStemAlbumArt.end()) {
             stemCacheKnown = true;
@@ -93,6 +107,11 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
         if (folderCached != state.folderAlbumArt.end()) {
             folderCacheKnown = true;
             folderCacheValue = folderCached->second;
+        }
+        auto namesCached = state.folderFileNames.find(folder);
+        if (namesCached != state.folderFileNames.end()) {
+            namesKnown = true;
+            namesCopy = namesCached->second;
         }
     }
 
@@ -112,7 +131,7 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
             { stem + L".png", L"image/png" },
         };
         for (const auto& candidate : perStemCandidates) {
-            std::wstring candidatePath = folder + L"\\" + candidate.fileName;
+            std::wstring candidatePath = folder + kPathSeparator + candidate.fileName;
             if (FsIsRegularFile(candidatePath)) {
                 stemCacheValue = { candidatePath, candidate.mimeType };
                 break;
@@ -124,7 +143,7 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
         // result), so an overwrite here is harmless: it only means two
         // workers each paid the stat cost once instead of one waiting on
         // the other.
-        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        std::lock_guard<std::mutex> lock(state.mutationMutex);
         state.perStemAlbumArt[stemKey] = stemCacheValue;
         if (!stemCacheValue.first.empty()) {
             item.albumArtPath = stemCacheValue.first;
@@ -139,16 +158,26 @@ void SetAlbumArtIfExists(MediaIndexState& state, MediaItem& item) {
         return;
     }
 
+    if (!namesKnown) {
+        // Unlocked listing same rationale as the stat calls above
+        // one directory read replaces one stat per candidate name
+        // the write below stays idempotent like the stem cache write
+        std::vector<FsDirEntry> entries;
+        FsListDirectory(folder, entries);
+        for (const auto& entry : entries) {
+            if (!entry.isDirectory) namesCopy.insert(ToLowerWide(entry.name));
+        }
+    }
     for (const auto& candidate : BuildAlbumArtCandidateNames(L"")) {
-        std::wstring candidatePath = folder + L"\\" + candidate.fileName;
-        if (FsIsRegularFile(candidatePath)) {
-            folderCacheValue = { candidatePath, candidate.mimeType };
+        if (namesCopy.find(ToLowerWide(candidate.fileName)) != namesCopy.end()) {
+            folderCacheValue = { folder + kPathSeparator + candidate.fileName, candidate.mimeType };
             break;
         }
     }
     {
-        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        std::lock_guard<std::mutex> lock(state.mutationMutex);
         state.folderAlbumArt[folder] = folderCacheValue;
+        if (!namesKnown) state.folderFileNames[folder] = namesCopy;
     }
     item.albumArtPath = folderCacheValue.first;
     item.albumArtMime = folderCacheValue.second;
@@ -167,7 +196,7 @@ void SetSubtitleIfExists(MediaIndexState& state, MediaItem& item) {
     bool namesKnown = false;
     std::unordered_set<std::wstring> namesCopy;
     {
-        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        std::lock_guard<std::mutex> lock(state.mutationMutex);
         auto cached = state.folderFileNames.find(folder);
         if (cached != state.folderFileNames.end()) {
             namesKnown = true;
@@ -183,7 +212,7 @@ void SetSubtitleIfExists(MediaIndexState& state, MediaItem& item) {
         for (const auto& entry : entries) {
             if (!entry.isDirectory) namesCopy.insert(ToLowerWide(entry.name));
         }
-        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        std::lock_guard<std::mutex> lock(state.mutationMutex);
         state.folderFileNames[folder] = namesCopy;
     }
 
@@ -192,7 +221,7 @@ void SetSubtitleIfExists(MediaIndexState& state, MediaItem& item) {
     for (const wchar_t* subExt : kSubExts) {
         std::wstring candidateName = ToLowerWide(stem + subExt);
         if (namesCopy.find(candidateName) != namesCopy.end()) {
-            item.subtitlePath = folder + L"\\" + stem + subExt;
+            item.subtitlePath = folder + kPathSeparator + stem + subExt;
             return;
         }
     }
@@ -227,6 +256,7 @@ void MediaSources::Scan() {
         std::shared_ptr<PlaylistScanContext> ctx;
         MediaSource source;
         int containerId;
+        bool singleFile;
     };
     std::vector<SourceJob> jobs;
 
@@ -243,12 +273,15 @@ void MediaSources::Scan() {
                 continue;
             }
         }
-        const int containerId = PublishContainer(database.get(), 0, SourceDisplayName(src.path), src.path, g_canonicalize);
+        const bool singleFile = IsSingleLocalFileSource(src.path);
+        const int containerId = singleFile
+            ? 0
+            : PublishContainer(database.get(), 0, SourceDisplayName(src.path), src.path, g_canonicalize);
 
         auto ctx = std::make_shared<PlaylistScanContext>();
         ctx->cfg = cfg;
         ctx->state.mediaDatabase = database.get();
-        jobs.push_back({ctx, src, containerId});
+        jobs.push_back({ctx, src, containerId, singleFile});
     }
 
     if (!cfg.hasRuntimeSourceOverride && cfg.defaultPlaylistEnabled && !cfg.defaultPlaylistPath.empty() && DefaultPlaylistFileExists(cfg.defaultPlaylistPath)) {
@@ -256,10 +289,10 @@ void MediaSources::Scan() {
         auto ctx = std::make_shared<PlaylistScanContext>();
         ctx->cfg = cfg;
         ctx->state.mediaDatabase = database.get();
-        jobs.push_back({ctx, MediaSource{cfg.defaultPlaylistPath}, containerId});
+        jobs.push_back({ctx, MediaSource{cfg.defaultPlaylistPath}, containerId, false});
     }
 
-    // Each top-level source job runs on its own dedicated thread, never on
+    // Each top-level source job runs on its own SourceScanPool task, never on
     // PlaylistScanPool. RunPlaylistDispatcher (reached via ScanPlaylistTree,
     // called directly here or indirectly from ScanFolder/ScanNetworkFolder
     // when they discover a nested playlist) submits leaf ScanOnePlaylistNode
@@ -271,17 +304,19 @@ void MediaSources::Scan() {
     // tasks being waited on -- a permanent deadlock. See Task 9 of
     // dlna-server-concurrency-memory-fix-workflow-17-7-26.md and SEI CERT
     // TPS01-J. Do not change this back to PlaylistScanPool::Get().Submit(...).
-    std::vector<std::thread> sourceThreads;
-    sourceThreads.reserve(jobs.size());
+    TaskGroup sourceGroup;
+    m_publishBatchDepth.fetch_add(1, std::memory_order_acq_rel);
     for (auto& job : jobs) {
-        sourceThreads.emplace_back([this, &job]() {
+        sourceGroup.Enter();
+        SourceScanPool::Get().Submit([this, &job, &sourceGroup]() {
+            TaskGroupLeaveGuard leave(sourceGroup);
             RunGuarded(L"source-scan", [this, &job]() {
                 LogPrint(L"Scanning media source: %ls", RedactUrlForLog(job.source.path).c_str());
                 if (IsPlaylistSourcePath(job.source.path)) {
                     ScanPlaylistTree(job.ctx, job.source.path, job.containerId);
                 } else if (IsNetworkShareUrl(job.source.path)) {
                     ScanNetworkFolder(job.ctx, job.source.path, job.containerId, 0);
-                } else if (!IsRemoteMediaUrl(job.source.path) && FsIsRegularFile(job.source.path)) {
+                } else if (job.singleFile) {
                     // A configured source that is a single local file (not
                     // a directory) used to fall into the ScanFolder()
                     // branch below, which calls FsListDirectory(rootPath,
@@ -302,9 +337,8 @@ void MediaSources::Scan() {
             });
         });
     }
-    for (auto& sourceThread : sourceThreads) {
-        sourceThread.join();
-    }
+    sourceGroup.Wait();
+    m_publishBatchDepth.fetch_sub(1, std::memory_order_acq_rel);
 
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
     AppEvents.NotifySystemUpdateId(newUpdateId);
@@ -313,6 +347,8 @@ void MediaSources::Scan() {
         LogPrint(L"Scan cancelled before completion; media-cache.tsv left unmodified.");
         return;
     }
+
+    SweepStaleEntries();
 
     const size_t prunedRecordCount = database->PruneUntouched();
     if (prunedRecordCount > 0) {
@@ -338,11 +374,6 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
             }
             return;
         }
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
-        if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, path, g_canonicalize)).second) return;
     }
 
     MediaItem fileInfo;
@@ -379,6 +410,10 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
     }
 
     SetAlbumArtIfExists(state, fileInfo);
+    {
+        std::lock_guard<std::mutex> lock(state.mutationMutex);
+        if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, path, g_canonicalize)).second) return;
+    }
     AppMedia.PublishItem(fileInfo);
     scanSuccess.Mark();
     if (allowArtistAlbumMirror) {
@@ -388,7 +423,7 @@ void MediaSources::AddMediaFile(MediaIndexState& state, const ConfigSnapshot& cf
 
 void MediaSources::AddHlsStreamItem(MediaIndexState& state, const std::wstring& path, int parentId, const std::wstring& titleOverride) {
     {
-        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        std::lock_guard<std::mutex> lock(state.mutationMutex);
         if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(parentId, path, g_canonicalize)).second) return;
     }
 
@@ -579,7 +614,7 @@ void MediaSources::ScanOnePlaylistNode(std::shared_ptr<PlaylistScanContext> ctx,
 }
 
 void MediaSources::ScanNetworkFolder(std::shared_ptr<PlaylistScanContext> sourceContext, const std::wstring& folderUrl, int parentId, int depth) {
-    if (depth > 8 || AppScanCancel.IsCancelled()) {
+    if (depth > kMaxNetworkFolderDepth || AppScanCancel.IsCancelled()) {
         if (AppScanCancel.IsCancelled()) {
             LogPrint(L"[media:cancelled] Network folder scan cancelled: %ls", RedactUrlForLog(folderUrl).c_str());
         } else {
@@ -613,7 +648,7 @@ void MediaSources::ScanNetworkFolder(std::shared_ptr<PlaylistScanContext> source
 }
 
 void MediaSources::ScanFolder(std::shared_ptr<PlaylistScanContext> sourceContext, const std::wstring& rootPath, int parentId, int depth) {
-    if (depth > 64 || AppScanCancel.IsCancelled()) {
+    if (depth > kMaxLocalFolderDepth || AppScanCancel.IsCancelled()) {
         if (AppScanCancel.IsCancelled()) {
             LogPrint(L"[media:cancelled] Folder scan cancelled: %ls", rootPath.c_str());
         } else {
@@ -724,52 +759,28 @@ int MediaSources::GetSystemUpdateID() {
 void MediaSources::ResetForRescan() {
     {
         std::unique_lock<std::shared_mutex> lock(m_mutex);
-        // Capture the catalog size THIS pass is about to discard, before
-        // clearing it. Without this, every ResetForRescan() call
-        // reserve()s the same fixed kInitialCatalogReserve regardless of
-        // how large the catalog actually is, forcing the same sequence
-        // of doubling reallocations to repeat on every rescan for the
-        // life of the process. See F-MEM-01. size() is 0 before anything
-        // has ever been scanned, so first-run behavior is unchanged
-        // (falls through to the kInitialCatalogReserve floor below).
-        const size_t previousSize = m_items.size();
-        m_items.clear();
-        m_idToIndex.clear();
-        m_childrenByParent.clear();
-        // Reserving up front does not remove the possibility of a
-        // reallocation-while-locked stall for a library larger than this
-        // capacity (std::vector growth is only amortized O(1), a single
-        // triggering push is not O(1)), it only pushes the first
-        // reallocation past the common case. A structural fix (switching
-        // m_items to a container that never invalidates existing element
-        // storage on growth, e.g. std::deque) is a larger change that also
-        // touches m_idToIndex's index scheme and is out of scope here.
-        //
-        // Size the reserve off the previous pass's final size (with
-        // 12.5% slack for growth since the last scan) instead of the
-        // fixed constant, once a real size has been observed. This adds
-        // no new lock or I/O -- it is a pure allocation-policy change
-        // using data already available under the lock this function
-        // already holds. m_idToIndex gets the same hint so its bucket
-        // array does not repeatedly rehash (and scatter entries into new
-        // buckets, costing cache misses on every subsequent lookup)
-        // while it grows back to the same size it was before this
-        // reset. m_childrenByParent is deliberately NOT given this same
-        // hint: its key count is the number of distinct parent
-        // containers, not the item count, and previousSize would be a
-        // poor (large) overestimate for it.
-        const size_t reserveHint = (std::max)(kInitialCatalogReserve, previousSize + previousSize / 8);
-        m_items.reserve(reserveHint);
-        m_idToIndex.reserve(reserveHint);
-
-        MediaItem root{};
-        root.id = 0;
-        root.parentId = -1;
-        root.title = L"Root";
-        root.isFolder = true;
-        root.upnpClass = L"object.container.storageFolder";
-        m_items.push_back(root);
-        m_idToIndex[0] = 0;
+        // the catalog is never cleared here on purpose
+        // clearing here made every existing item unresolvable to a
+        // concurrent HTTP reader for the entire duration of the scan
+        // publishing during the scan tags each item with the new
+        // generation and SweepStaleEntries removes only items that
+        // truly were not republished after the scan fully completes
+        ++m_currentGeneration;
+        m_items.reserve(kInitialCatalogReserve);
+        auto rootIndexEntry = m_idToIndex.find(0);
+        if (rootIndexEntry == m_idToIndex.end()) {
+            MediaItem root{};
+            root.id = 0;
+            root.parentId = -1;
+            root.title = L"Root";
+            root.isFolder = true;
+            root.upnpClass = L"object.container.storageFolder";
+            root.scanGeneration = m_currentGeneration;
+            m_items.push_back(root);
+            m_idToIndex[0] = m_items.size() - 1;
+        } else if (rootIndexEntry->second < m_items.size()) {
+            m_items[rootIndexEntry->second].scanGeneration = m_currentGeneration;
+        }
     }
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
     AppEvents.NotifySystemUpdateId(newUpdateId);
@@ -788,15 +799,23 @@ int MediaSources::PublishContainer(MediaDatabase* database, int parentId,
         std::unique_lock<std::shared_mutex> lock(m_mutex);
         container.id = database
             ? database->GetOrCreateStableContainerId(
-                  BuildStableContainerKey(parentId, title, path, canonicalize))
+                BuildStableContainerKey(parentId, title, path, canonicalize))
             : NextScratchId();
+        auto existing = m_idToIndex.find(container.id);
+        if (existing != m_idToIndex.end() && existing->second < m_items.size() &&
+            m_items[existing->second].scanGeneration == m_currentGeneration) {
+            return container.id;
+        }
+        container.scanGeneration = m_currentGeneration;
         m_items.push_back(container);
         const size_t index = m_items.size() - 1;
         m_idToIndex[container.id] = index;
         m_childrenByParent[parentId].push_back(index);
     }
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
-    AppEvents.NotifySystemUpdateId(newUpdateId);
+    if (m_publishBatchDepth.load(std::memory_order_acquire) == 0) {
+        AppEvents.NotifySystemUpdateId(newUpdateId);
+    }
     return container.id;
 }
 
@@ -817,6 +836,12 @@ int MediaSources::PublishContainer(MediaDatabase* database, int parentId,
 void MediaSources::PublishItem(MediaItem item) {
     {
         std::unique_lock<std::shared_mutex> lock(m_mutex);
+        auto existing = m_idToIndex.find(item.id);
+        if (existing != m_idToIndex.end() && existing->second < m_items.size() &&
+            m_items[existing->second].scanGeneration == m_currentGeneration) {
+            return;
+        }
+        item.scanGeneration = m_currentGeneration;
         m_items.push_back(std::move(item));
         const size_t index = m_items.size() - 1;
         const MediaItem& stored = m_items.back();
@@ -824,5 +849,25 @@ void MediaSources::PublishItem(MediaItem item) {
         m_childrenByParent[stored.parentId].push_back(index);
     }
     const int newUpdateId = m_systemUpdateId.fetch_add(1, std::memory_order_acq_rel) + 1;
-    AppEvents.NotifySystemUpdateId(newUpdateId);
+    if (m_publishBatchDepth.load(std::memory_order_acquire) == 0) {
+        AppEvents.NotifySystemUpdateId(newUpdateId);
+    }
+}
+
+void MediaSources::SweepStaleEntries() {
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
+    std::vector<MediaItem> survivors;
+    survivors.reserve(m_items.size());
+    for (auto& item : m_items) {
+        if (item.scanGeneration == m_currentGeneration) {
+            survivors.push_back(std::move(item));
+        }
+    }
+    m_items = std::move(survivors);
+    m_idToIndex.clear();
+    m_childrenByParent.clear();
+    for (size_t i = 0; i < m_items.size(); ++i) {
+        m_idToIndex[m_items[i].id] = i;
+        m_childrenByParent[m_items[i].parentId].push_back(i);
+    }
 }

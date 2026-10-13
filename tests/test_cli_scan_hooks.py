@@ -1,12 +1,15 @@
+import os
 import subprocess
 
 import pytest
 
 
 def _run(binary_path, *args, timeout=30):
+    env = os.environ.copy()
+    env["DLNA_SERVER_SKIP_FIREWALL"] = "1"
     return subprocess.run(
         [str(binary_path), *args],
-        capture_output=True, text=True, timeout=timeout,
+        capture_output=True, text=True, timeout=timeout, env=env,
     )
 
 

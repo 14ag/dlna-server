@@ -1,0 +1,3405 @@
+// GTK4 front end for the DLNA server POSIX build
+// pixel and color parity target is the Win32 GUI
+// see src/mainwindow.cpp src/settingsdlg.cpp src/logdlg.cpp
+// src/help_dialog.cpp and resources/app.rc
+// plain GTK4 C API from C++ with no gtkmm layer
+// NOTE the tray icon and dialog chrome replicate the Win32
+// windows as closely as GTK4 allows
+// NOTE message boxes use GtkMessageDialog because this build
+// targets GTK 4.6 which predates GtkAlertDialog added in 4.10
+
+#include "config.h"
+#include "dlna_utils.h"
+#include "log.h"
+#include "media_source_file_types.h"
+#include "network_sources.h"
+#include "thread_guard.h"
+#include "server.h"
+#include "scan_cancellation.h"
+#include "settings_restart.h"
+#include "close_pending_state.h"
+#include "server_close_policy.h"
+#include "health_check_policy.h"
+#include "input_gate.h"
+#include "settings_help.h"
+#include "cli_flags.h"
+#include "posix_single_instance.h"
+#include "source_drop_policy.h"
+#include "ui_tokens.h"
+#include "ui_tokens_posix.h"
+#include "server_ui_state.h"
+#include "posix_tray.h"
+#include "source_list_focus.h"
+#include "modal_stack.h"
+#include "function_key_action.h"
+#include "access_keys.h"
+#include "access_keys_gtk_adapter.h"
+#include "app_identity.h"
+
+#include <gtk/gtk.h>
+#include <gio/gio.h>
+#include <gdk/gdk.h>
+#include <gdk/x11/gdkx.h>
+#ifdef GDK_WINDOWING_WAYLAND
+#include <gdk/wayland/gdkwayland.h>
+#endif
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+
+#include <algorithm>
+#include <atomic>
+#include <csignal>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+#include <cwctype>
+int g_ignore_baddrawable = 0;
+// x window id of the main window recorded when it is mapped
+static std::atomic<unsigned long> g_mainWindowXid{0};
+static int (*g_prev_x_error_handler)(Display*, XErrorEvent*) = nullptr;
+
+static int g_x_error_handler(Display* display, XErrorEvent* error) {
+    if (g_ignore_baddrawable && error->error_code == BadDrawable) {
+        return 0;
+    }
+    // requests that still name the main window after the display server
+    // destroyed it are harmless because the app is already closing
+    const unsigned long mainXid = g_mainWindowXid.load(std::memory_order_acquire);
+    if (mainXid != 0 && error->resourceid == mainXid &&
+        (error->error_code == BadWindow || error->error_code == BadDrawable)) {
+        return 0;
+    }
+    return g_prev_x_error_handler ? g_prev_x_error_handler(display, error) : 0;
+}
+
+// installed once at startup so the handler chain never nests
+void InstallXErrorGuard() {
+    if (g_prev_x_error_handler != nullptr) return;
+    g_prev_x_error_handler = XSetErrorHandler(g_x_error_handler);
+}
+
+void BeginIgnoreBadDrawable() {
+    g_ignore_baddrawable = 1;
+}
+
+void EndIgnoreBadDrawable() {
+    g_ignore_baddrawable = 0;
+}
+
+
+
+namespace {
+
+std::atomic<bool> g_signalStop(false);
+
+void HandleTerminationSignal(int) {
+    g_signalStop.store(true, std::memory_order_relaxed);
+}
+
+std::string TitleFromPath(const std::string& moviePath) {
+    const std::wstring stem = SourceStemName(Utf8ToWide(moviePath));
+    return stem.empty() ? "Media item" : WideToUtf8(stem);
+}
+
+bool AppendDefaultPlaylistEntry(const std::string& moviePath, const std::string& subtitlePath) {
+    if (moviePath.empty()) return false;
+    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    std::wstring playlistPath = cfg.defaultPlaylistPath;
+    if (playlistPath.empty()) {
+        playlistPath = AppConfig.GetDefaultPlaylistPath();
+        AppConfig.Mutate([&](Config& c) { c.defaultPlaylistPath = playlistPath; });
+    }
+    std::ifstream existing(WideToUtf8(playlistPath), std::ios::binary);
+    bool hasContent = existing.good() && existing.peek() != std::ifstream::traits_type::eof();
+    existing.close();
+
+    std::ofstream file(WideToUtf8(playlistPath), std::ios::binary | std::ios::app);
+    if (!file) return false;
+    if (!hasContent) file << "#EXTM3U\n";
+    file << "#EXTINF:-1," << TitleFromPath(moviePath) << "\n";
+    if (!subtitlePath.empty()) {
+        file << "#DLNA-SUBTITLE:" << subtitlePath << "\n";
+        file << "#EXTVLCOPT:sub-file=" << subtitlePath << "\n";
+    }
+    file << moviePath << "\n";
+    return true;
+}
+
+GtkFileFilter* BuildMediaSourceFilter() {
+    GtkFileFilter* filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, "Media and playlist files");
+    const auto extensions = GetMediaSourceFileExtensions();
+    for (const auto& ext : extensions) {
+        gchar* pattern = g_strdup_printf("*.%s", WideToUtf8(ext).c_str());
+        gtk_file_filter_add_pattern(filter, pattern);
+        g_free(pattern);
+    }
+    return filter;
+}
+
+GtkFileFilter* BuildSubtitleFilter() {
+    GtkFileFilter* filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, "Subtitle files");
+    const char* patterns[] = {"*.srt", "*.vtt", "*.sub", "*.ass", "*.ssa", "*.smi", "*.txt"};
+    for (const char* pattern : patterns) {
+        gtk_file_filter_add_pattern(filter, pattern);
+    }
+    return filter;
+}
+
+GtkWidget* g_mainWindow = nullptr;
+GtkWidget* g_toolbar = nullptr;
+GtkWidget* g_addButton = nullptr;
+GtkWidget* g_removeButton = nullptr;
+GtkWidget* g_startStopButton = nullptr;
+GtkWidget* g_settingsButton = nullptr;
+GtkWidget* g_status = nullptr;
+GtkWidget* g_sourcesScrolled = nullptr;
+GtkWidget* g_sources = nullptr;
+GtkWidget* g_emptyState = nullptr;
+GtkWidget* g_activeSourceContextMenu = nullptr;
+GtkWidget* g_sourceHoverTip = nullptr;
+GtkWidget* g_sourceHoverTipLabel = nullptr;
+GtkListBoxRow* g_sourceHoverTipRow = nullptr;
+
+ServerUiState g_state = ServerUiState::Stopped;
+std::thread g_worker;
+std::thread g_rescanWorker;
+std::mutex g_pendingMutex;
+ClosePendingState g_closePending;
+bool g_hasPendingResult = false;
+bool g_pendingSuccess = false;
+ServerUiState g_pendingState = ServerUiState::Stopped;
+std::string g_pendingMessage;
+SourceListFocusState g_sourceFocusState;
+std::atomic<bool> g_scanInProgress{false};
+int g_consecutiveUnhealthyPolls = 0;
+// WSLg can report a freshly mapped window as minimized before it has been
+// presented. Only treat minimization as a user action after one normal map.
+bool g_mainWindowWasUnminimized = false;
+// set when the display server destroyed the main window behind the app
+bool g_mainSurfaceLost = false;
+
+GtkWidget* g_sourceDialog = nullptr;
+GtkWidget* g_sourceEntry = nullptr;
+GtkWidget* g_sourceAddButton = nullptr;
+bool g_sourceDone = false;
+
+GtkWidget* g_playlistDialog = nullptr;
+GtkWidget* g_movieEntry = nullptr;
+GtkWidget* g_subtitleEntry = nullptr;
+bool g_playlistDone = false;
+
+GtkWidget* g_settingsDialog = nullptr;
+GtkWidget* g_serverNameEntry = nullptr;
+GtkWidget* g_httpPortEntry = nullptr;
+GtkWidget* g_ipWhitelistEntry = nullptr;
+GtkWidget* g_debugLogCheck = nullptr;
+GtkWidget* g_defaultPlaylistCheck = nullptr;
+GtkWidget* g_defaultPlaylistAddButton = nullptr;
+GtkWidget* g_artistAlbumCheck = nullptr;
+GtkWidget* g_hideAllMediaCheck = nullptr;
+GtkWidget* g_sortByTitleCheck = nullptr;
+GtkWidget* g_flatFoldersCheck = nullptr;
+GtkWidget* g_showFileNamesCheck = nullptr;
+GtkWidget* g_proxyStreamsCheck = nullptr;
+GtkWidget* g_backgroundScanCheck = nullptr;
+bool g_settingsSaved = false;
+bool g_settingsRestartRequested = false;
+
+GtkWidget* g_logDialog = nullptr;
+GtkWidget* g_helpDialog = nullptr;
+GtkTextBuffer* g_logBuffer = nullptr;
+unsigned long long g_logLastSequence = 0;
+
+ModalStack<GtkWindow*> g_modalStack;
+
+KeyboardCueState g_cueState;
+std::vector<wchar_t> g_toolbarMnemonics;
+
+// Applies a Win32-style "&"-marked mnemonic label (produced by
+// InsertMnemonicMarker) to a GTK4 button, translating it to GTK's
+// "_"-underscore convention via the existing adapter, and enables
+// use-underline rendering on the button.
+void ApplyMnemonicLabel(GtkWidget* button, const std::wstring& plainLabel, wchar_t mnemonic) {
+    const std::wstring markedWide = InsertMnemonicMarker(plainLabel, mnemonic);
+    const std::wstring underscoreWide = ConvertAmpersandMnemonicToUnderscore(markedWide);
+    gtk_button_set_label(GTK_BUTTON(button), WideToUtf8(underscoreWide).c_str());
+    gtk_button_set_use_underline(GTK_BUTTON(button), TRUE);
+}
+
+// Applies the current KeyboardCueState visibility to a specific
+// top-level window. Call this once per top-level immediately after
+// KeyboardCueState changes (see the key/button controllers installed
+// in Task 8.3).
+void ApplyMnemonicsVisible(GtkWindow* window) {
+    if (window == nullptr) return;
+    gtk_window_set_mnemonics_visible(window, !g_cueState.HideAccel() ? TRUE : FALSE);
+}
+
+// Wires KeyboardCueState into a specific top-level window: any keyboard
+// key reveals mnemonic underlines on that window, any mouse-button press
+// hides them again. Uses GTK_PHASE_CAPTURE so this observes input before
+// any specific widget's own handler consumes it, and never returns TRUE,
+// so it never blocks normal key/click handling elsewhere in the window.
+void InstallMnemonicCueControllers(GtkWidget* window) {
+    GtkEventController* keyWatcher = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(keyWatcher, GTK_PHASE_CAPTURE);
+    gtk_widget_add_controller(window, keyWatcher);
+    g_signal_connect(keyWatcher, "key-pressed",
+                     G_CALLBACK(+[](GtkEventController*, guint, guint, GdkModifierType, gpointer data) -> gboolean {
+        g_cueState.OnKeyboardInput();
+        ApplyMnemonicsVisible(GTK_WINDOW(data));
+        return FALSE;
+    }), window);
+
+    GtkGesture* clickWatcher = gtk_gesture_click_new();
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(clickWatcher), GTK_PHASE_CAPTURE);
+    gtk_widget_add_controller(window, GTK_EVENT_CONTROLLER(clickWatcher));
+    g_signal_connect(clickWatcher, "pressed",
+                     G_CALLBACK(+[](GtkGestureClick*, gint, gdouble, gdouble, gpointer data) {
+        g_cueState.OnMouseButtonInput();
+        ApplyMnemonicsVisible(GTK_WINDOW(data));
+    }), window);
+}
+
+// Escape always closes the given window. Backspace closes it only when
+// the currently focused widget inside the window is not an editable
+// text widget (GtkEntry, GtkText, GtkSpinButton, GtkSearchEntry, etc.
+// all implement GtkEditable), matching the Win32 isLiveEdit check in
+// mainwindow.cpp/help_dialog.cpp/logdlg.cpp. onClose is invoked instead
+// of calling gtk_window_destroy directly so callers can run their
+// existing "done"/"cancel" cleanup path (RestoreModalFocus equivalents,
+// ClearActiveModal, etc.) instead of bypassing it.
+void InstallSubwindowCloseKeys(GtkWidget* window, std::function<void()> onClose) {
+    auto* closeFn = new std::function<void()>(std::move(onClose));
+    g_object_set_data_full(G_OBJECT(window), "dlna-close-fn", closeFn,
+                           +[](gpointer data) { delete static_cast<std::function<void()>*>(data); });
+
+    GtkEventController* keyController = gtk_event_controller_key_new();
+    gtk_widget_add_controller(window, keyController);
+    g_signal_connect(keyController, "key-pressed",
+                     G_CALLBACK(+[](GtkEventController*, guint keyval, guint, GdkModifierType, gpointer data) -> gboolean {
+        GtkWidget* win = GTK_WIDGET(data);
+        auto* fn = static_cast<std::function<void()>*>(g_object_get_data(G_OBJECT(win), "dlna-close-fn"));
+        if (!fn) return FALSE;
+        if (keyval == GDK_KEY_Escape) {
+            (*fn)();
+            return TRUE;
+        }
+        if (keyval == GDK_KEY_BackSpace) {
+            GtkRoot* root = gtk_widget_get_root(win) ? GTK_ROOT(gtk_widget_get_root(win)) : nullptr;
+            GtkWidget* focused = root ? gtk_root_get_focus(root) : nullptr;
+            const bool isLiveEdit = focused != nullptr && GTK_IS_EDITABLE(focused);
+            if (!isLiveEdit) {
+                (*fn)();
+                return TRUE;
+            }
+        }
+        return FALSE;
+    }), window);
+}
+
+GtkWindow* ActiveTopLevelWindow() {
+    // The topmost still-visible modal owns the focus chain. A plain "current
+    // modal" pointer cannot express nesting (Settings -> Log -> message box),
+    // so the stack is popped past any window that has already been hidden or
+    // destroyed.
+    while (!g_modalStack.Empty()) {
+        GtkWindow* top = g_modalStack.Top();
+        if (top != nullptr && GTK_IS_WIDGET(top) && gtk_widget_get_visible(GTK_WIDGET(top))) {
+            return top;
+        }
+        g_modalStack.Remove(top);
+    }
+    return GTK_WINDOW(g_mainWindow);
+}
+
+void PresentModalChild(GtkWindow* child, GtkWindow* parent) {
+    // Spec C11: subwindows take priority focus over the main window and are
+    // not minimizable. transient_for + modal is the GTK4 equivalent of the
+    // Win32 EnableWindow(owner, FALSE) the dialogs use.
+    if (parent != nullptr) {
+        gtk_window_set_transient_for(child, parent);
+    }
+    gtk_window_set_modal(child, TRUE);
+    gtk_window_set_resizable(child, FALSE);
+    gtk_window_set_deletable(child, TRUE);
+    gtk_window_present(child);
+    g_modalStack.Push(child);
+}
+
+void ClearActiveModal(GtkWindow* child) {
+    g_modalStack.Remove(child);
+}
+
+// Spec C11: "the subwindow flashes signaling you should act on it first".
+// GTK4 has no urgency hint API, so the attention cue is a short CSS class
+// toggle on the modal's own title bar.
+void FlashActiveModal() {
+    GtkWindow* top = g_modalStack.Top();
+    if (top == nullptr || !GTK_IS_WIDGET(top)) return;
+    GtkWidget* titlebar = gtk_window_get_titlebar(top);
+    if (titlebar == nullptr) return;
+    gtk_widget_add_css_class(titlebar, "win10-attention");
+    g_timeout_add(220, +[](gpointer data) -> gboolean {
+        GtkWidget* bar = GTK_WIDGET(data);
+        if (GTK_IS_WIDGET(bar)) gtk_widget_remove_css_class(bar, "win10-attention");
+        return G_SOURCE_REMOVE;
+    }, titlebar);
+}
+
+// Every modal subwindow runs its loop through here. The slot pointer
+// (g_settingsDialog, g_logDialog, ...) is cleared by the window's own
+// "destroy" handler; destroying here is what allows the dialog to be opened
+// again. Leaving a hidden-but-alive window in the slot is the defect that made
+// Settings unopenable after its first close.
+void RunModalLoopAndDestroy(GtkWidget* dialog) {
+    if (dialog == nullptr) return;
+    while (GTK_IS_WIDGET(dialog) && gtk_widget_get_visible(dialog)) {
+        g_main_context_iteration(nullptr, TRUE);
+    }
+    if (!GTK_IS_WIDGET(dialog)) return;
+    ClearActiveModal(GTK_WINDOW(dialog));
+    gtk_window_destroy(GTK_WINDOW(dialog));
+}
+
+// hidden debug hook: --dump-widget-geometry builds every Part-1 dialog
+// headless, prints [gtk4-<tag>-geometry] rects, and exits before the modal
+// loops so no user input is needed. see DumpAllWindowsAndExit.
+bool g_dumpGeometry = false;
+// hidden debug hook: --dump-log-dialog-reopen exercises the ShowLogDialog
+// Close-button-hide then reopen path headless. see DumpLogDialogReopenAndExit.
+bool g_dumpLogDialogReopen = false;
+bool g_dumpMsgBoxParent = false;
+bool g_printDeleteFocusGating = false;
+bool g_printPlaylistAddSensitivity = false;
+bool g_printStoppedCloseExit = false;
+bool g_printSettingsReopen = false;
+bool g_printCloseWithContextMenuOpen = false;
+bool g_printCloseWhileStarting = false;
+bool g_printCloseWhileStartingFails = false;
+
+// Number of attempts and delay between attempts when the initial
+// stopped distro (microsoft/WSL#11958). Total worst-case wait is
+// maxAttempts * delayMs; keep this well under what a user will
+// perceive as "the shortcut did nothing" (a few seconds), and well
+// above WSLg's typical compositor cold-start time (observed on the
+// order of 1-3 seconds in the linked upstream reports).
+constexpr int kGuiStartupMaxAttempts = 15;
+constexpr int kGuiStartupRetryDelayMs = 300;
+void DumpWindowGeometry(const char* tag, GtkWidget* toplevel);
+void DumpAllWindowsAndExit(GtkApplication* app);
+void DumpLogDialogReopenAndExit(GtkApplication* app);
+void PrintSettingsReopenAndExit(GtkApplication* app);
+void DumpMessageBoxParentAndExit(GtkApplication* app);
+void RefreshStatus();
+void ApplyPendingResult();
+void BeginRescan();
+void StartServer();
+void StopServer();
+void RestartServer();
+void DestroyMainWindowSafely();
+void RequestClose();
+void LayoutMainWindow(int width, int height);
+void RefreshSourceList();
+void RefreshEmptyState();
+void RefreshDeleteButton();
+bool CanRemoveSelectedSource();
+void ShowSourceListContextMenu(double x, double y);
+void RemoveSelectedSource();
+bool IsShowingOverrideSources();
+void RunModalLoopAndDestroy(GtkWidget* dialog);
+void FlashActiveModal();
+GtkWidget* BuildSourceRow(const std::string& pathUtf8);
+void HideSourceHoverTip();
+void OnSourceFocusChanged(GtkEventControllerFocus*, gpointer);
+void OnSourceFocusLeave(GtkEventControllerFocus*, gpointer);
+void OnSourceSelectionChanged(GtkListBox*, GtkListBoxRow*, gpointer);
+bool HasSourceSelection();
+void SaveSourcesFromList();
+void ShowLogDialog(GtkWindow* parent);
+void ShowPlaylistEntryDialog(GtkWindow* parent);
+void PromptForMediaSource();
+void ShowHelpDialog(GtkWindow* parent);
+bool IsBusy();
+gboolean OnMainWindowKeyPressed(GtkEventControllerKey*, guint, guint, GdkModifierType, gpointer);
+bool ShowSettingsDialog();
+void RestoreAndFocusMainWindow();
+gboolean OnTrayAction(gpointer);
+void OnSingleInstanceCommand(const std::string& cmd);
+
+enum class WindowChrome {
+    Main,
+    Dialog
+};
+
+struct TitlebarState {
+    GtkWindow* window;
+    GtkWidget* titlebar;
+};
+
+static void UpdateTitlebarActiveState(TitlebarState* state) {
+    const bool active = gtk_window_is_active(state->window);
+    if (active) {
+        gtk_widget_add_css_class(state->titlebar, "win10-active");
+        gtk_widget_remove_css_class(state->titlebar, "win10-inactive");
+    } else {
+        gtk_widget_add_css_class(state->titlebar, "win10-inactive");
+        gtk_widget_remove_css_class(state->titlebar, "win10-active");
+    }
+}
+
+static void OnTitlebarActiveNotify(GObject*, GParamSpec*, gpointer userData) {
+    UpdateTitlebarActiveState(static_cast<TitlebarState*>(userData));
+}
+
+static void OnWindowMinimize(GtkButton*, gpointer userData) {
+    gtk_window_minimize(GTK_WINDOW(userData));
+}
+
+static GtkWidget* CreateWin10WindowControl(GtkWindow* window,
+                                           const char* cssClass,
+                                           bool closesWindow,
+                                           bool disabled = false) {
+    GtkWidget* button = gtk_button_new();
+    gtk_widget_add_css_class(button, "win10-window-control");
+    gtk_widget_add_css_class(button, "flat");
+    gtk_widget_add_css_class(button, cssClass);
+    gtk_widget_set_size_request(button, 46, UiTokensPosix::kTitlebarHeight);
+    gtk_widget_set_tooltip_text(button, closesWindow ? "Close" :
+                                         disabled ? "Maximize" : "Minimize");
+    if (closesWindow) {
+        g_signal_connect_swapped(button, "clicked", G_CALLBACK(gtk_window_close), window);
+    } else if (!disabled) {
+        g_signal_connect(button, "clicked", G_CALLBACK(OnWindowMinimize), window);
+    }
+    gtk_widget_set_sensitive(button, disabled ? FALSE : TRUE);
+    return button;
+}
+
+void OnWindowMap(GtkWidget* widget, gpointer) {
+    GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(widget));
+    if (surface == nullptr) return;
+    if (widget == g_mainWindow && GDK_IS_X11_SURFACE(surface)) {
+        g_mainWindowXid.store(gdk_x11_surface_get_xid(surface), std::memory_order_release);
+        g_mainSurfaceLost = false;
+    }
+#ifdef GDK_WINDOWING_WAYLAND
+    if (widget == g_mainWindow && GDK_IS_WAYLAND_SURFACE(surface)) {
+        // WSLg cuts the app list key at the last dot
+        // so the live window carries the short id to match the entry
+        gdk_wayland_toplevel_set_application_id(GDK_TOPLEVEL(surface), DLNA_APP_ID);
+    }
+#endif
+}
+
+GtkWidget* CreateWin10Titlebar(GtkWindow* window,
+                               const char* title,
+                               WindowChrome chrome) {
+    gtk_window_set_title(window, title);
+    gtk_window_set_icon_name(window, DLNA_GTK_APP_ID);
+    g_signal_connect_after(window, "map", G_CALLBACK(OnWindowMap), nullptr);
+    // realize runs before the compositor sees the window
+    // so the short wayland id is set before the first commit
+    g_signal_connect(window, "realize", G_CALLBACK(OnWindowMap), nullptr);
+
+    GtkWidget* handle = gtk_window_handle_new();
+    gtk_widget_add_css_class(handle, "win10-titlebar");
+    gtk_widget_add_css_class(handle,
+                             chrome == WindowChrome::Main ? "win10-main-titlebar"
+                                                         : "win10-dialog-titlebar");
+    gtk_widget_set_size_request(handle, -1, UiTokensPosix::kTitlebarHeight);
+
+    GtkWidget* titlebar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(titlebar, "win10-titlebar-box");
+    gtk_window_handle_set_child(GTK_WINDOW_HANDLE(handle), titlebar);
+
+    GtkWidget* leftBox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, UiTokensPosix::kTitlebarIconTitleGap);
+    gtk_widget_set_margin_start(
+        leftBox,
+        chrome == WindowChrome::Main ? UiTokensPosix::kTitlebarLeftPadding
+                                     : UiTokensPosix::kTitlebarIconTitleGap);
+    gtk_widget_set_valign(leftBox, GTK_ALIGN_CENTER);
+
+    if (chrome == WindowChrome::Main) {
+        GtkWidget* icon = nullptr;
+        std::string iconPath = ResolveBundledResourcePath("server_icon_16.png");
+        if (iconPath.empty()) {
+            iconPath = ResolveBundledResourcePath("icons/server_icon_16.png");
+        }
+        if (!iconPath.empty()) {
+            icon = gtk_image_new_from_file(iconPath.c_str());
+            gtk_image_set_pixel_size(GTK_IMAGE(icon), 16);
+            gtk_widget_set_name(icon, "win10-title-icon");
+            gtk_box_append(GTK_BOX(leftBox), icon);
+        }
+    }
+
+    GtkWidget* titleLabel = gtk_label_new(title);
+    gtk_widget_add_css_class(titleLabel, "title");
+    gtk_widget_set_name(titleLabel, "win10-title-label");
+    gtk_label_set_xalign(GTK_LABEL(titleLabel), 0.0f);
+    gtk_box_append(GTK_BOX(leftBox), titleLabel);
+
+    gtk_box_append(GTK_BOX(titlebar), leftBox);
+
+    GtkWidget* spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(spacer, TRUE);
+    gtk_box_append(GTK_BOX(titlebar), spacer);
+
+    GtkWidget* controls = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(controls, "win10-window-controls");
+    gtk_widget_set_margin_end(controls, 0);
+    gtk_widget_set_halign(controls, GTK_ALIGN_END);
+    if (chrome == WindowChrome::Main) {
+        gtk_box_append(GTK_BOX(controls),
+                       CreateWin10WindowControl(window, "win10-minimize-control", false));
+        gtk_box_append(GTK_BOX(controls),
+                       CreateWin10WindowControl(window, "win10-maximize-control", false, true));
+    }
+    GtkWidget* closeButton = CreateWin10WindowControl(window, "win10-close-control", true);
+    gtk_widget_set_name(closeButton, "win10-close-button");
+    gtk_box_append(GTK_BOX(controls), closeButton);
+    gtk_box_append(GTK_BOX(titlebar), controls);
+
+    TitlebarState* state = g_new0(TitlebarState, 1);
+    state->window = window;
+    state->titlebar = handle;
+    g_object_set_data_full(G_OBJECT(handle), "win10-titlebar-state", state,
+                           reinterpret_cast<GDestroyNotify>(g_free));
+
+    UpdateTitlebarActiveState(state);
+    g_signal_connect(window, "notify::is-active",
+                     G_CALLBACK(OnTitlebarActiveNotify), state);
+
+    return handle;
+}
+
+GtkWindow* CreateMessageWindow(GtkWindow* parent,
+                               const char* title,
+                               WindowChrome chrome) {
+    GtkWindow* window = GTK_WINDOW(gtk_window_new());
+    gtk_widget_add_css_class(GTK_WIDGET(window), "dlna-dialog-window");
+    gtk_window_set_modal(window, TRUE);
+    gtk_window_set_resizable(window, FALSE);
+    // Win32 message boxes grow to fit their text. Keep the Figma width as a
+    // minimum only and let the height follow the wrapped label.
+    gtk_widget_set_size_request(GTK_WIDGET(window), UiTokensPosix::kWarningWindowWidth, -1);
+    gtk_window_set_transient_for(window, parent);
+    gtk_window_set_titlebar(
+        window,
+        CreateWin10Titlebar(window, title, chrome));
+    return window;
+}
+
+void MessageBoxShow(GtkWindow* parent, const std::string& text) {
+    GtkWindow* msgWin = CreateMessageWindow(parent, "DLNA Server", WindowChrome::Dialog);
+    InstallMnemonicCueControllers(GTK_WIDGET(msgWin));
+
+    if (g_dumpMsgBoxParent) {
+        GtkWindow* transientParent = gtk_window_get_transient_for(msgWin);
+        const char* parentTag = "none";
+        if (transientParent == GTK_WINDOW(g_settingsDialog)) parentTag = "settings";
+        else if (transientParent == GTK_WINDOW(g_logDialog)) parentTag = "log";
+        else if (transientParent == GTK_WINDOW(g_playlistDialog)) parentTag = "playlist";
+        else if (transientParent == GTK_WINDOW(g_sourceDialog)) parentTag = "source";
+        else if (transientParent == GTK_WINDOW(g_mainWindow)) parentTag = "main";
+        std::printf("[gtk4-msgbox-parent] parent=%s\n", parentTag);
+        gtk_window_destroy(msgWin);
+        return;
+    }
+
+    GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_window_set_child(msgWin, vbox);
+
+    GtkWidget* messageArea = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_add_css_class(messageArea, "dlna-warning-message");
+    gtk_widget_set_size_request(messageArea, UiTokensPosix::kWarningWindowWidth, -1);
+    gtk_widget_set_margin_top(messageArea, 16);
+    gtk_widget_set_margin_bottom(messageArea, 16);
+    gtk_box_append(GTK_BOX(vbox), messageArea);
+
+    GtkWidget* icon = gtk_image_new_from_file(
+        ResolveBundledResourcePath("gtk/penpot-warning.svg").c_str());
+    gtk_image_set_pixel_size(GTK_IMAGE(icon), UiTokensPosix::kWarningTriangleW);
+    gtk_widget_set_margin_start(icon, 19);
+    gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(messageArea), icon);
+
+    GtkWidget* label = gtk_label_new(text.c_str());
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_widget_set_valign(label, GTK_ALIGN_START);
+    gtk_label_set_max_width_chars(GTK_LABEL(label), 48);
+    gtk_box_append(GTK_BOX(messageArea), label);
+
+    GtkWidget* footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_add_css_class(footer, "dlna-warning-footer");
+    gtk_widget_set_size_request(footer, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningFooterH);
+    gtk_widget_set_halign(footer, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(footer, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(vbox), footer);
+    GtkWidget* buttonBox = footer;
+
+    GtkWidget* footerSpacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(footerSpacer, TRUE);
+    gtk_box_append(GTK_BOX(buttonBox), footerSpacer);
+
+    gboolean done = FALSE;
+    GtkWidget* okButton = gtk_button_new_with_label("OK");
+    gtk_widget_add_css_class(okButton, "dlna-warning-ok");
+    gtk_widget_set_size_request(okButton, UiTokensPosix::kWarningOkW, UiTokensPosix::kWarningOkH);
+    gtk_widget_set_margin_end(okButton, 15);
+    g_signal_connect(okButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer userData) {
+        *static_cast<gboolean*>(userData) = TRUE;
+    }), &done);
+    gtk_box_append(GTK_BOX(buttonBox), okButton);
+    {
+        std::vector<std::wstring> okLabels = { L"OK" };
+        std::vector<wchar_t> okMnemonics = AssignMnemonics(okLabels);
+        ApplyMnemonicLabel(okButton, okLabels[0], okMnemonics[0]);
+    }
+    gtk_widget_grab_focus(okButton);
+
+    g_signal_connect(msgWin, "close-request", G_CALLBACK(+[](GtkWidget*, gpointer userData) -> gboolean {
+        *static_cast<gboolean*>(userData) = TRUE;
+        return TRUE;
+    }), &done);
+    InstallSubwindowCloseKeys(GTK_WIDGET(msgWin), [&done]() { done = TRUE; });
+
+    if (g_dumpGeometry) {
+        PresentModalChild(msgWin, parent);
+        DumpWindowGeometry("warning", GTK_WIDGET(msgWin));
+        gtk_window_destroy(msgWin);
+        return;
+    }
+
+    PresentModalChild(msgWin, parent);
+    while (!done) {
+        g_main_context_iteration(nullptr, TRUE);
+    }
+    ClearActiveModal(msgWin);
+    gtk_window_destroy(msgWin);
+}
+
+bool MessageBoxQuestion(GtkWindow* parent, const std::string& text) {
+    GtkWindow* msgWin = CreateMessageWindow(parent, "DLNA Server", WindowChrome::Dialog);
+    InstallMnemonicCueControllers(GTK_WIDGET(msgWin));
+
+    GtkWidget* vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_window_set_child(msgWin, vbox);
+
+    GtkWidget* messageArea = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_add_css_class(messageArea, "dlna-warning-message");
+    gtk_widget_set_size_request(messageArea, UiTokensPosix::kWarningWindowWidth, -1);
+    gtk_widget_set_margin_top(messageArea, 16);
+    gtk_widget_set_margin_bottom(messageArea, 16);
+    gtk_box_append(GTK_BOX(vbox), messageArea);
+
+    GtkWidget* icon = gtk_image_new_from_file(
+        ResolveBundledResourcePath("gtk/penpot-warning.svg").c_str());
+    gtk_image_set_pixel_size(GTK_IMAGE(icon), UiTokensPosix::kWarningTriangleW);
+    gtk_widget_set_margin_start(icon, 19);
+    gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(messageArea), icon);
+
+    GtkWidget* label = gtk_label_new(text.c_str());
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_widget_set_halign(label, GTK_ALIGN_START);
+    gtk_widget_set_valign(label, GTK_ALIGN_START);
+    gtk_label_set_max_width_chars(GTK_LABEL(label), 48);
+    gtk_box_append(GTK_BOX(messageArea), label);
+
+    GtkWidget* footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    gtk_widget_add_css_class(footer, "dlna-warning-footer");
+    gtk_widget_set_size_request(footer, UiTokensPosix::kWarningWindowWidth, UiTokensPosix::kWarningFooterH);
+    gtk_widget_set_halign(footer, GTK_ALIGN_FILL);
+    gtk_widget_set_valign(footer, GTK_ALIGN_CENTER);
+    gtk_box_append(GTK_BOX(vbox), footer);
+    GtkWidget* buttonBox = footer;
+
+    GtkWidget* footerSpacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_hexpand(footerSpacer, TRUE);
+    gtk_box_append(GTK_BOX(buttonBox), footerSpacer);
+
+    struct QuestionState {
+        int result;
+        gboolean done;
+    };
+    QuestionState state = { GTK_RESPONSE_NONE, FALSE };
+
+    GtkWidget* yesButton = gtk_button_new_with_label("Yes");
+    gtk_widget_add_css_class(yesButton, "dlna-dialog-button");
+    g_signal_connect(yesButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer userData) {
+        QuestionState* qs = static_cast<QuestionState*>(userData);
+        qs->result = GTK_RESPONSE_YES;
+        qs->done = TRUE;
+    }), &state);
+    gtk_box_append(GTK_BOX(buttonBox), yesButton);
+
+    GtkWidget* noButton = gtk_button_new_with_label("No");
+    gtk_widget_add_css_class(noButton, "dlna-dialog-button");
+    g_signal_connect(noButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer userData) {
+        QuestionState* qs = static_cast<QuestionState*>(userData);
+        qs->result = GTK_RESPONSE_NO;
+        qs->done = TRUE;
+    }), &state);
+    gtk_box_append(GTK_BOX(buttonBox), noButton);
+    {
+        std::vector<std::wstring> answerLabels = { L"Yes", L"No" };
+        std::vector<wchar_t> answerMnemonics = AssignMnemonics(answerLabels);
+        ApplyMnemonicLabel(yesButton, answerLabels[0], answerMnemonics[0]);
+        ApplyMnemonicLabel(noButton, answerLabels[1], answerMnemonics[1]);
+    }
+    // Win32 parity: settingsdlg.cpp passes MB_DEFBUTTON2, so "No" is the
+    // default action for the restart prompt.
+    gtk_widget_grab_focus(noButton);
+
+    g_signal_connect(msgWin, "close-request", G_CALLBACK(+[](GtkWidget*, gpointer userData) -> gboolean {
+        QuestionState* qs = static_cast<QuestionState*>(userData);
+        qs->result = GTK_RESPONSE_NO;
+        qs->done = TRUE;
+        return TRUE;
+    }), &state);
+    // Escape/Backspace on a Yes/No box means "No", matching the Win32
+    // MB_YESNO + MB_DEFBUTTON2 behaviour in settingsdlg.cpp.
+    InstallSubwindowCloseKeys(GTK_WIDGET(msgWin), [&state]() {
+        state.result = GTK_RESPONSE_NO;
+        state.done = TRUE;
+    });
+
+    PresentModalChild(msgWin, parent);
+    while (!state.done) {
+        g_main_context_iteration(nullptr, TRUE);
+    }
+    ClearActiveModal(msgWin);
+    gtk_window_destroy(msgWin);
+    return state.result == GTK_RESPONSE_YES;
+}
+
+// Helper functions for file dialogs — kept out of lambdas to avoid
+// GCC "embedding a directive within macro arguments" warnings.
+
+void ShowFileChooserNativeImpl(GtkWindow* parent, GtkFileChooserAction action,
+                               const char* title, GtkEditable* entry,
+                               GtkFileFilter* filter) {
+    GtkFileChooserNative* chooser = gtk_file_chooser_native_new(
+        title, parent, action, "Select", "Cancel");
+    if (filter != nullptr) {
+        gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), filter);
+        g_object_unref(filter);
+    }
+    gtk_native_dialog_show(GTK_NATIVE_DIALOG(chooser));
+    g_signal_connect(chooser, "response", G_CALLBACK(+[](GtkNativeDialog* dialog, int response, gpointer data) {
+        if (response == GTK_RESPONSE_ACCEPT) {
+            GFile* file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dialog));
+            if (file != nullptr) {
+                gchar* path = g_file_get_path(file);
+                if (path != nullptr) {
+                    gtk_editable_set_text(GTK_EDITABLE(static_cast<GtkEditable*>(data)), path);
+                    g_free(path);
+                }
+                g_object_unref(file);
+            }
+        }
+        gtk_native_dialog_destroy(dialog);
+        g_object_unref(dialog);
+    }), entry);
+}
+
+void ShowOpenFileDialog(GtkWindow* parent, const char* title,
+                        GtkEditable* entry, GtkFileFilter* filter) {
+#if GTK_CHECK_VERSION(4, 10, 0)
+    GtkFileDialog* chooser = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(chooser, title);
+    if (filter != nullptr) {
+        GListStore* store = g_list_store_new(GTK_TYPE_FILE_FILTER);
+        g_list_store_append(store, filter);
+        gtk_file_dialog_set_filters(chooser, G_LIST_MODEL(store));
+        g_object_unref(filter);
+        g_object_unref(store);
+    }
+    gtk_file_dialog_open(chooser, parent, nullptr, +[](GObject* source, GAsyncResult* res, gpointer data) {
+        GFile* file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source), res, nullptr);
+        if (file != nullptr) {
+            gchar* path = g_file_get_path(file);
+            if (path != nullptr) {
+                gtk_editable_set_text(GTK_EDITABLE(static_cast<GtkEditable*>(data)), path);
+                g_free(path);
+            }
+            g_object_unref(file);
+        }
+    }, entry);
+    g_object_unref(chooser);
+#else
+    ShowFileChooserNativeImpl(parent, GTK_FILE_CHOOSER_ACTION_OPEN, title, entry, filter);
+#endif
+}
+
+void ShowFolderDialog(GtkWindow* parent, const char* title,
+                      GtkEditable* entry, GtkFileFilter* filter) {
+#if GTK_CHECK_VERSION(4, 10, 0)
+    GtkFileDialog* chooser = gtk_file_dialog_new();
+    gtk_file_dialog_set_title(chooser, title);
+    if (filter != nullptr) {
+        GListStore* store = g_list_store_new(GTK_TYPE_FILE_FILTER);
+        g_list_store_append(store, filter);
+        gtk_file_dialog_set_filters(chooser, G_LIST_MODEL(store));
+        g_object_unref(filter);
+        g_object_unref(store);
+    }
+    gtk_file_dialog_select_folder(chooser, parent, nullptr, +[](GObject* source, GAsyncResult* res, gpointer data) {
+        GFile* file = gtk_file_dialog_select_folder_finish(GTK_FILE_DIALOG(source), res, nullptr);
+        if (file != nullptr) {
+            gchar* path = g_file_get_path(file);
+            if (path != nullptr) {
+                gtk_editable_set_text(GTK_EDITABLE(static_cast<GtkEditable*>(data)), path);
+                g_free(path);
+            }
+            g_object_unref(file);
+        }
+    }, entry);
+    g_object_unref(chooser);
+#else
+    ShowFileChooserNativeImpl(parent, GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER, title, entry, filter);
+#endif
+}
+
+void ShowPlaylistMovieBrowse(GtkWindow* parent) {
+    ShowOpenFileDialog(parent, "Choose movie file",
+                       GTK_EDITABLE(g_movieEntry), BuildMediaSourceFilter());
+}
+
+void ShowPlaylistSubtitleBrowse(GtkWindow* parent) {
+    ShowOpenFileDialog(parent, "Choose subtitle file",
+                       GTK_EDITABLE(g_subtitleEntry), BuildSubtitleFilter());
+}
+
+void ShowPlaylistEntryDialog(GtkWindow* parent) {
+    if (g_playlistDialog != nullptr) return;
+    g_playlistDone = false;
+
+    g_playlistDialog = gtk_window_new();
+    InstallMnemonicCueControllers(g_playlistDialog);
+    gtk_window_set_title(GTK_WINDOW(g_playlistDialog), "Default playlist entry");
+    gtk_window_set_default_size(GTK_WINDOW(g_playlistDialog),
+                                UiTokensPosix::kPlaylistWindowWidth, UiTokensPosix::kPlaylistWindowBodyHeight);
+    gtk_window_set_resizable(GTK_WINDOW(g_playlistDialog), FALSE);
+
+    gtk_window_set_titlebar(
+        GTK_WINDOW(g_playlistDialog),
+        CreateWin10Titlebar(GTK_WINDOW(g_playlistDialog),
+                            "Default playlist entry",
+                            WindowChrome::Dialog));
+
+    GtkWidget* fixed = gtk_fixed_new();
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kPlaylistWindowWidth, UiTokensPosix::kPlaylistWindowBodyHeight);
+    gtk_widget_set_hexpand(fixed, TRUE);
+    gtk_widget_set_vexpand(fixed, TRUE);
+    gtk_widget_add_css_class(GTK_WIDGET(g_playlistDialog), "dlna-dialog-window");
+    gtk_window_set_child(GTK_WINDOW(g_playlistDialog), fixed);
+    gtk_widget_add_css_class(fixed, "dlna-dialog-body");
+
+    GtkWidget* movieLabel = gtk_label_new("Movie path:");
+    gtk_widget_set_size_request(movieLabel, 85, 16);
+    gtk_fixed_put(GTK_FIXED(fixed), movieLabel, UiTokensPosix::kPlaylistMovieLabelX, UiTokensPosix::kPlaylistMovieLabelY);
+    gtk_label_set_xalign(GTK_LABEL(movieLabel), 0.0f);
+
+    g_movieEntry = gtk_entry_new();
+    gtk_widget_set_size_request(g_movieEntry, UiTokensPosix::kPlaylistMovieEditW, UiTokensPosix::kPlaylistMovieEditH);
+    gtk_fixed_put(GTK_FIXED(fixed), g_movieEntry, UiTokensPosix::kPlaylistMovieEditX, UiTokensPosix::kPlaylistMovieEditY);
+
+    GtkWidget* movieBrowse = gtk_button_new_with_label("Browse...");
+    gtk_widget_set_size_request(movieBrowse, UiTokensPosix::kPlaylistMovieBrowseW, UiTokensPosix::kPlaylistMovieBrowseH);
+    gtk_fixed_put(GTK_FIXED(fixed), movieBrowse, UiTokensPosix::kPlaylistMovieBrowseX, UiTokensPosix::kPlaylistMovieBrowseY);
+    gtk_widget_add_css_class(movieBrowse, "dlna-dialog-button");
+    g_signal_connect(movieBrowse, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        ShowPlaylistMovieBrowse(GTK_WINDOW(g_playlistDialog));
+    }), nullptr);
+
+    GtkWidget* subtitleLabel = gtk_label_new("Subtitle path:");
+    gtk_widget_set_size_request(subtitleLabel, 85, 16);
+    gtk_fixed_put(GTK_FIXED(fixed), subtitleLabel, UiTokensPosix::kPlaylistSubtitleLabelX, UiTokensPosix::kPlaylistSubtitleLabelY);
+    gtk_label_set_xalign(GTK_LABEL(subtitleLabel), 0.0f);
+
+    g_subtitleEntry = gtk_entry_new();
+    gtk_widget_set_size_request(g_subtitleEntry, UiTokensPosix::kPlaylistSubtitleEditW, UiTokensPosix::kPlaylistSubtitleEditH);
+    gtk_fixed_put(GTK_FIXED(fixed), g_subtitleEntry, UiTokensPosix::kPlaylistSubtitleEditX, UiTokensPosix::kPlaylistSubtitleEditY);
+
+    GtkWidget* subtitleBrowse = gtk_button_new_with_label("Browse...");
+    gtk_widget_set_size_request(subtitleBrowse, UiTokensPosix::kPlaylistSubtitleBrowseW, UiTokensPosix::kPlaylistSubtitleBrowseH);
+    gtk_fixed_put(GTK_FIXED(fixed), subtitleBrowse, UiTokensPosix::kPlaylistSubtitleBrowseX, UiTokensPosix::kPlaylistSubtitleBrowseY);
+    gtk_widget_add_css_class(subtitleBrowse, "dlna-dialog-button");
+    g_signal_connect(subtitleBrowse, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        ShowPlaylistSubtitleBrowse(GTK_WINDOW(g_playlistDialog));
+    }), nullptr);
+
+    GtkWidget* addButton = gtk_button_new_with_label("Add");
+    gtk_widget_set_size_request(addButton, UiTokensPosix::kPlaylistAddW, UiTokensPosix::kPlaylistAddH);
+    gtk_fixed_put(GTK_FIXED(fixed), addButton, UiTokensPosix::kPlaylistAddX, UiTokensPosix::kPlaylistAddY);
+    gtk_widget_add_css_class(addButton, "dlna-dialog-button");
+    gtk_widget_add_css_class(addButton, "suggested-action");
+    gtk_widget_set_sensitive(addButton, FALSE);
+    g_signal_connect(addButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        g_playlistDone = true;
+        gtk_widget_set_visible(g_playlistDialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(g_playlistDialog));
+    }), nullptr);
+    auto refreshPlaylistAddSensitivity = +[](GtkEditable*, gpointer data) {
+        GtkWidget* button = static_cast<GtkWidget*>(data);
+        gtk_widget_set_sensitive(button,
+            AnyFieldHasContent({
+                static_cast<int>(g_utf8_strlen(gtk_editable_get_text(GTK_EDITABLE(g_movieEntry)), -1)),
+                static_cast<int>(g_utf8_strlen(gtk_editable_get_text(GTK_EDITABLE(g_subtitleEntry)), -1))
+            }) ? TRUE : FALSE);
+    };
+    g_signal_connect(g_movieEntry, "changed", G_CALLBACK(refreshPlaylistAddSensitivity), addButton);
+    g_signal_connect(g_subtitleEntry, "changed", G_CALLBACK(refreshPlaylistAddSensitivity), addButton);
+
+    {
+        std::vector<std::wstring> playlistLabels = { L"Browse...", L"Browse...", L"Add" };
+        std::vector<wchar_t> playlistMnemonics = AssignMnemonics(playlistLabels);
+        ApplyMnemonicLabel(movieBrowse, playlistLabels[0], playlistMnemonics[0]);
+        ApplyMnemonicLabel(subtitleBrowse, playlistLabels[1], playlistMnemonics[1]);
+        ApplyMnemonicLabel(addButton, playlistLabels[2], playlistMnemonics[2]);
+    }
+
+    g_signal_connect(g_playlistDialog, "close-request", G_CALLBACK(+[](GtkWidget* w, gpointer) -> gboolean {
+        g_playlistDone = true;
+        gtk_widget_set_visible(w, FALSE);
+        ClearActiveModal(GTK_WINDOW(w));
+        return TRUE;
+    }), nullptr);
+    InstallSubwindowCloseKeys(g_playlistDialog, []() {
+        g_playlistDone = true;
+        gtk_widget_set_visible(g_playlistDialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(g_playlistDialog));
+    });
+
+    g_signal_connect(g_playlistDialog, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        g_playlistDialog = nullptr;
+    }), nullptr);
+
+    if (g_printPlaylistAddSensitivity) {
+        std::printf("initial=%s\n", gtk_widget_get_sensitive(addButton) ? "true" : "false");
+        gtk_editable_set_text(GTK_EDITABLE(g_movieEntry), "movie.mp4");
+        std::printf("after-movie-text=%s\n", gtk_widget_get_sensitive(addButton) ? "true" : "false");
+        std::fflush(stdout);
+        gtk_window_destroy(GTK_WINDOW(g_playlistDialog));
+        return;
+    }
+    if (g_dumpGeometry) {
+        PresentModalChild(GTK_WINDOW(g_playlistDialog), parent != nullptr ? parent : GTK_WINDOW(g_mainWindow));
+        DumpWindowGeometry("playlist-entry", g_playlistDialog);
+        return;
+    }
+    PresentModalChild(GTK_WINDOW(g_playlistDialog), parent != nullptr ? parent : GTK_WINDOW(g_mainWindow));
+
+    while (!g_playlistDone) {
+        g_main_context_iteration(nullptr, TRUE);
+    }
+    gtk_widget_set_visible(g_playlistDialog, FALSE);
+    ClearActiveModal(GTK_WINDOW(g_playlistDialog));
+    // NOTE: the dialog is intentionally NOT destroyed yet -- the accepted text
+    // is read out of g_movieEntry/g_subtitleEntry below. gtk_window_destroy is
+    // called at the end of this function, which nulls g_playlistDialog via its
+    // destroy handler.
+
+    if (g_playlistDone) {
+        const std::string movie = gtk_editable_get_text(GTK_EDITABLE(g_movieEntry));
+        const std::string subtitle = gtk_editable_get_text(GTK_EDITABLE(g_subtitleEntry));
+        if (!movie.empty()) {
+            if (!AppendDefaultPlaylistEntry(movie, subtitle)) {
+                MessageBoxShow(ActiveTopLevelWindow(), "Could not write default playlist.");
+            } else {
+                AppConfig.Mutate([](Config& cfg) { cfg.defaultPlaylistEnabled = true; });
+                AppConfig.Save();
+            }
+        }
+    }
+    gtk_window_destroy(GTK_WINDOW(g_playlistDialog));
+}
+
+void OnSourceEntryChanged(GtkEditable* editable, gpointer) {
+    const gchar* text = gtk_editable_get_text(editable);
+    gtk_widget_set_sensitive(g_sourceAddButton,
+                             AnyFieldHasContent({static_cast<int>(g_utf8_strlen(text, -1))}));
+}
+
+void ChooseSourcePath(GtkWindow* parent, GtkFileChooserAction action, const char* title) {
+    if (action == GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER) {
+        ShowFolderDialog(parent, title, GTK_EDITABLE(g_sourceEntry), nullptr);
+    } else {
+        ShowOpenFileDialog(parent, title, GTK_EDITABLE(g_sourceEntry), BuildMediaSourceFilter());
+    }
+}
+
+void PromptForMediaSource() {
+    if (g_sourceDialog != nullptr) return;
+    g_sourceDone = false;
+
+    g_sourceDialog = gtk_window_new();
+    InstallMnemonicCueControllers(g_sourceDialog);
+    gtk_window_set_title(GTK_WINDOW(g_sourceDialog), "Add media source");
+    gtk_window_set_default_size(GTK_WINDOW(g_sourceDialog),
+                                UiTokensPosix::kSourcePromptWindowWidth, UiTokensPosix::kSourcePromptWindowBodyHeight);
+    gtk_window_set_resizable(GTK_WINDOW(g_sourceDialog), FALSE);
+
+    gtk_window_set_titlebar(
+        GTK_WINDOW(g_sourceDialog),
+        CreateWin10Titlebar(GTK_WINDOW(g_sourceDialog),
+                            "Add media source",
+                            WindowChrome::Dialog));
+
+    GtkWidget* fixed = gtk_fixed_new();
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kSourcePromptWindowWidth, UiTokensPosix::kSourcePromptWindowBodyHeight);
+    gtk_widget_set_hexpand(fixed, TRUE);
+    gtk_widget_set_vexpand(fixed, TRUE);
+    gtk_widget_add_css_class(GTK_WIDGET(g_sourceDialog), "dlna-dialog-window");
+    gtk_window_set_child(GTK_WINDOW(g_sourceDialog), fixed);
+    gtk_widget_add_css_class(fixed, "dlna-dialog-body");
+
+    GtkWidget* label = gtk_label_new("Add a local source or a Network share URL:");
+    gtk_widget_set_size_request(label, 273, 16);
+    gtk_fixed_put(GTK_FIXED(fixed), label, 18, 18);
+    gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+
+    g_sourceEntry = gtk_entry_new();
+    gtk_widget_add_css_class(g_sourceEntry, "dlna-dialog-entry-warm-border");
+    gtk_widget_set_size_request(g_sourceEntry, UiTokensPosix::kSourcePromptInputW, UiTokensPosix::kSourcePromptInputH);
+    gtk_fixed_put(GTK_FIXED(fixed), g_sourceEntry, UiTokensPosix::kSourcePromptInputX, UiTokensPosix::kSourcePromptInputY);
+    g_signal_connect(g_sourceEntry, "changed", G_CALLBACK(OnSourceEntryChanged), nullptr);
+
+    GtkWidget* hintLabel = gtk_label_new("Example: ftp://user:pass@server:21/media");
+    gtk_widget_set_size_request(hintLabel, 254, 15);
+    gtk_fixed_put(GTK_FIXED(fixed), hintLabel, 18, 92);
+    gtk_label_set_xalign(GTK_LABEL(hintLabel), 0.0f);
+
+    GtkWidget* folderButton = gtk_button_new_with_label("Folder...");
+    gtk_widget_set_size_request(folderButton, UiTokensPosix::kSourcePromptFolderW, UiTokensPosix::kSourcePromptFolderH);
+    gtk_fixed_put(GTK_FIXED(fixed), folderButton, 18, 129);
+    gtk_widget_add_css_class(folderButton, "dlna-dialog-button");
+    gtk_widget_add_css_class(folderButton, "source-dialog-button");
+    g_signal_connect(folderButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        ChooseSourcePath(GTK_WINDOW(g_sourceDialog), GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER,
+                         "Choose media folder");
+    }), nullptr);
+
+    GtkWidget* fileButton = gtk_button_new_with_label("File...");
+    gtk_widget_set_size_request(fileButton, UiTokensPosix::kSourcePromptFileW, UiTokensPosix::kSourcePromptFileH);
+    gtk_fixed_put(GTK_FIXED(fixed), fileButton, 122, 130);
+    gtk_widget_add_css_class(fileButton, "dlna-dialog-button");
+    gtk_widget_add_css_class(fileButton, "source-dialog-button");
+    g_signal_connect(fileButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        ChooseSourcePath(GTK_WINDOW(g_sourceDialog), GTK_FILE_CHOOSER_ACTION_OPEN,
+                         "Choose media file");
+    }), nullptr);
+
+    g_sourceAddButton = gtk_button_new_with_label("Add");
+    gtk_widget_set_size_request(g_sourceAddButton, UiTokensPosix::kSourcePromptAddW, UiTokensPosix::kSourcePromptAddH);
+    gtk_fixed_put(GTK_FIXED(fixed), g_sourceAddButton, 373, 129);
+    gtk_widget_add_css_class(g_sourceAddButton, "dlna-dialog-button");
+    gtk_widget_add_css_class(g_sourceAddButton, "source-dialog-button");
+    gtk_widget_add_css_class(g_sourceAddButton, "suggested-action");
+    gtk_widget_set_sensitive(g_sourceAddButton, FALSE);
+    g_signal_connect(g_sourceAddButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        g_sourceDone = true;
+        gtk_widget_set_visible(g_sourceDialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(g_sourceDialog));
+    }), nullptr);
+
+    GtkWidget* cancelButton = gtk_button_new_with_label("Cancel");
+    gtk_widget_set_size_request(cancelButton, UiTokensPosix::kSourcePromptCancelW, UiTokensPosix::kSourcePromptCancelH);
+    gtk_fixed_put(GTK_FIXED(fixed), cancelButton, 460, 131);
+    gtk_widget_add_css_class(cancelButton, "dlna-dialog-button");
+    gtk_widget_add_css_class(cancelButton, "source-dialog-button");
+    g_signal_connect(cancelButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        gtk_editable_set_text(GTK_EDITABLE(g_sourceEntry), "");
+        g_sourceDone = false;
+        gtk_widget_set_visible(g_sourceDialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(g_sourceDialog));
+    }), nullptr);
+
+    {
+        std::vector<std::wstring> sourceLabels = { L"Folder...", L"File...", L"Add", L"Cancel" };
+        std::vector<wchar_t> sourceMnemonics = AssignMnemonics(sourceLabels);
+        ApplyMnemonicLabel(folderButton, sourceLabels[0], sourceMnemonics[0]);
+        ApplyMnemonicLabel(fileButton, sourceLabels[1], sourceMnemonics[1]);
+        ApplyMnemonicLabel(g_sourceAddButton, sourceLabels[2], sourceMnemonics[2]);
+        ApplyMnemonicLabel(cancelButton, sourceLabels[3], sourceMnemonics[3]);
+    }
+
+    InstallSubwindowCloseKeys(g_sourceDialog, []() {
+        gtk_editable_set_text(GTK_EDITABLE(g_sourceEntry), "");
+        g_sourceDone = false;
+        gtk_widget_set_visible(g_sourceDialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(g_sourceDialog));
+    });
+
+    g_signal_connect(g_sourceDialog, "close-request", G_CALLBACK(+[](GtkWidget* w, gpointer) -> gboolean {
+        g_sourceDone = false;
+        gtk_widget_set_visible(w, FALSE);
+        ClearActiveModal(GTK_WINDOW(w));
+        return TRUE;
+    }), nullptr);
+
+    g_signal_connect(g_sourceDialog, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        g_sourceDialog = nullptr;
+    }), nullptr);
+
+    if (g_dumpGeometry) {
+        PresentModalChild(GTK_WINDOW(g_sourceDialog), GTK_WINDOW(g_mainWindow));
+        DumpWindowGeometry("source-prompt", g_sourceDialog);
+        return;
+    }
+    PresentModalChild(GTK_WINDOW(g_sourceDialog), GTK_WINDOW(g_mainWindow));
+
+    while (gtk_widget_get_visible(g_sourceDialog)) {
+        g_main_context_iteration(nullptr, TRUE);
+    }
+    ClearActiveModal(GTK_WINDOW(g_sourceDialog));
+    // NOTE: the dialog is intentionally NOT destroyed yet -- the accepted text
+    // is read out of g_sourceEntry below. gtk_window_destroy is called at the
+    // end of this function, which nulls g_sourceDialog via its destroy handler.
+
+    if (g_sourceDone) {
+        const gchar* text = gtk_editable_get_text(GTK_EDITABLE(g_sourceEntry));
+        if (text != nullptr && *text != '\0') {
+            const std::string selected = text;
+            bool duplicate = false;
+            GtkWidget* rowWidget = gtk_widget_get_first_child(g_sources);
+            while (rowWidget != nullptr) {
+                GtkWidget* rowChild = gtk_list_box_row_get_child(GTK_LIST_BOX_ROW(rowWidget));
+                if (GTK_IS_LABEL(rowChild)) {
+                    const gchar* rowText = gtk_label_get_text(GTK_LABEL(rowChild));
+                    if (rowText != nullptr && selected == rowText) {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                rowWidget = gtk_widget_get_next_sibling(rowWidget);
+            }
+            if (!duplicate) {
+                gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(selected));
+                SaveSourcesFromList();
+            }
+        }
+        g_sourceDone = false;
+    }
+    gtk_window_destroy(GTK_WINDOW(g_sourceDialog));
+}
+
+void LoadLogInitial() {
+    LogSnapshot snapshot = GetSystemLogSince(0);
+    g_logLastSequence = snapshot.latestSequence;
+    if (!snapshot.text.empty()) {
+        gtk_text_buffer_set_text(g_logBuffer, WideToUtf8(snapshot.text).c_str(), -1);
+    }
+    GtkTextIter endIter;
+    gtk_text_buffer_get_end_iter(g_logBuffer, &endIter);
+    gtk_text_buffer_place_cursor(g_logBuffer, &endIter);
+}
+
+void RefreshLogDialog() {
+    LoadLogInitial();
+}
+
+void ShowLogDialog(GtkWindow* parent) {
+    if (g_logDialog != nullptr) {
+        gtk_window_present(GTK_WINDOW(g_logDialog));
+        return;
+    }
+
+    g_logDialog = gtk_window_new();
+    InstallMnemonicCueControllers(g_logDialog);
+    gtk_window_set_title(GTK_WINDOW(g_logDialog), "DLNA Server log");
+    gtk_window_set_default_size(GTK_WINDOW(g_logDialog),
+                                UiTokensPosix::kLogWindowWidth, UiTokensPosix::kLogWindowBodyHeight);
+    gtk_window_set_resizable(GTK_WINDOW(g_logDialog), FALSE);
+
+    gtk_window_set_titlebar(
+        GTK_WINDOW(g_logDialog),
+        CreateWin10Titlebar(GTK_WINDOW(g_logDialog),
+                            "DLNA Server log",
+                            WindowChrome::Dialog));
+
+    GtkWidget* fixed = gtk_fixed_new();
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kLogWindowWidth, UiTokensPosix::kLogWindowBodyHeight);
+    // hexpand/vexpand so the body surface actually covers the whole client
+    // area; without it the window background (dark) shows around the fixed.
+    gtk_widget_set_hexpand(fixed, TRUE);
+    gtk_widget_set_vexpand(fixed, TRUE);
+    gtk_widget_add_css_class(fixed, "dlna-log-body");
+    gtk_widget_add_css_class(GTK_WIDGET(g_logDialog), "dlna-log-window");
+    gtk_window_set_child(GTK_WINDOW(g_logDialog), fixed);
+
+    GtkWidget* workspace = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_add_css_class(workspace, "dlna-log-workspace");
+    gtk_widget_set_size_request(workspace, UiTokensPosix::kLogTextW + 6, UiTokensPosix::kLogTextH + 6);
+    gtk_fixed_put(GTK_FIXED(fixed), workspace, UiTokensPosix::kLogTextX - 3, UiTokensPosix::kLogTextY - 3);
+
+    GtkWidget* scrolled = gtk_scrolled_window_new();
+    gtk_widget_set_size_request(scrolled, UiTokensPosix::kLogTextW, UiTokensPosix::kLogTextH);
+    gtk_fixed_put(GTK_FIXED(fixed), scrolled, UiTokensPosix::kLogTextX, UiTokensPosix::kLogTextY);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
+                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+
+    GtkWidget* textView = gtk_text_view_new();
+    gtk_widget_add_css_class(textView, "dlna-log-surface");
+    g_logBuffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(textView));
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(textView), FALSE);
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(textView), FALSE);
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(textView), TRUE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), textView);
+
+    GtkWidget* refreshButton = gtk_button_new_with_label("Refresh");
+    gtk_widget_set_size_request(refreshButton, UiTokensPosix::kLogRefreshW, UiTokensPosix::kLogRefreshH);
+    gtk_fixed_put(GTK_FIXED(fixed), refreshButton, UiTokensPosix::kLogRefreshX, UiTokensPosix::kLogRefreshY);
+    gtk_widget_add_css_class(refreshButton, "dlna-dialog-button");
+    g_signal_connect(refreshButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        RefreshLogDialog();
+    }), nullptr);
+
+    GtkWidget* closeButton = gtk_button_new_with_label("Close");
+    gtk_widget_set_size_request(closeButton, UiTokensPosix::kLogCloseW, UiTokensPosix::kLogCloseH);
+    gtk_fixed_put(GTK_FIXED(fixed), closeButton, UiTokensPosix::kLogCloseX, UiTokensPosix::kLogCloseY);
+    gtk_widget_add_css_class(closeButton, "dlna-dialog-button");
+    gtk_widget_add_css_class(closeButton, "suggested-action");
+    g_signal_connect(closeButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        gtk_widget_set_visible(g_logDialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(g_logDialog));
+        if (g_mainWindow != nullptr) {
+            gtk_window_present(GTK_WINDOW(g_mainWindow));
+        }
+    }), nullptr);
+
+    g_signal_connect(g_logDialog, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        g_logDialog = nullptr;
+    }), nullptr);
+
+    g_signal_connect(g_logDialog, "close-request", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        gtk_widget_set_visible(g_logDialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(g_logDialog));
+        return TRUE;
+    }), nullptr);
+    InstallSubwindowCloseKeys(g_logDialog, []() {
+        gtk_widget_set_visible(g_logDialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(g_logDialog));
+        if (g_mainWindow != nullptr) {
+            gtk_window_present(GTK_WINDOW(g_mainWindow));
+        }
+    });
+
+    RefreshLogDialog();
+    if (g_dumpGeometry) {
+        PresentModalChild(GTK_WINDOW(g_logDialog), parent != nullptr ? parent : GTK_WINDOW(g_mainWindow));
+        DumpWindowGeometry("log", g_logDialog);
+        return;
+    }
+    if (g_dumpLogDialogReopen || g_dumpMsgBoxParent) {
+        // headless reopen test: present without the modal loop so
+        // DumpLogDialogReopenAndExit can drive the hide/reopen sequence
+        // (and DumpMessageBoxParentAndExit can parent a message box to it)
+        PresentModalChild(GTK_WINDOW(g_logDialog), parent != nullptr ? parent : GTK_WINDOW(g_mainWindow));
+        return;
+    }
+    PresentModalChild(GTK_WINDOW(g_logDialog), parent != nullptr ? parent : GTK_WINDOW(g_mainWindow));
+    RunModalLoopAndDestroy(g_logDialog);
+}
+
+void ShowHelpDialog(GtkWindow* parent) {
+    if (g_helpDialog != nullptr) {
+        gtk_window_present(GTK_WINDOW(g_helpDialog));
+        return;
+    }
+    GtkWidget* dialog = gtk_window_new();
+    InstallMnemonicCueControllers(dialog);
+    g_helpDialog = dialog;
+    gtk_window_set_title(GTK_WINDOW(dialog), "DLNA Server Help");
+    gtk_window_set_default_size(GTK_WINDOW(dialog),
+                                UiTokensPosix::kHelpWindowWidth, UiTokensPosix::kHelpWindowBodyHeight);
+    gtk_window_set_resizable(GTK_WINDOW(dialog), FALSE);
+
+    gtk_window_set_titlebar(
+        GTK_WINDOW(dialog),
+        CreateWin10Titlebar(GTK_WINDOW(dialog),
+                            "DLNA Server Help",
+                            WindowChrome::Dialog));
+
+    GtkWidget* fixed = gtk_fixed_new();
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kHelpWindowWidth, UiTokensPosix::kHelpWindowBodyHeight);
+    gtk_widget_set_hexpand(fixed, TRUE);
+    gtk_widget_set_vexpand(fixed, TRUE);
+    gtk_widget_add_css_class(GTK_WIDGET(dialog), "dlna-dialog-window");
+    gtk_window_set_child(GTK_WINDOW(dialog), fixed);
+    gtk_widget_add_css_class(fixed, "dlna-dialog-body");
+
+    GtkWidget* scrolled = gtk_scrolled_window_new();
+    gtk_widget_set_size_request(scrolled, UiTokensPosix::kHelpTextW, UiTokensPosix::kHelpTextH);
+    gtk_fixed_put(GTK_FIXED(fixed), scrolled, UiTokensPosix::kHelpTextX, UiTokensPosix::kHelpTextY);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled),
+                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+
+    GtkWidget* textView = gtk_text_view_new();
+    gtk_widget_add_css_class(textView, "dlna-help-surface");
+    GtkTextBuffer* buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(textView));
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(textView), FALSE);
+    gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(textView), FALSE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scrolled), textView);
+
+    // measure the longest flag or setting label to size the tab stop
+    // mirror the win32 columnGutterPx and longestLabelPx computation
+    PangoLayout* measureLayout = gtk_widget_create_pango_layout(textView, nullptr);
+    int longestLabelPx = 0;
+    const auto measure = [&measureLayout, &longestLabelPx](const std::wstring& label) {
+        pango_layout_set_text(measureLayout, WideToUtf8(label).c_str(), -1);
+        int labelWidth = 0;
+        int labelHeight = 0;
+        pango_layout_get_pixel_size(measureLayout, &labelWidth, &labelHeight);
+        if (labelWidth > longestLabelPx) longestLabelPx = labelWidth;
+    };
+    for (const auto& flag : GetCliFlagTable()) measure(flag.flag);
+    for (const auto& setting : GetSettingsHelpTable()) measure(setting.label);
+    g_object_unref(measureLayout);
+
+    const int columnGutterPx = 24;
+    const int tabStopPx = longestLabelPx + columnGutterPx;
+
+    // tab stops are expressed in pango units when positionsInPixels is
+    // false which matches pango_layout_get_pixel_size measurements
+    PangoTabArray* tabArray = pango_tab_array_new(1, FALSE);
+    pango_tab_array_set_tab(tabArray, 0, PANGO_TAB_LEFT, tabStopPx * PANGO_SCALE);
+    gtk_text_view_set_tabs(GTK_TEXT_VIEW(textView), tabArray);
+    pango_tab_array_free(tabArray);
+
+    GtkTextIter iter;
+    gtk_text_buffer_get_start_iter(buffer, &iter);
+
+    GtkTextTag* boldTag = gtk_text_buffer_create_tag(buffer, nullptr, "weight", PANGO_WEIGHT_BOLD, nullptr);
+
+    auto insertHeader = [&](const std::wstring& header) {
+        gtk_text_buffer_insert_with_tags(buffer, &iter, WideToUtf8(header).c_str(), -1, boldTag, nullptr);
+        gtk_text_buffer_insert(buffer, &iter, "\n\n", -1);
+    };
+    auto insertRow = [&](const std::wstring& flag, const std::wstring& meaning) {
+        std::string line = WideToUtf8(flag) + "\t" + WideToUtf8(meaning) + "\n";
+        gtk_text_buffer_insert(buffer, &iter, line.c_str(), -1);
+    };
+
+    insertHeader(L"Command-Line Flags");
+    for (const auto& flag : GetCliFlagTable()) insertRow(flag.flag, flag.meaning);
+    gtk_text_buffer_insert(buffer, &iter, "\n", -1);
+    insertHeader(L"Settings");
+    for (const auto& setting : GetSettingsHelpTable()) insertRow(setting.label, setting.meaning);
+
+    g_signal_connect(dialog, "close-request", G_CALLBACK(+[](GtkWidget* w, gpointer) -> gboolean {
+        // Only hide here. The slot is nulled by the "destroy" handler, and the
+        // destroy itself is performed by RunModalLoopAndDestroy once the loop
+        // that owns this window exits. Nulling the slot here as well would
+        // leave a live, unreachable window behind.
+        gtk_widget_set_visible(w, FALSE);
+        ClearActiveModal(GTK_WINDOW(w));
+        return TRUE;
+    }), nullptr);
+    InstallSubwindowCloseKeys(dialog, [dialog]() {
+        gtk_widget_set_visible(dialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(dialog));
+    });
+
+    g_signal_connect(dialog, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        g_helpDialog = nullptr;
+    }), nullptr);
+
+    if (g_dumpGeometry) {
+        PresentModalChild(GTK_WINDOW(dialog), parent ? parent : GTK_WINDOW(g_mainWindow));
+        DumpWindowGeometry("help", dialog);
+        return;
+    }
+    PresentModalChild(GTK_WINDOW(dialog), parent ? parent : GTK_WINDOW(g_mainWindow));
+    RunModalLoopAndDestroy(dialog);
+}
+
+void RefreshDefaultPlaylistControls() {
+    gtk_widget_set_sensitive(g_defaultPlaylistAddButton,
+                             gtk_check_button_get_active(GTK_CHECK_BUTTON(g_defaultPlaylistCheck)));
+}
+
+void LoadSettingsFromConfig() {
+    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    gtk_editable_set_text(GTK_EDITABLE(g_serverNameEntry), WideToUtf8(cfg.serverName).c_str());
+    gtk_editable_set_text(GTK_EDITABLE(g_httpPortEntry), std::to_string(cfg.port).c_str());
+    gtk_editable_set_text(GTK_EDITABLE(g_ipWhitelistEntry), WideToUtf8(cfg.ipWhiteList).c_str());
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(g_debugLogCheck), cfg.debugLog);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(g_defaultPlaylistCheck), cfg.defaultPlaylistEnabled);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(g_artistAlbumCheck), cfg.addArtistAlbumFolders);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(g_hideAllMediaCheck), cfg.doNotShowAllMediaFolders);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(g_flatFoldersCheck), cfg.flatFolderStyle);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(g_showFileNamesCheck), cfg.showFileNamesInsteadOfTitles);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(g_sortByTitleCheck), cfg.sortByTitle);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(g_proxyStreamsCheck), cfg.proxyStreams);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(g_backgroundScanCheck), cfg.backgroundScanEnabled);
+    RefreshDefaultPlaylistControls();
+}
+
+bool SaveSettingsToConfig() {
+    int httpPort = 0;
+    const gchar* portText = gtk_editable_get_text(GTK_EDITABLE(g_httpPortEntry));
+    if (!TryParsePortStrict(portText ? portText : "", httpPort)) {
+        MessageBoxShow(GTK_WINDOW(g_settingsDialog), "HTTP port must be between 1 and 65535.");
+        return false;
+    }
+    const gchar* serverNameText = gtk_editable_get_text(GTK_EDITABLE(g_serverNameEntry));
+    const gchar* ipWhiteListText = gtk_editable_get_text(GTK_EDITABLE(g_ipWhitelistEntry));
+    const std::wstring serverName = Utf8ToWide(serverNameText ? serverNameText : "");
+    const std::wstring ipWhiteList = Utf8ToWide(ipWhiteListText ? ipWhiteListText : "");
+    const bool debugLog = gtk_check_button_get_active(GTK_CHECK_BUTTON(g_debugLogCheck));
+    const bool defaultPlaylistEnabled = gtk_check_button_get_active(GTK_CHECK_BUTTON(g_defaultPlaylistCheck));
+    const bool addArtistAlbumFolders = gtk_check_button_get_active(GTK_CHECK_BUTTON(g_artistAlbumCheck));
+    const bool doNotShowAllMediaFolders = gtk_check_button_get_active(GTK_CHECK_BUTTON(g_hideAllMediaCheck));
+    const bool flatFolderStyle = gtk_check_button_get_active(GTK_CHECK_BUTTON(g_flatFoldersCheck));
+    const bool showFileNamesInsteadOfTitles = gtk_check_button_get_active(GTK_CHECK_BUTTON(g_showFileNamesCheck));
+    const bool sortByTitle = gtk_check_button_get_active(GTK_CHECK_BUTTON(g_sortByTitleCheck));
+    const bool proxyStreams = gtk_check_button_get_active(GTK_CHECK_BUTTON(g_proxyStreamsCheck));
+    const bool backgroundScanEnabled = gtk_check_button_get_active(GTK_CHECK_BUTTON(g_backgroundScanCheck));
+
+    const ConfigSnapshot before = AppConfig.Snapshot();
+    AppConfig.Mutate([&](Config& cfg) {
+        cfg.serverName = serverName;
+        cfg.port = httpPort;
+        cfg.ipWhiteList = ipWhiteList;
+        cfg.debugLog = debugLog;
+        cfg.defaultPlaylistEnabled = defaultPlaylistEnabled;
+        if (cfg.defaultPlaylistPath.empty()) cfg.defaultPlaylistPath = cfg.GetDefaultPlaylistPath();
+        cfg.addArtistAlbumFolders = addArtistAlbumFolders;
+        cfg.doNotShowAllMediaFolders = doNotShowAllMediaFolders;
+        cfg.flatFolderStyle = flatFolderStyle;
+        cfg.showFileNamesInsteadOfTitles = showFileNamesInsteadOfTitles;
+        cfg.sortByTitle = sortByTitle;
+        cfg.proxyStreams = proxyStreams;
+        cfg.backgroundScanEnabled = backgroundScanEnabled;
+    });
+    AppConfig.Save();
+    LogPrint(L"Saved settings.");
+
+    g_settingsRestartRequested = false;
+    if (DLNAServer.IsRunning()) {
+        const ConfigSnapshot after = AppConfig.Snapshot();
+        std::vector<std::wstring> changed = DetermineSettingsRequiringRestart(before, after);
+        if (!changed.empty()) {
+            std::wstring names;
+            for (size_t i = 0; i < changed.size(); ++i) {
+                if (i) names += L", ";
+                names += changed[i];
+            }
+            std::string prompt = "A server restart is needed to apply changes to: " +
+                                  WideToUtf8(names) + ".\n\nRestart server?";
+            g_settingsRestartRequested =
+                MessageBoxQuestion(GTK_WINDOW(g_settingsDialog), prompt);
+        }
+    }
+    return true;
+}
+
+bool ShowSettingsDialog() {
+    if (g_settingsDialog != nullptr) {
+        // Already open (re-entrant click while the modal loop is running).
+        // Bring it forward instead of silently doing nothing.
+        gtk_window_present(GTK_WINDOW(g_settingsDialog));
+        return false;
+    }
+    g_settingsSaved = false;
+    g_settingsRestartRequested = false;
+
+    g_settingsDialog = gtk_window_new();
+    InstallMnemonicCueControllers(g_settingsDialog);
+    gtk_window_set_title(GTK_WINDOW(g_settingsDialog), "DLNA Server Settings");
+    gtk_window_set_default_size(GTK_WINDOW(g_settingsDialog),
+                                UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsWindowBodyHeight);
+    gtk_window_set_resizable(GTK_WINDOW(g_settingsDialog), FALSE);
+
+    GtkWidget* fixed = gtk_fixed_new();
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsWindowBodyHeight);
+    gtk_widget_set_hexpand(fixed, TRUE);
+    gtk_widget_set_vexpand(fixed, TRUE);
+    gtk_widget_add_css_class(GTK_WIDGET(g_settingsDialog), "dlna-dialog-window");
+    gtk_window_set_child(GTK_WINDOW(g_settingsDialog), fixed);
+    gtk_widget_add_css_class(fixed, "dlna-dialog-body");
+
+    // Win32 GROUPBOX parity: the caption sits ON the top stroke with the
+    // stroke interrupted behind it. GtkFrame's own label is drawn above the
+    // border instead, so the frame is created unlabelled and the caption is a
+    // separate label positioned over the border line, painting the dialog
+    // background to punch the gap.
+    constexpr int kGroupCaptionHeight = 15;
+    constexpr int kGroupCaptionInset = 9;
+    auto makeFrame = [&](const char* label, int x, int y, int w, int h) {
+        GtkWidget* frame = gtk_frame_new(nullptr);
+        gtk_widget_add_css_class(frame, "dlna-groupbox");
+        gtk_widget_set_size_request(frame, w, h);
+        gtk_fixed_put(GTK_FIXED(fixed), frame, x, y);
+        if (label != nullptr && *label != '\0') {
+            GtkWidget* caption = gtk_label_new(label);
+            gtk_widget_add_css_class(caption, "dlna-groupbox-caption");
+            gtk_label_set_xalign(GTK_LABEL(caption), 0.0f);
+            gtk_widget_set_size_request(caption, -1, kGroupCaptionHeight);
+            gtk_fixed_put(GTK_FIXED(fixed), caption,
+                          x + kGroupCaptionInset,
+                          y - (kGroupCaptionHeight / 2));
+        }
+        return frame;
+    };
+    auto makeLabel = [&](const char* text, int x, int y, int w, int h) {
+        GtkWidget* widget = gtk_label_new(text);
+        gtk_widget_set_size_request(widget, w, h);
+        gtk_fixed_put(GTK_FIXED(fixed), widget, x, y);
+        gtk_label_set_xalign(GTK_LABEL(widget), 0.0f);
+        return widget;
+    };
+    auto makeEntry = [&](int x, int y, int w, int h) {
+        GtkWidget* entry = gtk_entry_new();
+        gtk_widget_add_css_class(entry, "dlna-dialog-entry");
+        gtk_widget_set_size_request(entry, w, h);
+        gtk_fixed_put(GTK_FIXED(fixed), entry, x, y);
+        return entry;
+    };
+    auto makeCheck = [&](const char* text, int x, int y, int w, int h) {
+        GtkWidget* check = gtk_check_button_new_with_label(text);
+        gtk_widget_set_size_request(check, w, h);
+        gtk_fixed_put(GTK_FIXED(fixed), check, x, y);
+        return check;
+    };
+
+    // menu bar row mirrors the win32 SetMenu Logs/Help bar that sits in
+    // the non-client area so it is absent from the geometry dump and the
+    // group boxes below start at the captured y coordinate of 21
+    GtkWidget* settingsRibbon = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_size_request(settingsRibbon, UiTokensPosix::kSettingsWindowWidth, UiTokensPosix::kSettingsRibbonHeight);
+    gtk_widget_add_css_class(settingsRibbon, "settings-ribbon");
+    gtk_widget_set_overflow(settingsRibbon, GTK_OVERFLOW_HIDDEN);
+    gtk_fixed_put(GTK_FIXED(fixed), settingsRibbon, 0, 0);
+
+    GtkWidget* logsButton = gtk_button_new_with_label("Logs");
+    gtk_widget_set_valign(logsButton, GTK_ALIGN_FILL);
+    gtk_box_append(GTK_BOX(settingsRibbon), logsButton);
+    gtk_widget_add_css_class(logsButton, "settings-toolbar-button");
+    g_signal_connect(logsButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        ShowLogDialog(GTK_WINDOW(g_settingsDialog));
+    }), nullptr);
+
+    GtkWidget* helpButton = gtk_button_new_with_label("Help");
+    gtk_widget_set_valign(helpButton, GTK_ALIGN_FILL);
+    gtk_box_append(GTK_BOX(settingsRibbon), helpButton);
+    gtk_widget_add_css_class(helpButton, "settings-toolbar-button");
+    g_signal_connect(helpButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        ShowHelpDialog(GTK_WINDOW(g_settingsDialog));
+    }), nullptr);
+
+    {
+        std::vector<std::wstring> ribbonLabels = { L"Logs", L"Help" };
+        std::vector<wchar_t> ribbonMnemonics = AssignMnemonics(ribbonLabels);
+        ApplyMnemonicLabel(logsButton, ribbonLabels[0], ribbonMnemonics[0]);
+        ApplyMnemonicLabel(helpButton, ribbonLabels[1], ribbonMnemonics[1]);
+    }
+    {
+        // Win32 parity: settingsdlg.cpp's WM_MENUCHAR handler executes the
+        // Logs/Help commands on a BARE access key once the cues are visible.
+        // GTK button mnemonics require Alt, so the bare key is handled here.
+        GtkEventController* ribbonKeys = gtk_event_controller_key_new();
+        gtk_event_controller_set_propagation_phase(ribbonKeys, GTK_PHASE_CAPTURE);
+        gtk_widget_add_controller(g_settingsDialog, ribbonKeys);
+        auto ribbonCb = +[](GtkEventController*, guint keyval, guint, GdkModifierType mods, gpointer) -> gboolean {
+            if (g_cueState.HideAccel()) return FALSE;
+            if ((mods & (GDK_CONTROL_MASK | GDK_ALT_MASK)) != 0) return FALSE;
+            GtkRoot* root = g_settingsDialog ? GTK_ROOT(gtk_widget_get_root(g_settingsDialog)) : nullptr;
+            GtkWidget* focused = root ? gtk_root_get_focus(root) : nullptr;
+            if (focused != nullptr && GTK_IS_EDITABLE(focused)) return FALSE;
+            std::vector<std::wstring> ribbonLabels = { L"Logs", L"Help" };
+            std::vector<wchar_t> ribbonMnemonics = AssignMnemonics(ribbonLabels);
+            const guint lowered = gdk_keyval_to_lower(keyval);
+            if (ribbonMnemonics[0] != L'\0' && lowered == gdk_unicode_to_keyval(static_cast<guint32>(towlower(ribbonMnemonics[0])))) {
+                ShowLogDialog(GTK_WINDOW(g_settingsDialog));
+                return TRUE;
+            }
+            if (ribbonMnemonics[1] != L'\0' && lowered == gdk_unicode_to_keyval(static_cast<guint32>(towlower(ribbonMnemonics[1])))) {
+                ShowHelpDialog(GTK_WINDOW(g_settingsDialog));
+                return TRUE;
+            }
+            return FALSE;
+        };
+        g_signal_connect(ribbonKeys, "key-pressed", G_CALLBACK(ribbonCb), nullptr);
+    }
+
+    makeFrame("Server", UiTokensPosix::kServerGroupX, UiTokensPosix::kServerGroupY, UiTokensPosix::kServerGroupW, UiTokensPosix::kServerGroupH);
+    makeLabel("Server name:", UiTokensPosix::kSettingsServerNameLabelX, UiTokensPosix::kSettingsServerNameLabelY,
+              UiTokensPosix::kSettingsServerNameLabelW, UiTokensPosix::kSettingsServerNameLabelH);
+    g_serverNameEntry = makeEntry(UiTokensPosix::kSettingsServerNameEditX, UiTokensPosix::kSettingsServerNameEditY,
+                                  UiTokensPosix::kServerNameEditW, UiTokensPosix::kServerNameEditH);
+    makeLabel("HTTP port: *", UiTokensPosix::kSettingsHttpPortLabelX, UiTokensPosix::kSettingsHttpPortLabelY,
+              UiTokensPosix::kSettingsHttpPortLabelW, UiTokensPosix::kSettingsHttpPortLabelH);
+    g_httpPortEntry = makeEntry(UiTokensPosix::kSettingsHttpPortEditX, UiTokensPosix::kSettingsHttpPortEditY,
+                                UiTokensPosix::kHttpPortEditW, UiTokensPosix::kHttpPortEditH);
+    makeLabel("IP whitelist: *", UiTokensPosix::kSettingsIpWhitelistLabelX, UiTokensPosix::kSettingsIpWhitelistLabelY,
+              UiTokensPosix::kSettingsIpWhitelistLabelW, UiTokensPosix::kSettingsIpWhitelistLabelH);
+    g_ipWhitelistEntry = makeEntry(UiTokensPosix::kSettingsIpWhitelistEditX, UiTokensPosix::kSettingsIpWhitelistEditY,
+                                   UiTokensPosix::kIpWhitelistEditW, UiTokensPosix::kIpWhitelistEditH);
+
+    makeFrame("General", UiTokensPosix::kGeneralGroupX, UiTokensPosix::kGeneralGroupY, UiTokensPosix::kGeneralGroupW, UiTokensPosix::kGeneralGroupH);
+    g_debugLogCheck = makeCheck("Debug log (write to file)",
+                                UiTokensPosix::kSettingsDebugLogX, UiTokensPosix::kSettingsDebugLogY,
+                                UiTokensPosix::kSettingsDebugLogW, UiTokensPosix::kSettingsDebugLogH);
+
+    makeFrame("Playlist", UiTokensPosix::kPlaylistGroupX, UiTokensPosix::kPlaylistGroupY, UiTokensPosix::kPlaylistGroupW, UiTokensPosix::kPlaylistGroupH);
+    g_defaultPlaylistCheck = makeCheck("Default playlist",
+                                       UiTokensPosix::kSettingsDefaultPlaylistX, UiTokensPosix::kSettingsDefaultPlaylistY,
+                                       UiTokensPosix::kSettingsDefaultPlaylistW, UiTokensPosix::kSettingsDefaultPlaylistH);
+    g_defaultPlaylistAddButton = gtk_button_new_with_label("Add...");
+    gtk_widget_set_size_request(g_defaultPlaylistAddButton,
+                                  UiTokensPosix::kPlaylistAddButtonW, UiTokensPosix::kPlaylistAddButtonH);
+    gtk_fixed_put(GTK_FIXED(fixed), g_defaultPlaylistAddButton,
+                  UiTokensPosix::kSettingsPlaylistAddX, UiTokensPosix::kSettingsPlaylistAddY);
+    gtk_widget_add_css_class(g_defaultPlaylistAddButton, "dlna-dialog-button");
+    g_signal_connect(g_defaultPlaylistAddButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        ShowPlaylistEntryDialog(GTK_WINDOW(g_settingsDialog));
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(g_defaultPlaylistCheck), TRUE);
+        RefreshDefaultPlaylistControls();
+    }), nullptr);
+    g_signal_connect(g_defaultPlaylistCheck, "toggled", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        RefreshDefaultPlaylistControls();
+    }), nullptr);
+
+    makeFrame("Media browsing", UiTokensPosix::kMediaGroupX, UiTokensPosix::kMediaGroupY, UiTokensPosix::kMediaGroupW, UiTokensPosix::kMediaGroupH);
+    g_artistAlbumCheck = makeCheck("Add artist/album folders to audio",
+                                   UiTokensPosix::kSettingsArtistAlbumsX, UiTokensPosix::kSettingsArtistAlbumsY,
+                                   UiTokensPosix::kSettingsArtistAlbumsW, UiTokensPosix::kSettingsArtistAlbumsH);
+    g_hideAllMediaCheck = makeCheck("Do not show 'All Media' folders",
+                                    UiTokensPosix::kSettingsHideAllMediaX, UiTokensPosix::kSettingsHideAllMediaY,
+                                    UiTokensPosix::kSettingsHideAllMediaW, UiTokensPosix::kSettingsHideAllMediaH);
+    g_sortByTitleCheck = makeCheck("Sort by title instead of file name",
+                                   UiTokensPosix::kSettingsSortByTitleX, UiTokensPosix::kSettingsSortByTitleY,
+                                   UiTokensPosix::kSettingsSortByTitleW, UiTokensPosix::kSettingsSortByTitleH);
+    g_flatFoldersCheck = makeCheck("Flat folders style",
+                                   UiTokensPosix::kSettingsFlatFoldersX, UiTokensPosix::kSettingsFlatFoldersY,
+                                   UiTokensPosix::kSettingsFlatFoldersW, UiTokensPosix::kSettingsFlatFoldersH);
+    g_showFileNamesCheck = makeCheck("Show file names instead of titles",
+                                     UiTokensPosix::kSettingsShowFileNamesX, UiTokensPosix::kSettingsShowFileNamesY,
+                                     UiTokensPosix::kSettingsShowFileNamesW, UiTokensPosix::kSettingsShowFileNamesH);
+    g_proxyStreamsCheck = makeCheck("Proxy streams",
+                                    UiTokensPosix::kSettingsProxyStreamsX, UiTokensPosix::kSettingsProxyStreamsY,
+                                    UiTokensPosix::kSettingsProxyStreamsW, UiTokensPosix::kSettingsProxyStreamsH);
+    g_backgroundScanCheck = makeCheck("Background scan (auto-rescan on changes)",
+                                      UiTokensPosix::kSettingsBackgroundScanX, UiTokensPosix::kSettingsBackgroundScanY,
+                                      UiTokensPosix::kSettingsBackgroundScanW, UiTokensPosix::kSettingsBackgroundScanH);
+
+    GtkWidget* cancelButton = gtk_button_new_with_label("Cancel");
+    gtk_widget_set_size_request(cancelButton, UiTokensPosix::kSettingsCancelW, UiTokensPosix::kSettingsCancelH);
+    gtk_fixed_put(GTK_FIXED(fixed), cancelButton, UiTokensPosix::kSettingsCancelX, UiTokensPosix::kSettingsCancelY);
+    gtk_widget_add_css_class(cancelButton, "dlna-dialog-button");
+    g_signal_connect(cancelButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        g_settingsSaved = false;
+        gtk_widget_set_visible(g_settingsDialog, FALSE);
+        ClearActiveModal(GTK_WINDOW(g_settingsDialog));
+        RefreshStatus();
+    }), nullptr);
+
+    GtkWidget* okButton = gtk_button_new_with_label("OK");
+    gtk_widget_set_size_request(okButton, UiTokensPosix::kSettingsOkW, UiTokensPosix::kSettingsOkH);
+    gtk_fixed_put(GTK_FIXED(fixed), okButton, UiTokensPosix::kSettingsOkX, UiTokensPosix::kSettingsOkY);
+    gtk_widget_add_css_class(okButton, "dlna-dialog-button");
+    gtk_widget_add_css_class(okButton, "suggested-action");
+    g_signal_connect(okButton, "clicked", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        if (SaveSettingsToConfig()) {
+            g_settingsSaved = true;
+            gtk_widget_set_visible(g_settingsDialog, FALSE);
+            ClearActiveModal(GTK_WINDOW(g_settingsDialog));
+            RefreshStatus();
+        }
+    }), nullptr);
+
+    g_signal_connect(g_settingsDialog, "destroy", G_CALLBACK(+[](GtkWidget*, gpointer) {
+        g_settingsDialog = nullptr;
+    }), nullptr);
+
+    g_signal_connect(g_settingsDialog, "close-request", G_CALLBACK(+[](GtkWidget*, gpointer) -> gboolean {
+        if (g_settingsDialog != nullptr) {
+            gtk_widget_set_visible(g_settingsDialog, FALSE);
+            ClearActiveModal(GTK_WINDOW(g_settingsDialog));
+            RefreshStatus();
+        }
+        return TRUE;
+    }), nullptr);
+    InstallSubwindowCloseKeys(g_settingsDialog, []() {
+        if (g_settingsDialog != nullptr) {
+            gtk_widget_set_visible(g_settingsDialog, FALSE);
+            ClearActiveModal(GTK_WINDOW(g_settingsDialog));
+            RefreshStatus();
+        }
+    });
+
+    gtk_window_set_titlebar(
+        GTK_WINDOW(g_settingsDialog),
+        CreateWin10Titlebar(GTK_WINDOW(g_settingsDialog),
+                            "DLNA Server Settings",
+                            WindowChrome::Dialog));
+
+    LoadSettingsFromConfig();
+    if (g_dumpGeometry) {
+        PresentModalChild(GTK_WINDOW(g_settingsDialog), GTK_WINDOW(g_mainWindow));
+        DumpWindowGeometry("settings", g_settingsDialog);
+        return false;
+    }
+    if (g_dumpMsgBoxParent) {
+        g_modalStack.Push(GTK_WINDOW(g_settingsDialog));
+        gtk_window_set_transient_for(GTK_WINDOW(g_settingsDialog), GTK_WINDOW(g_mainWindow));
+        gtk_window_set_modal(GTK_WINDOW(g_settingsDialog), TRUE);
+        gtk_window_present(GTK_WINDOW(g_settingsDialog));
+        return false;
+    }
+    PresentModalChild(GTK_WINDOW(g_settingsDialog), GTK_WINDOW(g_mainWindow));
+    RunModalLoopAndDestroy(g_settingsDialog);
+    if (g_settingsSaved) {
+        RefreshSourceList();
+        RefreshStatus();
+    }
+    return g_settingsRestartRequested;
+}
+
+void LayoutMainWindow(int width, int height) {
+    (void)width;
+    (void)height;
+    gtk_widget_set_size_request(g_toolbar, UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainToolbarHeight);
+
+    GtkWidget* fixed = gtk_widget_get_parent(g_toolbar);
+
+    gtk_fixed_move(GTK_FIXED(fixed), g_addButton, UiTokensPosix::kAddButtonX, UiTokensPosix::kAddButtonY);
+    gtk_fixed_move(GTK_FIXED(fixed), g_removeButton, UiTokensPosix::kDeleteButtonX, UiTokensPosix::kDeleteButtonY);
+    gtk_fixed_move(GTK_FIXED(fixed), g_startStopButton, UiTokensPosix::kStartStopButtonX, UiTokensPosix::kStartStopButtonY);
+    gtk_fixed_move(GTK_FIXED(fixed), g_settingsButton, UiTokensPosix::kSettingsButtonX, UiTokensPosix::kSettingsButtonY);
+
+    gtk_fixed_move(GTK_FIXED(fixed), g_status, UiTokensPosix::kMainSourceListX, UiTokensPosix::kMainToolbarHeight + 10);
+
+    const int listTop = UiTokensPosix::kMainToolbarHeight + UiTokensPosix::kMainSourceListYFromListArea;
+    gtk_fixed_move(GTK_FIXED(fixed), g_sourcesScrolled, UiTokensPosix::kMainSourceListX, listTop);
+    gtk_widget_set_size_request(g_sourcesScrolled, UiTokensPosix::kMainSourceListWidth, UiTokensPosix::kMainSourceListHeight);
+
+    gtk_fixed_move(GTK_FIXED(fixed), g_emptyState, UiTokensPosix::kMainSourceListX + 16, listTop + 16);
+}
+
+// Single construction point for a source-list row. Both PromptForMediaSource()
+// and RefreshSourceList() must use this so the ellipsis/tooltip behaviour can
+// never diverge between "just added" rows and "reloaded from config" rows.
+GtkWidget* BuildSourceRow(const std::string& pathUtf8) {
+    GtkWidget* row = gtk_list_box_row_new();
+    GtkWidget* rowLabel = gtk_label_new(pathUtf8.c_str());
+    gtk_label_set_xalign(GTK_LABEL(rowLabel), 0.0f);
+    gtk_label_set_ellipsize(GTK_LABEL(rowLabel), PANGO_ELLIPSIZE_END);
+    gtk_label_set_single_line_mode(GTK_LABEL(rowLabel), TRUE);
+    gtk_widget_set_hexpand(rowLabel, TRUE);
+    // full path on hover is shown only by the custom popover installed
+    // in InstallSourceListHoverTip and driven by SourceRowClippedText
+    // the native gtk tooltip is intentionally not used here because
+    // having both active at once produced two overlapping tooltips
+    gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), rowLabel);
+    return row;
+}
+
+void RefreshEmptyState() {
+    bool hasSources = gtk_widget_get_first_child(g_sources) != nullptr;
+    gtk_widget_set_visible(g_emptyState, !hasSources);
+}
+
+bool HasSourceSelection() {
+    if (g_sources == nullptr) return false;
+    GtkListBoxRow* selected = gtk_list_box_get_selected_row(GTK_LIST_BOX(g_sources));
+    return selected != nullptr;
+}
+
+bool IsShowingOverrideSources() {
+    return AppConfig.HasRuntimeSourceOverride() && g_state == ServerUiState::Running;
+}
+
+void RefreshDeleteButton() {
+    if (g_removeButton == nullptr) return;
+    // uses source_list_focus.h SourceListFocusState directly, the same
+    // pure state machine src/mainwindow.cpp uses on Win32, instead of a
+    // bare bool. This is required so that a click landing on the Delete
+    // button (which moves keyboard focus away from the source list) does
+    // not disable Delete before the click's own handler executes.
+    // Single predicate shared by the button, the context menu and the keyboard
+    // shortcut, so the three can never disagree about whether deletion is legal.
+    gtk_widget_set_sensitive(g_removeButton, CanRemoveSelectedSource() ? TRUE : FALSE);
+}
+
+void OnSourceFocusChanged(GtkEventControllerFocus*, gpointer) {
+    RefreshDeleteButton();
+    gtk_widget_add_css_class(g_sourcesScrolled, "source-list-focused");
+}
+
+void OnSourceFocusLeave(GtkEventControllerFocus*, gpointer) {
+    // Determine whether the widget that just gained focus is the Delete
+    // button itself, mirroring the wParam check in mainwindow.cpp's
+    // ListBoxProc WM_KILLFOCUS handler
+    // (reinterpret_cast<HWND>(wParam) == pThis->m_hBtnDelete). GTK4 has
+    // no equivalent "which widget is about to gain focus" parameter on
+    // the "leave" signal, so this reads the root's current focus widget
+    // at the moment "leave" fires. This assumes GTK updates the root's
+    // focus widget before dispatching the losing widget's "leave"
+    // signal. VERIFY THIS EMPIRICALLY: select a source, click Delete,
+    // and confirm Delete's own "clicked" handler still runs and removes
+    // the source. If it does not, GTK is dispatching "leave" before the
+    // new focus is committed to the root; in that case move this same
+    // check into a GtkGestureClick "pressed" handler installed on
+    // g_removeButton with GTK_PHASE_CAPTURE, set a
+    // "delete button press in flight" bool there instead, and read that
+    // bool here instead of querying gtk_root_get_focus.
+    GtkRoot* root = gtk_widget_get_root(g_sources);
+    GtkWidget* newFocus = root ? gtk_root_get_focus(root) : nullptr;
+    const bool gainedFocusIsDeleteButton = (newFocus == g_removeButton);
+    g_sourceFocusState.OnListBoxLostFocus(gainedFocusIsDeleteButton);
+    if (!gainedFocusIsDeleteButton) {
+        gtk_list_box_unselect_all(GTK_LIST_BOX(g_sources));
+    }
+    gtk_widget_remove_css_class(g_sourcesScrolled, "source-list-focused");
+    RefreshDeleteButton();
+}
+
+void RefreshStatus() {
+    if (g_mainWindow == nullptr) return;
+    gtk_label_set_text(GTK_LABEL(g_status), "");
+
+    if (g_state == ServerUiState::Starting) {
+        gtk_label_set_text(GTK_LABEL(g_status), "starting server...");
+    } else if (g_state == ServerUiState::Stopping) {
+        gtk_label_set_text(GTK_LABEL(g_status), "stopping server...");
+    } else if (g_state == ServerUiState::Running) {
+        std::string label;
+        if (AppConfig.HasRuntimeSourceOverride()) {
+            label = "temporary source";
+        } else {
+            label = (DLNAServer.IsInitialScanInProgress() || g_scanInProgress.load())
+                ? " scanning..."
+                : "Server running";
+        }
+        gtk_label_set_text(GTK_LABEL(g_status), label.c_str());
+    }
+
+    const bool transition =
+        g_state == ServerUiState::Starting ||
+        g_state == ServerUiState::Stopping;
+    const bool scanBusy =
+        g_scanInProgress.load() ||
+        DLNAServer.IsInitialScanInProgress();
+
+    gtk_widget_set_sensitive(
+        g_startStopButton,
+        !transition);
+    ApplyMnemonicLabel(g_startStopButton, g_state == ServerUiState::Running ? L"Stop" : L"Start", g_toolbarMnemonics[2]);
+
+    gtk_widget_set_sensitive(
+        g_addButton,
+        !transition && !scanBusy);
+    ApplyMnemonicLabel(g_addButton, g_state == ServerUiState::Running ? L"Scan" : L"Add", g_toolbarMnemonics[0]);
+
+    gtk_widget_set_sensitive(
+        g_settingsButton,
+        TRUE);
+
+    RefreshDeleteButton();
+
+    if (!transition && !scanBusy) {
+        RefreshEmptyState();
+    }
+}
+
+void RefreshSourceList() {
+    if (g_mainWindow == nullptr) return;
+    HideSourceHoverTip();
+    GtkWidget* rowWidget = gtk_widget_get_first_child(g_sources);
+    while (rowWidget != nullptr) {
+        GtkWidget* next = gtk_widget_get_next_sibling(rowWidget);
+        // gtk_list_box_remove only accepts a tracked GtkListBoxRow
+        // the hover tip popover and the context menu popover are
+        // attached to g_sources with gtk_widget_set_parent directly
+        // and are not rows so they must be skipped here
+        // handing a non row child to gtk_list_box_remove is what
+        // produced the tried to remove non child warning
+        if (GTK_IS_LIST_BOX_ROW(rowWidget)) {
+            gtk_list_box_remove(GTK_LIST_BOX(g_sources), rowWidget);
+        }
+        rowWidget = next;
+    }
+    // Win32 parity (MainWindow::RefreshSourceList): while a runtime --source
+    // override is actually being served, the list shows the override, not
+    // config.ini. When the server is stopped the config list is shown even if
+    // an override has been installed, because a later Start() is what makes it
+    // take effect.
+    const std::vector<MediaSource> displayed = IsShowingOverrideSources()
+        ? AppConfig.GetRuntimeSourceOverride()
+        : AppConfig.mediaSources;
+    for (const auto& source : displayed) {
+        gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(WideToUtf8(source.path)));
+    }
+    RefreshEmptyState();
+}
+
+void SaveSourcesFromList() {
+    // Never persist override rows. Win32 reaches the same outcome by disabling
+    // Add/Delete entirely while IsShowingOverrideSources() is true.
+    if (IsShowingOverrideSources()) return;
+    size_t savedCount = 0;
+    std::vector<std::wstring> paths;
+    GtkWidget* rowWidget = gtk_widget_get_first_child(g_sources);
+    while (rowWidget != nullptr) {
+        GtkWidget* rowChild = gtk_list_box_row_get_child(GTK_LIST_BOX_ROW(rowWidget));
+        if (GTK_IS_LABEL(rowChild)) {
+            const gchar* text = gtk_label_get_text(GTK_LABEL(rowChild));
+            if (text != nullptr && *text != '\0') {
+                paths.push_back(Utf8ToWide(text ? text : ""));
+            }
+        }
+        rowWidget = gtk_widget_get_next_sibling(rowWidget);
+    }
+    AppConfig.Mutate([&paths, &savedCount](Config& cfg) {
+        std::vector<MediaSource> sources;
+        sources.reserve(paths.size());
+        for (const auto& path : paths) {
+            MediaSource source;
+            source.path = path;
+            sources.push_back(source);
+        }
+        cfg.mediaSources = std::move(sources);
+        savedCount = cfg.mediaSources.size();
+    });
+    AppConfig.Save();
+    BeginRescan();
+    LogPrint(L"Saved %d media source(s).", static_cast<int>(savedCount));
+}
+
+bool IsBusy() {
+    return g_state == ServerUiState::Starting || g_state == ServerUiState::Stopping;
+}
+
+void SetPendingResult(ServerUiState state, bool success, const std::string& message) {
+    std::lock_guard<std::mutex> lock(g_pendingMutex);
+    g_pendingState = state;
+    g_pendingSuccess = success;
+    g_pendingMessage = message;
+    g_hasPendingResult = true;
+}
+
+void ApplySourceOverridePayload(const std::string& payload) {
+    std::vector<std::wstring> parsed = ParseQuotedCommaList(Utf8ToWide(payload));
+    std::vector<MediaSource> overrideSources;
+    for (auto& p : parsed) {
+        if (!p.empty()) overrideSources.push_back({p});
+    }
+    if (IsBusy()) {
+        // a start stop or restart worker is already in flight drop this
+        // request rather than race it matches the WM COPYDATA IsBusy guard
+        // on the windows build
+        return;
+    }
+    if (DLNAServer.IsRunning()) {
+        std::vector<MediaSource> forRestart = overrideSources;
+        if (g_worker.joinable()) g_worker.join();
+        g_state = ServerUiState::Stopping;
+        RefreshStatus();
+        g_worker = std::thread([forRestart]() {
+            RunGuarded(L"gtk4-source-override-restart", [forRestart]() {
+                DLNAServer.Stop();
+                AppConfig.SetRuntimeSourceOverride(forRestart);
+                SetPendingResult(ServerUiState::Starting, true, "");
+                std::wstring reason;
+                bool ok = DLNAServer.Start(reason);
+                std::string message;
+                if (!ok) {
+                    message = "server could not start\n";
+                    if (!reason.empty()) message += WideToUtf8(reason);
+                }
+                SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, message);
+            });
+        });
+    } else {
+        AppConfig.SetRuntimeSourceOverride(overrideSources);
+        RefreshSourceList();
+    }
+}
+
+void StartServer() {
+    if (IsBusy() || g_state == ServerUiState::Running) return;
+    // A runtime --source override is a valid source set on its own; Server::Start
+    // validates against cfg.effectiveMediaSources, so this pre-check must too.
+    if (AppConfig.Snapshot().effectiveMediaSources.empty() && !AppConfig.defaultPlaylistEnabled) {
+        MessageBoxShow(GTK_WINDOW(g_mainWindow), "Add at least one media source.");
+        return;
+    }
+    if (g_worker.joinable()) g_worker.join();
+    g_state = ServerUiState::Starting;
+    RefreshStatus();
+    g_worker = std::thread([]() {
+        RunGuarded(L"gtk4-start-worker", []() {
+            std::wstring reason;
+            bool ok = DLNAServer.Start(reason);
+            std::string message;
+            if (!ok) {
+                message = "server could not start\n";
+                if (!reason.empty()) {
+                    message += WideToUtf8(reason);
+                }
+            }
+            SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, message);
+        });
+    });
+}
+
+void StopServer() {
+    if (IsBusy() || g_state != ServerUiState::Running) return;
+    if (g_worker.joinable()) g_worker.join();
+    g_state = ServerUiState::Stopping;
+    RefreshStatus();
+    g_worker = std::thread([]() {
+        RunGuarded(L"gtk4-stop-worker", []() {
+            DLNAServer.Stop();
+            SetPendingResult(ServerUiState::Stopped, true, "");
+        });
+    });
+}
+
+void RestartServer() {
+    if (IsBusy()) return;
+    if (g_state != ServerUiState::Running) return;
+    if (g_worker.joinable()) g_worker.join();
+    g_state = ServerUiState::Stopping;
+    RefreshStatus();
+    g_worker = std::thread([]() {
+        RunGuarded(L"gtk4-restart-worker", []() {
+            DLNAServer.Stop();
+            std::wstring reason;
+            bool ok = DLNAServer.Start(reason);
+            std::string message;
+            if (!ok) {
+                message = "server could not start\n";
+                if (!reason.empty()) message += WideToUtf8(reason);
+            }
+            SetPendingResult(ok ? ServerUiState::Running : ServerUiState::Stopped, ok, message);
+        });
+    });
+}
+
+// wm initiated close can leave x11 events and requests still queued
+// drain the main context then force a sync before destroying the surface
+// this closes the same race GDK_SYNCHRONIZE fixes for the whole process
+void DestroyMainWindowSafely() {
+    if (g_mainWindow == nullptr) return;
+    // close any open source list context menu first so its own
+    // closed handler unparents it cleanly before window teardown
+    // walks the same widget tree, see task 5 of the fix workflow
+    if (g_activeSourceContextMenu != nullptr) {
+        gtk_popover_popdown(GTK_POPOVER(g_activeSourceContextMenu));
+    }
+    HideSourceHoverTip();
+    if (g_sourceHoverTip != nullptr) {
+        gtk_widget_unparent(g_sourceHoverTip);
+        g_sourceHoverTip = nullptr;
+        g_sourceHoverTipLabel = nullptr;
+        g_sourceHoverTipRow = nullptr;
+    }
+    GtkWidget* toDestroy = g_mainWindow;
+    g_mainWindow = nullptr;
+    while (g_main_context_pending(nullptr)) {
+        g_main_context_iteration(nullptr, FALSE);
+    }
+    GdkDisplay* display = gtk_widget_get_display(toDestroy);
+    if (display != nullptr) {
+        gdk_display_sync(display);
+    }
+    BeginIgnoreBadDrawable();
+    gtk_window_destroy(GTK_WINDOW(toDestroy));
+    EndIgnoreBadDrawable();
+}
+
+void HideMainWindow() {
+    if (g_mainWindow == nullptr || g_mainSurfaceLost) return;
+    gtk_widget_set_visible(g_mainWindow, FALSE);
+}
+
+void RequestClose() {
+    if (g_closePending.IsPending()) return;
+    if (IsBusy()) {
+        // remember the close in every busy state
+        // the worker result handler runs the stop and the teardown later
+        LogPrint(L"[close] request latched while busy state=%d", static_cast<int>(g_state));
+        g_closePending.RequestCloseOnceStopped();
+        // an in flight scan must not delay the exit
+        AppScanCancel.RequestCancel();
+        HideMainWindow();
+        return;
+    }
+    if (ShouldCloseNow(DLNAServer.IsRunning(), false)) {
+        if (g_mainWindow != nullptr) {
+            g_idle_add(+[](gpointer) -> gboolean {
+                DestroyMainWindowSafely();
+                return G_SOURCE_REMOVE;
+            }, nullptr);
+        }
+        return;
+    }
+    LogPrint(L"[close] request stopping the running server");
+    g_closePending.RequestCloseOnceStopped();
+    g_state = ServerUiState::Stopping;
+    RefreshStatus();
+    HideMainWindow();
+    if (g_worker.joinable()) g_worker.join();
+    g_worker = std::thread([]() {
+        RunGuarded(L"gtk4-close-worker", []() {
+            DLNAServer.Stop();
+            SetPendingResult(ServerUiState::Stopped, true, "");
+        });
+    });
+}
+
+void ApplyPendingResult() {
+    bool hasResult = false;
+    ServerUiState state = ServerUiState::Stopped;
+    bool success = false;
+    std::string message;
+    {
+        std::lock_guard<std::mutex> lock(g_pendingMutex);
+        hasResult = g_hasPendingResult;
+        if (hasResult) {
+            state = g_pendingState;
+            success = g_pendingSuccess;
+            message = g_pendingMessage;
+            g_hasPendingResult = false;
+        }
+    }
+    if (!hasResult) return;
+    if (g_worker.joinable() && ShouldJoinWorkerForResult(state)) {
+        g_worker.join();
+    }
+    g_state = state;
+    RefreshStatus();
+    if (!success && !message.empty()) {
+        if (g_closePending.IsPending()) {
+            LogPrint(L"[close] failure dialog suppressed while closing: %hs", message.c_str());
+        } else {
+            MessageBoxShow(ActiveTopLevelWindow(), message);
+        }
+    }
+    if (g_closePending.ShouldCloseNowAfterOperation(state == ServerUiState::Stopped)) {
+        DestroyMainWindowSafely();
+        return;
+    }
+    if (g_closePending.ShouldStopAgainAfterOperation(state == ServerUiState::Running)) {
+        StopServer();
+    }
+}
+
+void BeginRescan() {
+    if (g_closePending.IsPending()) return;
+    if (g_scanInProgress.exchange(true)) return;
+    RefreshStatus();
+    if (g_rescanWorker.joinable()) g_rescanWorker.join();
+    g_rescanWorker = std::thread([]() {
+        RunGuarded(L"gtk4-rescan", []() {
+            DLNAServer.Rescan();
+            g_scanInProgress.store(false);
+            g_idle_add(+[](gpointer) -> gboolean {
+                RefreshStatus();
+                return G_SOURCE_REMOVE;
+            }, nullptr);
+        });
+    });
+}
+
+// Win32 parity: MainWindow::ShowSourceListContextMenu. Same single item, same
+// enablement predicate, reachable by right-click and by Shift+F10 / Menu key.
+bool CanRemoveSelectedSource() {
+    return HasSourceSelection() &&
+           !g_sourceFocusState.IsNoFocus() &&
+           !IsBusy() &&
+           !g_scanInProgress.load() &&
+           !DLNAServer.IsInitialScanInProgress() &&
+           !IsShowingOverrideSources();
+}
+
+void ShowSourceListContextMenu(double x, double y) {
+    GMenu* model = g_menu_new();
+    g_menu_append(model, "Remove selected source", "win.remove-source");
+    GtkWidget* popover = gtk_popover_menu_new_from_model(G_MENU_MODEL(model));
+    g_object_unref(model);
+    gtk_widget_set_parent(popover, g_sources);
+    const GdkRectangle rect = { static_cast<int>(x), static_cast<int>(y), 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rect);
+    gtk_popover_set_has_arrow(GTK_POPOVER(popover), FALSE);
+    g_activeSourceContextMenu = popover;
+    g_signal_connect(popover, "closed", G_CALLBACK(+[](GtkPopover* p, gpointer) {
+        // guard against a second unparent call
+        // this can fire once from a normal dismiss and again during
+        // window teardown if the popover was still open
+        if (gtk_widget_get_parent(GTK_WIDGET(p)) != nullptr) {
+            gtk_widget_unparent(GTK_WIDGET(p));
+        }
+        if (g_activeSourceContextMenu == GTK_WIDGET(p)) {
+            g_activeSourceContextMenu = nullptr;
+        }
+    }), nullptr);
+    gtk_popover_popup(GTK_POPOVER(popover));
+}
+
+void RemoveSelectedSource() {
+    if (!CanRemoveSelectedSource()) return;
+    GtkListBox* box = GTK_LIST_BOX(g_sources);
+    GtkListBoxRow* selected = gtk_list_box_get_selected_row(box);
+    if (selected == nullptr) return;
+    gtk_list_box_remove(box, GTK_WIDGET(selected));
+    g_sourceFocusState.OnSourceDeleted();
+    SaveSourcesFromList();
+    RefreshEmptyState();
+    RefreshDeleteButton();
+}
+
+
+void OnSourceSelectionChanged(GtkListBox*, GtkListBoxRow*, gpointer) {
+    g_sourceFocusState.OnSelectionChanged(HasSourceSelection());
+    RefreshDeleteButton();
+}
+
+void OnAddButtonClicked(GtkButton*, gpointer) {
+    if (g_state == ServerUiState::Running) {
+        BeginRescan();
+    } else if (g_state == ServerUiState::Stopped) {
+        PromptForMediaSource();
+        RefreshEmptyState();
+    }
+}
+
+void OnRemoveButtonClicked(GtkButton*, gpointer) {
+    RemoveSelectedSource();
+}
+
+void OnStartStopButtonClicked(GtkButton*, gpointer) {
+    if (g_state == ServerUiState::Running) {
+        StopServer();
+    } else if (g_state == ServerUiState::Stopped) {
+        StartServer();
+    }
+}
+
+void OnSettingsButtonClicked(GtkButton*, gpointer) {
+    bool restartRequested = ShowSettingsDialog();
+    if (restartRequested && DLNAServer.IsRunning()) {
+        RestartServer();
+    }
+}
+
+gboolean OnMainWindowCloseRequest(GtkWidget*, gpointer) {
+    RequestClose();
+    return TRUE;
+}
+
+gboolean OnPollTick(gpointer) {
+    if (g_mainWindow == nullptr) return G_SOURCE_REMOVE;
+    if (g_signalStop.load(std::memory_order_relaxed)) {
+        RequestClose();
+    }
+    if (g_state == ServerUiState::Running) {
+        const bool healthyNow = DLNAServer.IsHealthy();
+        g_consecutiveUnhealthyPolls = healthyNow ? 0 : (g_consecutiveUnhealthyPolls + 1);
+        if (ShouldTreatServerAsUnhealthy(true, healthyNow, g_consecutiveUnhealthyPolls)) {
+            LogPrint(L"Server reported running but an internal worker thread has stopped unexpectedly stopping cleanly");
+            StopServer();
+            if (!g_closePending.IsPending()) {
+                MessageBoxShow(ActiveTopLevelWindow(),
+                    "The server stopped unexpectedly and has been shut down\n\nPress Start to resume");
+            }
+        }
+    } else {
+        g_consecutiveUnhealthyPolls = 0;
+    }
+    ApplyPendingResult();
+    // Win32 parity (mainwindow.cpp WM_TIMER): only repaint when the polled
+    // state actually changed. RefreshStatus() rewrites four button labels and
+    // the status band, which forces a full relayout on every tick.
+    static ServerUiState lastState = ServerUiState::Stopped;
+    static bool lastScanBusy = false;
+    static bool lastOverride = false;
+    const bool scanBusyNow = g_scanInProgress.load() || DLNAServer.IsInitialScanInProgress();
+    const bool overrideNow = AppConfig.HasRuntimeSourceOverride();
+    if (g_state != lastState || scanBusyNow != lastScanBusy || overrideNow != lastOverride) {
+        lastState = g_state;
+        lastScanBusy = scanBusyNow;
+        lastOverride = overrideNow;
+        RefreshStatus();
+    }
+    if (g_mainWindow != nullptr && gtk_widget_get_visible(GTK_WIDGET(g_mainWindow))) {
+        GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(g_mainWindow));
+        // a visible window with a recorded x id but no live surface was destroyed externally
+        const bool surfaceGone = g_mainWindowXid.load(std::memory_order_acquire) != 0 &&
+                                 (surface == nullptr || gdk_surface_is_destroyed(surface));
+        if (surfaceGone) {
+            LogPrint(L"[close] main window surface was destroyed externally");
+            g_mainSurfaceLost = true;
+            RequestClose();
+            return G_SOURCE_CONTINUE;
+        }
+        if (surface != nullptr && GDK_IS_TOPLEVEL(surface)) {
+            const GdkToplevelState state = gdk_toplevel_get_state(GDK_TOPLEVEL(surface));
+            if ((state & GDK_TOPLEVEL_STATE_MINIMIZED) == 0) {
+                g_mainWindowWasUnminimized = true;
+            } else if (g_mainWindowWasUnminimized) {
+                gtk_widget_set_visible(GTK_WIDGET(g_mainWindow), FALSE);
+            } else {
+                // initial wslg launch keep requesting presentation until
+                // the compositor has completed the first map
+                gtk_window_present(GTK_WINDOW(g_mainWindow));
+            }
+        }
+    }
+    return G_SOURCE_CONTINUE;
+}
+
+// Task 15/16: shared recovery path for app-icon/second-instance and
+// tray activation. Restores the hidden/minimized main window without
+// stealing focus from an active modal child.
+void RestoreAndFocusMainWindow() {
+    if (g_mainWindow != nullptr) {
+        gtk_window_present(GTK_WINDOW(g_mainWindow));
+    }
+    GtkWindow* top = g_modalStack.Top();
+    if (top != nullptr) {
+        gtk_window_present(top);
+    }
+}
+
+void OnSingleInstanceCommand(const std::string& cmd) {
+    if (cmd == "kill") {
+        g_idle_add(+[](gpointer) -> gboolean {
+            RequestClose();
+            return G_SOURCE_REMOVE;
+        }, nullptr);
+        return;
+    }
+    if (cmd == "show") {
+        g_idle_add(+[](gpointer) -> gboolean {
+            RestoreAndFocusMainWindow();
+            return G_SOURCE_REMOVE;
+        }, nullptr);
+        return;
+    }
+    if (cmd.rfind("source:", 0) == 0) {
+        std::string payload = cmd.substr(7);
+        // marshal back onto the gtk main thread this callback runs on the
+        // posix single instance listener thread and must never touch gtk
+        // widgets directly see StartListening in posix single instance cpp
+        auto* heapPayload = new std::string(std::move(payload));
+        g_idle_add(+[](gpointer data) -> gboolean {
+            std::string* p = static_cast<std::string*>(data);
+            ApplySourceOverridePayload(*p);
+            delete p;
+            return G_SOURCE_REMOVE;
+        }, heapPayload);
+    }
+}
+
+gboolean OnTrayAction(gpointer) {
+    RestoreAndFocusMainWindow();
+    return G_SOURCE_REMOVE;
+}
+
+void OnTrayNotify(TrayNotifyAction action) {
+    if (action == TrayNotifyAction::Activate) {
+        g_idle_add(OnTrayAction, nullptr);
+    } else if (action == TrayNotifyAction::ShowMenu) {
+        // the desktop shows the exported menu model for us so nothing
+        // else is needed here the menu actions map to the same handlers
+        // that the in-app Logs and Help entries use
+    }
+}
+
+// Returns the full path a row carries, or an empty string when the row's label
+// is not being ellipsized (i.e. the text already fits, so no tip is wanted).
+std::string SourceRowClippedText(GtkListBoxRow* row) {
+    if (row == nullptr) return {};
+    GtkWidget* child = gtk_list_box_row_get_child(row);
+    if (!GTK_IS_LABEL(child)) return {};
+    PangoLayout* layout = gtk_label_get_layout(GTK_LABEL(child));
+    if (layout == nullptr) return {};
+    if (!pango_layout_is_ellipsized(layout)) return {};
+    const gchar* text = gtk_label_get_text(GTK_LABEL(child));
+    return text ? std::string(text) : std::string();
+}
+
+void HideSourceHoverTip() {
+    g_sourceHoverTipRow = nullptr;
+    if (g_sourceHoverTip != nullptr) {
+        gtk_popover_popdown(GTK_POPOVER(g_sourceHoverTip));
+    }
+}
+
+void UpdateSourceHoverTip(double x, double y) {
+    if (g_sourceHoverTip == nullptr) return;
+    GtkListBoxRow* row = gtk_list_box_get_row_at_y(GTK_LIST_BOX(g_sources), static_cast<int>(y));
+    if (row == g_sourceHoverTipRow) return;
+    g_sourceHoverTipRow = row;
+    const std::string text = SourceRowClippedText(row);
+    if (text.empty()) {
+        gtk_popover_popdown(GTK_POPOVER(g_sourceHoverTip));
+        return;
+    }
+    gtk_label_set_text(GTK_LABEL(g_sourceHoverTipLabel), text.c_str());
+    graphene_rect_t bounds;
+    if (gtk_widget_compute_bounds(GTK_WIDGET(row), g_sources, &bounds)) {
+        const GdkRectangle rect = {
+            static_cast<int>(bounds.origin.x), static_cast<int>(bounds.origin.y),
+            static_cast<int>(bounds.size.width), static_cast<int>(bounds.size.height)
+        };
+        gtk_popover_popdown(GTK_POPOVER(g_sourceHoverTip));
+        gtk_popover_set_pointing_to(GTK_POPOVER(g_sourceHoverTip), &rect);
+    } else {
+        const GdkRectangle rect = { static_cast<int>(x), static_cast<int>(y), 1, 1 };
+        gtk_popover_popdown(GTK_POPOVER(g_sourceHoverTip));
+        gtk_popover_set_pointing_to(GTK_POPOVER(g_sourceHoverTip), &rect);
+    }
+    gtk_popover_popup(GTK_POPOVER(g_sourceHoverTip));
+}
+
+// Win32 parity: mainwindow.cpp sets TTM_SETDELAYTIME/TTDT_INITIAL to 0 so the
+// source-list tooltip appears with no hover delay. GTK4 offers no equivalent
+// knob, so a popover is driven directly off pointer motion instead.
+void InstallSourceListHoverTip() {
+    g_sourceHoverTip = gtk_popover_new();
+    gtk_widget_add_css_class(g_sourceHoverTip, "dlna-hover-tip");
+    gtk_popover_set_autohide(GTK_POPOVER(g_sourceHoverTip), FALSE);
+    gtk_popover_set_has_arrow(GTK_POPOVER(g_sourceHoverTip), FALSE);
+    gtk_popover_set_position(GTK_POPOVER(g_sourceHoverTip), GTK_POS_BOTTOM);
+    gtk_widget_set_parent(g_sourceHoverTip, g_sources);
+    g_sourceHoverTipLabel = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(g_sourceHoverTipLabel), 0.0f);
+    gtk_popover_set_child(GTK_POPOVER(g_sourceHoverTip), g_sourceHoverTipLabel);
+
+    GtkEventController* motion = gtk_event_controller_motion_new();
+    gtk_widget_add_controller(g_sources, motion);
+    g_signal_connect(motion, "motion", G_CALLBACK(+[](GtkEventControllerMotion*, gdouble x, gdouble y, gpointer) {
+        UpdateSourceHoverTip(x, y);
+    }), nullptr);
+    g_signal_connect(motion, "leave", G_CALLBACK(+[](GtkEventControllerMotion*, gpointer) {
+        HideSourceHoverTip();
+    }), nullptr);
+}
+
+// Spec C1: the toolbar button row is one navigation group and the source list
+// is a second group. Tab moves between groups; Left/Right cycle inside the
+// toolbar group; Up/Down are inert on toolbar buttons. This is the GTK4
+// counterpart of WS_GROUP/WS_TABSTOP plus mainwindow.cpp::ToolbarButtonProc,
+// which swallows VK_UP/VK_DOWN while letting VK_LEFT/VK_RIGHT reach
+// IsDialogMessage's group navigation.
+int ToolbarFocusIndex() {
+    GtkRoot* root = g_mainWindow ? gtk_widget_get_root(g_mainWindow) : nullptr;
+    GtkWidget* focused = root ? gtk_root_get_focus(root) : nullptr;
+    GtkWidget* const order[] = { g_addButton, g_removeButton, g_startStopButton, g_settingsButton };
+    for (int i = 0; i < 4; ++i) {
+        if (focused == order[i]) return i;
+    }
+    return -1;
+}
+
+void FocusToolbarIndex(int index) {
+    GtkWidget* const order[] = { g_addButton, g_removeButton, g_startStopButton, g_settingsButton };
+    for (int step = 0; step < 4; ++step) {
+        const int candidate = ((index + step) % 4 + 4) % 4;
+        if (gtk_widget_get_sensitive(order[candidate])) {
+            gtk_widget_grab_focus(order[candidate]);
+            return;
+        }
+    }
+}
+
+// Last toolbar button that held focus, so Tab re-enters the group where the
+// user left it (Win32 WS_GROUP semantics).
+int g_lastToolbarFocusIndex = 0;
+
+gboolean OnMainWindowKeyPressed(GtkEventControllerKey*, guint keyval, guint,
+                                GdkModifierType modifiers, gpointer) {
+    switch (DecideFunctionKeyAction(keyval == GDK_KEY_F1 ? 0x70 : (keyval == GDK_KEY_F5 ? 0x74 : 0),
+                                    g_state == ServerUiState::Running,
+                                    IsBusy(),
+                                    g_scanInProgress.load())) {
+    case FunctionKeyAction::ShowHelp:
+        ShowHelpDialog(GTK_WINDOW(g_mainWindow));
+        return TRUE;
+    case FunctionKeyAction::Rescan:
+        BeginRescan();
+        return TRUE;
+    case FunctionKeyAction::RefreshSourceList:
+        RefreshSourceList();
+        return TRUE;
+    case FunctionKeyAction::ShowSourceListContextMenu:
+    case FunctionKeyAction::NoAction:
+        break;
+    }
+
+    const int toolbarIndex = ToolbarFocusIndex();
+    const bool inToolbar = toolbarIndex >= 0;
+    if (inToolbar) g_lastToolbarFocusIndex = toolbarIndex;
+
+    if ((modifiers & GDK_CONTROL_MASK) != 0 || (modifiers & GDK_ALT_MASK) != 0) return FALSE;
+
+    if (keyval == GDK_KEY_Tab || keyval == GDK_KEY_ISO_Left_Tab) {
+        if (inToolbar) {
+            gtk_widget_grab_focus(g_sources);
+        } else {
+            FocusToolbarIndex(g_lastToolbarFocusIndex);
+        }
+        return TRUE;
+    }
+
+    if (!inToolbar) return FALSE;
+
+    if (keyval == GDK_KEY_Left) { FocusToolbarIndex(toolbarIndex - 1); return TRUE; }
+    if (keyval == GDK_KEY_Right) { FocusToolbarIndex(toolbarIndex + 1); return TRUE; }
+    // Up/Down are swallowed on toolbar buttons, never forwarded.
+    if (keyval == GDK_KEY_Up || keyval == GDK_KEY_Down) return TRUE;
+    return FALSE;
+}
+
+void BuildMainWindow(GtkApplication* app) {
+
+    GtkWidget* window = gtk_application_window_new(app);
+    g_mainWindow = window;
+    gtk_widget_add_css_class(window, "dlna-main-window");
+    InstallMnemonicCueControllers(window);
+    gtk_window_set_title(GTK_WINDOW(window), "DLNA Server");
+gtk_window_set_default_size(GTK_WINDOW(window),
+                                UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainWindowBodyHeight);
+    gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
+    gtk_window_set_titlebar(
+        GTK_WINDOW(window),
+        CreateWin10Titlebar(GTK_WINDOW(window), "DLNA Server", WindowChrome::Main));
+
+    // Task 8: prevent main window from stealing focus while a modal
+    // child is active — main cannot become active / receive focus /
+    // when a modal child owns the focus chain (mirrors Win32 dialog
+    // modality semantics)
+    GtkEventController* mainFocus = gtk_event_controller_focus_new();
+    gtk_widget_add_controller(GTK_WIDGET(g_mainWindow), mainFocus);
+    g_signal_connect(mainFocus, "enter", G_CALLBACK(+[](GtkEventController*, gpointer) {
+        // Spec C11: a modal child owns the focus chain. GTK's "enter" signal
+        // cannot veto focus, so the modal is re-presented and flashed instead,
+        // which is the GTK equivalent of the Win32 EnableWindow(owner, FALSE)
+        // bounce.
+        GtkWindow* top = g_modalStack.Top();
+        if (top != nullptr && top != GTK_WINDOW(g_mainWindow)) {
+            gtk_window_present(top);
+            FlashActiveModal();
+        }
+    }), nullptr);
+GtkWidget* fixed = gtk_fixed_new();
+    gtk_widget_set_size_request(fixed, UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainWindowBodyHeight);
+    gtk_widget_add_css_class(fixed, "dlna-main-surface");
+    gtk_window_set_child(GTK_WINDOW(window), fixed);
+
+    g_toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+    gtk_widget_set_size_request(g_toolbar, UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainToolbarHeight);
+    gtk_fixed_put(GTK_FIXED(fixed), g_toolbar, 0, 0);
+    gtk_widget_add_css_class(g_toolbar, "toolbar");
+
+    g_addButton = gtk_button_new_with_label("Add");
+    gtk_widget_set_size_request(g_addButton, UiTokensPosix::kAddButtonW, UiTokensPosix::kAddButtonH);
+    gtk_fixed_put(GTK_FIXED(fixed), g_addButton, 0, 0);
+    gtk_widget_add_css_class(g_addButton, "toolbar-button");
+    g_signal_connect(g_addButton, "clicked", G_CALLBACK(OnAddButtonClicked), nullptr);
+
+    g_removeButton = gtk_button_new_with_label("Delete");
+    gtk_widget_set_size_request(g_removeButton, UiTokensPosix::kDeleteButtonW, UiTokensPosix::kDeleteButtonH);
+    gtk_fixed_put(GTK_FIXED(fixed), g_removeButton, 0, 0);
+    gtk_widget_add_css_class(g_removeButton, "toolbar-button");
+    g_signal_connect(g_removeButton, "clicked", G_CALLBACK(OnRemoveButtonClicked), nullptr);
+
+    g_startStopButton = gtk_button_new_with_label("Start");
+    gtk_widget_set_size_request(g_startStopButton, UiTokensPosix::kStartStopButtonW, UiTokensPosix::kStartStopButtonH);
+    gtk_fixed_put(GTK_FIXED(fixed), g_startStopButton, 0, 0);
+    gtk_widget_add_css_class(g_startStopButton, "toolbar-button");
+    g_signal_connect(g_startStopButton, "clicked", G_CALLBACK(OnStartStopButtonClicked), nullptr);
+
+    g_settingsButton = gtk_button_new_with_label("Settings");
+    gtk_widget_set_size_request(g_settingsButton, UiTokensPosix::kSettingsButtonW, UiTokensPosix::kSettingsButtonH);
+    gtk_fixed_put(GTK_FIXED(fixed), g_settingsButton, 0, 0);
+    gtk_widget_add_css_class(g_settingsButton, "toolbar-button");
+    g_signal_connect(g_settingsButton, "clicked", G_CALLBACK(OnSettingsButtonClicked), nullptr);
+
+    {
+        std::vector<std::wstring> toolbarLabels = { L"Add", L"Delete", L"Start", L"Settings" };
+        g_toolbarMnemonics = AssignMnemonics(toolbarLabels);
+        ApplyMnemonicLabel(g_addButton, toolbarLabels[0], g_toolbarMnemonics[0]);
+        ApplyMnemonicLabel(g_removeButton, toolbarLabels[1], g_toolbarMnemonics[1]);
+        ApplyMnemonicLabel(g_startStopButton, toolbarLabels[2], g_toolbarMnemonics[2]);
+        ApplyMnemonicLabel(g_settingsButton, toolbarLabels[3], g_toolbarMnemonics[3]);
+    }
+
+    g_status = gtk_label_new("");
+    gtk_widget_set_size_request(g_status, UiTokensPosix::kMainSourceListWidth, 24);
+    gtk_fixed_put(GTK_FIXED(fixed), g_status, UiTokensPosix::kMainSourceListX, UiTokensPosix::kMainToolbarHeight + 10);
+    gtk_widget_add_css_class(g_status, "status-band");
+    gtk_label_set_xalign(GTK_LABEL(g_status), 0.0f);
+    gtk_label_set_ellipsize(GTK_LABEL(g_status), PANGO_ELLIPSIZE_END);
+
+    g_sourcesScrolled = gtk_scrolled_window_new();
+    gtk_widget_add_css_class(g_sourcesScrolled, "source-list");
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(g_sourcesScrolled),
+                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_fixed_put(GTK_FIXED(fixed), g_sourcesScrolled, 0, 0);
+
+    g_sources = gtk_list_box_new();
+    gtk_list_box_set_selection_mode(GTK_LIST_BOX(g_sources), GTK_SELECTION_SINGLE);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(g_sourcesScrolled), g_sources);
+    g_signal_connect(g_sources, "row-selected", G_CALLBACK(OnSourceSelectionChanged), nullptr);
+
+    {
+        GSimpleAction* removeAction = g_simple_action_new("remove-source", nullptr);
+        g_signal_connect(removeAction, "activate", G_CALLBACK(+[](GSimpleAction*, GVariant*, gpointer) {
+            RemoveSelectedSource();
+        }), nullptr);
+        g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(removeAction));
+        g_object_unref(removeAction);
+
+        GtkGesture* rightClick = gtk_gesture_click_new();
+        gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(rightClick), GDK_BUTTON_SECONDARY);
+        gtk_widget_add_controller(g_sources, GTK_EVENT_CONTROLLER(rightClick));
+        g_signal_connect(rightClick, "pressed",
+                         G_CALLBACK(+[](GtkGestureClick*, gint, gdouble x, gdouble y, gpointer) {
+            if (!CanRemoveSelectedSource()) return;
+            ShowSourceListContextMenu(x, y);
+        }), nullptr);
+    }
+
+    GtkEventController* sourceFocus = gtk_event_controller_focus_new();
+    gtk_widget_add_controller(g_sources, sourceFocus);
+    g_signal_connect(sourceFocus, "enter", G_CALLBACK(OnSourceFocusChanged), nullptr);
+    g_signal_connect(sourceFocus, "leave", G_CALLBACK(OnSourceFocusLeave), nullptr);
+
+    GtkDropTarget* sourceDropTarget = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
+    GType fileListGTypes[] = { GDK_TYPE_FILE_LIST };
+    gtk_drop_target_set_gtypes(sourceDropTarget, fileListGTypes, 1);
+    g_signal_connect(sourceDropTarget, "accept", G_CALLBACK(+[](GtkDropTarget*, GdkDrop*, gpointer) -> gboolean {
+        // matches ShouldAllowSourceDrop in source drop policy h a busy or
+        // running server disallows the drop exactly like the windows build
+        return ShouldAllowSourceDrop(IsBusy() || DLNAServer.IsRunning()) ? TRUE : FALSE;
+    }), nullptr);
+    g_signal_connect(sourceDropTarget, "drop", G_CALLBACK(+[](GtkDropTarget*, const GValue* value, double, double, gpointer) -> gboolean {
+        if (ShouldAllowSourceDrop(IsBusy() || DLNAServer.IsRunning()) == false) return FALSE;
+        if (!G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST)) return FALSE;
+        GSList* files = static_cast<GSList*>(g_value_get_boxed(value));
+        bool addedAny = false;
+        for (GSList* it = files; it != nullptr; it = it->next) {
+            GFile* file = G_FILE(it->data);
+            gchar* path = g_file_get_path(file);
+            if (path == nullptr) continue;
+            std::wstring widePath = Utf8ToWide(path ? path : "");
+            g_free(path);
+            // directories are always accepted files are checked against
+            // the same supported extension list IsSupportedLocalMediaOrPlaylistPath
+            // already implements on both platforms see dlna utils cpp
+            if (IsSupportedLocalMediaOrPlaylistPath(widePath)) {
+                gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(WideToUtf8(widePath)));
+                addedAny = true;
+            }
+        }
+        if (addedAny) {
+            SaveSourcesFromList();
+            RefreshEmptyState();
+            RefreshDeleteButton();
+        }
+        return addedAny ? TRUE : FALSE;
+    }), nullptr);
+    gtk_widget_add_controller(g_sources, GTK_EVENT_CONTROLLER(sourceDropTarget));
+
+    InstallSourceListHoverTip();
+
+    GtkEventController* keyController = gtk_event_controller_key_new();
+    gtk_widget_add_controller(g_sources, keyController);
+    g_signal_connect(keyController, "key-pressed",
+                     G_CALLBACK(+[](GtkEventController*, guint keyval, guint, GdkModifierType, gpointer) -> gboolean {
+        if (keyval == GDK_KEY_Delete) {
+            RemoveSelectedSource();
+            return TRUE;
+        }
+        if ((keyval == GDK_KEY_d || keyval == GDK_KEY_D) && !g_sourceFocusState.IsNoFocus()) {
+            RemoveSelectedSource();
+            return TRUE;
+        }
+        if (keyval == GDK_KEY_Menu ||
+            (keyval == GDK_KEY_F10 && CanRemoveSelectedSource())) {
+            // Win32 parity: mainwindow.cpp anchors the keyboard-invoked menu at
+            // the selected item's rect, falling back to the list client rect.
+            double anchorX = 0.0;
+            double anchorY = 0.0;
+            GtkListBoxRow* selected = gtk_list_box_get_selected_row(GTK_LIST_BOX(g_sources));
+            graphene_rect_t bounds;
+            if (selected != nullptr &&
+                gtk_widget_compute_bounds(GTK_WIDGET(selected), g_sources, &bounds)) {
+                anchorX = bounds.origin.x;
+                anchorY = bounds.origin.y + bounds.size.height;
+            }
+            ShowSourceListContextMenu(anchorX, anchorY);
+            return TRUE;
+        }
+        return FALSE;
+    }), nullptr);
+
+    g_emptyState = gtk_label_new("Please add shared folders or files with Add.");
+    gtk_widget_set_size_request(g_emptyState, UiTokensPosix::kMainWindowWidth - UiTokens::kGutter * 2 - 16, 24);
+    gtk_fixed_put(GTK_FIXED(fixed), g_emptyState, 0, 0);
+    gtk_widget_add_css_class(g_emptyState, "empty-state");
+    gtk_label_set_xalign(GTK_LABEL(g_emptyState), 0.0f);
+
+    GtkEventController* mainKeys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(mainKeys, GTK_PHASE_CAPTURE);
+    gtk_widget_add_controller(window, mainKeys);
+    g_signal_connect(mainKeys, "key-pressed", G_CALLBACK(OnMainWindowKeyPressed), nullptr);
+
+    g_signal_connect(window, "close-request", G_CALLBACK(OnMainWindowCloseRequest), nullptr);
+
+    LayoutMainWindow(UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainWindowHeight);
+    RefreshSourceList();
+    RefreshStatus();
+
+    g_timeout_add(250, OnPollTick, nullptr);
+
+    gtk_window_unmaximize(GTK_WINDOW(window));
+    gtk_window_present(GTK_WINDOW(window));
+}
+
+// Walks every visible widget and emits one line per widget:
+//   [gtk4-<tag>-geometry] class=... id=... x=... y=... w=... h=...
+// coordinates are relative to the dialog toplevel so they can be diffed
+// verbatim against src/ui_tokens.h (and the win32 log).
+//
+// gtk_widget_compute_bounds(widget, toplevel) can assert-fail or return false
+// for widgets nested inside not-yet-realized container chains, silently
+// dropping them. Walking the parent chain with parent-relative bounds is
+// always valid (parents are always realized widgets) and yields identical
+// absolute coordinates, so nothing is lost. Note: compute_bounds includes
+// outline/border in the returned size; we use gtk_widget_get_width/height
+// (allocation) for the reported dimensions to match Win32 pixel sizes.
+static bool ComputeBoundsTo(GtkWidget* widget, GtkWidget* origin,
+                             graphene_rect_t* out) {
+    if (widget == origin) {
+        if (!gtk_widget_compute_bounds(widget, origin, out)) return false;
+        return true;
+    }
+    GtkWidget* parent = gtk_widget_get_parent(widget);
+    if (!parent) return false;
+    graphene_rect_t local;
+    if (!gtk_widget_compute_bounds(widget, parent, &local)) return false;
+    graphene_rect_t parentAbs;
+    if (!ComputeBoundsTo(parent, origin, &parentAbs)) return false;
+    out->origin.x = parentAbs.origin.x + local.origin.x;
+    out->origin.y = parentAbs.origin.y + local.origin.y;
+    out->size.width = gtk_widget_get_width(widget);
+    out->size.height = gtk_widget_get_height(widget);
+    return true;
+}
+
+void DumpWidgetTree(const char* tag, GtkWidget* widget, GtkWidget* origin) {
+    if (!gtk_widget_is_visible(widget)) return;
+    if (GTK_IS_WINDOW(widget)) {
+        std::printf("[gtk4-%s-geometry] titlebar=%s\n",
+                    tag, gtk_window_get_titlebar(GTK_WINDOW(widget)) != nullptr ? "csd" : "none");
+    }
+    graphene_rect_t bounds;
+    if (ComputeBoundsTo(widget, origin, &bounds)) {
+        const char* className = G_OBJECT_TYPE_NAME(widget);
+        const char* name = gtk_widget_get_name(widget);
+        std::printf("[gtk4-%s-geometry] class=%s id=%s x=%d y=%d w=%d h=%d\n",
+                    tag, className ? className : "?",
+                    name ? name : "0",
+                    static_cast<int>(bounds.origin.x),
+                    static_cast<int>(bounds.origin.y),
+                    static_cast<int>(bounds.size.width),
+                    static_cast<int>(bounds.size.height));
+        if (GTK_IS_BUTTON(widget)) {
+            int srw = -2, srh = -2;
+            gtk_widget_get_size_request(widget, &srw, &srh);
+            int mw = 0, nw = 0, mh = 0, nh = 0;
+            gtk_widget_measure(widget, GTK_ORIENTATION_HORIZONTAL, -1, &mw, &nw, nullptr, nullptr);
+            gtk_widget_measure(widget, GTK_ORIENTATION_VERTICAL, -1, &mh, &nh, nullptr, nullptr);
+            std::printf("[gtk4-%s-geometry]   sr=%dx%d measure_w min=%d nat=%d measure_h min=%d nat=%d\n",
+                        tag, srw, srh, mw, nw, mh, nh);
+        }
+    }
+    GtkWidget* child = gtk_widget_get_first_child(widget);
+    while (child != nullptr) {
+        DumpWidgetTree(tag, child, origin);
+        child = gtk_widget_get_next_sibling(child);
+    }
+}
+
+void DumpWindowGeometry(const char* tag, GtkWidget* toplevel) {
+    if (!toplevel) return;
+    gtk_window_present(GTK_WINDOW(toplevel));
+    // gtk_window_present is async (allocates on the next frame) so drive the
+    // default GMainContext under xvfb until the toplevel is allocated.
+    for (int i = 0; i < 200 && gtk_widget_get_width(toplevel) <= 0; ++i)
+        g_main_context_iteration(nullptr, TRUE);
+    DumpWidgetTree(tag, toplevel, toplevel);
+}
+
+// builds/shows every Part-1 dialog headless, dumps its geometry, and exits
+// before any modal loop so no user input is required.
+void DumpAllWindowsAndExit(GtkApplication* app) {
+    (void)app;
+    gtk_window_present(GTK_WINDOW(g_mainWindow));
+    DumpWindowGeometry("main-window", g_mainWindow);
+    ShowPlaylistEntryDialog(GTK_WINDOW(g_mainWindow));
+    PromptForMediaSource();
+    ShowLogDialog(GTK_WINDOW(g_mainWindow));
+    ShowHelpDialog(GTK_WINDOW(g_mainWindow));
+    ShowSettingsDialog();
+    MessageBoxShow(GTK_WINDOW(g_mainWindow), "geometry probe");
+    // std::_Exit skips static destruction so the joinable single-instance
+    // listener thread is not torn down during exit (that path aborts with
+    // terminate called without an active exception and truncates the dump)
+    std::fflush(stdout);
+    std::_Exit(0);
+}
+
+// exercises the Task 6 fix: open the log dialog, hide it the way its Close
+// button does (gtk_widget_hide), then open it again. before the fix the
+// second ShowLogDialog() hit the stale non-null guard and returned without
+// showing, so gtk_widget_get_visible() is FALSE and we exit non-zero.
+// std::_Exit is used instead of std::exit so the joinable single-instance
+// listener thread is not destroyed during static teardown (that path aborts
+// with terminate called without an active exception); the kernel releases
+// the flock when the process exits.
+void DumpLogDialogReopenAndExit(GtkApplication* app) {
+    (void)app;
+    gtk_window_present(GTK_WINDOW(g_mainWindow));
+    ShowLogDialog(GTK_WINDOW(g_mainWindow));
+    for (int i = 0; i < 200 && !gtk_widget_get_visible(g_logDialog); ++i)
+        g_main_context_iteration(nullptr, TRUE);
+    gtk_widget_set_visible(g_logDialog, FALSE);
+    g_main_context_iteration(nullptr, TRUE);
+    ShowLogDialog(GTK_WINDOW(g_mainWindow));
+    const bool reopened = (g_logDialog != nullptr) &&
+                          gtk_widget_get_visible(GTK_WIDGET(g_logDialog));
+    std::_Exit(reopened ? 0 : 2);
+}
+
+// exercises the Task 16 fix: an asynchronously-triggered failure message box
+// (here forced through SetPendingResult + ApplyPendingResult) must parent to
+// whichever secondary dialog is visible, falling back to the main window.
+// prints [gtk4-msgbox-parent] parent=<tag> for the no-dialog case, for the
+// Settings-open case and for the nested Settings+Log case, then exits.
+// std::_Exit skips static teardown (the joinable single-instance listener
+// thread aborts on std::exit).
+void DumpMessageBoxParentAndExit(GtkApplication* app) {
+    (void)app;
+    gtk_window_present(GTK_WINDOW(g_mainWindow));
+    SetPendingResult(ServerUiState::Stopped, false, "forced failure");
+    ApplyPendingResult();
+    ShowSettingsDialog();
+    for (int i = 0; i < 200 && !gtk_widget_get_visible(g_settingsDialog); ++i)
+        g_main_context_iteration(nullptr, TRUE);
+    SetPendingResult(ServerUiState::Stopped, false, "forced failure");
+    ApplyPendingResult();
+    RefreshStatus();
+    MessageBoxShow(ActiveTopLevelWindow(), "parent test");
+    // nested case: with Settings still open, also open the Log dialog; the
+    // failure box must then parent to Log (topmost of the two dialogs).
+    ShowLogDialog(GTK_WINDOW(g_mainWindow));
+    for (int i = 0; i < 200 && !gtk_widget_get_visible(g_logDialog); ++i)
+        g_main_context_iteration(nullptr, TRUE);
+    SetPendingResult(ServerUiState::Stopped, false, "forced failure");
+    ApplyPendingResult();
+    MessageBoxShow(ActiveTopLevelWindow(), "parent test");
+    std::fflush(stdout);
+    std::_Exit(0);
+}
+
+// Regression hook for the "Settings will not reopen after being closed" defect.
+// Opens the settings dialog, closes it the way its Cancel button does, then
+// opens it again, printing the visibility of each attempt. Before the Phase 8
+// fix the second attempt hit the stale non-null g_settingsDialog guard and
+// printed second-open=0.
+void PrintSettingsReopenAndExit(GtkApplication* app) {
+    (void)app;
+    gtk_window_present(GTK_WINDOW(g_mainWindow));
+    g_dumpMsgBoxParent = true;   // present without entering the modal loop
+    ShowSettingsDialog();
+    for (int i = 0; i < 200 && (g_settingsDialog == nullptr || !gtk_widget_get_visible(g_settingsDialog)); ++i) {
+        g_main_context_iteration(nullptr, TRUE);
+    }
+    std::printf("first-open=%d\n", (g_settingsDialog != nullptr && gtk_widget_get_visible(g_settingsDialog)) ? 1 : 0);
+
+    gtk_widget_set_visible(g_settingsDialog, FALSE);
+    ClearActiveModal(GTK_WINDOW(g_settingsDialog));
+    gtk_window_destroy(GTK_WINDOW(g_settingsDialog));
+    for (int i = 0; i < 50; ++i) g_main_context_iteration(nullptr, FALSE);
+    std::printf("slot-cleared=%d\n", g_settingsDialog == nullptr ? 1 : 0);
+
+    ShowSettingsDialog();
+    for (int i = 0; i < 200 && (g_settingsDialog == nullptr || !gtk_widget_get_visible(g_settingsDialog)); ++i) {
+        g_main_context_iteration(nullptr, TRUE);
+    }
+    std::printf("second-open=%d\n", (g_settingsDialog != nullptr && gtk_widget_get_visible(g_settingsDialog)) ? 1 : 0);
+    std::fflush(stdout);
+    std::_Exit(0);
+}
+
+void OnAppActivate(GtkApplication* app, gpointer) {
+    BuildMainWindow(app);
+    // Give the tray registration's async D-Bus round trip a moment to
+    // resolve, then surface a one-time hint if no tray host is present, so
+    // the user understands why there is no icon to click back to (see
+    // Task 14 of dlna-server-qa-audit-and-posix-gui-lifecycle-workflow-05-08-26.md).
+    // This does not block startup and does not affect window recovery,
+    // which never depends on the tray (see OnSingleInstanceCommand).
+    g_timeout_add_seconds(2, +[](gpointer) -> gboolean {
+        if (PosixTray::IsRegistrationConfirmed() && !PosixTray::IsTrayAvailable()) {
+            LogPrint(L"No system tray host detected; closing this window will "
+                     L"still be reachable by re-running dlna-server-gui.");
+        }
+        return G_SOURCE_REMOVE;
+    }, nullptr);
+    if (g_dumpGeometry) {
+        DumpAllWindowsAndExit(app);
+        return;
+    }
+    if (g_dumpLogDialogReopen) {
+        DumpLogDialogReopenAndExit(app);
+        return;
+    }
+    if (g_dumpMsgBoxParent) {
+        DumpMessageBoxParentAndExit(app);
+        return;
+    }
+    if (g_printDeleteFocusGating) {
+        GtkWidget* row = gtk_list_box_row_new();
+        GtkWidget* rowLabel = gtk_label_new("/tmp/probe-source");
+        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), rowLabel);
+        gtk_list_box_append(GTK_LIST_BOX(g_sources), row);
+        gtk_list_box_select_row(GTK_LIST_BOX(g_sources), GTK_LIST_BOX_ROW(row));
+        OnSourceSelectionChanged(GTK_LIST_BOX(g_sources), GTK_LIST_BOX_ROW(row), nullptr);
+        std::printf("after-select=%s\n", gtk_widget_get_sensitive(g_removeButton) ? "true" : "false");
+
+        g_sourceFocusState.OnListBoxLostFocus(/*gainedFocusIsDeleteButton=*/true);
+        RefreshDeleteButton();
+        std::printf("after-focus-to-delete=%s\n", gtk_widget_get_sensitive(g_removeButton) ? "true" : "false");
+
+        g_sourceFocusState.OnListBoxLostFocus(/*gainedFocusIsDeleteButton=*/false);
+        RefreshDeleteButton();
+        std::printf("after-focus-elsewhere=%s\n", gtk_widget_get_sensitive(g_removeButton) ? "true" : "false");
+
+        std::fflush(stdout);
+        std::_Exit(0);
+    }
+    if (g_printPlaylistAddSensitivity) {
+        ShowPlaylistEntryDialog(GTK_WINDOW(g_mainWindow));
+        std::fflush(stdout);
+        std::_Exit(0);
+    }
+    if (g_printSettingsReopen) {
+        PrintSettingsReopenAndExit(app);
+        return;
+    }
+    if (g_printCloseWithContextMenuOpen) {
+        // reproduces the reported sequence right click to open the
+        // source list context menu then close the window without
+        // dismissing it first see task 5 of the fix workflow
+        gtk_window_present(GTK_WINDOW(g_mainWindow));
+        for (int i = 0; i < 200 && g_state != ServerUiState::Stopped; ++i)
+            g_main_context_iteration(nullptr, TRUE);
+        ShowSourceListContextMenu(10, 10);
+        for (int i = 0; i < 50; ++i)
+            g_main_context_iteration(nullptr, TRUE);
+        RequestClose();
+        for (int i = 0; i < 300 && gtk_widget_get_realized(g_mainWindow); ++i)
+            g_main_context_iteration(nullptr, TRUE);
+        std::fflush(stdout);
+        std::_Exit(0);
+    }
+    if (g_printCloseWhileStarting || g_printCloseWhileStartingFails) {
+        // simulate a close while a start is in flight then let the normal
+        // poll tick finish the sequence and exit the process
+        gtk_window_present(GTK_WINDOW(g_mainWindow));
+        g_state = ServerUiState::Starting;
+        RequestClose();
+        std::printf("pending-after-request=%d\n", g_closePending.IsPending() ? 1 : 0);
+        std::fflush(stdout);
+        if (g_printCloseWhileStartingFails) {
+            SetPendingResult(ServerUiState::Stopped, false, "forced failure");
+        } else {
+            SetPendingResult(ServerUiState::Running, true, "");
+        }
+        return;
+    }
+    if (g_printStoppedCloseExit) {
+        // Task 1: Close in the Stopped state must destroy the window and
+        // exit the process cleanly instead of hiding it.
+        gtk_window_present(GTK_WINDOW(g_mainWindow));
+        for (int i = 0; i < 200 && g_state != ServerUiState::Stopped; ++i)
+            g_main_context_iteration(nullptr, TRUE);
+        RequestClose();
+        for (int i = 0; i < 300 && gtk_widget_get_realized(g_mainWindow); ++i)
+            g_main_context_iteration(nullptr, TRUE);
+        std::fflush(stdout);
+        std::_Exit(0);
+    }
+}
+
+void OnAppStartup(GtkApplication* app, gpointer) {
+    GdkDisplay* display = gdk_display_get_default();
+    // the display is open here because the class handler of startup ran first
+    InstallXErrorGuard();
+    const std::string cssPath = ResolveBundledResourcePath("gtk/styles1.css");
+    if (!cssPath.empty()) {
+        GtkCssProvider* provider = gtk_css_provider_new();
+        gtk_css_provider_load_from_path(provider, cssPath.c_str());
+        gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(provider),
+                                                   GTK_STYLE_PROVIDER_PRIORITY_USER);
+        g_object_unref(provider);
+    }
+    // Win32 look-and-feel base layer. These three sheets are derived from the
+    // Windows-10-Dark GTK theme and audited against the Win32 sources; they sit
+    // ABOVE the generated styles1.css (so they can replace GTK/desktop-theme
+    // defaults) and BELOW styles0.css (so any property the Figma design owns
+    // still wins). Order within the layer is 2 -> 3 -> 4: 2 is generic theme
+    // geometry, 3 is shared-property overrides, 4 is the Win32-verified subset.
+    for (const char* sheet : { "gtk/styles2.css", "gtk/styles3.css", "gtk/styles4.css" }) {
+        const std::string sheetPath = ResolveBundledResourcePath(sheet);
+        if (sheetPath.empty()) {
+            LogPrint(L"%hs not found via ResolveBundledResourcePath; Win32 base styling will be incomplete.", sheet);
+            continue;
+        }
+        GtkCssProvider* sheetProvider = gtk_css_provider_new();
+        gtk_css_provider_load_from_path(sheetProvider, sheetPath.c_str());
+        gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(sheetProvider),
+                                                   GTK_STYLE_PROVIDER_PRIORITY_USER + 1);
+        g_object_unref(sheetProvider);
+    }
+
+    // Figma overlay, loaded after styles1.css so its rules win at equal
+    // selector specificity for the classes it defines. See Section 1,
+    // Conflict B of dlna-server-posix-gui-figma-alignment-workflow-20-08-26.md.
+    const std::string figmaCssPath = ResolveBundledResourcePath("gtk/styles0.css");
+    if (!figmaCssPath.empty()) {
+        GtkCssProvider* figmaProvider = gtk_css_provider_new();
+        gtk_css_provider_load_from_path(figmaProvider, figmaCssPath.c_str());
+        gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(figmaProvider),
+                                                   GTK_STYLE_PROVIDER_PRIORITY_USER + 2);
+        g_object_unref(figmaProvider);
+    } else {
+        LogPrint(L"styles0.css not found via ResolveBundledResourcePath; Figma overlay styling will be missing.");
+    }
+
+    // tray icon registers with org.kde.StatusNotifierWatcher when present
+    // the GUI binary is the only build that creates the tray
+    GDBusConnection* connection = g_application_get_dbus_connection(G_APPLICATION(app));
+    GMenu* menu = g_menu_new();
+    g_menu_append(menu, "Show Window", "app.show");
+    g_menu_append(menu, "Start/Stop Server", "app.startstop");
+    g_menu_append(menu, "Exit", "app.quit");
+    PosixTray::Initialize(connection, DLNA_GTK_APP_ID, "DLNA Server", G_MENU_MODEL(menu),
+                          OnTrayNotify);
+    g_object_unref(menu);
+}
+
+} // namespace
+
+// Appends flag to a comma separated environment list unless already present
+static void AppendEnvListFlag(const char* name, const char* flag) {
+    const char* existing = g_getenv(name);
+    std::string value = existing ? existing : "";
+    if (("," + value + ",").find("," + std::string(flag) + ",") != std::string::npos) return;
+    if (!value.empty()) value += ",";
+    value += flag;
+    g_setenv(name, value.c_str(), TRUE);
+}
+
+// Must run before GTK/GDK initialise. GDK_DEBUG/GDK_DISABLE are read once at
+// display open. gl disabled means no GdkGLContext and therefore no EGL native
+// window attached to the surface, so an external DestroyNotify cannot trip the
+// egl_native_window assertion in _gdk_surface_destroy_hierarchy.
+static void ConfigureGdkEnvironment() {
+    // Disable Adwaita so our CSS has sole control over widget styling
+    g_setenv("GTK_THEME", "Default", FALSE);
+    // flat css window: cairo renderer is sufficient
+    g_setenv("GSK_RENDERER", "cairo", FALSE);
+    // GTK 4.16 moved the disable flags from GDK_DEBUG to GDK_DISABLE
+    if (gtk_check_version(4, 16, 0) == nullptr) {
+        AppendEnvListFlag("GDK_DISABLE", "gl");
+    } else {
+        AppendEnvListFlag("GDK_DEBUG", "gl-disable");
+    }
+}
+
+int main(int argc, char** argv) {
+    // prgname must equal the gtk app id
+    // the live wayland window carries the short id instead
+    // because wslg cuts the app list key at the last dot
+    g_set_prgname(DLNA_GTK_APP_ID);
+    g_set_application_name("DLNA Server");
+    ConfigureGdkEnvironment();
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--print-gtk-identity") {
+            const char* prgName = g_get_prgname();
+            // program class removed in gtk4 the live window reuses the short id
+            const char* programClass = DLNA_APP_ID;
+            std::printf("PRGNAME=%s\nPROGRAM_CLASS=%s\nGTK_APP_ID=%s\n",
+                        prgName ? prgName : "",
+                        programClass ? programClass : "",
+                        DLNA_GTK_APP_ID);
+            return 0;
+        }
+        if (std::string(argv[i]) == "--print-gdk-environment") {
+            const char* debugValue = g_getenv("GDK_DEBUG");
+            const char* disableValue = g_getenv("GDK_DISABLE");
+            const char* rendererValue = g_getenv("GSK_RENDERER");
+            std::printf("GDK_DEBUG=%s\nGDK_DISABLE=%s\nGSK_RENDERER=%s\n",
+                        debugValue ? debugValue : "",
+                        disableValue ? disableValue : "",
+                        rendererValue ? rendererValue : "");
+            return 0;
+        }
+    }
+    std::signal(SIGPIPE, SIG_IGN);
+    std::signal(SIGINT, HandleTerminationSignal);
+    std::signal(SIGTERM, HandleTerminationSignal);
+    AppConfig.Load();
+
+    bool killServer = false;
+    bool explicitHeadless = false;
+    std::vector<std::wstring> runtimeSources;
+    bool wroteConfigOverride = false;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--kill-server" || arg == "-k") {
+            killServer = true;
+        } else if (arg == "--headless" || arg == "-h") {
+            // accepted for command line symmetry with the windows and posix
+            // non gui builds this binary has no headless versus windowed
+            // code path distinction of its own it always creates a window
+            // the flag only matters for whether a second launch is allowed
+            // to auto elevate itself see ShouldStartHeadless in startup mode h
+            explicitHeadless = true;
+        } else if (arg == "--port" && i + 1 < argc) {
+            int port = 0;
+            if (TryParsePortStrict(argv[++i], port)) {
+                AppConfig.Mutate([port](Config& cfg) { cfg.port = port; });
+                wroteConfigOverride = true;
+            }
+        } else if (arg == "--name" && i + 1 < argc) {
+            std::wstring name = Utf8ToWide(argv[++i]);
+            AppConfig.Mutate([&name](Config& cfg) { cfg.serverName = name; });
+            wroteConfigOverride = true;
+        } else if (arg == "--uuid" && i + 1 < argc) {
+            std::wstring uuid = Utf8ToWide(argv[++i]);
+            AppConfig.Mutate([&uuid](Config& cfg) { cfg.deviceUUID = uuid; });
+            wroteConfigOverride = true;
+        } else if (arg == "--debug") {
+            AppConfig.Mutate([](Config& cfg) { cfg.debugLog = true; });
+            wroteConfigOverride = true;
+        } else if (arg == "--source" && i + 1 < argc) {
+            ++i;
+            std::vector<std::wstring> parsed = ParseQuotedCommaList(Utf8ToWide(argv[i]));
+            if (parsed.empty()) {
+                runtimeSources.push_back(Utf8ToWide(argv[i]));
+            } else {
+                for (auto& p : parsed) runtimeSources.push_back(p);
+            }
+        } else if (arg == "--no-debug") {
+            AppConfig.Mutate([](Config& cfg) { cfg.debugLog = false; });
+        } else if (arg == "--help") {
+            std::cout << WideToUtf8(BuildHelpText(DLNA_GUI_NAME_W));
+            return 0;
+        } else if (IsTestOnlyFlag(arg)) {
+            // hidden test hooks are parsed by the dedicated loop below
+        } else if (!arg.empty() && arg[0] == '-') {
+            std::cerr << "Unknown option: " << arg << std::endl;
+            std::cerr << WideToUtf8(BuildHelpText(DLNA_GUI_NAME_W));
+            return 2;
+        } else if (!arg.empty()) {
+            // bare positional argument is a source path on its own
+            runtimeSources.push_back(Utf8ToWide(argv[i]));
+        }
+    }
+    // saves port name uuid debug to config so the user does not have to
+    // retype them next launch source overrides are deliberately excluded
+    // they stay session only per the both section requirement
+    if (wroteConfigOverride) {
+        AppConfig.Save();
+    }
+
+    if (killServer) {
+        SingleInstance::SendKill();
+        return 0;
+    }
+
+    std::wstring sourcePayload;
+    if (!runtimeSources.empty()) {
+        sourcePayload = BuildQuotedCommaList(runtimeSources);
+        std::vector<MediaSource> overrideSources;
+        for (const auto& s : runtimeSources) overrideSources.push_back({s});
+        AppConfig.SetRuntimeSourceOverride(overrideSources);
+    }
+    (void)explicitHeadless; // reserved, this binary has no separate headless UI path
+
+    // console echo is only ever turned on for the real foreground debug
+    // session every --print-* early return above this line already exited
+    // before reaching here so a test flag combined with --debug never
+    // gets echo turned on see IsTestOnlyFlag in cli_flags h task 8
+    bool sawTestOnlyFlag = false;
+    for (int i = 1; i < argc; ++i) {
+        if (IsTestOnlyFlag(std::string(argv[i]))) { sawTestOnlyFlag = true; break; }
+    }
+    if (AppConfig.debugLog && !sawTestOnlyFlag) {
+        SetConsoleEchoEnabled(true);
+    }
+
+    // parse the hidden --dump-widget-geometry / --dump-log-dialog-reopen
+    // / --dump-msgbox-parent / --print-stopped-close-exit flags before the
+    // single-instance check so test dumps are not short-circuited by an
+    // existing instance handshake
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--dump-widget-geometry") {
+            g_dumpGeometry = true;
+        } else if (arg == "--dump-log-dialog-reopen") {
+            g_dumpLogDialogReopen = true;
+        } else if (arg == "--dump-msgbox-parent") {
+            g_dumpMsgBoxParent = true;
+        } else if (arg == "--print-settings-reopen") {
+            g_printSettingsReopen = true;
+        } else if (arg == "--print-stopped-close-exit") {
+            g_printStoppedCloseExit = true;
+        } else if (arg == "--print-close-with-context-menu-open") {
+            g_printCloseWithContextMenuOpen = true;
+        } else if (arg == "--print-delete-focus-gating") {
+            g_printDeleteFocusGating = true;
+        } else if (arg == "--print-playlist-add-sensitivity") {
+            g_printPlaylistAddSensitivity = true;
+        } else if (arg == "--print-close-while-starting") {
+            g_printCloseWhileStarting = true;
+        } else if (arg == "--print-close-while-starting-fails") {
+            g_printCloseWhileStartingFails = true;
+        }
+    }
+
+    // No atexit ReleaseLock here: secondary --kill-server and --source
+    // forward processes exit through the returns below without ever
+    // owning the lock and ReleaseLock unlinks the socket path
+
+    // skip the single-instance handshake for dump/test flags so headless
+    // geometry dumps run regardless of whether another instance holds the lock
+    const bool anyTestHook = g_dumpGeometry || g_dumpLogDialogReopen || g_dumpMsgBoxParent ||
+        g_printStoppedCloseExit || g_printDeleteFocusGating || g_printSettingsReopen ||
+        g_printCloseWithContextMenuOpen || g_printPlaylistAddSensitivity ||
+        g_printCloseWhileStarting || g_printCloseWhileStartingFails;
+    if (!anyTestHook) {
+        if (!SingleInstance::TryAcquireLock()) {
+            if (!sourcePayload.empty()) {
+                // a running instance already exists forward the override instead
+                // of showing the window matches WM COPYDATA on the windows build
+                if (!SingleInstance::SendSourceOverride(WideToUtf8(sourcePayload))) {
+                    std::cerr << "dlna-server-gui: another instance appears to be "
+                                 "starting or is unreachable; exiting without action." << std::endl;
+                }
+                return 0;
+            }
+            if (!SingleInstance::SendShowWithRetry()) {
+                LogPrint(L"Another instance appears to be starting or is unreachable; exiting without action.");
+                std::cerr << "dlna-server-gui: another instance appears to be "
+                              "starting or is unreachable; exiting without action." << std::endl;
+            }
+            return 0;
+        }
+        // This process now owns the single instance lock so release it at
+        // exit even when the app dies to an X error. Secondary processes
+        // returned above and never reach here.
+        std::atexit([]() { SingleInstance::ReleaseLock(); });
+    }
+
+    GtkApplication* app = nullptr;
+    int result = 1;
+    for (int attempt = 0; attempt < kGuiStartupMaxAttempts; ++attempt) {
+        // GTK requires a valid reverse-DNS/D-Bus application identifier.
+#if GLIB_CHECK_VERSION(2, 74, 0)
+        app = gtk_application_new(DLNA_GTK_APP_ID, G_APPLICATION_DEFAULT_FLAGS);
+#else
+        app = gtk_application_new(DLNA_GTK_APP_ID, G_APPLICATION_FLAGS_NONE);
+#endif
+        // connect before register so the startup signal emitted during
+        // registration reaches OnAppStartup instead of firing into the void
+        g_signal_connect(app, "startup", G_CALLBACK(OnAppStartup), nullptr);
+        g_signal_connect(app, "activate", G_CALLBACK(OnAppActivate), nullptr);
+        GError* registerError = nullptr;
+        if (g_application_register(G_APPLICATION(app), nullptr, &registerError)) {
+            g_clear_error(&registerError);
+            break;
+        }
+        LogPrint(L"GTK application registration failed (attempt %d/%d): %hs",
+                 attempt + 1, kGuiStartupMaxAttempts,
+                 registerError ? registerError->message : "unknown error");
+        g_clear_error(&registerError);
+        g_object_unref(app);
+        app = nullptr;
+        g_usleep(static_cast<gulong>(kGuiStartupRetryDelayMs) * 1000);
+    }
+    if (!app) {
+        LogPrint(L"Could not connect to a display/session bus after repeated attempts.");
+        std::cerr << "dlna-server-gui: could not connect to a display/session "
+                     "bus after repeated attempts; exiting." << std::endl;
+        return 1;
+    }
+
+    // tray menu actions
+    GActionEntry entries[] = {
+        {"show", +[](GSimpleAction*, GVariant*, gpointer) {
+            RestoreAndFocusMainWindow();
+        }, nullptr, nullptr, nullptr, {0, 0, 0}},
+        {"startstop", +[](GSimpleAction*, GVariant*, gpointer) {
+            g_idle_add(+[](gpointer) -> gboolean {
+                if (g_state == ServerUiState::Running) {
+                    StopServer();
+                } else if (g_state == ServerUiState::Stopped) {
+                    StartServer();
+                }
+                return G_SOURCE_REMOVE;
+            }, nullptr);
+        }, nullptr, nullptr, nullptr, {0, 0, 0}},
+        {"quit", +[](GSimpleAction*, GVariant*, gpointer) {
+            RequestClose();
+        }, nullptr, nullptr, nullptr, {0, 0, 0}},
+    };
+    g_action_map_add_action_entries(G_ACTION_MAP(app), entries, G_N_ELEMENTS(entries), app);
+
+    SingleInstance::StartListening(OnSingleInstanceCommand, +[]() -> std::string {
+        std::string out;
+        for (const auto& src : AppConfig.Snapshot().effectiveMediaSources) {
+            out += WideToUtf8(src.path);
+            out += "\n";
+        }
+        return out;
+    });
+
+    // Every option is parsed by the loop at the top of main(). Passing the
+    // user's argv to g_application_run would make GApplication parse it again:
+    // "-h" would print GApplication's own help and unknown options would be
+    // rejected. Only the program name is passed.
+    char* appArgv[] = { argv[0], nullptr };
+    result = g_application_run(G_APPLICATION(app), 1, appArgv);
+
+    PosixTray::Shutdown();
+    if (g_worker.joinable()) g_worker.join();
+    if (g_rescanWorker.joinable()) g_rescanWorker.join();
+    DLNAServer.Stop();
+    SingleInstance::ReleaseLock();
+    g_object_unref(app);
+    return result;
+}

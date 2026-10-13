@@ -4,6 +4,8 @@
 #include "settings_help.h"
 #include "ui_font.h"
 #include "dark_frame.h"
+#include "win_geometry_dump.h"
+#include "app_identity.h"
 #include <dwmapi.h>
 #include <string>
 #include <Richedit.h>
@@ -102,7 +104,7 @@ LRESULT CALLBACK HelpWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
         // locate and bold each header using EM_FINDTEXTW
         struct { const wchar_t* text; int len; } headers[] = {
-            { L"Command-Line Flags", 19 },
+            { L"Command-Line Flags", 18 },
             { L"Settings", 8 }
         };
         for (auto& h : headers) {
@@ -120,6 +122,7 @@ LRESULT CALLBACK HelpWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             }
         }
 
+        DumpDialogGeometry(hwnd, L"help-geometry");
         return 0;
     }
     case WM_CLOSE:
@@ -139,7 +142,7 @@ LRESULT CALLBACK HelpWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 }
 
 void HelpDialog::Show(HWND hParent) {
-    const wchar_t* className = L"dlna-server_HelpDialog";
+    const wchar_t* className = DLNA_APP_ID_W L".HelpDialog";
     static bool registered = false;
     if (!registered) {
         WNDCLASSW wc = {};
@@ -163,7 +166,7 @@ void HelpDialog::Show(HWND hParent) {
     int x = ownerRect.left + ((ownerRect.right - ownerRect.left) - width) / 2;
     int y = ownerRect.top + ((ownerRect.bottom - ownerRect.top) - height) / 2;
     HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, className, L"DLNA Server Help",
-        WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_MINIMIZEBOX, x, y, width, height, hParent, NULL, GetModuleHandleW(NULL), &state);
+        WS_CAPTION | WS_SYSMENU | WS_POPUP, x, y, width, height, hParent, NULL, GetModuleHandleW(NULL), &state);
     if (!hwnd) return;
     EnableWindow(hParent, FALSE);
     ShowWindow(hwnd, SW_SHOW);
@@ -191,6 +194,9 @@ void HelpDialog::Show(HWND hParent) {
             TranslateMessage(&msg);
         DispatchMessage(&msg);
         }
+    }
+    if (getResult == -1) {
+        state.done = true;
     }
     if (!state.done) {
         EnableOwnerAndRestoreModalFocus(state.focusSnapshot, hParent);

@@ -6,7 +6,7 @@ resources = Path(__file__).parent
 iconSource = resources / 'dlna-server-icon.png'
 icon = Image.open(iconSource).convert('RGBA')
 
-for size in (48, 120, 256):
+for size in (16, 48, 120, 256):
     resized = icon.resize((size, size), Image.Resampling.LANCZOS)
     resized.save(resources / f'server_icon_{size}.png', format='PNG', optimize=True)
 

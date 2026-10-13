@@ -24,6 +24,20 @@
 #define IPV6_JOIN_GROUP IPV6_ADD_MEMBERSHIP
 #endif
 
+#ifndef IP_UNICAST_IF
+// value from the upstream linux kernel patch that introduced this option
+// see include/linux/in.h in torvalds/linux commit 76e21053b5bf
+// not always exposed by netinet in,h on every libc version this project targets
+#define IP_UNICAST_IF 50
+#endif
+#ifndef IPV6_UNICAST_IF
+// fallback definition for older headers that predate this constant
+// value 76 is the stable linux kernel option number for this option
+// it is the ipv6 counterpart of ip unicast if added for the wine project
+// see the workflow document citations for the kernel commit reference
+#define IPV6_UNICAST_IF 76
+#endif
+
 namespace {
 constexpr int kSsdpPort = 1900;
 constexpr const char* kSsdpMulticastIPv4 = "239.255.255.250";
@@ -32,13 +46,15 @@ constexpr const char* kSsdpMulticastIPv6 = "ff02::c";
 constexpr size_t kMaxDelayedResponses = 256;
 
 void DiscoveryLog(const wchar_t* fmt, ...) {
-    if (!AppConfig.Snapshot().debugLog) {
+    if (!AppConfig.IsDebugLogEnabled()) {
         return;
     }
-    wchar_t buffer[2048];
+    wchar_t buffer[2048] = {};
     va_list args;
     va_start(args, fmt);
-    vswprintf(buffer, sizeof(buffer) / sizeof(buffer[0]), fmt, args);
+    if (vswprintf(buffer, sizeof(buffer) / sizeof(buffer[0]), fmt, args) < 0) {
+        buffer[(sizeof(buffer) / sizeof(buffer[0])) - 1] = L'\0';
+    }
     va_end(args);
     LogPrint(L"%ls", buffer);
 }
@@ -106,7 +122,10 @@ int CreateIPv6Socket(const std::vector<NetworkEndpoint>& endpoints) {
     return fd;
 }
 
-bool SetOutboundInterface(int fd, const NetworkEndpoint& endpoint) {
+// selects the outbound interface for a multicast destined send
+// used only by SendNotifyRound for the periodic alive and byebye notify
+// never call this before a unicast destined send see the function below
+bool SetMulticastOutboundInterface(int fd, const NetworkEndpoint& endpoint) {
     if (endpoint.family == AF_INET) {
         in_addr addr = reinterpret_cast<const sockaddr_in*>(&endpoint.sockaddr)->sin_addr;
         if (setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &addr, sizeof(addr)) != 0) {
@@ -119,6 +138,41 @@ bool SetOutboundInterface(int fd, const NetworkEndpoint& endpoint) {
             LogPrint(L"IP_MULTICAST_IF failed for interface %lu.", endpoint.interfaceIndex);
             return false;
         }
+    }
+    return true;
+}
+
+// selects the outbound interface for a unicast destined send
+// used only by SendDelayedSearchResponse for the m search reply
+// ip multicast if has no defined effect on a unicast destination
+// per the linux ip 7 man page so it must never be used here
+// ip unicast if pins the real outbound interface where the running
+// kernel defines it and is a best effort call everywhere else so a
+// platform without this option still gets correct default kernel
+// routing for the unicast destination instead of a wrong pin
+// this function always returns true unlike the multicast one above
+// because a failed or unavailable pin still leaves a fully working
+// send behind through normal kernel routing while returning false
+// here would turn a soft hint into a hard failure on the one path
+// every discovering client actually depends on
+bool SetUnicastOutboundInterface(int fd, const NetworkEndpoint& endpoint) {
+    // Both IP_UNICAST_IF and IPV6_UNICAST_IF take the interface index in
+    // NETWORK byte order on Linux (the kernel ntohl()s the value before using
+    // it). Passing host order makes the call fail with ENODEV and silently
+    // leaves the send on default routing.
+    const uint32_t ifIndexNetworkOrder = htonl(static_cast<uint32_t>(endpoint.interfaceIndex));
+    if (endpoint.family == AF_INET) {
+#ifdef IP_UNICAST_IF
+        setsockopt(fd, IPPROTO_IP, IP_UNICAST_IF, &ifIndexNetworkOrder, sizeof(ifIndexNetworkOrder));
+#else
+        (void)fd;
+#endif
+    } else if (endpoint.family == AF_INET6) {
+#ifdef IPV6_UNICAST_IF
+        setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_IF, &ifIndexNetworkOrder, sizeof(ifIndexNetworkOrder));
+#else
+        (void)fd;
+#endif
     }
     return true;
 }
@@ -159,32 +213,113 @@ SSDP::SSDP() : m_running(false), m_ipv4Socket(-1), m_ipv6Socket(-1) {
 }
 
 bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid) {
+    (void)port;
+    (void)serverName;
+    bool expectedIdle = false;
+    if (!m_lifecycleBusy.compare_exchange_strong(expectedIdle, true, std::memory_order_acq_rel)) {
+        LogPrint(L"SSDP Start rejected: a Start or Stop call is already in progress.");
+        return false;
+    }
+    struct LifecycleGuard {
+        std::atomic<bool>& flag;
+        ~LifecycleGuard() { flag.store(false, std::memory_order_release); }
+    } lifecycleGuard{ m_lifecycleBusy };
+
     if (m_running.load()) return true;
-    m_endpoints = endpoints;
+    {
+        std::lock_guard<std::mutex> lock(m_endpointsMutex);
+        m_endpoints = endpoints;
+    }
     m_uuidStr = WideToUtf8(uuid);
     m_targets = BuildAdvertisedTargets(m_uuidStr);
-    m_bootId = static_cast<unsigned int>(time(nullptr));
+    if (!m_bootIdAssigned) {
+        m_bootId = static_cast<unsigned int>(time(nullptr));
+        m_bootIdAssigned = true;
+    }
+    // CONFIGID.UPNP.ORG stays fixed across every restart in this
+    // process this server's description.xml and SCPD documents never
+    // change at runtime so there is nothing for a bumped CONFIGID to
+    // signal and bumping it would force every control point to
+    // needlessly re fetch and re cache those documents on every
+    // transient network triggered restart see UDA 1 1 section 1 2
     m_configId = 1;
     m_ipv4Socket = CreateIPv4Socket(m_endpoints);
     m_ipv6Socket = CreateIPv6Socket(m_endpoints);
     if (m_ipv4Socket < 0 && m_ipv6Socket < 0) return false;
     m_running.store(true);
+    m_workerThreadAlive.store(true, std::memory_order_release);
     m_thread = std::thread(&SSDP::ThreadWorker, this);
     m_responseThread = std::thread(&SSDP::ResponseWorker, this);
-    std::this_thread::sleep_for(std::chrono::milliseconds(ComputeSsdpStartupJitterMilliseconds()));
-    SendNotifyBurst("ssdp:alive", 3, 100);
+    // fire the initial ssdp alive burst asynchronously so Start does
+    // not block the caller for the jitter delay plus three send rounds
+    // mirrors the windows implementation in ssdp cpp SSDP Start see
+    // that file for the full rationale comment
+    // this thread is joined in Stop before CloseSockets runs
+    // it must not be detached or it can read m_ipv4Socket m_ipv6Socket
+    // at the same time Stop is writing them during teardown
+    m_initialBurstThread = std::thread([this]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(ComputeSsdpStartupJitterMilliseconds()));
+        static const unsigned int kFollowUpDelaysMs[] = { 0, 1000, 3000, 8000, 20000 };
+        for (unsigned int delayMs : kFollowUpDelaysMs) {
+            if (delayMs > 0) {
+                std::unique_lock<std::mutex> burstLock(m_burstMutex);
+                if (m_burstCondition.wait_for(burstLock, std::chrono::milliseconds(delayMs),
+                                              [this]() { return !m_running.load(); })) {
+                    return;
+                }
+            }
+            if (!m_running.load()) return;
+            SendNotifyBurst("ssdp:alive", 2, 150);
+        }
+    });
     return true;
 }
 
 void SSDP::Stop() {
+    bool expectedIdle = false;
+    if (!m_lifecycleBusy.compare_exchange_strong(expectedIdle, true, std::memory_order_acq_rel)) {
+        LogPrint(L"SSDP Stop rejected: a Start or Stop call is already in progress.");
+        return;
+    }
+    struct LifecycleGuard {
+        std::atomic<bool>& flag;
+        ~LifecycleGuard() { flag.store(false, std::memory_order_release); }
+    } lifecycleGuard{ m_lifecycleBusy };
+
     if (!m_running.load()) return;
+
+    // send any delayed search response that is already due or due
+    // within the next quarter second before this restart closes the
+    // socket it would have gone out on rather than silently dropping
+    // it see task 3 of the ssdp restart storm fix workflow document
+    {
+        std::vector<DelayedSearchResponse> dueSoon;
+        const auto flushDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+        {
+            std::lock_guard<std::mutex> responseLock(m_responseMutex);
+            for (auto it = m_delayedResponses.begin(); it != m_delayedResponses.end();) {
+                if (it->dueAt <= flushDeadline) {
+                    dueSoon.push_back(std::move(*it));
+                    it = m_delayedResponses.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        for (const auto& response : dueSoon) {
+            SendDelayedSearchResponse(response);
+        }
+    }
+
     m_running.store(false);
+    m_burstCondition.notify_all();
     SendNotifyBurst("ssdp:byebye", 1, 0);
     if (m_ipv4Socket >= 0) shutdown(m_ipv4Socket, SHUT_RDWR);
     if (m_ipv6Socket >= 0) shutdown(m_ipv6Socket, SHUT_RDWR);
     m_responseCondition.notify_all();
     if (m_thread.joinable()) m_thread.join();
     if (m_responseThread.joinable()) m_responseThread.join();
+    if (m_initialBurstThread.joinable()) m_initialBurstThread.join();
     CloseSockets();
 }
 
@@ -201,16 +336,18 @@ void SSDP::CloseSockets() {
 
 void SSDP::SendNotifyRound(const char* nts) {
     const std::string serverHeader = GetDlnaServerHeader();
-    for (const auto& endpoint : m_endpoints) {
+    const auto endpoints = EndpointsSnapshot();
+    for (const auto& endpoint : endpoints) {
         int socketFd = endpoint.family == AF_INET ? m_ipv4Socket : m_ipv6Socket;
         if (socketFd < 0) continue;
 
-        std::lock_guard<std::mutex> socketLock(m_socketMutex);
+        std::mutex& sendMutex = (endpoint.family == AF_INET) ? m_ipv4SendMutex : m_ipv6SendMutex;
+        std::lock_guard<std::mutex> socketLock(sendMutex);
         sockaddr_storage dest{};
         socklen_t destLen = 0;
         std::string hostHeader;
         if (!BuildMulticastDestination(endpoint, dest, destLen, hostHeader)) continue;
-        if (!SetOutboundInterface(socketFd, endpoint)) {
+        if (!SetMulticastOutboundInterface(socketFd, endpoint)) {
             continue;
         }
 
@@ -265,18 +402,59 @@ void SSDP::QueueSearchResponses(DelayedSearchResponse response) {
     m_responseCondition.notify_one();
 }
 
+void SSDP::QueueTestResponseDueNow() {
+    const auto endpoints = EndpointsSnapshot();
+    if (endpoints.empty()) return;
+    const NetworkEndpoint* endpoint = nullptr;
+    if (m_ipv4Socket >= 0) {
+        for (const auto& candidate : endpoints) {
+            if (candidate.family == AF_INET) { endpoint = &candidate; break; }
+        }
+    } else if (m_ipv6Socket >= 0) {
+        for (const auto& candidate : endpoints) {
+            if (candidate.family == AF_INET6) { endpoint = &candidate; break; }
+        }
+    }
+    if (!endpoint) return;
+    DelayedSearchResponse response{};
+    response.socket = (endpoint->family == AF_INET) ? m_ipv4Socket : m_ipv6Socket;
+    response.endpoint = *endpoint;
+    response.dueAt = std::chrono::steady_clock::now();
+    if (endpoint->family == AF_INET) {
+        sockaddr_in* remote = reinterpret_cast<sockaddr_in*>(&response.remoteAddr);
+        remote->sin_family = AF_INET;
+        remote->sin_port = htons(kSsdpPort);
+        inet_pton(AF_INET, kSsdpMulticastIPv4, &remote->sin_addr);
+        response.remoteLen = static_cast<int>(sizeof(sockaddr_in));
+    } else {
+        sockaddr_in6* remote = reinterpret_cast<sockaddr_in6*>(&response.remoteAddr);
+        remote->sin6_family = AF_INET6;
+        remote->sin6_port = htons(kSsdpPort);
+        remote->sin6_addr = in6addr_any;
+        remote->sin6_scope_id = endpoint->interfaceIndex;
+        response.remoteLen = static_cast<int>(sizeof(sockaddr_in6));
+    }
+    response.messages.push_back("HTTP/1.1 200 OK\r\n\r\n");
+    QueueSearchResponses(std::move(response));
+}
+
 void SSDP::SendDelayedSearchResponse(const DelayedSearchResponse& response) {
     if (!m_running.load()) return;
-    std::lock_guard<std::mutex> socketLock(m_socketMutex);
-    if (!SetOutboundInterface(response.socket, response.endpoint)) return;
+    std::mutex& sendMutex = (response.endpoint.family == AF_INET) ? m_ipv4SendMutex : m_ipv6SendMutex;
+    std::lock_guard<std::mutex> socketLock(sendMutex);
+    if (!SetUnicastOutboundInterface(response.socket, response.endpoint)) return;
     for (size_t i = 0; i < response.messages.size(); ++i) {
         const std::string& message = response.messages[i];
-        ssize_t sent = sendto(response.socket,
-                              message.data(),
-                              message.size(),
-                              0,
-                              reinterpret_cast<const sockaddr*>(&response.remoteAddr),
-                              static_cast<socklen_t>(response.remoteLen));
+        ssize_t sent = -1;
+        for (int attempt = 0; attempt < kSearchResponseSendCount; ++attempt) {
+            sent = sendto(response.socket,
+                          message.data(),
+                          message.size(),
+                          0,
+                          reinterpret_cast<const sockaddr*>(&response.remoteAddr),
+                          static_cast<socklen_t>(response.remoteLen));
+            if (sent < 0) break;
+        }
         const std::string st = i < response.logSt.size() ? response.logSt[i] : std::string();
         const std::string usn = i < response.logUsn.size() ? response.logUsn[i] : std::string();
         std::string destination = SockaddrToLiteral(reinterpret_cast<const SOCKADDR*>(&response.remoteAddr));
@@ -324,6 +502,7 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
         return;
     }
     std::string firstLine = request.substr(0, firstLineEnd);
+    if (IsSsdpNotifyStartLine(firstLine)) return;
     if (ToLowerAscii(firstLine) != "m-search * http/1.1") {
         DiscoveryLog(L"SSDP request ignored: start line=%hs", firstLine.c_str());
         return;
@@ -344,7 +523,8 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
         DiscoveryLog(L"SSDP search ignored: invalid MAN from %hs", source.c_str());
         return;
     }
-    const NetworkEndpoint* endpoint = SelectBestEndpoint(m_endpoints, remoteAddr);
+    const auto endpoints = EndpointsSnapshot();
+    const NetworkEndpoint* endpoint = SelectBestEndpoint(endpoints, remoteAddr);
     if (!endpoint || endpoint->family != remoteAddr->sa_family) {
         DiscoveryLog(L"SSDP search ignored: no endpoint match for %hs", source.c_str());
         return;
@@ -373,18 +553,16 @@ void SSDP::HandleSearchRequest(int socketFd, const SOCKADDR* remoteAddr, socklen
     delayed.dueAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(delayMs);
     std::memcpy(&delayed.remoteAddr, remoteAddr, remoteLen);
     for (const auto& target : responses) {
-        std::stringstream ss;
-        ss << "HTTP/1.1 200 OK\r\n"
-           << "CACHE-CONTROL: max-age=1800\r\n"
-           << "DATE: " << BuildHttpDateHeaderValue() << "\r\n"
-           << "EXT:\r\n"
-           << "LOCATION: " << endpoint->locationUrl << "\r\n"
-           << "SERVER: " << serverHeader << "\r\n"
-           << "ST: " << target.st << "\r\n"
-           << "USN: " << target.usn << "\r\n"
-           << "BOOTID.UPNP.ORG: " << m_bootId << "\r\n"
-           << "CONFIGID.UPNP.ORG: " << m_configId << "\r\n\r\n";
-        delayed.messages.push_back(ss.str());
+        SsdpSearchResponseFields fields;
+        fields.date = BuildHttpDateHeaderValue();
+        fields.serverHeader = serverHeader;
+        fields.locationUrl = endpoint->locationUrl;
+        fields.st = target.st;
+        fields.usn = target.usn;
+        fields.bootId = m_bootId;
+        fields.configId = m_configId;
+
+        delayed.messages.push_back(BuildSearchResponseMessage(fields));
         delayed.logSt.push_back(target.st);
         delayed.logUsn.push_back(target.usn);
         DiscoveryLog(L"SSDP response queued: dst=%hs st=%hs usn=%hs location=%hs", source.c_str(), target.st.c_str(), target.usn.c_str(), endpoint->locationUrl.c_str());
@@ -438,4 +616,5 @@ void SSDP::ThreadWorker() {
             HandleSearchRequest(socketFd, reinterpret_cast<SOCKADDR*>(&remote), remoteLen, std::string(buffer, static_cast<size_t>(bytes)));
         }
     }
+    m_workerThreadAlive.store(false, std::memory_order_release);
 }

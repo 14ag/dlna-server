@@ -10,7 +10,9 @@
 #include <mutex>
 #include <net/if.h>
 #include <netdb.h>
+#include <set>
 #include <unistd.h>
+#include <utility>
 
 namespace {
 bool PrefixMatchBits(const unsigned char* a, const unsigned char* b, size_t bitCount) {
@@ -181,32 +183,6 @@ std::wstring Utf8ToWide(const std::string& value) {
     return out;
 }
 
-std::string XMLEscapeUtf8(const std::string& value) {
-    std::string result;
-    result.reserve(value.size());
-    for (char ch : value) {
-        switch (ch) {
-        case '&': result += "&amp;"; break;
-        case '<': result += "&lt;"; break;
-        case '>': result += "&gt;"; break;
-        case '"': result += "&quot;"; break;
-        case '\'': result += "&apos;"; break;
-        default: result += ch; break;
-        }
-    }
-    return result;
-}
-
-std::string NormalizeIpLiteral(const std::string& ipAddress) {
-    std::string value = ipAddress;
-    if (!value.empty() && value.front() == '[' && value.back() == ']') {
-        value = value.substr(1, value.size() - 2);
-    }
-    const size_t zone = value.find('%');
-    if (zone != std::string::npos) value.erase(zone);
-    return value;
-}
-
 std::string SockaddrToLiteral(const SOCKADDR* addr) {
     char host[NI_MAXHOST] = {};
     if (getnameinfo(addr,
@@ -222,7 +198,7 @@ std::string SockaddrToLiteral(const SOCKADDR* addr) {
 }
 
 std::string SockaddrToHostPort(const SOCKADDR* addr, int port) {
-    if (addr->sa_family == AF_INET6) return "[" + SockaddrToLiteral(addr) + "]:" + std::to_string(port);
+    if (addr->sa_family == AF_INET6) return "[" + NormalizeIpLiteral(SockaddrToLiteral(addr)) + "]:" + std::to_string(port);
     return SockaddrToLiteral(addr) + ":" + std::to_string(port);
 }
 
@@ -244,6 +220,8 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
     // See Step 3.2 for why this must not move inside the loop.
     const std::string defaultRouteV4 = DetectDefaultRouteSourceAddress(AF_INET);
     const std::string defaultRouteV6 = DetectDefaultRouteSourceAddress(AF_INET6);
+
+    std::set<std::pair<unsigned long, int>> emittedInterfaceFamilies;
 
     for (ifaddrs* it = list; it; it = it->ifa_next) {
         if (!it->ifa_addr) continue;
@@ -277,6 +255,14 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
         }
         endpoint.address = SockaddrToLiteral(reinterpret_cast<SOCKADDR*>(&endpoint.sockaddr));
         endpoint.locationUrl = "http://" + endpoint.host + ":" + std::to_string(port) + "/description.xml";
+        // One advertised address per (interface, family). See the matching
+        // comment in src/netutils.cpp: a control point keeps the LAST LOCATION
+        // it received for a USN, so a second address on the same interface can
+        // replace a reachable LOCATION with an unreachable one.
+        if (!emittedInterfaceFamilies.insert({endpoint.interfaceIndex, endpoint.family}).second) {
+            continue;
+        }
+        
         endpoints.push_back(endpoint);
     }
     freeifaddrs(list);
@@ -312,14 +298,43 @@ const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& en
         } else if (remoteAddr && endpoint.family == AF_INET6) {
             auto* local = reinterpret_cast<const sockaddr_in6*>(&endpoint.sockaddr);
             auto* remote = reinterpret_cast<const sockaddr_in6*>(remoteAddr);
-            if (PrefixMatchBits(local->sin6_addr.s6_addr, remote->sin6_addr.s6_addr, endpoint.prefixLength)) score += 100;
+            if (PrefixMatchBits(local->sin6_addr.s6_addr, remote->sin6_addr.s6_addr, endpoint.prefixLength)) {
+                score += 100;
+            }
+            // a link local ipv6 prefix fe80 colon colon slash 10 rfc 4291
+            // section 2 5 6 is identical on every interface of this host
+            // so the prefix match above alone cannot tell which physical
+            // interface a link local remote address belongs to
+            // rfc 4007 ipv6 scoped address architecture section 5
+            // requires the zone scope id to disambiguate a link local
+            // address without this check every link local endpoint on a
+            // multi homed host scores identically and whichever one is
+            // first in the vector always wins even if it is on the wrong
+            // interface see F-DISCOVERY-01 mirrors the same scope id
+            // check netutils cpp SelectBestEndpoint already performs on
+            // windows
+            if (endpoint.isLinkLocal && remote->sin6_scope_id != 0 &&
+                remote->sin6_scope_id == endpoint.interfaceIndex) {
+                score += 50;
+            }
         }
         if (score > bestScore) {
             best = &endpoint;
             bestScore = score;
         }
     }
-    return best ? best : (endpoints.empty() ? nullptr : &endpoints.front());
+    if (best != nullptr) return best;
+    // fall back to any endpoint of the same address family before ever
+    // returning an endpoint of the wrong family the previous fallback
+    // ignored family entirely which the caller happened to catch with
+    // its own separate family check but that made this function's
+    // return value misleading on its own see F-DISCOVERY-01
+    if (remoteAddr != nullptr) {
+        for (const auto& endpoint : endpoints) {
+            if (endpoint.family == remoteAddr->sa_family) return &endpoint;
+        }
+    }
+    return endpoints.empty() ? nullptr : &endpoints.front();
 }
 
 bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Content) {
@@ -337,45 +352,4 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
     }
     std::remove(WideToUtf8(tempPath).c_str());
     return false;
-}
-
-namespace {
-// guarded because HandleClient calls GetRoutableHostUrl from many
-// concurrent client threads on both platforms see the workflow
-// document for the full rationale
-std::mutex g_routableHostCacheMutex;
-std::string g_routableHostCached;
-int g_routableHostCachedPort = 0;
-bool g_routableHostCacheValid = false;
-long g_routableHostRecomputeCount = 0;
-}
-
-void InvalidateRoutableHostUrlCache() {
-    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
-    g_routableHostCacheValid = false;
-}
-
-long GetRoutableHostUrlRecomputeCountForTest() {
-    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
-    return g_routableHostRecomputeCount;
-}
-
-std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
-    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
-    if (!g_routableHostCacheValid || g_routableHostCachedPort != port) {
-        ++g_routableHostRecomputeCount;
-        g_routableHostCached.clear();
-        std::vector<NetworkEndpoint> endpoints;
-        if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
-            for (const auto& ep : endpoints) {
-                if (!ep.isLinkLocal) {
-                    g_routableHostCached = ep.address + ":" + std::to_string(port);
-                    break;
-                }
-            }
-        }
-        g_routableHostCachedPort = port;
-        g_routableHostCacheValid = true;
-    }
-    return g_routableHostCached;
 }

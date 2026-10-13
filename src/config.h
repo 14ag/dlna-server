@@ -16,7 +16,6 @@ struct MediaSource {
 struct ConfigSnapshot {
     std::wstring serverName;
     int port;
-    int fileServerPort;
     bool flatFolderStyle;
     bool showFileNamesInsteadOfTitles;
     bool proxyStreams;
@@ -54,6 +53,14 @@ struct DeviceDescriptionConfig {
     std::wstring presentationUrl;
 };
 
+struct RuntimeFlags {
+    int port;
+    bool debugLog;
+    bool sortByTitle;
+    bool proxyStreams;
+    bool backgroundScanEnabled;
+};
+
 class Config {
 public:
     static Config& Get();
@@ -70,11 +77,15 @@ public:
         std::shared_lock<std::shared_mutex> lock(m_mutex);
         return DeviceDescriptionConfig{ deviceUUID, serverName, deviceManufacturer, deviceModelName, presentationUrl };
     }
+
+    RuntimeFlags GetRuntimeFlags() const {
+        std::shared_lock<std::shared_mutex> lock(m_mutex);
+        return RuntimeFlags{ port, debugLog, sortByTitle, proxyStreams, backgroundScanEnabled };
+    }
     
     // Properties
     std::wstring serverName;
     int port;
-    int fileServerPort;
     bool flatFolderStyle;
     bool showFileNamesInsteadOfTitles;
     bool proxyStreams;
@@ -94,9 +105,8 @@ public:
     
     // INVARIANT: as of this writing, every direct (unlocked) read of this
     // field happens only from the UI thread (MainWindow::RefreshSourceList,
-    // fltk_gui_main.cpp's equivalent), and every write to it happens only
-    // via Mutate()/Load() also called from the UI thread. That is what
-    // makes the direct-field-access pattern in those two files safe today
+    //  and every write to it happens only via Mutate()/Load() also called from the UI thread.
+    //  That is what makes the direct-field-access pattern in those two files safe today
     // despite Config using a shared_mutex for its "official" thread-safe
     // surface (Snapshot()/Mutate()). If you are about to add ANY code path
     // that writes mediaSources from a background thread (an auto-import
@@ -127,6 +137,7 @@ public:
     int GetPort() const;
     bool IsSortByTitleEnabled() const;
     bool IsProxyStreamsEnabled() const;
+    std::wstring GetNetworkInterfaceAllowList() const;
 
     std::vector<MediaSource> GetRuntimeSourceOverride() const {
         std::shared_lock<std::shared_mutex> lock(m_mutex);

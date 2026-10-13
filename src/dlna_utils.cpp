@@ -9,6 +9,7 @@
 #include <cwctype>
 #include <limits>
 #include <random>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -110,9 +111,27 @@ std::string ProtocolTail(const MediaFormatInfo& info, bool hasKnownSize) {
     return tail;
 }
 
-std::string NarrowAscii(const std::wstring& value) {
-    return WideToUtf8(value);
-}
+} // namespace
+
+std::string ReadWholeFileBinary(const std::wstring& path) {
+#ifdef _WIN32
+    FILE* fp = nullptr;
+    if (_wfopen_s(&fp, path.c_str(), L"rb") != 0 || !fp) return {};
+#else
+    FILE* fp = std::fopen(WideToUtf8(path).c_str(), "rb");
+    if (!fp) return {};
+#endif
+    std::string text;
+    char buffer[4096];
+    while (true) {
+        size_t readCount = std::fread(buffer, 1, sizeof(buffer), fp);
+        if (readCount > 0) text.append(buffer, readCount);
+        if (readCount < sizeof(buffer)) {
+            if (std::feof(fp) || std::ferror(fp)) break;
+        }
+    }
+    std::fclose(fp);
+    return text;
 }
 
 std::string TrimAscii(const std::string& value) {
@@ -287,18 +306,30 @@ HttpByteRange ParseHttpRangeHeader(const std::string& rangeHeader, long long fil
 }
 
 bool GetMediaFormatForExtension(const std::wstring& ext, MediaFormatInfo& info) {
-    std::wstring lower = ToLowerWide(ext);
-    for (const auto& format : kFormats) {
-        if (lower == format.ext) {
-            info = FormatInfoFromExtensionFormat(format);
-            return true;
+    // built once on first call from kFormats then reused for every
+    // lookup after that
+    // turns a linear scan of up to thirty five entries per call into
+    // a single average case constant time hash lookup
+    // kFormats has file scope const storage duration so pointers
+    // into it stay valid for the life of the process
+    static const std::unordered_map<std::wstring, const ExtensionFormat*> kFormatByExtension = []() {
+        std::unordered_map<std::wstring, const ExtensionFormat*> map;
+        map.reserve(sizeof(kFormats) / sizeof(kFormats[0]));
+        for (const auto& format : kFormats) {
+            map[format.ext] = &format;
         }
-    }
-    return false;
+        return map;
+    }();
+
+    std::wstring lower = ToLowerWide(ext);
+    auto found = kFormatByExtension.find(lower);
+    if (found == kFormatByExtension.end()) return false;
+    info = FormatInfoFromExtensionFormat(*found->second);
+    return true;
 }
 
 std::string BuildProtocolInfo(const MediaFormatInfo& info, bool hasKnownSize) {
-    return "http-get:*:" + NarrowAscii(info.mimeType) + ":" + ProtocolTail(info, hasKnownSize);
+    return "http-get:*:" + WideToUtf8(info.mimeType) + ":" + ProtocolTail(info, hasKnownSize);
 }
 
 std::string BuildProtocolInfoForExtension(const std::wstring& ext, const std::wstring& mimeType, bool hasKnownSize) {
@@ -340,38 +371,44 @@ std::string BuildHlsProtocolInfo() {
 }
 
 std::string BuildSourceProtocolInfoList() {
-    std::vector<std::string> entries;
-    std::unordered_set<std::string> seen;
-    for (const auto& format : kFormats) {
-        MediaFormatInfo info = FormatInfoFromExtensionFormat(format);
-        std::string entry = BuildProtocolInfo(info, true);
-        if (seen.insert(entry).second) {
-            entries.push_back(entry);
+    static const std::string kCached = []() {
+        std::vector<std::string> entries;
+        std::unordered_set<std::string> seen;
+        for (const auto& format : kFormats) {
+            MediaFormatInfo info = FormatInfoFromExtensionFormat(format);
+            std::string entry = BuildProtocolInfo(info, true);
+            if (seen.insert(entry).second) {
+                entries.push_back(entry);
+            }
         }
-    }
-    // HLS is excluded from kFormats so file scanning does not treat .m3u8 as a
-    // generic playable extension. It must still be advertised here so DLNA
-    // renderers that consult GetProtocolInfo before playback accept HLS items.
-    // Flags match contentdirectory.cpp ItemProtocolInfo() and the Android
-    // contentFeatures.dlna.org response header in j.java.
-    entries.push_back(std::string("http-get:*:video/mpegurl:") + kHlsProtocolContentFeatures);
-    std::string result;
-    for (size_t i = 0; i < entries.size(); ++i) {
-        if (i > 0) result += ",";
-        result += entries[i];
-    }
-    return result;
+        // HLS is excluded from kFormats so file scanning does not treat .m3u8 as a
+        // generic playable extension. It must still be advertised here so DLNA
+        // renderers that consult GetProtocolInfo before playback accept HLS items.
+        // Flags match contentdirectory.cpp ItemProtocolInfo() and the Android
+        // contentFeatures.dlna.org response header in j.java.
+        entries.push_back(std::string("http-get:*:video/mpegurl:") + kHlsProtocolContentFeatures);
+        std::string result;
+        for (size_t i = 0; i < entries.size(); ++i) {
+            if (i > 0) result += ",";
+            result += entries[i];
+        }
+        return result;
+    }();
+    return kCached;
 }
 
 
 std::string GetDlnaServerHeader() {
+    static const std::string kHeader = []() -> std::string {
 #ifdef _WIN32
-    return "Windows/10.0 UPnP/1.1 dlna-server/" DLNA_SERVER_VERSION_STRING;
+        return "Windows/10.0 DLNADOC/1.50 UPnP/1.0 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #elif defined(DLNA_PLATFORM_NAME)
-    return std::string(DLNA_PLATFORM_NAME) + " UPnP/1.1 dlna-server/" DLNA_SERVER_VERSION_STRING;
+        return std::string(DLNA_PLATFORM_NAME) + " DLNADOC/1.50 UPnP/1.0 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #else
-    return "POSIX UPnP/1.1 dlna-server/" DLNA_SERVER_VERSION_STRING;
+        return "POSIX DLNADOC/1.50 UPnP/1.0 dlna-server/" DLNA_SERVER_VERSION_STRING;
 #endif
+    }();
+    return kHeader;
 }
 
 std::string BuildMediaResourceUrlExtensionSuffix(const std::wstring& sourcePath) {
@@ -427,32 +464,15 @@ bool NaturalLessWide(const std::wstring& left, const std::wstring& right) {
 }
 
 std::vector<AlbumArtCandidate> BuildAlbumArtCandidateNames(const std::wstring& stem) {
-    std::vector<AlbumArtCandidate> candidates;
-#if defined(_WIN32)
-    candidates = {
+    // Lowercase names only callers match these against the lowercased
+    // cached directory listing instead of stat ing case permutations
+    std::vector<AlbumArtCandidate> candidates = {
         { L"folder.jpg", L"image/jpeg" },
         { L"cover.jpg", L"image/jpeg" },
         { L"album.jpg", L"image/jpeg" },
         { L"thumb.jpg", L"image/jpeg" },
         { L"thumb.jpeg", L"image/jpeg" },
     };
-#else
-    candidates = {
-        { L"folder.jpg", L"image/jpeg" },
-        { L"folder.JPG", L"image/jpeg" },
-        { L"Folder.jpg", L"image/jpeg" },
-        { L"cover.jpg", L"image/jpeg" },
-        { L"cover.JPG", L"image/jpeg" },
-        { L"Cover.jpg", L"image/jpeg" },
-        { L"album.jpg", L"image/jpeg" },
-        { L"album.JPG", L"image/jpeg" },
-        { L"Album.jpg", L"image/jpeg" },
-        { L"thumb.jpg", L"image/jpeg" },
-        { L"thumb.JPG", L"image/jpeg" },
-        { L"thumb.jpeg", L"image/jpeg" },
-        { L"thumb.JPEG", L"image/jpeg" },
-    };
-#endif
     if (!stem.empty()) {
         candidates.push_back({ stem + L".jpg", L"image/jpeg" });
         candidates.push_back({ stem + L".jpeg", L"image/jpeg" });
@@ -477,7 +497,14 @@ unsigned int ComputeSsdpNextAliveIntervalMilliseconds() {
     // strictly under 900000ms). Jitter also avoids multiple restarted
     // instances refreshing in lockstep.
     static thread_local std::mt19937 generator(std::random_device{}());
-    std::uniform_int_distribution<unsigned int> distribution(12u * 60u * 1000u, 14u * 60u * 1000u + 30u * 1000u);
+    // shortened from the previous 12 to 14 point 5 minute window to 4 to 6
+    // minutes still comfortably under the 15 minute uda ceiling this
+    // trades modestly more network chatter for roughly 3x more
+    // independently jittered alive announcements per hour which directly
+    // raises the odds that a client with only an intermittent discovery
+    // window such as an android app that briefly holds a wifi multicast
+    // lock actually overlaps with one see F-DISCOVERY-02
+    std::uniform_int_distribution<unsigned int> distribution(4u * 60u * 1000u, 6u * 60u * 1000u);
     return distribution(generator);
 }
 

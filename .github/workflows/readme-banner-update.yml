@@ -1,4 +1,4 @@
-name: Update Banner
+name: Update Readme Banner
 
 on:
  workflow_dispatch:

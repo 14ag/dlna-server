@@ -2,6 +2,7 @@
 #include "dlna_utils.h"
 #include "log.h"
 #include "netutils.h"
+#include "app_identity.h"
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <sstream>
@@ -111,12 +112,8 @@ int ParseIntOrDefault(const std::unordered_map<std::string, std::string>& values
     if (it == values.end() || it->second.empty()) {
         return defaultValue;
     }
-
-    try {
-        return std::stoi(it->second);
-    } catch (...) {
-        return defaultValue;
-    }
+    int parsed = 0;
+    return TryParseIntStrict(TrimAscii(it->second), parsed) ? parsed : defaultValue;
 }
 
 std::wstring DefaultServerName() {
@@ -140,7 +137,7 @@ Config& Config::Get() {
     return instance;
 }
 
-Config::Config() : port(8200), fileServerPort(8201), flatFolderStyle(false), showFileNamesInsteadOfTitles(false),
+Config::Config() : port(8200), flatFolderStyle(false), showFileNamesInsteadOfTitles(false),
     proxyStreams(false), sortByTitle(false), doNotShowAllMediaFolders(false), addArtistAlbumFolders(false),
     debugLog(false),
     deviceManufacturer(L"dlna-server contributors"),
@@ -156,7 +153,6 @@ ConfigSnapshot Config::Snapshot() const {
     return ConfigSnapshot{
         serverName,
         port,
-        fileServerPort,
         flatFolderStyle,
         showFileNamesInsteadOfTitles,
         proxyStreams,
@@ -198,6 +194,11 @@ bool Config::IsSortByTitleEnabled() const {
 bool Config::IsProxyStreamsEnabled() const {
     std::shared_lock<std::shared_mutex> lock(m_mutex);
     return proxyStreams;
+}
+
+std::wstring Config::GetNetworkInterfaceAllowList() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return networkInterfaceAllowList;
 }
 
 int ParsePortOrDefault(const std::unordered_map<std::string, std::string>& values, const char* key, int defaultValue) {
@@ -249,12 +250,13 @@ void Config::SetRunOnBoot(bool enable) {
     HKEY hKey;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
 if (enable) {
+        RegDeleteValueW(hKey, L"dlna-server");
         wchar_t exePath[MAX_PATH];
         GetModuleFileNameW(NULL, exePath, MAX_PATH);
         std::wstring val = std::wstring(L"\"") + exePath + L"\" --headless";
-        RegSetValueExW(hKey, L"dlna-server", 0, REG_SZ, (const BYTE*)val.c_str(), (DWORD)((val.length() + 1) * sizeof(wchar_t)));
+        RegSetValueExW(hKey, DLNA_APP_ID_W, 0, REG_SZ, (const BYTE*)val.c_str(), (DWORD)((val.length() + 1) * sizeof(wchar_t)));
     } else {
-            RegDeleteValueW(hKey, L"dlna-server");
+            RegDeleteValueW(hKey, DLNA_APP_ID_W);
         }
         RegCloseKey(hKey);
     }
@@ -276,7 +278,8 @@ void Config::Load() {
     }
 
     port = ParsePortOrDefault(values, "Port", 8200);
-    fileServerPort = ParsePortOrDefault(values, "FileServerPort", 8201);
+    // Dead key kept readable so old config files still load
+    ParsePortOrDefault(values, "FileServerPort", 8201);
     flatFolderStyle = ParseIntOrDefault(values, "FlatFolderStyle", 0) != 0;
     showFileNamesInsteadOfTitles = ParseIntOrDefault(values, "ShowFileNamesInsteadOfTitles", 0) != 0;
     proxyStreams = ParseIntOrDefault(values, "ProxyStreams", 0) != 0;
@@ -339,7 +342,6 @@ void Config::Save() {
     ss << "[Settings]\n";
     ss << "ServerName=" << WideToUtf8(serverName) << "\n";
     ss << "Port=" << port << "\n";
-    ss << "FileServerPort=" << fileServerPort << "\n";
     ss << "FlatFolderStyle=" << (flatFolderStyle ? 1 : 0) << "\n";
     ss << "ShowFileNamesInsteadOfTitles=" << (showFileNamesInsteadOfTitles ? 1 : 0) << "\n";
     ss << "ProxyStreams=" << (proxyStreams ? 1 : 0) << "\n";
@@ -378,5 +380,11 @@ void Config::Save() {
         LogPrint(L"Config save failed: %ls", path.c_str());
     }
 
-    SetRunOnBoot(runOnBootLocal);
+    static bool s_lastAppliedRunOnBoot = false;
+    static bool s_hasAppliedRunOnBoot = false;
+    if (!s_hasAppliedRunOnBoot || s_lastAppliedRunOnBoot != runOnBootLocal) {
+        SetRunOnBoot(runOnBootLocal);
+        s_lastAppliedRunOnBoot = runOnBootLocal;
+        s_hasAppliedRunOnBoot = true;
+    }
 }

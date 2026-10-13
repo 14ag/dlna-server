@@ -5,7 +5,6 @@
 #include <vector>
 
 void LogPrint(const wchar_t* fmt, ...);
-std::wstring GetSystemLog();
 
 // Enables/disables echoing every LogPrint() line to stdout in addition to
 // the in-memory ring buffer and (if DebugLog is on) debug.log. Call this

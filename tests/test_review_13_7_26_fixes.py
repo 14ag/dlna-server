@@ -180,7 +180,8 @@ class TestSsdpInitialBurstThreadIsJoined:
         stop_idx = source.find("void SSDP::Stop()")
         assert start_idx > 0 and stop_idx > 0
         start_region = source[start_idx:stop_idx]
-        stop_region = source[stop_idx:stop_idx + 1200]
+        next_fn = source.find("\nvoid SSDP::", stop_idx + 10)
+        stop_region = source[stop_idx:next_fn if next_fn > -1 else stop_idx + 1200]
         assert "m_initialBurstThread = std::thread(" in start_region
         assert "m_initialBurstThread.joinable()" in stop_region
         assert "m_initialBurstThread.join();" in stop_region
@@ -232,7 +233,8 @@ class TestSsdpStartStopCycleUnderRace:
                 config_ini.write_text(
                     "[Settings]\n"
                     f"Port={port}\n"
-                    f"MediaSources={media_dir}\n",
+                    f"MediaSources={media_dir}\n"
+                    "DebugLog=1\n",
                     encoding="utf-8-sig",
                 )
                 env = os.environ.copy()
@@ -242,7 +244,7 @@ class TestSsdpStartStopCycleUnderRace:
                 env["XDG_RUNTIME_DIR"] = tempfile.mkdtemp(prefix="dlna-runtime-")
                 proc = subprocess.Popen(
                     [str(dlna_binary), "--headless"],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     env=env, cwd=str(binary_dir))
                 deadline = time.time() + 15
                 connected = False
@@ -338,7 +340,13 @@ class TestSkipFirewallEnvVarDetection:
         config_ini.write_text(
             "[Settings]\n"
             f"Port={port}\n"
-            f"MediaSources={media_dir}\n",
+            f"MediaSources={media_dir}\n"
+            # Foreground mode: without DebugLog the server daemonizes and
+            # the Popen handle points at the exited parent, so teardown
+            # can never kill the daemon grandchild. That stray then holds
+            # the global single-instance socket and later --print tests
+            # forward to it instead of reading their own config.
+            "DebugLog=1\n",
             encoding="utf-8-sig",
         )
         env = os.environ.copy()
@@ -379,20 +387,15 @@ class TestSkipFirewallEnvVarDetection:
 
 
 class TestRescanSerialization:
-    def test_rescan_mutex_declared_and_used_both_platforms(self):
+    def test_rescan_mutex_declared_and_used(self):
         header = _read("src/server.h")
-        win = _read("src/server.cpp")
-        posix = _read("src/posix_server.cpp")
+        src = _read("src/server_common.cpp")
         assert "std::mutex m_rescanMutex;" in header
-        for src in (win, posix):
-            idx = src.find("bool Server::Rescan()")
-            assert idx > 0
-            region = src[idx:idx + 500]
-            assert "std::lock_guard<std::mutex> rescanLock(m_rescanMutex);" \
-                in region
-            reset_idx = region.find("AppMedia.ResetForRescan();")
-            lock_idx = region.find("rescanLock(m_rescanMutex)")
-            assert 0 < lock_idx < reset_idx, (
-                "the rescan lock must be taken before ResetForRescan "
-                "runs, otherwise two overlapping Rescan calls can still "
-                "interleave their reset and scan phases")
+        idx = src.find("bool Server::Rescan()")
+        assert idx >= 0
+        region = src[idx:idx + 500]
+        assert "std::lock_guard<std::mutex> rescanLock(m_rescanMutex);" in region
+        reset_idx = region.find("AppMedia.ResetForRescan();")
+        lock_idx = region.find("rescanLock(m_rescanMutex)")
+        assert 0 <= lock_idx < reset_idx, (
+            "the rescan lock must be taken before ResetForRescan runs")

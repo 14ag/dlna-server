@@ -1,10 +1,14 @@
 # Known Issues
 
+> Verification status (Oct 2026): each entry below was checked against current
+> source (`src/`) and the built binaries. Statuses recorded per item.
+
 ## Samsung 1GiB Content-Length for remote files of unknown size
 
 When a remote (proxied) media file's size cannot be determined (no `Content-Length` from the upstream, no cached probe result) and the client `User-Agent` is empty or starts with `SEC_HHP_` (Samsung TVs), the server sends a placeholder `Content-Length: 1073741824` (1 GiB) instead of omitting the header. Samsung DLNA clients refuse to play files that lack `Content-Length` entirely, so a fabricated large-enough value is sent as a pragmatic workaround. The Samsung TV will seek/play within whatever portion of the file the server can actually serve; playback stops when the real content ends before the advertised size.
 
-See: `contentdirectory.cpp` — `ShouldFakeContentLengthForSamsung()`; `httpserver.cpp` / `posix_httpserver.cpp`.
+See: `httpserver.cpp` line 588 (`ua.find("SEC_HHP_")`); `posix_httpserver.cpp` line 511; header emitted at line 597 / 520.
+
 
 ## SMB source support removed
 
@@ -30,6 +34,26 @@ The watch loop (`source_watcher.cpp`) computes an FNV-1a hash over source metada
 
 `SUBSCRIBE`/`UNSUBSCRIBE` to `/upnp/event/connection_manager` are accepted and tracked, but `NotifySystemUpdateId()` only dispatches to `/upnp/event/content_directory` subscribers. ConnectionManager eventing is reserved for future use (e.g., when the server needs to report connection status changes).
 
+`upnp_eventing.cpp` line 24 dispatches to both paths for subscribe tracking, but `DispatchNotifyToSubscribersLocked` (line 208–227) only queues jobs when `IsContentDirectoryEventPath` (line 216) is true; ConnectionManager subscriptions are stored but never notified.
+
 ## `RunOnBoot` is a no-op on POSIX
 
 The `RunOnBoot` config field is loaded and saved on all platforms, but `Config::SetRunOnBoot()` only writes/removes a `HKCU\...\Run` registry value on Windows. On POSIX, the method is a no-op. Users who want auto-start on Linux should configure it through their desktop environment or init system directly.
+
+
+## WSLg (Linux GUI on Windows) drag-and-drop not supported
+
+Dragging files from Windows Explorer into the GTK4 GUI binary running under WSLg does not deliver the drop to the application. This is a platform limitation, not a bug in this project: WSLg's Weston compositor does not implement cross-VM drag-and-drop over its RDP backend (clipboard text/bitmap is bridged, but DnD is not). See upstream tracking issue [microsoft/wslg#84](https://github.com/microsoft/wslg/issues/84) and the WSLg architecture post which states "Drag and drop is not currently supported."
+
+Workarounds for getting files into the GUI:
+- Use the file picker and navigate to `/mnt/c/...` (same files, one extra click).
+- Paste a Windows path as text — clipboard is bridged.
+- Pass the path on the command line via `--source`.
+
+The only known third-party workaround (`wsl-drag-relay`) injects into classic X servers (VcXsrv/Cygwin/X/Xming) and explicitly does not support WSLg; using it requires disabling WSLg entirely, which is not recommended for a single drop target.
+
+This project cannot fix the gap from inside the GTK application — DnD events never reach the Wayland/X surface from the host.
+
+- Status: **still applies** — WSLg has not shipped cross-VM DnD as of Oct 2026; no in-repo change can deliver host drops to the app.
+
+

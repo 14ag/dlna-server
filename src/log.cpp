@@ -14,6 +14,7 @@ static std::mutex g_logMutex;
 static FILE* g_debugLogFile = NULL;
 static std::wstring g_debugLogPath;
 const size_t MAX_LOG_LINES = 1000;
+static std::mutex g_debugFileMutex;
 static std::atomic<bool> g_consoleEchoEnabled(false);
 
 void SetConsoleEchoEnabled(bool enabled) {
@@ -43,15 +44,26 @@ FILE* OpenOrReuseDebugLogFile(const std::wstring& path) {
 }
 
 FILE* GetDebugLogFile() {
-    std::wstring configPath = AppConfig.GetConfigPath();
-    wchar_t szPath[MAX_PATH] = {};
-    if (configPath.empty() || configPath.size() >= MAX_PATH) {
-        return NULL;
-    }
-    wcscpy_s(szPath, configPath.c_str());
-    PathRemoveFileSpecW(szPath);
-    PathAppendW(szPath, L"debug.log");
-    return OpenOrReuseDebugLogFile(std::wstring(szPath));
+    // computed once per process the executable module path cannot change
+    // after process start so recomputing it on every LogPrint call is a
+    // needless GetModuleFileNameW syscall on the debug log hot path
+    // function local static initialization is guaranteed thread safe by
+    // the c plus plus standard stmt dcl paragraph 4 magic statics so no
+    // extra locking is needed here even though every current caller of
+    // this function also happens to already hold g_logMutex
+    static const std::wstring cachedDebugLogPath = []() -> std::wstring {
+        std::wstring configPath = AppConfig.GetConfigPath();
+        wchar_t szPath[MAX_PATH] = {};
+        if (configPath.empty() || configPath.size() >= MAX_PATH) {
+            return L"";
+        }
+        wcscpy_s(szPath, configPath.c_str());
+        PathRemoveFileSpecW(szPath);
+        PathAppendW(szPath, L"debug.log");
+        return std::wstring(szPath);
+    }();
+    if (cachedDebugLogPath.empty()) return NULL;
+    return OpenOrReuseDebugLogFile(cachedDebugLogPath);
 }
 
 void LogPrint(const wchar_t* fmt, ...) {
@@ -70,12 +82,18 @@ void LogPrint(const wchar_t* fmt, ...) {
     std::wstring line = std::wstring(timeBuf) + msg + L"\r\n";
     const bool writeDebugLog = AppConfig.IsDebugLogEnabled();
 
-    std::lock_guard<std::mutex> lock(g_logMutex);
-    g_logLines.emplace_back(g_nextSeq++, line);
-    if (g_logLines.size() > MAX_LOG_LINES) {
-        g_logLines.pop_front();
+    {
+        std::lock_guard<std::mutex> lock(g_logMutex);
+        g_logLines.emplace_back(g_nextSeq++, line);
+        if (g_logLines.size() > MAX_LOG_LINES) {
+            g_logLines.pop_front();
+        }
     }
+    // File and console I/O happen outside g_logMutex so a blocked write
+    // (e.g. a captured pipe) can never pin the log mutex and stall every
+    // other logging thread.
     if (writeDebugLog) {
+        std::lock_guard<std::mutex> fileLock(g_debugFileMutex);
         FILE* fp = GetDebugLogFile();
         if (fp) {
             fwprintf(fp, L"%s", line.c_str());
@@ -86,16 +104,6 @@ void LogPrint(const wchar_t* fmt, ...) {
         fwprintf(stdout, L"%ls", line.c_str());
         fflush(stdout);
     }
-}
-
-std::wstring GetSystemLog() {
-    std::lock_guard<std::mutex> lock(g_logMutex);
-    std::wstring res;
-    res.reserve(g_logLines.size() * 128);
-    for (const auto& entry : g_logLines) {
-        res += entry.second;
-    }
-    return res;
 }
 
 LogSnapshot GetSystemLogSince(unsigned long long sinceSequence) {

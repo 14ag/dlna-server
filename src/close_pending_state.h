@@ -2,7 +2,6 @@
 #define CLOSE_PENDING_STATE_H
 
 // pure state extracted so it can be exercised by a print flag test
-// no windows types and no fltk types so it compiles on both platforms
 // mirrors the pattern used by server_close_policy h source_list_focus h
 // and function_key_action h see those files for the same convention
 //

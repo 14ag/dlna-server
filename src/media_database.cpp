@@ -6,6 +6,7 @@
 #include "netutils.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -59,25 +60,6 @@ std::vector<std::string> SplitTabs(const std::string& line) {
     return fields;
 }
 
-std::string ReadWholeFile(const std::wstring& path) {
-#ifdef _WIN32
-    FILE* fp = nullptr;
-    if (_wfopen_s(&fp, path.c_str(), L"rb") != 0 || !fp) return {};
-#else
-    FILE* fp = std::fopen(WideToUtf8(path).c_str(), "rb");
-    if (!fp) return {};
-#endif
-    std::string text;
-    char buffer[4096];
-    while (true) {
-        size_t readCount = std::fread(buffer, 1, sizeof(buffer), fp);
-        if (readCount > 0) text.append(buffer, readCount);
-        if (readCount < sizeof(buffer)) break;
-    }
-    std::fclose(fp);
-    return text;
-}
-
 bool WriteWholeFile(const std::wstring& path, const std::string& text) {
 #ifdef _WIN32
     FILE* fp = nullptr;
@@ -118,7 +100,7 @@ void MediaDatabase::Load(const std::wstring& path) {
     m_records.clear();
     m_nextId = kPersistentMediaIdBase;
 
-    std::string text = ReadWholeFile(path);
+    std::string text = ReadWholeFileBinary(path);
     std::stringstream stream(text);
     std::string line;
     while (std::getline(stream, line)) {
@@ -143,13 +125,20 @@ void MediaDatabase::Load(const std::wstring& path) {
 
 bool MediaDatabase::Save(const std::wstring& path) const {
     std::unique_lock<std::mutex> lock(m_mutex);
+    std::vector<const Record*> sorted;
+    sorted.reserve(m_records.size());
+    for (const auto& entry : m_records) {
+        sorted.push_back(&entry.second);
+    }
+    std::sort(sorted.begin(), sorted.end(), [](const Record* a, const Record* b) {
+        return a->id < b->id;
+    });
     std::ostringstream out;
     out << "# dlna-server media-cache.tsv v1\n";
-    for (const auto& entry : m_records) {
-        const Record& record = entry.second;
-        out << record.id << '\t'
-            << EscapeField(record.key) << '\t'
-            << EscapeField(record.scanError) << '\n';
+    for (const auto* record : sorted) {
+        out << record->id << '\t'
+            << EscapeField(record->key) << '\t'
+            << EscapeField(record->scanError) << '\n';
     }
     const std::string content = out.str();
     // Up to kPlaylistScanPoolSize (20) concurrent scan workers call

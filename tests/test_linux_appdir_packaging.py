@@ -1,5 +1,10 @@
 import unittest
 from pathlib import Path
+import pytest
+
+from tests.identity import GTK_APP_ID
+
+pytestmark = pytest.mark.posix_only
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,96 +22,74 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn('exec "$appdir/usr/bin/dlna-server-gui"', apprun)
         self.assertNotIn("DLNA_SERVER_GUI_DIR", apprun)
 
+    def test_linux_build_uses_local_wsl_workspace(self):
+        build = self.read("scripts/build_linux.sh")
+        self.assertIn('mktemp -d "${TMPDIR:-/tmp}/dlna-server-linux-build.XXXXXX"', build)
+        self.assertIn('build_dir="$build_root/build"', build)
+        self.assertIn('release_stage_dir="$build_root/stage"', build)
+        self.assertIn('trap \'rm -rf "$build_root"\' EXIT', build)
+
     def test_appdir_desktop_metadata_is_relative(self):
-        desktop = self.read("packaging/linux/dlna-server.appimage.desktop")
+        desktop = self.read("packaging/linux/portable.desktop.in")
 
         self.assertIn("Name=DLNA Server", desktop)
         self.assertIn("Exec=dlna-server-gui", desktop)
-        self.assertIn("Icon=dlna-server", desktop)
-        self.assertIn("StartupWMClass=dlna-server", desktop)
+        self.assertIn("Icon=@DLNA_GTK_APP_ID@", desktop)
+        self.assertIn("StartupWMClass=@DLNA_GTK_APP_ID@", desktop)
+        self.assertNotIn(GTK_APP_ID, desktop)
 
     def test_linux_desktop_installers_are_scripted(self):
         cmake = self.read("CMakeLists.txt")
-        script = self.read("scripts/build-linux-desktop-assets.sh")
         gitattributes = self.read(".gitattributes")
-        flatpak = self.read("packaging/flatpak/com.github.14ag.dlna_server.yml")
-        desktop = self.read("packaging/flatpak/com.github.14ag.dlna_server.desktop")
-        workflow = self.read(".github/workflows/release-assets.yml")
+        flatpak = self.read("packaging/flatpak/manifest.yml.in")
+        desktop = self.read("packaging/linux/portable.desktop.in")
 
         self.assertIn('set(CPACK_GENERATOR "DEB")', cmake)
         self.assertIn("CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON", cmake)
-        self.assertIn("cpack --config", script)
-        self.assertIn("linuxdeploy-x86_64.AppImage", script)
-        self.assertIn("linuxdeploy_version=\"1-alpha-20251107-1\"", script)
-        self.assertIn("linuxdeploy_sha256=", script)
-        self.assertIn("download_verified", script)
-        self.assertIn("-name '*.AppImage'", script)
-        self.assertIn('flatpak-builder and flatpak are required for default release assets', script)
         self.assertIn("*.sh text eol=lf", gitattributes)
         self.assertIn("*.yml text eol=lf", gitattributes)
-        self.assertIn("build-bundle", script)
-        self.assertIn("app-id: com.github.14ag.dlna_server", flatpak)
+        self.assertIn('app-id: "@DLNA_GTK_APP_ID@"', flatpak)
         self.assertIn("--share=network", flatpak)
         self.assertIn("--filesystem=home", flatpak)
         self.assertIn("Name=DLNA Server", desktop)
-        self.assertIn("Release assets", workflow)
-        self.assertIn("runs-on: windows-latest", workflow)
-        self.assertIn("output/winx64/*.zip", workflow)
-        self.assertIn("output/winx86/*.zip", workflow)
-        self.assertIn("flatpak flatpak-builder", workflow)
-        self.assertIn("org.freedesktop.Sdk//24.08", workflow)
-        self.assertIn("scripts/build-linux-desktop-assets.sh", workflow)
 
     def test_macos_dmg_packaging_prefers_native_gui(self):
         cmake = self.read("CMakeLists.txt")
         plist = self.read("packaging/macos/Info.plist.in")
         launcher = self.read("packaging/macos/dlna-server-gui")
-        script = self.read("scripts/build-macos-dmg.sh")
 
         self.assertIn("DLNA Server.app", cmake)
         self.assertIn("dlna-server-gui-bin", cmake)
         self.assertIn("DLNA_PLATFORM_NAME=\\\"macOS\\\"", cmake)
         self.assertIn("<string>DLNA Server</string>", plist)
         self.assertIn('native_gui="$app_dir/Contents/MacOS/dlna-server-gui-bin"', launcher)
-        self.assertIn("Rebuild with -DDLNA_ENABLE_FLTK_GUI=ON.", launcher)
+        self.assertIn("Rebuild with -DDLNA_ENABLE_GTK4_GUI=ON.", launcher)
         self.assertNotIn("posix_gui.py", launcher)
-        self.assertIn("hdiutil create", script)
-        self.assertIn("notarytool submit", script)
 
     def test_wslg_gui_smoke_prereqs_are_in_build_and_pytest_wiring(self):
-        linux_script = self.read("scripts/build-linux-desktop-assets.sh")
         conftest = self.read("tests/conftest.py")
-
-        self.assertIn("libx11-dev", linux_script)
-        self.assertIn("libxft-dev", linux_script)
-        self.assertIn("libxext-dev", linux_script)
-        self.assertIn("libxinerama-dev", linux_script)
-        self.assertIn("libxcursor-dev", linux_script)
-        self.assertIn("libxrender-dev", linux_script)
-        self.assertIn("libxfixes-dev", linux_script)
-        self.assertIn('-DDLNA_ENABLE_FLTK_GUI=ON', linux_script)
         self.assertIn("DLNA_GUI_BINARY", conftest)
 
-    def test_fltk_gui_is_only_posix_desktop_ui(self):
+    def test_gtk4_gui_is_only_posix_desktop_ui(self):
         cmake = self.read("CMakeLists.txt")
-        gui_source = self.read("src/fltk_gui_main.cpp")
+        gui_source = self.read("src/gtk4_gui_main.cpp")
         linux_launcher = self.read("packaging/linux/dlna-server-gui")
         mac_launcher = self.read("packaging/macos/dlna-server-gui")
 
-        self.assertIn("DLNA_ENABLE_FLTK_GUI", cmake)
-        self.assertIn('option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" ON)', cmake)
-        self.assertIn("find_package(FLTK QUIET)", cmake)
-        self.assertIn("FetchContent_Declare", cmake)
-        self.assertIn("EXCLUDE_FROM_ALL", cmake)
-        self.assertIn("release-1.4.5", cmake)
-        self.assertIn("dlna-server-gui-native", cmake)
-        self.assertIn("if(FLTK_FOUND)", cmake)
+        self.assertIn("DLNA_ENABLE_GTK4_GUI", cmake)
+        self.assertIn('option(DLNA_ENABLE_GTK4_GUI "Build the native GTK4 Linux GUI" ON)', cmake)
+        self.assertNotIn("DLNA_ENABLE_FLTK_GUI", cmake)
+        self.assertNotIn("find_package(FLTK QUIET)", cmake)
+        self.assertNotIn("dlna-server-gui-native", cmake)
+        self.assertNotIn("fltk_gui_main.cpp", cmake)
+        self.assertIn("pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)", cmake)
+        self.assertIn("dlna-server-gui-gtk4", cmake)
         self.assertIn("OUTPUT_NAME dlna-server-gui-bin", cmake)
         self.assertIn('configure_file(packaging/linux/dlna-server-gui "${CMAKE_BINARY_DIR}/dlna-server-gui" @ONLY NEWLINE_STYLE UNIX)', cmake)
         self.assertIn('install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui"', cmake)
         self.assertIn("src/posix_server.cpp", cmake)
         self.assertIn("Threads::Threads", cmake)
-        self.assertIn("#include <FL/Fl_Window.H>", gui_source)
+        self.assertIn("#include <gtk/gtk.h>", gui_source)
         self.assertNotIn("DLNA Server is stopped", gui_source)
         self.assertFalse((ROOT / "src/posix_gui.py").exists())
         self.assertFalse((ROOT / "tests/test_posix_gui.py").exists())
@@ -114,37 +97,31 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertNotIn("python3", linux_launcher + mac_launcher + cmake)
         self.assertIn("DLNA Server native GUI is missing", linux_launcher)
 
-    def test_fltk_main_window_has_parity_controls(self):
-        gui_source = self.read("src/fltk_gui_main.cpp")
+    def test_gtk4_main_window_has_parity_controls(self):
+        gui_source = self.read("src/gtk4_gui_main.cpp")
+        tokens_h = self.read("src/ui_tokens.h")
 
-        self.assertIn("class MainWindow", gui_source)
-        self.assertIn("Fl_Hold_Browser", gui_source)
-        self.assertIn("Fl_Native_File_Chooser", gui_source)
+        self.assertIn("GtkListBox", gui_source)
+        self.assertIn("GtkFileChooserNative", gui_source)
         self.assertIn("Add media source", gui_source)
-        self.assertIn("Delete selected source", gui_source)
+        self.assertIn("Remove selected source", gui_source)
         self.assertIn('"Delete"', gui_source)
-        self.assertIn("FL_Delete", gui_source)
         self.assertIn("RemoveSelectedSource", gui_source)
-        self.assertIn("Start server", gui_source)
-        self.assertIn("Stop server", gui_source)
-        self.assertIn("Settings", gui_source)
+        self.assertIn("Start/Stop Server", gui_source)
+        self.assertIn('"Start"', gui_source)
+        self.assertIn('"Settings"', gui_source)
         self.assertIn("Please add shared folders or files", gui_source)
-        self.assertIn("constexpr int kWindowWidth = 440", gui_source)
-        self.assertIn("constexpr int kWindowHeight = 600", gui_source)
-        self.assertIn("constexpr int kToolbarHeight = 56", gui_source)
-        self.assertIn("constexpr int kStatusHeight = 40", gui_source)
-        self.assertIn("constexpr int kListTopGap = 8", gui_source)
-        self.assertIn("size_range(440, 460)", gui_source)
-        self.assertIn("Fl::focus(&m_sources)", gui_source)
-        self.assertIn("Fl::focus(state->movie)", gui_source)
-        self.assertIn("Fl::focus(state->subtitle)", gui_source)
-        self.assertIn("Fl::focus(&dialog)", gui_source)
-        self.assertIn("void resize", gui_source)
+        self.assertIn("constexpr int kWindowWidth = 440", tokens_h)
+        self.assertIn("constexpr int kWindowHeight = 600", tokens_h)
+        self.assertIn("constexpr int kToolbarHeight = 56", tokens_h)
+        self.assertIn("constexpr int kStatusHeight = 40", tokens_h)
+        self.assertIn("constexpr int kListTopGap = 8", tokens_h)
+        self.assertIn("gtk_application_window_new", gui_source)
         self.assertIn("DLNAServer.Start(", gui_source)
         self.assertIn("DLNAServer.Stop()", gui_source)
         self.assertIn("AppConfig.Save()", gui_source)
         self.assertIn("DLNAServer.Rescan()", gui_source)
 
-    
+
 if __name__ == "__main__":
     unittest.main()

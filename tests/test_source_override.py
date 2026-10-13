@@ -183,7 +183,7 @@ def test_start_succeeds_with_only_an_override_and_empty_config_sources(
     if config_path.exists():
         old = config_path.read_bytes()
     try:
-        config_path.write_text("[Settings]\nPort=18206\n")
+        config_path.write_text("[Settings]\nPort=18206\nDebugLog=1\n")
         override = tmp_path / "override"
         override.mkdir()
 

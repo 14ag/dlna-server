@@ -1,8 +1,10 @@
 #ifdef DLNA_POSIX
 
 #include "posix_single_instance.h"
+#include "app_identity.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -23,21 +25,23 @@ namespace {
 
 // ---- helpers ----
 
-std::string GetRuntimeDir() {
-    if (const char* dir = std::getenv("XDG_RUNTIME_DIR"); dir && *dir) {
-        return dir;
-    }
-    // No XDG_RUNTIME_DIR → fallback to /tmp/dlna-server-<uid>.
+// The single-instance dir is intentionally FIXED per user (uid), independent
+// of XDG_RUNTIME_DIR. Rationale: the lock + IPC socket must be at a known,
+// global location so that (a) only one instance can run per user no matter
+// what env a second launch inherits, and (b) --kill-server and the test
+// harness can always find the running instance. XDG_RUNTIME_DIR can differ
+// between sessions and is not reliably writable for AF_UNIX sockets.
+std::string GetInstanceDir() {
     uid_t uid = getuid();
-    return std::string("/tmp/dlna-server-") + std::to_string(uid);
+    return std::string("/tmp/" DLNA_APP_ID "-") + std::to_string(uid);
 }
 
 std::string GetLockPath() {
-    return GetRuntimeDir() + "/dlna-server.lock";
+    return GetInstanceDir() + "/" DLNA_APP_ID ".lock";
 }
 
 std::string GetSocketPath() {
-    return GetRuntimeDir() + "/dlna-server.sock";
+    return GetInstanceDir() + "/" DLNA_APP_ID ".sock";
 }
 
 void EnsureDirExists(const std::string& path) {
@@ -56,6 +60,7 @@ int         g_wakeupWriteFd = -1;
 std::thread g_listenerThread;
 std::atomic<bool> g_running(false);
 void (*g_callback)(const std::string&) = nullptr;
+std::string (*g_queryProvider)() = nullptr;
 
 } // anonymous namespace
 
@@ -64,14 +69,16 @@ namespace SingleInstance {
 // ---- public API ----
 
 bool TryAcquireLock() {
-    const std::string dir = GetRuntimeDir();
+    const std::string dir = GetInstanceDir();
     EnsureDirExists(dir);
 
     const std::string lockPath = GetLockPath();
     g_lockFd = ::open(lockPath.c_str(), O_CREAT | O_RDWR, 0600);
     if (g_lockFd < 0) {
-        // Cannot even open the lock file; let the caller proceed.
-        return true;
+        // Fail closed: never let a second instance run just because the
+        // instance dir is unwritable. A lock we cannot open cannot be held
+        // exclusively, so the caller treats us as busy.
+        return false;
     }
 
     if (::flock(g_lockFd, LOCK_EX | LOCK_NB) == 0) {
@@ -102,9 +109,44 @@ bool SendShow() {
     }
 
     static const char kShow[] = "show\n";
-    ::write(fd, kShow, sizeof(kShow) - 1);
+    const ssize_t sent = ::write(fd, kShow, sizeof(kShow) - 1);
+    (void)sent;
     ::close(fd);
     return true;
+}
+
+bool SendSourceOverride(const std::string& payload) {
+    const std::string sockPath = GetSocketPath();
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+
+    struct sockaddr_un addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, sockPath.c_str(), sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    if (::connect(fd, reinterpret_cast<const struct sockaddr*>(&addr),
+                  sizeof(addr)) < 0) {
+        ::close(fd);
+        return false;
+    }
+
+    const std::string message = "source:" + payload + "\n";
+    const ssize_t sent = ::write(fd, message.data(), message.size());
+    (void)sent;
+    ::close(fd);
+    return true;
+}
+
+bool SendShowWithRetry(int maxAttempts, int delayMs) {
+    for (int attempt = 0; attempt < maxAttempts; ++attempt) {
+        if (SendShow()) return true;
+        if (attempt + 1 < maxAttempts) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+        }
+    }
+    return false;
 }
 
 bool SendKill() {
@@ -125,14 +167,63 @@ bool SendKill() {
     }
 
     static const char kKill[] = "kill\n";
-    ::write(fd, kKill, sizeof(kKill) - 1);
+    const ssize_t sent = ::write(fd, kKill, sizeof(kKill) - 1);
+    (void)sent;
     ::close(fd);
     return true;
 }
 
-void StartListening(void (*onCommand)(const std::string&)) {
+bool KillExistingAndReacquire(int maxAttempts, int delayMs) {
+    if (!SendKill()) {
+        // nothing was listening to kill try to acquire directly this
+        // covers a stale lock file left by a process that crashed
+        return TryAcquireLock();
+    }
+    for (int attempt = 0; attempt < maxAttempts; ++attempt) {
+        if (TryAcquireLock()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+    }
+    return false;
+}
+
+bool SendEffectiveSourcesRequest(std::string* outResponse) {
+    const std::string sockPath = GetSocketPath();
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+
+    struct sockaddr_un addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, sockPath.c_str(), sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    if (::connect(fd, reinterpret_cast<const struct sockaddr*>(&addr),
+                  sizeof(addr)) < 0) {
+        ::close(fd);
+        return false;
+    }
+
+    static const char kQuery[] = "effective-sources\n";
+    const ssize_t sent = ::write(fd, kQuery, sizeof(kQuery) - 1);
+    (void)sent;
+
+    std::string response;
+    char buf[256];
+    for (;;) {
+        const ssize_t n = ::read(fd, buf, sizeof(buf));
+        if (n <= 0) break;
+        response.append(buf, static_cast<size_t>(n));
+    }
+    ::close(fd);
+    if (outResponse) *outResponse = response;
+    return true;
+}
+
+void StartListening(void (*onCommand)(const std::string&),
+                    std::string (*onQuery)()) {
     if (g_running.load()) return;
     g_callback = onCommand;
+    g_queryProvider = onQuery;
 
     const std::string sockPath = GetSocketPath();
     ::unlink(sockPath.c_str()); // remove any stale socket file
@@ -206,7 +297,16 @@ void StartListening(void (*onCommand)(const std::string&)) {
                        (cmd.back() == '\n' || cmd.back() == '\r')) {
                     cmd.pop_back();
                 }
-                if (g_callback) g_callback(cmd);
+                if (cmd == "effective-sources" && g_queryProvider) {
+                    const std::string response = g_queryProvider();
+                    if (!response.empty()) {
+                        const ssize_t written = ::write(
+                            clientFd, response.data(), response.size());
+                        (void)written;
+                    }
+                } else if (g_callback) {
+                    g_callback(cmd);
+                }
             }
             ::close(clientFd);
         }
