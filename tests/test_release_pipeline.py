@@ -78,13 +78,13 @@ def test_reusable_workflows_declare_workflow_call(name):
 
 
 def test_release_workflow_requires_no_input():
-    _, triggers = load_workflow("release.yml")
+    _, triggers = load_workflow("release-all.yml")
     inputs = triggers["workflow_dispatch"].get("inputs", {})
     assert not any(spec.get("required") for spec in inputs.values())
 
 
 def test_release_workflow_calls_both_builds_then_notes():
-    doc, _ = load_workflow("release.yml")
+    doc, _ = load_workflow("release-all.yml")
     jobs = doc["jobs"]
     assert jobs["windows"]["uses"].endswith("build-windows.yml")
     assert jobs["linux"]["uses"].endswith("build-linux.yml")
