@@ -8,11 +8,11 @@
 
 New version format: `v1.YY.DDD-buildN` (for example `v1.26.76153-build7`). The old fixed version was `1.7.0`.
 
----
 
-# Highlights
 
-## Windows app
+## Highlights
+
+Windows app
 
 - The main window can no longer be resized.
 - Long source paths now show a full-path tooltip when you hover over them. The tooltip has no delay. It only shows when the path is cut off.
@@ -24,7 +24,7 @@ New version format: `v1.YY.DDD-buildN` (for example `v1.26.76153-build7`). The o
 - A very large file (over 2 GB) is now sent correctly to the player. Before, the file size could wrap around and break playback.
 - The "Debug log" no longer writes the control sizes of the Settings window. A new hidden flag does that now.
 
-## Linux app (GTK4)
+Linux app (GTK4)
 
 - New look that matches the Windows 10 dark style: custom title bar with minimize and close buttons, new colors, and the Selawik font.
 - The window now has a 16 px icon in the title bar. A new 16 px icon is installed for the desktop.
@@ -38,7 +38,7 @@ New version format: `v1.YY.DDD-buildN` (for example `v1.26.76153-build7`). The o
 - New package formats: **AppImage** and **Flatpak** (besides `.deb`).
 - A new `postinst` step for the `.deb` package.
 
-## Command line
+Command line
 
 - `--help` now prints a full, aligned help text with a usage line. The program name is correct for each platform.
 - New flag `--no-debug`: turns off debug logging for this run only. It does not change your saved config.
@@ -49,7 +49,7 @@ New version format: `v1.YY.DDD-buildN` (for example `v1.26.76153-build7`). The o
 - If a second app is started with `--source`, the first one switches to the new sources. You can read the current sources with `--print-effective-media-sources`. It now also works on Windows.
 - On Linux, the single-instance lock and socket are in `/tmp/com.github.dlna_server_14ag-<uid>/`. If the lock cannot be opened, a second app does not start (it fails closed).
 
-## Finding the server (discovery) and playing media
+### Finding the server (discovery) and playing media
 
 These changes make the server easier to find and more reliable for players.
 
@@ -70,7 +70,7 @@ These changes make the server easier to find and more reliable for players.
 - **Playlist subtitles and remote files** are handled in the same way on both platforms.
 - The server icon is read once and kept in memory.
 
-## Folders, scanning, and the library
+Folders, scanning, and the library
 
 - A rescan no longer makes media disappear while it runs. Old items stay playable until the scan finishes. Then only the items that are really gone are removed.
 - Stopping the server now stops all running scans.
@@ -83,7 +83,7 @@ These changes make the server easier to find and more reliable for players.
 ---
 
 
-## Crashes and data races
+Crashes and data races
 
 - An error inside a worker thread no longer ends the whole app. The thread pool and the Windows thread pool now catch and log errors.
 - Closing the app or using `--kill-server` while the server starts or stops no longer leaks memory or loses the result message.
@@ -95,7 +95,7 @@ These changes make the server easier to find and more reliable for players.
 - Messages received from another app (`WM_COPYDATA`) are checked for a valid size before use.
 - Number parsing is now strict. Wrong numbers no longer throw errors.
 
-## Memory and speed
+Memory and speed
 
 - The log file path is calculated once. The log file is written outside the main log lock, so one slow write cannot block all threads.
 - The IP address and settings caches have limits. They use batch removal where needed.
@@ -108,9 +108,9 @@ These changes make the server easier to find and more reliable for players.
 
 ---
 
-# Part 3: For developers and maintainers
+### For developers and maintainers
 
-## Build and release
+Build and release
 
 - One new identity file, `identity.env`, holds the app id, the reverse DNS prefix, and the product name. CMake builds `app_identity.h` from it.
 - New `scripts/version.py` creates the version. It no longer asks questions. It adds a build number when that version already exists in `output/`.
@@ -124,19 +124,19 @@ These changes make the server easier to find and more reliable for players.
 - `.gitattributes` forces LF line endings for the Linux and macOS launcher scripts.
 - Agent tool files moved or changed: `.opencode/opencode.json`, `.codex/config.toml`, `AGENTS.MD`, `UI/AGENT.md`.
 
-## Tests
+Tests
 
 - Tests use Python (`pytest`). `pytest.ini` has new platform markers. The test folder under `tmp/` is cleaned after each session.
 - Many new hidden `--print-*` flags let tests check logic without a GUI. They are split into `cli_print_hooks_win.cpp` and `cli_print_hooks_posix.cpp`. Examples: health check, close pending state, modal stack, SSDP search response, SSDP boot id, search cache budget, icon cache, interface policy.
 - `--dump-widget-geometry` (and the matching GTK flag) prints control positions and sizes for UI comparison.
 
-## Documentation
+Documentation
 
 - New: `docs/TESTING.md`, `docs/UI.md`, `docs/gtk4_windows10_ui_design_guide.md`, `docs/release-pipeline-white-box-report.md`.
 - Updated: `README.md`, `docs/BUILD.md`, `docs/ARCHITECTURE.md`, `docs/CONFIGURATION.md`, `docs/HTTP-SERVER.md`, `docs/specs.md`.
 - The README credits the B00merang-Project Windows 10 theme.
 - The font Selawik (SIL Open Font License) is now included.
 
-## Known risks (from the release report)
+Known risks (from the release report)
 
 - The hosted Linux build (AppImage, Flatpak, apt packages) still needs a real GitHub Actions run to confirm it works.

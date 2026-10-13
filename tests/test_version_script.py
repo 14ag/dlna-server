@@ -67,7 +67,7 @@ def test_default_version_has_no_patch_suffix_when_unused(tmp_path):
     assert result.stderr == ""
 
 
-def test_patch_increments_until_version_is_unused(tmp_path):
+def test_existing_version_uses_build_suffix(tmp_path):
     script = isolated_script(tmp_path)
     output = tmp_path / "output" / "linux"
     output.mkdir(parents=True)
@@ -76,10 +76,10 @@ def test_patch_increments_until_version_is_unused(tmp_path):
 
     result = run("--now", "2026-10-05T14:07", script=script)
     assert result.returncode == 0
-    assert result.stdout == f"v{MAJOR}.26.76152\n"
+    assert result.stdout == f"v{MAJOR}.26.7615-build2\n"
 
 
-def test_patch_increments_past_single_digits(tmp_path):
+def test_patch_number_collision_uses_build_suffix(tmp_path):
     script = isolated_script(tmp_path)
     output = tmp_path / "output" / "winx64"
     output.mkdir(parents=True)
@@ -89,7 +89,7 @@ def test_patch_increments_past_single_digits(tmp_path):
 
     result = run("--now", "2026-10-05T14:07", script=script)
     assert result.returncode == 0
-    assert result.stdout == f"v{MAJOR}.26.761510\n"
+    assert result.stdout == f"v{MAJOR}.26.7615-build2\n"
 
 
 def test_patch_from_environment(tmp_path):

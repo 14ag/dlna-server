@@ -40,40 +40,31 @@ def read_patch(cli_value):
     return raw
 
 
-def read_build(cli_value):
-    raw = cli_value
-    if raw is None:
-        raw = os.environ.get("DLNA_BUILD")
-    if raw is None or raw == "":
-        return None
-    if not re.fullmatch("[0-9]+", raw):
-        raise ValueError("build must be a non negative integer")
-    return raw
-
-
 def version_exists(version, output_dir):
     pattern = re.compile(r"(?<!\d)" + re.escape(version) + r"(?!\d)")
-    return any(pattern.search(path.name) for path in output_dir.rglob("*"))
+    return any(
+        path.is_file() and pattern.search(path.name)
+        for path in output_dir.rglob("*")
+    )
 
 
-def select_tag(patch, now, output_dir, build=None):
-    initial_patch = patch
-    tag = build_tag(initial_patch or "", now, build)
+def select_tag(patch, now, output_dir):
+    tag = build_tag(patch or "", now)
     if not version_exists(numeric_of(tag), output_dir):
         return tag
 
-    next_patch = int(initial_patch) + 1 if initial_patch is not None else 1
+    build = 2
     while True:
-        tag = build_tag(str(next_patch), now, build)
-        if not version_exists(numeric_of(tag), output_dir):
+        tag = build_tag(patch or "", now, str(build))
+        version_number = tag[1:] if tag.startswith("v") else tag
+        if not version_exists(version_number, output_dir):
             return tag
-        next_patch += 1
+        build += 1
 
 
 def main(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("--patch")
-    parser.add_argument("--build")
     parser.add_argument("--now")
     parser.add_argument("--numeric-of", dest="numeric_of")
     args = parser.parse_args(argv)
@@ -88,7 +79,6 @@ def main(argv):
 
     try:
         patch = read_patch(args.patch)
-        build = read_build(args.build)
     except ValueError as error:
         sys.stderr.write(str(error) + "\n")
         return 2
@@ -99,7 +89,7 @@ def main(argv):
         now = datetime.datetime.now()
     output_dir = Path(__file__).resolve().parent.parent / "output"
     try:
-        print(select_tag(patch, now, output_dir, build))
+        print(select_tag(patch, now, output_dir))
     except ValueError as error:
         sys.stderr.write(str(error) + "\n")
         return 2

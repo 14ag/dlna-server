@@ -23,14 +23,16 @@ jobs:
   notes:
     runs-on: ubuntu-latest
     env:
-      GH_TOKEN: ${{ github.token }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # GH_TOKEN: ${{ github.token }}
+      # GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       TAG: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - run: |
-          TAG="${TAG:-$(gh release view --json tagName --jq .tagName)}"
-          bash scripts/release-notes.sh "$TAG" > notes.md
-          gh release edit "$TAG" --notes-file notes.md
+          # TAG="${TAG:-$(gh release view --json tagName --jq .tagName)}"
+          # bash scripts/release-notes.sh "$TAG" > notes.md
+          # gh release edit "$TAG" --notes-file notes.md
+          gh release edit "$TAG" --notes-file CHANGELOG.md
+
