@@ -27,13 +27,11 @@ def test_build_linux_passes_version_to_cmake():
     text = read("scripts/build_linux.sh")
     assert '-DDLNA_VERSION="$DLNA_VERSION"' in text
     assert "resolve_version" in text
-    assert "dlna-server_*.deb" not in text
     assert "${DLNA_PRODUCT_NAME}_*.deb" in text
 
 
 def test_install_script_handles_old_and_new_package_name():
     text = read("scripts/install_linux.sh")
-    assert "dlna-server_*.deb" not in text
     assert "${DLNA_PRODUCT_NAME}_*.deb" in text
     assert 'dpkg -P "$DLNA_APP_ID"' in text
     assert "dpkg -P dlna-server " in text

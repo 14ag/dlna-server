@@ -35,6 +35,8 @@
 #include "access_keys.h"
 #include "access_keys_gtk_adapter.h"
 #include "app_identity.h"
+#include "startup_mode.h"
+#include "posix_daemonize.h"
 
 #include <gtk/gtk.h>
 #include <gio/gio.h>
@@ -184,6 +186,7 @@ int g_consecutiveUnhealthyPolls = 0;
 bool g_mainWindowWasUnminimized = false;
 // set when the display server destroyed the main window behind the app
 bool g_mainSurfaceLost = false;
+bool g_startHeadless = false;
 
 GtkWidget* g_sourceDialog = nullptr;
 GtkWidget* g_sourceEntry = nullptr;
@@ -221,6 +224,8 @@ ModalStack<GtkWindow*> g_modalStack;
 
 KeyboardCueState g_cueState;
 std::vector<wchar_t> g_toolbarMnemonics;
+int ToolbarButtonForAccessKey(guint keyval);
+bool TryHandleToolbarAccessKey(guint keyval, GdkModifierType modifiers);
 
 // Applies a Win32-style "&"-marked mnemonic label (produced by
 // InsertMnemonicMarker) to a GTK4 button, translating it to GTK's
@@ -252,10 +257,12 @@ void InstallMnemonicCueControllers(GtkWidget* window) {
     gtk_event_controller_set_propagation_phase(keyWatcher, GTK_PHASE_CAPTURE);
     gtk_widget_add_controller(window, keyWatcher);
     g_signal_connect(keyWatcher, "key-pressed",
-                     G_CALLBACK(+[](GtkEventController*, guint, guint, GdkModifierType, gpointer data) -> gboolean {
+                     G_CALLBACK(+[](GtkEventController*, guint keyval, guint, GdkModifierType modifiers, gpointer data) -> gboolean {
+        // use the state before this key so the revealing key never fires
+        const bool cuesWereVisible = !g_cueState.HideAccel();
         g_cueState.OnKeyboardInput();
         ApplyMnemonicsVisible(GTK_WINDOW(data));
-        return FALSE;
+        return cuesWereVisible && GTK_WIDGET(data) == g_mainWindow && TryHandleToolbarAccessKey(keyval, modifiers);
     }), window);
 
     GtkGesture* clickWatcher = gtk_gesture_click_new();
@@ -384,6 +391,7 @@ bool g_printSettingsReopen = false;
 bool g_printCloseWithContextMenuOpen = false;
 bool g_printCloseWhileStarting = false;
 bool g_printCloseWhileStartingFails = false;
+bool g_printToolbarAccessKeys = false;
 
 // Number of attempts and delay between attempts when the initial
 // stopped distro (microsoft/WSL#11958). Total worst-case wait is
@@ -423,6 +431,7 @@ void OnSourceFocusLeave(GtkEventControllerFocus*, gpointer);
 void OnSourceSelectionChanged(GtkListBox*, GtkListBoxRow*, gpointer);
 bool HasSourceSelection();
 void SaveSourcesFromList();
+bool AddSourcesIfNew(const std::vector<std::wstring>& paths);
 void ShowLogDialog(GtkWindow* parent);
 void ShowPlaylistEntryDialog(GtkWindow* parent);
 void PromptForMediaSource();
@@ -1171,24 +1180,8 @@ void PromptForMediaSource() {
     if (g_sourceDone) {
         const gchar* text = gtk_editable_get_text(GTK_EDITABLE(g_sourceEntry));
         if (text != nullptr && *text != '\0') {
-            const std::string selected = text;
-            bool duplicate = false;
-            GtkWidget* rowWidget = gtk_widget_get_first_child(g_sources);
-            while (rowWidget != nullptr) {
-                GtkWidget* rowChild = gtk_list_box_row_get_child(GTK_LIST_BOX_ROW(rowWidget));
-                if (GTK_IS_LABEL(rowChild)) {
-                    const gchar* rowText = gtk_label_get_text(GTK_LABEL(rowChild));
-                    if (rowText != nullptr && selected == rowText) {
-                        duplicate = true;
-                        break;
-                    }
-                }
-                rowWidget = gtk_widget_get_next_sibling(rowWidget);
-            }
-            if (!duplicate) {
-                gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(selected));
-                SaveSourcesFromList();
-            }
+            const std::wstring selected = TrimWide(Utf8ToWide(text));
+            if (!selected.empty()) AddSourcesIfNew({ selected });
         }
         g_sourceDone = false;
     }
@@ -1840,60 +1833,35 @@ void OnSourceFocusChanged(GtkEventControllerFocus*, gpointer) {
     gtk_widget_add_css_class(g_sourcesScrolled, "source-list-focused");
 }
 
-void OnSourceFocusLeave(GtkEventControllerFocus*, gpointer) {
-    // Determine whether the widget that just gained focus is the Delete
-    // button itself, mirroring the wParam check in mainwindow.cpp's
-    // ListBoxProc WM_KILLFOCUS handler
-    // (reinterpret_cast<HWND>(wParam) == pThis->m_hBtnDelete). GTK4 has
-    // no equivalent "which widget is about to gain focus" parameter on
-    // the "leave" signal, so this reads the root's current focus widget
-    // at the moment "leave" fires. This assumes GTK updates the root's
-    // focus widget before dispatching the losing widget's "leave"
-    // signal. VERIFY THIS EMPIRICALLY: select a source, click Delete,
-    // and confirm Delete's own "clicked" handler still runs and removes
-    // the source. If it does not, GTK is dispatching "leave" before the
-    // new focus is committed to the root; in that case move this same
-    // check into a GtkGestureClick "pressed" handler installed on
-    // g_removeButton with GTK_PHASE_CAPTURE, set a
-    // "delete button press in flight" bool there instead, and read that
-    // bool here instead of querying gtk_root_get_focus.
-    GtkRoot* root = gtk_widget_get_root(g_sources);
-    GtkWidget* newFocus = root ? gtk_root_get_focus(root) : nullptr;
-    const bool gainedFocusIsDeleteButton = (newFocus == g_removeButton);
-    g_sourceFocusState.OnListBoxLostFocus(gainedFocusIsDeleteButton);
-    if (!gainedFocusIsDeleteButton) {
-        gtk_list_box_unselect_all(GTK_LIST_BOX(g_sources));
-    }
-    gtk_widget_remove_css_class(g_sourcesScrolled, "source-list-focused");
+bool IsWidgetInside(GtkWidget* widget, GtkWidget* container) {
+    return widget != nullptr && container != nullptr &&
+           (widget == container || gtk_widget_is_ancestor(widget, container));
+}
+
+// single exit from the selected state
+// used by focus loss and by a click outside the list
+void ClearSourceSelection() {
+    g_sourceFocusState.OnListBoxLostFocus(false);
+    gtk_list_box_unselect_all(GTK_LIST_BOX(g_sources));
     RefreshDeleteButton();
+}
+
+void OnSourceFocusLeave(GtkEventControllerFocus*, gpointer) {
+    ClearSourceSelection();
+    gtk_widget_remove_css_class(g_sourcesScrolled, "source-list-focused");
 }
 
 void RefreshStatus() {
     if (g_mainWindow == nullptr) return;
-    gtk_label_set_text(GTK_LABEL(g_status), "");
-
-    if (g_state == ServerUiState::Starting) {
-        gtk_label_set_text(GTK_LABEL(g_status), "starting server...");
-    } else if (g_state == ServerUiState::Stopping) {
-        gtk_label_set_text(GTK_LABEL(g_status), "stopping server...");
-    } else if (g_state == ServerUiState::Running) {
-        std::string label;
-        if (AppConfig.HasRuntimeSourceOverride()) {
-            label = "temporary source";
-        } else {
-            label = (DLNAServer.IsInitialScanInProgress() || g_scanInProgress.load())
-                ? " scanning..."
-                : "Server running";
-        }
-        gtk_label_set_text(GTK_LABEL(g_status), label.c_str());
-    }
+    const bool scanBusy =
+        g_scanInProgress.load() ||
+        DLNAServer.IsInitialScanInProgress();
+    gtk_label_set_text(GTK_LABEL(g_status),
+        WideToUtf8(StatusTextFor(g_state, scanBusy, AppConfig.HasRuntimeSourceOverride())).c_str());
 
     const bool transition =
         g_state == ServerUiState::Starting ||
         g_state == ServerUiState::Stopping;
-    const bool scanBusy =
-        g_scanInProgress.load() ||
-        DLNAServer.IsInitialScanInProgress();
 
     gtk_widget_set_sensitive(
         g_startStopButton,
@@ -1945,6 +1913,7 @@ void RefreshSourceList() {
         gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(WideToUtf8(source.path)));
     }
     RefreshEmptyState();
+    RefreshDeleteButton();
 }
 
 void SaveSourcesFromList() {
@@ -1978,6 +1947,19 @@ void SaveSourcesFromList() {
     AppConfig.Save();
     BeginRescan();
     LogPrint(L"Saved %d media source(s).", static_cast<int>(savedCount));
+}
+
+// adds new paths to config then redraws and rescans once
+bool AddSourcesIfNew(const std::vector<std::wstring>& paths) {
+    bool any = false;
+    for (const auto& path : paths) {
+        any = AppConfig.AddMediaSourceIfNew(path) || any;
+    }
+    if (!any) return false;
+    AppConfig.Save();
+    RefreshSourceList();
+    BeginRescan();
+    return true;
 }
 
 bool IsBusy() {
@@ -2524,6 +2506,31 @@ void FocusToolbarIndex(int index) {
 // user left it (Win32 WS_GROUP semantics).
 int g_lastToolbarFocusIndex = 0;
 
+// index of the toolbar button owning this access key or minus 1
+int ToolbarButtonForAccessKey(guint keyval) {
+    const guint lowered = gdk_keyval_to_lower(keyval);
+    for (size_t i = 0; i < g_toolbarMnemonics.size(); ++i) {
+        if (g_toolbarMnemonics[i] == L'\0') continue;
+        if (lowered == gdk_unicode_to_keyval(static_cast<guint32>(towlower(g_toolbarMnemonics[i])))) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+// mirrors the windows bare access key rule in TryHandleAccessKeyChar
+bool TryHandleToolbarAccessKey(guint keyval, GdkModifierType modifiers) {
+    if ((modifiers & (GDK_CONTROL_MASK | GDK_ALT_MASK)) != 0) return false;
+    GtkRoot* root = gtk_widget_get_root(g_mainWindow);
+    GtkWidget* focused = root ? gtk_root_get_focus(root) : nullptr;
+    if (!IsWidgetInside(focused, g_sources) && ToolbarFocusIndex() < 0) return false;
+    GtkWidget* const buttons[] = { g_addButton, g_removeButton, g_startStopButton, g_settingsButton };
+    const int index = ToolbarButtonForAccessKey(keyval);
+    if (index < 0 || !gtk_widget_get_sensitive(buttons[index])) return false;
+    gtk_widget_activate(buttons[index]);
+    return true;
+}
+
 gboolean OnMainWindowKeyPressed(GtkEventControllerKey*, guint keyval, guint,
                                 GdkModifierType modifiers, gpointer) {
     switch (DecideFunctionKeyAction(keyval == GDK_KEY_F1 ? 0x70 : (keyval == GDK_KEY_F5 ? 0x74 : 0),
@@ -2620,6 +2627,8 @@ GtkWidget* fixed = gtk_fixed_new();
     gtk_fixed_put(GTK_FIXED(fixed), g_removeButton, 0, 0);
     gtk_widget_add_css_class(g_removeButton, "toolbar-button");
     g_signal_connect(g_removeButton, "clicked", G_CALLBACK(OnRemoveButtonClicked), nullptr);
+    // a click on delete must not pull focus off the list
+    gtk_widget_set_focus_on_click(g_removeButton, FALSE);
 
     g_startStopButton = gtk_button_new_with_label("Start");
     gtk_widget_set_size_request(g_startStopButton, UiTokensPosix::kStartStopButtonW, UiTokensPosix::kStartStopButtonH);
@@ -2695,7 +2704,7 @@ GtkWidget* fixed = gtk_fixed_new();
         if (ShouldAllowSourceDrop(IsBusy() || DLNAServer.IsRunning()) == false) return FALSE;
         if (!G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST)) return FALSE;
         GSList* files = static_cast<GSList*>(g_value_get_boxed(value));
-        bool addedAny = false;
+        std::vector<std::wstring> accepted;
         for (GSList* it = files; it != nullptr; it = it->next) {
             GFile* file = G_FILE(it->data);
             gchar* path = g_file_get_path(file);
@@ -2706,16 +2715,10 @@ GtkWidget* fixed = gtk_fixed_new();
             // the same supported extension list IsSupportedLocalMediaOrPlaylistPath
             // already implements on both platforms see dlna utils cpp
             if (IsSupportedLocalMediaOrPlaylistPath(widePath)) {
-                gtk_list_box_append(GTK_LIST_BOX(g_sources), BuildSourceRow(WideToUtf8(widePath)));
-                addedAny = true;
+                accepted.push_back(widePath);
             }
         }
-        if (addedAny) {
-            SaveSourcesFromList();
-            RefreshEmptyState();
-            RefreshDeleteButton();
-        }
-        return addedAny ? TRUE : FALSE;
+        return AddSourcesIfNew(accepted) ? TRUE : FALSE;
     }), nullptr);
     gtk_widget_add_controller(g_sources, GTK_EVENT_CONTROLLER(sourceDropTarget));
 
@@ -2763,6 +2766,17 @@ GtkWidget* fixed = gtk_fixed_new();
     gtk_widget_add_controller(window, mainKeys);
     g_signal_connect(mainKeys, "key-pressed", G_CALLBACK(OnMainWindowKeyPressed), nullptr);
 
+    GtkGesture* outsideClick = gtk_gesture_click_new();
+    gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(outsideClick), GTK_PHASE_CAPTURE);
+    gtk_widget_add_controller(window, GTK_EVENT_CONTROLLER(outsideClick));
+    g_signal_connect(outsideClick, "pressed",
+                     G_CALLBACK(+[](GtkGestureClick*, gint, gdouble x, gdouble y, gpointer) {
+        if (g_mainWindow == nullptr) return;
+        GtkWidget* target = gtk_widget_pick(g_mainWindow, x, y, GTK_PICK_DEFAULT);
+        if (IsWidgetInside(target, g_sourcesScrolled) || IsWidgetInside(target, g_removeButton)) return;
+        if (!g_sourceFocusState.IsNoFocus()) ClearSourceSelection();
+    }), nullptr);
+
     g_signal_connect(window, "close-request", G_CALLBACK(OnMainWindowCloseRequest), nullptr);
 
     LayoutMainWindow(UiTokensPosix::kMainWindowWidth, UiTokensPosix::kMainWindowHeight);
@@ -2772,6 +2786,11 @@ GtkWidget* fixed = gtk_fixed_new();
     g_timeout_add(250, OnPollTick, nullptr);
 
     gtk_window_unmaximize(GTK_WINDOW(window));
+    if (g_startHeadless) {
+        // no window until the tray or a second launch asks for it
+        StartServer();
+        return;
+    }
     gtk_window_present(GTK_WINDOW(window));
 }
 
@@ -2995,6 +3014,12 @@ void OnAppActivate(GtkApplication* app, gpointer) {
         g_sourceFocusState.OnListBoxLostFocus(/*gainedFocusIsDeleteButton=*/false);
         RefreshDeleteButton();
         std::printf("after-focus-elsewhere=%s\n", gtk_widget_get_sensitive(g_removeButton) ? "true" : "false");
+        std::printf("delete-focus-on-click=%s\n", gtk_widget_get_focus_on_click(g_removeButton) ? "true" : "false");
+        gtk_list_box_select_row(GTK_LIST_BOX(g_sources), GTK_LIST_BOX_ROW(row));
+        OnSourceSelectionChanged(GTK_LIST_BOX(g_sources), GTK_LIST_BOX_ROW(row), nullptr);
+        std::printf("after-reselect=%s\n", gtk_widget_get_sensitive(g_removeButton) ? "true" : "false");
+        ClearSourceSelection();
+        std::printf("after-clear-selection=%s\n", gtk_widget_get_sensitive(g_removeButton) ? "true" : "false");
 
         std::fflush(stdout);
         std::_Exit(0);
@@ -3038,6 +3063,13 @@ void OnAppActivate(GtkApplication* app, gpointer) {
             SetPendingResult(ServerUiState::Running, true, "");
         }
         return;
+    }
+    if (g_printToolbarAccessKeys) {
+        for (const char* probe : { "a", "d", "s", "e", "x" }) {
+            std::printf("%s=%d\n", probe, ToolbarButtonForAccessKey(gdk_unicode_to_keyval(static_cast<guint32>(probe[0]))));
+        }
+        std::fflush(stdout);
+        std::_Exit(0);
     }
     if (g_printStoppedCloseExit) {
         // Task 1: Close in the Stopped state must destroy the window and
@@ -3182,11 +3214,6 @@ int main(int argc, char** argv) {
         if (arg == "--kill-server" || arg == "-k") {
             killServer = true;
         } else if (arg == "--headless" || arg == "-h") {
-            // accepted for command line symmetry with the windows and posix
-            // non gui builds this binary has no headless versus windowed
-            // code path distinction of its own it always creates a window
-            // the flag only matters for whether a second launch is allowed
-            // to auto elevate itself see ShouldStartHeadless in startup mode h
             explicitHeadless = true;
         } else if (arg == "--port" && i + 1 < argc) {
             int port = 0;
@@ -3248,18 +3275,11 @@ int main(int argc, char** argv) {
         for (const auto& s : runtimeSources) overrideSources.push_back({s});
         AppConfig.SetRuntimeSourceOverride(overrideSources);
     }
-    (void)explicitHeadless; // reserved, this binary has no separate headless UI path
+    g_startHeadless = ShouldStartHeadless(explicitHeadless, !runtimeSources.empty());
 
-    // console echo is only ever turned on for the real foreground debug
-    // session every --print-* early return above this line already exited
-    // before reaching here so a test flag combined with --debug never
-    // gets echo turned on see IsTestOnlyFlag in cli_flags h task 8
     bool sawTestOnlyFlag = false;
     for (int i = 1; i < argc; ++i) {
         if (IsTestOnlyFlag(std::string(argv[i]))) { sawTestOnlyFlag = true; break; }
-    }
-    if (AppConfig.debugLog && !sawTestOnlyFlag) {
-        SetConsoleEchoEnabled(true);
     }
 
     // parse the hidden --dump-widget-geometry / --dump-log-dialog-reopen
@@ -3288,6 +3308,8 @@ int main(int argc, char** argv) {
             g_printCloseWhileStarting = true;
         } else if (arg == "--print-close-while-starting-fails") {
             g_printCloseWhileStartingFails = true;
+        } else if (arg == "--print-toolbar-access-keys") {
+            g_printToolbarAccessKeys = true;
         }
     }
 
@@ -3300,7 +3322,11 @@ int main(int argc, char** argv) {
     const bool anyTestHook = g_dumpGeometry || g_dumpLogDialogReopen || g_dumpMsgBoxParent ||
         g_printStoppedCloseExit || g_printDeleteFocusGating || g_printSettingsReopen ||
         g_printCloseWithContextMenuOpen || g_printPlaylistAddSensitivity ||
-        g_printCloseWhileStarting || g_printCloseWhileStartingFails;
+        g_printCloseWhileStarting || g_printCloseWhileStartingFails || g_printToolbarAccessKeys;
+    // the gui never holds the terminal
+    if (ShouldDetachToBackground(false, anyTestHook || sawTestOnlyFlag)) {
+        DetachToBackgroundOrPrintReady(nullptr);
+    }
     if (!anyTestHook) {
         if (!SingleInstance::TryAcquireLock()) {
             if (!sourcePayload.empty()) {

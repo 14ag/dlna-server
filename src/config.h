@@ -133,6 +133,20 @@ public:
         fn(*this);
     }
 
+    // true when path was new and is now in mediaSources
+    // caller saves and refreshes after a true result
+    bool AddMediaSourceIfNew(const std::wstring& path) {
+        bool added = false;
+        Mutate([&](Config& cfg) {
+            for (const auto& source : cfg.mediaSources) {
+                if (source.path == path) return;
+            }
+            cfg.mediaSources.push_back({path});
+            added = true;
+        });
+        return added;
+    }
+
     bool IsDebugLogEnabled() const;
     int GetPort() const;
     bool IsSortByTitleEnabled() const;

@@ -706,13 +706,40 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
             std::wcout << L"never-requested-pending=" << (neverRequested.IsPending() ? 1 : 0) << std::endl;
             exitCode = 0; return true;
         }
+        else if (arg == "--print-status-text" && i + 3 < argc) {
+            const int stateValue = std::atoi(argv[++i]);
+            const bool scanning = std::string(argv[++i]) == "1";
+            const bool temporary = std::string(argv[++i]) == "1";
+            std::cout << "[" << WideToUtf8(StatusTextFor(static_cast<ServerUiState>(stateValue), scanning, temporary)) << "]" << std::endl;
+            exitCode = 0; return true;
+        }
         else if (arg == "--print-should-join-worker-for-result" && i + 1 < argc) {
             int stateValue = std::atoi(argv[++i]);
             std::cout << (ShouldJoinWorkerForResult(static_cast<ServerUiState>(stateValue)) ? "1" : "0") << std::endl;
             exitCode = 0; return true;
         }
+        else if (arg == "--print-add-media-source-if-new") {
+            const std::wstring probe = L"/dlna-test-unique-source";
+            const bool first = AppConfig.AddMediaSourceIfNew(probe);
+            const bool second = AppConfig.AddMediaSourceIfNew(probe);
+            int matches = 0;
+            for (const auto& src : AppConfig.Snapshot().mediaSources) {
+                if (src.path == probe) ++matches;
+            }
+            std::cout << "first=" << (first ? 1 : 0) << std::endl;
+            std::cout << "second=" << (second ? 1 : 0) << std::endl;
+            std::cout << "matches=" << matches << std::endl;
+            exitCode = 0; return true;
+        }
         else if (arg == "--print-app-id") {
             std::cout << DLNA_APP_ID << std::endl;
+            exitCode = 0; return true;
+        }
+        else if (arg == "--print-detach-marker" && i + 1 < argc) {
+            const std::string markerPath = argv[++i];
+            DetachToBackgroundOrPrintReady(nullptr);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            std::ofstream(markerPath) << "child\n";
             exitCode = 0; return true;
         }
         else if (arg == "--print-config-path") {
@@ -856,6 +883,18 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
             DLNAServer.Stop();
             std::wcout << L"--after-stop--" << std::endl;
             for (auto& s : AppConfig.Snapshot().effectiveMediaSources) std::wcout << s.path << std::endl;
+            exitCode = 0; return true;
+        }
+        else if (arg == "--print-rescan-then-start-safety") {
+            DLNAServer.Rescan();
+            std::wstring reason;
+            const bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+            DLNAServer.Stop();
+            std::wcout << L"done" << std::endl;
             exitCode = 0; return true;
         }
         else if (arg == "--print-concurrent-start-rescan-safety") {

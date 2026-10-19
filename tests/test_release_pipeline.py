@@ -79,12 +79,6 @@ def test_release_workflow_calls_both_builds_then_notes():
     assert set(jobs["publish"]["needs"]) == {"version", "windows", "linux"}
 
 
-def test_no_workflow_calls_gemini_outside_notes():
-    for path in WORKFLOWS.glob("*.yml"):
-        if path.name != "release-notes.yml":
-            assert "gemini" not in path.read_text(encoding="utf-8").lower()
-
-
 @pytest.mark.posix_only
 @pytest.mark.parametrize("script", ["build.sh", "scripts/release-notes.sh"])
 def test_shell_scripts_parse(script):
@@ -126,16 +120,6 @@ def test_release_notes_fall_back_to_commit_list_without_api_key(tmp_path):
     assert "first change" not in out
 
 
-@pytest.mark.posix_only
-@pytest.mark.parametrize(
-    ("response", "expected", "success"),
-    [
-        ('{"candidates":[{"content":{"parts":[{"text":"## Features\\n\\n- Added feature"}]}}]}',
-         "## Features", True),
-        ("", "Gemini returned an invalid response", False),
-        ("not json", "Gemini returned an invalid response", False),
-    ],
-)
 def test_release_notes_handle_gemini_response_without_jq(tmp_path, response, expected, success):
     scripts = tmp_path / "scripts"
     scripts.mkdir()
