@@ -55,7 +55,7 @@ You can check it in `/mnt/wslg/weston.log`:
 
 When you click the Start Menu entry, WSLg runs the `Exec` line:
 
-- `Exec=env DLNA_SERVER_GTK_LAUNCHED=1 /usr/bin/dlna-server-gui`
+- `Exec=/usr/bin/dlna-server-gui`
 
 `/usr/bin/dlna-server-gui` is a small wrapper script.
 It starts the real binary `dlna-server-gui-bin`.

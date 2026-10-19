@@ -8,7 +8,7 @@ Type=Application
 Name=DLNA Server
 GenericName=DLNA media server
 Comment=Share local media with DLNA and UPnP clients
-Exec=env DLNA_SERVER_GTK_LAUNCHED=1 /usr/bin/dlna-server-gui
+Exec=/usr/bin/dlna-server-gui
 TryExec=/usr/bin/dlna-server-gui
 Icon=@DLNA_GTK_APP_ID@
 Terminal=false

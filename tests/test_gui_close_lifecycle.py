@@ -1,6 +1,7 @@
 import ctypes
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -181,22 +182,33 @@ def _send_close_request(env, window_id):
 
 
 @pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
-@pytest.mark.skipif(XVFB_RUN is None, reason="xvfb-run not installed")
-@pytest.mark.skipif(shutil.which("dbus-run-session") is None,
-                    reason="dbus-run-session not installed")
-def test_tray_registration_result_is_logged(tmp_path):
+@pytest.mark.skipif(shutil.which("dbus-daemon") is None,
+                    reason="dbus-daemon not installed")
+def test_tray_registration_result_is_logged(tmp_path, xvfb):
     """Task 7: the tray icon registration result must always be resolved and
     logged (registered or unavailable), never left silently unknown. Run
     under a session D-Bus with no StatusNotifierWatcher so the registration
     call deterministically fails and the unavailable path is exercised."""
     env = _isolated_env(tmp_path)
+    # the gui detaches so xvfb-run would kill its display at once a
+    # standalone Xvfb from the fixture keeps the display alive instead
+    env["DISPLAY"] = xvfb["DISPLAY"]
+    # the registration needs a live session bus without a tray host so
+    # run a private dbus daemon for the whole test dbus run session
+    # would tear its bus down as soon as the detaching launcher exits
+    bus = subprocess.Popen(
+        ["dbus-daemon", "--session", "--nopidfile", "--print-address"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    bus_address = bus.stdout.readline().strip()
+    assert bus_address, "private session dbus daemon never printed its address"
+    env["DBUS_SESSION_BUS_ADDRESS"] = bus_address
     config_dir = Path(env["XDG_CONFIG_HOME"]) / "dlna-server"
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "config.ini").write_text(
         "[Settings]\nDebugLog=1\n", encoding="utf-8")
 
     proc = spawn_wrapped_process(
-        ["dbus-run-session", "--", XVFB_RUN, "-a", str(GUI_BINARY)],
+        [str(GUI_BINARY)],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         deadline = time.time() + 15
@@ -215,25 +227,42 @@ def test_tray_registration_result_is_logged(tmp_path):
         )
     finally:
         kill_process_group(proc)
+        # the detached gui survives the process group kill stop it by socket
+        subprocess.run(
+            [str(GUI_BINARY), "--kill-server"],
+            env=env, capture_output=True, timeout=10,
+        )
+        os.kill(bus.pid, signal.SIGTERM)
 
 
 @pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
-@pytest.mark.skipif(XVFB_RUN is None, reason="xvfb-run not installed")
-@pytest.mark.skipif(shutil.which("dbus-run-session") is None,
-                    reason="dbus-run-session not installed")
-def test_no_tray_hint_is_logged_but_recovery_needs_no_tray(tmp_path):
+@pytest.mark.skipif(shutil.which("dbus-daemon") is None,
+                    reason="dbus-daemon not installed")
+def test_no_tray_hint_is_logged_but_recovery_needs_no_tray(tmp_path, xvfb):
     """Task 14: with no tray host present (StatusNotifierWatcher absent) the
     app logs a one-time, non-blocking hint that the window stays reachable by
     re-running the shortcut. This does not block startup and window recovery
     never waits on the tray (see OnSingleInstanceCommand)."""
     env = _isolated_env(tmp_path)
+    # the gui detaches so xvfb-run would kill its display at once a
+    # standalone Xvfb from the fixture keeps the display alive instead
+    env["DISPLAY"] = xvfb["DISPLAY"]
+    # the hint needs a live session bus without a tray host so run a
+    # private dbus daemon for the whole test dbus run session would tear
+    # its bus down as soon as the detaching launcher parent exits
+    bus = subprocess.Popen(
+        ["dbus-daemon", "--session", "--nopidfile", "--print-address"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    bus_address = bus.stdout.readline().strip()
+    assert bus_address, "private session dbus daemon never printed its address"
+    env["DBUS_SESSION_BUS_ADDRESS"] = bus_address
     config_dir = Path(env["XDG_CONFIG_HOME"]) / "dlna-server"
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "config.ini").write_text(
         "[Settings]\nDebugLog=1\n", encoding="utf-8")
 
     proc = spawn_wrapped_process(
-        ["dbus-run-session", "--", XVFB_RUN, "-a", str(GUI_BINARY)],
+        [str(GUI_BINARY)],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         deadline = time.time() + 15
@@ -250,18 +279,33 @@ def test_no_tray_hint_is_logged_but_recovery_needs_no_tray(tmp_path):
         )
     finally:
         kill_process_group(proc)
+        # the detached gui survives the process group kill stop it by socket
+        subprocess.run(
+            [str(GUI_BINARY), "--kill-server"],
+            env=env, capture_output=True, timeout=10,
+        )
+        os.kill(bus.pid, signal.SIGTERM)
 
 
 @pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
-@pytest.mark.skipif(XVFB_RUN is None, reason="xvfb-run not installed")
+@pytest.mark.skipif(shutil.which("dbus-daemon") is None,
+                    reason="dbus-daemon not installed")
 @pytest.mark.skipif(XDOTOOL is None, reason="xdotool not installed")
 def test_closing_window_before_start_does_not_abort(tmp_path, xvfb):
     env = _isolated_env(tmp_path)
     env["DISPLAY"] = xvfb["DISPLAY"]
+    # the gui detaches so dbus run session would tear its bus down at
+    # once a private dbus daemon keeps a live session bus instead
+    bus = subprocess.Popen(
+        ["dbus-daemon", "--session", "--nopidfile", "--print-address"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    bus_address = bus.stdout.readline().strip()
+    assert bus_address, "private session dbus daemon never printed its address"
+    env["DBUS_SESSION_BUS_ADDRESS"] = bus_address
     sock_path = _socket_path(env)
 
     proc = spawn_wrapped_process(
-        ["dbus-run-session", "--", str(GUI_BINARY)],
+        [str(GUI_BINARY)],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -301,6 +345,8 @@ def test_closing_window_before_start_does_not_abort(tmp_path, xvfb):
     except subprocess.TimeoutExpired:
         kill_process_group(proc)
         pytest.fail("gui process did not exit after a window close request")
+    finally:
+        os.kill(bus.pid, signal.SIGTERM)
 
     if proc.returncode != 0:
         if "BadDrawable" in stderr and "terminate called" not in stderr and "Aborted" not in stderr:
@@ -315,16 +361,25 @@ def test_closing_window_before_start_does_not_abort(tmp_path, xvfb):
 
 
 @pytest.mark.skipif(GUI_BINARY is None, reason=_SKIP_REASON)
-@pytest.mark.skipif(XVFB_RUN is None, reason="xvfb-run not installed")
+@pytest.mark.skipif(shutil.which("dbus-daemon") is None,
+                    reason="dbus-daemon not installed")
 @pytest.mark.skipif(XDOTOOL is None, reason="xdotool not installed")
 @pytest.mark.needs_wm
 def test_second_launch_restores_minimized_window(tmp_path, xvfb):
     env = _isolated_env(tmp_path)
     env["DISPLAY"] = xvfb["DISPLAY"]
+    # the gui detaches so dbus run session would tear its bus down at
+    # once a private dbus daemon keeps a live session bus instead
+    bus = subprocess.Popen(
+        ["dbus-daemon", "--session", "--nopidfile", "--print-address"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    bus_address = bus.stdout.readline().strip()
+    assert bus_address, "private session dbus daemon never printed its address"
+    env["DBUS_SESSION_BUS_ADDRESS"] = bus_address
     sock_path = _socket_path(env)
 
     first = spawn_wrapped_process(
-        ["dbus-run-session", "--", str(GUI_BINARY)],
+        [str(GUI_BINARY)],
         env=env)
     try:
         assert _wait_for(lambda: sock_path.exists(), 15)
@@ -338,7 +393,7 @@ def test_second_launch_restores_minimized_window(tmp_path, xvfb):
             )
 
             second = subprocess.run(
-                ["dbus-run-session", "--", str(GUI_BINARY)],
+                [str(GUI_BINARY)],
                 env=env,
                 timeout=15,
             )
@@ -358,3 +413,9 @@ def test_second_launch_restores_minimized_window(tmp_path, xvfb):
             )
     finally:
         kill_process_group(first)
+        # the detached gui survives the process group kill stop it by socket
+        subprocess.run(
+            [str(GUI_BINARY), "--kill-server"],
+            env=env, capture_output=True, timeout=10,
+        )
+        os.kill(bus.pid, signal.SIGTERM)

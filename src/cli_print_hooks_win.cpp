@@ -495,9 +495,29 @@ bool TryRunPrintHook(int argc, wchar_t** argv, int& exitCode) {
         std::cout << kSearchResponseSendCount << std::endl;
         exitCode = 0;
         return true;
+    } else if (wcscmp(argv[i], L"--print-status-text") == 0 && i + 3 < argc) {
+        const int stateValue = _wtoi(argv[++i]);
+        const bool scanning = wcscmp(argv[++i], L"1") == 0;
+        const bool temporary = wcscmp(argv[++i], L"1") == 0;
+        std::wcout << L"[" << StatusTextFor(static_cast<ServerUiState>(stateValue), scanning, temporary) << L"]" << std::endl;
+        exitCode = 0;
+        return true;
     } else if (wcscmp(argv[i], L"--print-should-join-worker-for-result") == 0 && i + 1 < argc) {
         int stateValue = _wtoi(argv[++i]);
         std::cout << (ShouldJoinWorkerForResult(static_cast<ServerUiState>(stateValue)) ? "1" : "0") << std::endl;
+        exitCode = 0;
+        return true;
+    } else if (wcscmp(argv[i], L"--print-add-media-source-if-new") == 0) {
+        const std::wstring probe = L"/dlna-test-unique-source";
+        const bool first = AppConfig.AddMediaSourceIfNew(probe);
+        const bool second = AppConfig.AddMediaSourceIfNew(probe);
+        int matches = 0;
+        for (const auto& src : AppConfig.Snapshot().mediaSources) {
+            if (src.path == probe) ++matches;
+        }
+        std::cout << "first=" << (first ? 1 : 0) << std::endl;
+        std::cout << "second=" << (second ? 1 : 0) << std::endl;
+        std::cout << "matches=" << matches << std::endl;
         exitCode = 0;
         return true;
     } else if (wcscmp(argv[i], L"--print-app-id") == 0) {
@@ -619,6 +639,18 @@ bool TryRunPrintHook(int argc, wchar_t** argv, int& exitCode) {
         DLNAServer.Stop();
         std::wcout << L"--after-stop--" << std::endl;
         for (auto& s : AppConfig.Snapshot().effectiveMediaSources) std::wcout << s.path << std::endl;
+        exitCode = 0;
+        return true;
+    } else if (wcscmp(argv[i], L"--print-rescan-then-start-safety") == 0) {
+        DLNAServer.Rescan();
+        std::wstring reason;
+        const bool startOk = DLNAServer.Start(reason);
+        while (DLNAServer.IsInitialScanInProgress()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        std::wcout << L"start-ok=" << (startOk ? L"1" : L"0") << std::endl;
+        DLNAServer.Stop();
+        std::wcout << L"done" << std::endl;
         exitCode = 0;
         return true;
     } else if (wcscmp(argv[i], L"--print-concurrent-start-rescan-safety") == 0) {

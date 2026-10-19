@@ -227,8 +227,12 @@ bool Server::Rescan() {
     } else {
         AppMedia.Scan();
     }
-    StopDirectoryWatcher();
-    StartDirectoryWatcher();
+    // watcher belongs to a running server only
+    // Start owns the first watcher start
+    if (m_running.load(std::memory_order_acquire)) {
+        StopDirectoryWatcher();
+        StartDirectoryWatcher();
+    }
     return true;
 }
 

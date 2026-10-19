@@ -1039,17 +1039,7 @@ void MainWindow::DrawToolbarButton(const DRAWITEMSTRUCT* drawItem) {
 }
 
 bool MainWindow::AddMediaSourceIfNew(const std::wstring& path) {
-    bool alreadyPresent = false;
-    AppConfig.Mutate([&path, &alreadyPresent](Config& cfg) {
-        for (const auto& source : cfg.mediaSources) {
-            if (source.path == path) {
-                alreadyPresent = true;
-                return;
-            }
-        }
-        cfg.mediaSources.push_back({path});
-    });
-    if (alreadyPresent) {
+    if (!AppConfig.AddMediaSourceIfNew(path)) {
         return false;
     }
     AppConfig.Save();
@@ -1228,16 +1218,9 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         hOldFont = SelectObject(hdc, m_hBodyFont ? m_hBodyFont : GetStockObject(DEFAULT_GUI_FONT));
 
         RECT rcStatusText = { UiTokens::kGutter, UiTokens::kToolbarHeight, rcClient.right - UiTokens::kGutter, UiTokens::kToolbarHeight + UiTokens::kStatusHeight };
-        std::wstring statusText;
-        if (m_scanningStatusActive || (IsRunning() && DLNAServer.IsInitialScanInProgress())) {
-            statusText = L"scanning...";
-        } else if (m_state == ServerUiState::Starting) {
-            statusText = L"starting server...";
-        } else if (m_state == ServerUiState::Stopping) {
-            statusText = L"stopping server...";
-        } else if (m_state == ServerUiState::Running) {
-            statusText = AppConfig.HasRuntimeSourceOverride() ? L"temporary source" : L"Server running";
-        }
+        const std::wstring statusText = StatusTextFor(m_state,
+            m_scanningStatusActive || (IsRunning() && DLNAServer.IsInitialScanInProgress()),
+            AppConfig.HasRuntimeSourceOverride());
         DrawTextW(hdc, statusText.c_str(), -1, &rcStatusText, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
         if (SendMessage(m_hListSources, LB_GETCOUNT, 0, 0) == 0) {
