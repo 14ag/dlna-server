@@ -64,7 +64,7 @@ private:
     int m_fd;
 };
 
-int CreateListenSocket(int family, int port) {
+int CreateListenSocket(int family, int port, bool loopback) {
     int fd = socket(family, SOCK_STREAM, 0);
     if (fd < 0) return -1;
     int yes = 1;
@@ -77,13 +77,14 @@ int CreateListenSocket(int family, int port) {
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(static_cast<uint16_t>(port));
-        addr.sin_addr.s_addr = INADDR_ANY;
+        // bind loopback only in localhost mode so the claimed access restriction is real
+        addr.sin_addr.s_addr = loopback ? htonl(INADDR_LOOPBACK) : INADDR_ANY;
         if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) { close(fd); return -1; }
     } else {
         sockaddr_in6 addr{};
         addr.sin6_family = AF_INET6;
         addr.sin6_port = htons(static_cast<uint16_t>(port));
-        addr.sin6_addr = in6addr_any;
+        addr.sin6_addr = loopback ? in6addr_loopback : in6addr_any;
         if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) { close(fd); return -1; }
     }
     if (listen(fd, SOMAXCONN) != 0) { close(fd); return -1; }
@@ -238,7 +239,7 @@ HttpServer::HttpServer() : m_running(false), m_listenSocketV4(-1), m_listenSocke
     }
 }
 
-bool HttpServer::Start(int port) {
+bool HttpServer::Start(int port, bool localhostOnly) {
     bool expectedIdle = false;
     if (!m_lifecycleBusy.compare_exchange_strong(expectedIdle, true, std::memory_order_acq_rel)) {
         LogPrint(L"HTTP server Start rejected: a Start or Stop call is already in progress.");
@@ -258,8 +259,8 @@ bool HttpServer::Start(int port) {
             fcntl(m_wakeupReadFd, F_SETFL, fcntl(m_wakeupReadFd, F_GETFL) | O_NONBLOCK);
         }
     }
-    m_listenSocketV4 = CreateListenSocket(AF_INET, port);
-    m_listenSocketV6 = CreateListenSocket(AF_INET6, port);
+    m_listenSocketV4 = CreateListenSocket(AF_INET, port, localhostOnly);
+    m_listenSocketV6 = CreateListenSocket(AF_INET6, port, localhostOnly);
     if (m_listenSocketV4 < 0 && m_listenSocketV6 < 0) return false;
     m_clientPool = std::make_unique<BoundedThreadPool>(kMaxClientThreads, kMaxClientThreads);
     m_running = true;

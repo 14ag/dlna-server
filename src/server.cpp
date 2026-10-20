@@ -142,7 +142,7 @@ bool Server::Start(std::wstring& outReason) {
         m_initialScanInProgress.store(true, std::memory_order_release);
     }
 
-    if (!HttpServer::Get().Start(cfg.port)) {
+    if (!HttpServer::Get().Start(cfg.port, startMode == NetworkMode::Localhost)) {
         LogPrint(L"Failed to start HTTP server.");
         outReason = L"Failed to start HTTP server on port " + std::to_wstring(cfg.port);
         m_initialScanInProgress.store(false, std::memory_order_release);

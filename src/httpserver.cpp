@@ -138,7 +138,7 @@ struct WorkData {
 };
 
 namespace {
-SOCKET CreateListenSocket(int family, int port) {
+SOCKET CreateListenSocket(int family, int port, bool loopback) {
     SOCKET listenSocket = socket(family, SOCK_STREAM, IPPROTO_TCP);
     if (listenSocket == INVALID_SOCKET) {
         LogPrint(L"HTTP listen socket creation failed family=%d err=%d", family, WSAGetLastError());
@@ -161,7 +161,8 @@ SOCKET CreateListenSocket(int family, int port) {
         sockaddr_in addr = {};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(static_cast<u_short>(port));
-        addr.sin_addr.s_addr = INADDR_ANY;
+        // bind loopback only in localhost mode so the claimed access restriction is real
+        addr.sin_addr.s_addr = loopback ? htonl(INADDR_LOOPBACK) : INADDR_ANY;
 
         if (bind(listenSocket, reinterpret_cast<SOCKADDR*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
             LogPrint(L"HTTP listen bind failed family=%d port=%d err=%d", family, port, WSAGetLastError());
@@ -172,7 +173,7 @@ SOCKET CreateListenSocket(int family, int port) {
         sockaddr_in6 addr6 = {};
         addr6.sin6_family = AF_INET6;
         addr6.sin6_port = htons(static_cast<u_short>(port));
-        addr6.sin6_addr = in6addr_any;
+        addr6.sin6_addr = loopback ? in6addr_loopback : in6addr_any;
 
         if (bind(listenSocket, reinterpret_cast<SOCKADDR*>(&addr6), sizeof(addr6)) == SOCKET_ERROR) {
             LogPrint(L"HTTP listen bind failed family=%d port=%d err=%d", family, port, WSAGetLastError());
@@ -205,7 +206,7 @@ HttpServer::HttpServer()
       m_cleanupGroup(NULL) {
 }
 
-bool HttpServer::Start(int port) {
+bool HttpServer::Start(int port, bool localhostOnly) {
     bool expectedIdle = false;
     if (!m_lifecycleBusy.compare_exchange_strong(expectedIdle, true, std::memory_order_acq_rel)) {
         LogPrint(L"HTTP server Start rejected: a Start or Stop call is already in progress.");
@@ -218,8 +219,8 @@ bool HttpServer::Start(int port) {
 
     if (m_running.load()) return true;
 
-    m_listenSocketV4 = CreateListenSocket(AF_INET, port);
-    m_listenSocketV6 = CreateListenSocket(AF_INET6, port);
+    m_listenSocketV4 = CreateListenSocket(AF_INET, port, localhostOnly);
+    m_listenSocketV6 = CreateListenSocket(AF_INET6, port, localhostOnly);
 
     if (m_listenSocketV4 == INVALID_SOCKET && m_listenSocketV6 == INVALID_SOCKET) {
         LogPrint(L"HTTP server failed to bind on both address families for port %d", port);
