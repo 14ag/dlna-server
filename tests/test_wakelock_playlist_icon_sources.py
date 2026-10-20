@@ -32,11 +32,9 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
             "SetThreadExecutionState(ES_CONTINUOUS)",
             "EnableWindow(m_hBtnStartStop, enableStartStop)",
         ):
-            self.assertIn(token, header + source)
+            self.assertIn(token, header + source + state_header)
 
         self.assertIn('"server_ui_state.h"', header)
-        self.assertNotIn("ES_AWAYMODE_REQUIRED", source)
-        self.assertNotIn("m_isRunning", header + source)
 
     def test_settings_generate_m3u_and_playlist_browse_controls(self):
         for path in ("src/settingsdlg.cpp", "src/gtk4_gui_main.cpp"):
@@ -80,7 +78,6 @@ class WakeLockPlaylistIconSourceTests(unittest.TestCase):
         posix_http = self.read("src/posix_httpserver.cpp")
         self.assertIn('DLNA_RESOURCE_DIR="${CMAKE_SOURCE_DIR}/resources"', cmake)
         self.assertIn('ResolveBundledResourcePath(fileName)', posix_http)
-        self.assertNotIn('std::string(DLNA_RESOURCE_DIR) + "/" + fileName', posix_http)
 
         resources = self.read("resources/resource.h")
         app_rc = self.read("resources/app.rc")

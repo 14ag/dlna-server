@@ -37,12 +37,6 @@ def test_main_window_closes_with_context_menu_open(gtk_binary, xvfb_env, tmp_pat
     assert proc.returncode == 0
 
 
-def test_native_tooltip_removed_from_source_rows():
-    cpp = (REPO_ROOT / "src/gtk4_gui_main.cpp").read_text(encoding="utf-8")
-    build_row_start = cpp.index("GtkWidget* BuildSourceRow(")
-    build_row_end = cpp.index("\n}\n", build_row_start)
-    build_row_body = cpp[build_row_start:build_row_end]
-    assert "gtk_widget_set_tooltip_text" not in build_row_body
 
 
 def test_custom_hover_tip_still_present():

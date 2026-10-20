@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+    steps:
+      - uses: actions/checkout@v5
+      - run: New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('scripts/build-windows.ps1') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+      - run: .\build.bat --x64
+      - run: python -m pip install pytest
+      - run: python -m pytest tests/test_vlc_discovery_browse.py
+
+  linux:
+    # Matches build-linux.yml: 22.04 keeps the GTK4 6 baseline and older glibc.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: bash build.sh
+      - run: python3 -m pip install pytest
+      - run: python3 -m pytest tests/test_vlc_discovery_browse.py

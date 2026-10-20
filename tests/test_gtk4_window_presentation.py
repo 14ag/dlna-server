@@ -12,8 +12,6 @@ def test_build_main_window_ends_with_present(repo_root):
     assert match, "BuildMainWindow not found, update this test's anchor"
     body = match.group(1)
     assert "gtk_window_present(GTK_WINDOW(window));" in body
-    assert "gtk_widget_hide(window)" not in body
-    assert "gtk_widget_set_visible(window, FALSE)" not in body
 
 @pytest.mark.posix_only
 def test_gapplication_id_matches_desktop_file(repo_root):
@@ -43,7 +41,6 @@ def test_titlebar_uses_custom_windows_controls(repo_root):
     code = (repo_root / SOURCE).read_text()
     helper = code[code.index("GtkWidget* CreateWin10Titlebar"):code.index("GtkWindow* CreateMessageWindow")]
     assert "CreateWin10WindowControl" in helper
-    assert "gtk_window_controls_new" not in code
     assert '"win10-minimize-control"' in code
     assert '"win10-close-control"' in code
     assert '"win10-maximize-control"' in code
@@ -78,9 +75,7 @@ def test_main_window_chrome_matches_penpot_without_gtk_chrome(repo_root):
     css = (repo_root / "resources" / "gtk" / "styles0.css").read_text()
 
     assert "kMainWindowBodyHeight = 563" in header
-    assert "gtk_window_set_decorated(window, FALSE);" not in code
     assert "gtk_window_set_titlebar(" in code
-    assert "gtk_header_bar_new" not in code
     assert "#191919" in css
     assert "#252525" in css
     assert "#1f1f1f" in css

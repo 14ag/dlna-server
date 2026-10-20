@@ -132,17 +132,21 @@ def pytest_sessionfinish(session, exitstatus):
         pass
 
 
-def _has_window_manager():
+_WINDOW_MANAGERS = (
+    "openbox", "matchbox-window-manager", "mutter", "metacity",
+    "xfwm4", "kwin_x11", "icewm", "fluxbox", "compiz",
+)
+
+
+def _window_manager():
     # Minimizing windows and querying the active window need a window
     # manager; bare Xvfb provides none. No WM binary installed means the
     # needs_wm tests cannot run in this environment.
-    return any(
-        shutil.which(wm) is not None
-        for wm in (
-            "openbox", "matchbox-window-manager", "mutter", "metacity",
-            "xfwm4", "kwin_x11", "icewm", "fluxbox", "compiz",
-        )
-    )
+    return next((wm for wm in _WINDOW_MANAGERS if shutil.which(wm)), None)
+
+
+def _has_window_manager():
+    return _window_manager() is not None
 
 
 def pytest_collection_modifyitems(config, items):
@@ -164,7 +168,10 @@ def pytest_collection_modifyitems(config, items):
         remaining.append(item)
     if deselected:
         config.hook.pytest_deselected(items=deselected)
-        items[:] = remaining
+    target = [i for i in remaining if Path(i.path).name == "test_vlc_discovery_browse.py"]
+    if target:
+        remaining = target + [i for i in remaining if i not in target]
+    items[:] = remaining
 
 
 class ServerClient:
@@ -542,6 +549,25 @@ def xvfb():
         except subprocess.TimeoutExpired:
              proc.kill()
              proc.wait(timeout=3)
+
+
+@pytest.fixture
+def window_manager(xvfb):
+    """Run a window manager on the private Xvfb display."""
+    wm = _window_manager()
+    if wm is None:
+        pytest.skip("window manager not installed")
+    proc = subprocess.Popen([wm], env=xvfb, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(1)
+        yield xvfb
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
 
 
 @pytest.fixture

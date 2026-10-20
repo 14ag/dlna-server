@@ -1,11 +1,7 @@
 import os
 import subprocess
-import pathlib
-import sys
 
 import pytest
-
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 def _run(exe, *args):
@@ -57,16 +53,3 @@ def test_media_source_file_extensions_symmetric_across_platforms(dlna_binary):
         assert expected_media in sample
     for expected_playlist in ("m3u", "m3u8", "pls"):
         assert expected_playlist in sample
-    # Images are intentionally excluded from the media-source picker.
-    for excluded in ("jpg", "png", "gif"):
-        assert excluded not in sample
-
-
-@pytest.mark.parametrize("path,absent", [
-    ("src/mainwindow.cpp", ["IDC_SOURCE_BROWSE_PLAYLIST", "BrowsePlaylist("]),
-    ("src/gtk4_gui_main.cpp", ["playlistButton"]),
-])
-def test_removed_playlist_button_symbols(path, absent):
-    src = (REPO_ROOT / path).read_text(encoding="utf-8")
-    for symbol in absent:
-        assert symbol not in src

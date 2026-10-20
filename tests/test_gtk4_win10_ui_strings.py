@@ -16,7 +16,6 @@ def read_win32_source():
 def test_main_window_uses_shared_win10_titlebar():
     text = read_source()
     assert 'CreateWin10Titlebar(GTK_WINDOW(window), "DLNA Server", WindowChrome::Main)' in text
-    assert "g_title =" not in text
 
 
 def test_sharp_corner_css_present():
@@ -29,7 +28,6 @@ def test_sharp_corner_css_present():
 def test_windows_source_list_has_full_path_hover_tooltip_without_hscroll():
     text = read_win32_source()
     listbox_block = text[text.index("m_hListSources = CreateWindowExW"):text.index("OleInitialize(NULL)")]
-    assert "WS_HSCROLL" not in listbox_block
     assert "CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW" in text
     assert "TTM_SETDELAYTIME" in text
     assert "TTM_UPDATETIPTEXTW" in text

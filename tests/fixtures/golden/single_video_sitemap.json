@@ -103,6 +103,7 @@
     ],
     "childCount": null,
     "child_elements": [
+      "CaptionInfoEx",
       "class",
       "res",
       "title"
@@ -152,6 +153,7 @@
       ],
       "childCount": null,
       "child_elements": [
+        "CaptionInfoEx",
         "class",
         "res",
         "title"

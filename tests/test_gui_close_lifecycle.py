@@ -318,9 +318,21 @@ def test_closing_window_before_start_does_not_abort(tmp_path, xvfb):
 @pytest.mark.skipif(XVFB_RUN is None, reason="xvfb-run not installed")
 @pytest.mark.skipif(XDOTOOL is None, reason="xdotool not installed")
 @pytest.mark.needs_wm
-def test_second_launch_restores_minimized_window(tmp_path, xvfb):
+def test_second_launch_restores_minimized_window(tmp_path, window_manager):
     env = _isolated_env(tmp_path)
+<<<<<<< HEAD
     env["DISPLAY"] = xvfb["DISPLAY"]
+=======
+    env["DISPLAY"] = window_manager["DISPLAY"]
+    # the gui detaches so dbus run session would tear its bus down at
+    # once a private dbus daemon keeps a live session bus instead
+    bus = subprocess.Popen(
+        ["dbus-daemon", "--session", "--nopidfile", "--print-address"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    bus_address = bus.stdout.readline().strip()
+    assert bus_address, "private session dbus daemon never printed its address"
+    env["DBUS_SESSION_BUS_ADDRESS"] = bus_address
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
     sock_path = _socket_path(env)
 
     first = spawn_wrapped_process(

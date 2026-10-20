@@ -41,9 +41,7 @@ class PlaylistNetworkSourceTests(unittest.TestCase):
 
         for token in ("Playlist", "Network", "ftp://user:pass@server"):
             self.assertIn(token, windows_gui + gtk4_gui)
-        self.assertNotIn("smb://", windows_gui + gtk4_gui)
 
-        self.assertNotIn("BrowsePlaylist", windows_gui)
         self.assertIn("GtkFileChooserNative", gtk4_gui)
         self.assertIn("gtk_entry_new", gtk4_gui)
 

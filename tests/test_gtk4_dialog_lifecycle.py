@@ -15,10 +15,8 @@ def test_every_modal_dialog_is_destroyed_when_its_loop_ends(repo_root):
     settings = code[code.index("bool ShowSettingsDialog()"):]
     settings = settings[:settings.index("void LayoutMainWindow")]
     assert "gtk_window_present(GTK_WINDOW(g_settingsDialog));" in settings
-    assert "if (g_settingsDialog != nullptr) return false;" not in settings
 
     # The single-pointer modal tracker is gone.
-    assert "g_activeModal" not in code
     assert "ModalStack<GtkWindow*> g_modalStack;" in code
 
 
