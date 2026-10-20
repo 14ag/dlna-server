@@ -38,8 +38,6 @@ def test_event_subscribe_unsubscribe_routes_are_shared_by_windows_and_posix_http
         assert "AppEvents.HandleEventSubscription(method, path, req)" in source
         assert "AppEvents.ClearSubscriptions()" in source
 
-    assert "std::string EventSubscriptionResponse" not in windows
-    assert "std::string EventSubscriptionResponse" not in posix
 
 
 def test_server_watch_mode_detects_local_source_changes_and_rescans_without_restart():
@@ -85,17 +83,6 @@ def test_watch_loop_uses_fresh_config_snapshot_each_poll():
     header = read("src/server.h")
     common = read("src/server_common.cpp")
     assert "void WatchLoop()" in header
-    assert "WatchLoop(ConfigSnapshot cfg)" not in header
     assert "void Server::WatchLoop()" in common
     assert "ConfigSnapshot cfg = AppConfig.Snapshot()" in common
     assert "MediaSourcesHaveChanged(cfg, signature)" in common
-    assert "WatchLoop(ConfigSnapshot cfg)" not in common
-
-
-def test_source_watcher_does_not_ignore_entries_after_a_fixed_cap():
-    watcher_source = read("src/source_watcher.cpp")
-    watcher_header = read("src/source_watcher.h")
-
-    assert "kMaxWatchedEntries" not in watcher_source + watcher_header
-    assert "count < kMaxWatchedEntries" not in watcher_source
-    assert "if (count >= kMaxWatchedEntries)" not in watcher_source

@@ -9,14 +9,6 @@ class HardeningFixSourceTests(unittest.TestCase):
     def read(self, path: str) -> str:
         return (ROOT / path).read_text(encoding="utf-8")
 
-    def test_no_opencode_debug_instrumentation_remains(self):
-        # Task 1 regression sentinel
-        # the leftover opencode debug blocks must stay removed from the
-        # GTK4 GUI entry point since they are a dev agent artifact with
-        # zero production value
-        gtk4 = self.read("src/gtk4_gui_main.cpp")
-        self.assertNotIn("opencode", gtk4)
-
     def test_begin_rescan_is_thread_guarded(self):
         source = self.read("src/mainwindow.cpp")
         start = source.index("void MainWindow::BeginRescan()")

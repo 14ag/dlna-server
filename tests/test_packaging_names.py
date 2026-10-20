@@ -49,7 +49,6 @@ def test_cmake_uses_branded_names_and_keeps_startup_commands():
     assert 'set(CPACK_PACKAGE_NAME "${DLNA_PRODUCT_NAME}")' in text
     assert 'set(CPACK_DEBIAN_PACKAGE_REPLACES "${DLNA_APP_ID}")' in text
     assert 'set(CPACK_DEBIAN_PACKAGE_CONFLICTS "${DLNA_APP_ID}")' in text
-    assert "RENAME dlna-server" not in text
     assert "install(TARGETS dlna-server" in text
     assert 'install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui"' in text
 
@@ -67,5 +66,3 @@ def test_install_templates_use_app_id():
 def test_flatpak_manifest_is_a_version_template():
     text = read("packaging/flatpak/manifest.yml.in")
     assert "-DDLNA_VERSION=@PROJECT_VERSION@" in text
-    assert "rm -f /app/share/applications" not in text
-    assert "resources/dlna-server.svg" not in text

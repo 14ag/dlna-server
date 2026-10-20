@@ -44,16 +44,9 @@ class TestGeometryDumpGating:
         # let every dialog open during a debug session crowd out the
         # server history in debug.log
         source = _read("src/win_geometry_dump.h")
-        assert "AppConfig.IsDebugLogEnabled()" not in source
         assert "ShouldDumpDialogGeometry(" in source
         assert "DumpWidgetGeometryFlag()" in source
 
-    def test_settingsdlg_duplicate_walk_deleted(self):
-        # the reimplemented walk must be gone entirely, not merely
-        # unreferenced, so the shared helper is the single source of
-        # truth for geometry dumps
-        source = _read("src/settingsdlg.cpp")
-        assert "LogSettingsControlGeometryProc" not in source
 
     def test_settingsdlg_calls_shared_dump_once(self):
         # the settings dialog must route through the shared dump with

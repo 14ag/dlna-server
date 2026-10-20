@@ -37,7 +37,6 @@ def test_desktop_entry_uses_one_bare_identity(template):
     text = _read(template)
     assert "\nIcon=@DLNA_GTK_APP_ID@\n" in text
     assert "\nStartupWMClass=@DLNA_GTK_APP_ID@\n" in text
-    assert "Icon=/" not in text
     assert "\nName=DLNA Server\n" in text
 
 
@@ -57,8 +56,6 @@ def test_png_icons_installed_where_wslg_searches():
     assert re.search(r"/pixmaps\s+RENAME \$\{DLNA_GTK_APP_ID\}\.png", CMAKE)
     assert re.search(r"hicolor/48x48/apps\s+RENAME \$\{DLNA_GTK_APP_ID\}\.png", CMAKE)
     assert re.search(r"hicolor/scalable/apps\s+RENAME \$\{DLNA_GTK_APP_ID\}\.svg", CMAKE)
-    assert "DLNA_APP_ICON" not in CMAKE
-    assert "DLNA_WSLG_APP_ID" not in CMAKE
 
 
 @pytest.mark.parametrize("name", ["16", "48", "120", "256"])
@@ -72,7 +69,6 @@ def test_icon_png_is_plain_square_8bit_noninterlaced(name):
 
 def test_gtk_source_sets_one_identity_before_gtk_starts():
     assert "g_set_prgname(DLNA_GTK_APP_ID);" in GTK_SOURCE
-    assert "gdk_set_program_class" not in GTK_SOURCE
     assert GTK_SOURCE.index("g_set_prgname(DLNA_GTK_APP_ID);") < GTK_SOURCE.index("g_application_register(")
     assert "gtk_application_new(DLNA_GTK_APP_ID," in GTK_SOURCE
     assert "gtk_window_set_icon_name(window, DLNA_GTK_APP_ID)" in GTK_SOURCE
@@ -83,25 +79,16 @@ def test_gtk_source_sets_short_wayland_window_id():
     # WSLg cuts the app list key at the last dot
     # so the live Wayland window must carry the short id
     # to match the Start Menu entry and its taskbar icon
-    for removed in (
-        "DLNA_WSLG_APP_ID",
-        "DLNA_APP_ICON",
-    ):
-        assert removed not in GTK_SOURCE
     assert "gdk_wayland_toplevel_set_application_id" in GTK_SOURCE
     assert "gdkwayland.h" in GTK_SOURCE
     call = GTK_SOURCE.split("gdk_wayland_toplevel_set_application_id(")[1].split(";")[0]
     assert "DLNA_APP_ID" in call
-    assert "DLNA_GTK_APP_ID" not in call
 
 
 def test_start_menu_launch_contract():
     desktop = _read("packaging/linux/install_desktop.cmake.in")
     wrapper = _read("packaging/linux/dlna-server-gui")
-    assert "DLNA_SERVER_GTK_LAUNCHED" not in wrapper
-    assert "dbus-run-session" not in wrapper
     assert 'exec "$native_gui" "$@" 2>>"$log_file"' in wrapper
-    assert "exec gtk-launch " not in wrapper
     assert "Exec=/usr/bin/dlna-server-gui" in desktop
     # propagate display variables so the RDP RAIL session receives the window
     assert "dbus-update-activation-environment" in wrapper

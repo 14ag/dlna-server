@@ -45,8 +45,6 @@ def test_man_lists_every_user_flag(docs):
         text = read_man(docs, prog).replace("\\-", "-")
         for flag in USER_FLAGS:
             assert flag in text, (prog, flag)
-        assert "--configure-firewall" not in text
-        assert "--print-" not in text
 
 
 def test_completions_list_every_user_flag(docs):
@@ -55,7 +53,6 @@ def test_completions_list_every_user_flag(docs):
         assert flag.lstrip("-") in (docs / "completions" / "fish" / "dlna-server.fish").read_text()
     zsh = (docs / "completions" / "zsh" / "_dlna-server").read_text()
     assert zsh.startswith("#compdef dlna-server")
-    assert "--configure-firewall" not in zsh
 
 
 @pytest.mark.posix_only

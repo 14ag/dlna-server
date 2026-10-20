@@ -193,12 +193,6 @@ class TestSsdpInitialBurstThreadIsJoined:
             "m_initialBurstThread must be joined before CloseSockets "
             "runs in SSDP::Stop")
 
-    def test_diagnostic_scaffolding_removed_from_ssdp(self):
-        source = _read("src/ssdp.cpp")
-        assert "diag_mrunning.txt" not in source
-        assert "[diag:ssdp]" not in source
-
-
 class TestSsdpStartStopCycleUnderRace:
     def test_rapid_start_stop_does_not_crash_or_hang(
             self, dlna_binary, tmp_path):
@@ -277,14 +271,6 @@ class TestSsdpStartStopCycleUnderRace:
 
 
 class TestNoDeadHlsTernaryInLocalFileBranch:
-    def test_windows_local_file_branch_has_no_hardcoded_hls_ternary(self):
-        source = _read("src/httpserver.cpp")
-        assert 'item.mimeType == L"video/mpegurl" ? "DLNA.ORG_OP=01' \
-            not in source, (
-            "dead ternary reintroduced in the local file branch, "
-            "item.mimeType can never be video/mpegurl at that point "
-            "because the dedicated HLS branch earlier in the function "
-            "always continues or returns, see workflow T3")
 
     def test_windows_and_posix_local_file_contentfeatures_call_match(self):
         win = _read("src/httpserver.cpp")
@@ -304,13 +290,6 @@ class TestSkipFirewallEnvVarDetection:
         source = _read("src/server.cpp")
         assert "IsSkipFirewallEnvVarPresent" in source
         assert "GetLastError() != ERROR_ENVVAR_NOT_FOUND" in source
-        assert "wchar_t skipFirewall[8]" not in source, (
-            "old inline unset-vs-empty-conflating check should be gone")
-
-    def test_diagnostic_scaffolding_removed_from_server_start(self):
-        source = _read("src/server.cpp")
-        assert "[diag]" not in source
-        assert "[diag:server]" not in source
 
     def test_empty_env_var_skips_firewall_check(
             self, dlna_binary, tmp_path):

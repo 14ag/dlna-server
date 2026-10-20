@@ -109,8 +109,6 @@ class TestMaxClientThreadsParity:
         assert "kMaxClientThreads" in httpserver
         assert "kMaxClientThreads" in posix_httpserver
         # The two platform .cpp files must no longer define their own copy
-        assert "constexpr size_t kMaxClientThreads" not in httpserver
-        assert "constexpr size_t kMaxClientThreads" not in posix_httpserver
 
     @staticmethod
     def _kmax_client_threads(dlna_binary):

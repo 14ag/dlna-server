@@ -365,9 +365,9 @@ def test_closing_window_before_start_does_not_abort(tmp_path, xvfb):
                     reason="dbus-daemon not installed")
 @pytest.mark.skipif(XDOTOOL is None, reason="xdotool not installed")
 @pytest.mark.needs_wm
-def test_second_launch_restores_minimized_window(tmp_path, xvfb):
+def test_second_launch_restores_minimized_window(tmp_path, window_manager):
     env = _isolated_env(tmp_path)
-    env["DISPLAY"] = xvfb["DISPLAY"]
+    env["DISPLAY"] = window_manager["DISPLAY"]
     # the gui detaches so dbus run session would tear its bus down at
     # once a private dbus daemon keeps a live session bus instead
     bus = subprocess.Popen(

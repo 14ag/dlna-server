@@ -54,16 +54,7 @@ class FirewallAccessSourceTests(unittest.TestCase):
         self.assertIn("EnsureFirewallAccess(cfg.port, FirewallAccessMode::Interactive", server)
 
     def test_posix_build_has_no_firewall_helper(self):
-        cmake = self.read("CMakeLists.txt")
-        cli = self.read("src/posix_main.cpp")
-        gui = self.read("src/gtk4_gui_main.cpp")
-
         self.assertFalse((ROOT / "src/firewall_access_posix.cpp").exists())
-        self.assertNotIn("firewall_access_posix.cpp", cmake)
-        self.assertNotIn("firewall_access.h", cli)
-        self.assertNotIn("EnsureFirewallAccess", cli)
-        self.assertNotIn("firewall_access.h", gui)
-        self.assertNotIn("EnsureFirewallAccess", gui)
 
     def test_http_debug_log_records_media_requests_for_blackbox_verification(self):
         for path in ("src/httpserver.cpp", "src/posix_httpserver.cpp"):

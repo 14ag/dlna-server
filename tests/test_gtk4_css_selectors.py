@@ -5,21 +5,19 @@ pytestmark = pytest.mark.posix_only
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "gtk4_gui_main.cpp"
 CSS = pathlib.Path(__file__).resolve().parents[1] / "resources" / "gtk" / "styles1.css"
+STYLES0 = pathlib.Path(__file__).resolve().parents[1] / "resources" / "gtk" / "styles0.css"
 
 
 def _read_css() -> str:
     return CSS.read_text(encoding="utf-8")
 
 
-def test_no_stray_listbox_type_selector():
-    """
-    GTK4 CSS selectors match CSS node names, not C type names.
-    GtkListBox's CSS node name is 'list', not 'listbox'.
-    A bare 'listbox' selector never matches anything and is always a bug.
-    """
-    text = _read_css()
-    assert '"listbox {' not in text
-    assert '"listbox row' not in text
+def test_context_menu_items_have_no_inner_border():
+    text = STYLES0.read_text(encoding="utf-8")
+    block = text[text.index("popover.menu button.model,"):]
+    block = block[:block.index("}")]
+    assert "border: none;" in block
+    assert "background-color: transparent;" in block
 
 
 def test_source_list_uses_correct_gtklistbox_node_names():

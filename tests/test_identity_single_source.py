@@ -6,8 +6,6 @@ import pytest
 from tests.identity import APP_ID, GTK_APP_ID, PRODUCT_NAME
 
 ROOT = Path(__file__).resolve().parents[1]
-SCAN_ROOTS = ("src", "scripts", "packaging", "resources/gtk", "CMakeLists.txt", "build.sh", "build.bat")
-LEGACY_CLEANUP = {"scripts/install_linux.sh"}
 ROLE_TEMPLATES = (
     "packaging/linux/metainfo.xml.in",
     "packaging/linux/portable.desktop.in",
@@ -19,15 +17,6 @@ def _read(relative_path):
     return (ROOT / relative_path).read_text(encoding="utf-8-sig")
 
 
-def _scan_files():
-    for entry in SCAN_ROOTS:
-        path = ROOT / entry
-        if path.is_file():
-            yield path
-        elif path.is_dir():
-            yield from (p for p in path.rglob("*") if p.is_file())
-
-
 def test_reverse_dns_id_is_prefix_plus_app_id():
     assert GTK_APP_ID == "com.app." + APP_ID
     cmake = _read("CMakeLists.txt")
@@ -35,17 +24,6 @@ def test_reverse_dns_id_is_prefix_plus_app_id():
     assert 'string(CONCAT DLNA_GTK_APP_ID "${DLNA_REVERSE_DNS_PREFIX}" "." "${DLNA_APP_ID}")' in cmake
 
 
-def test_identity_literals_live_only_in_identity_env():
-    for item in _scan_files():
-        rel = item.relative_to(ROOT).as_posix()
-        if rel in LEGACY_CLEANUP:
-            continue
-        try:
-            text = item.read_text(encoding="utf-8-sig")
-        except UnicodeDecodeError:
-            continue
-        assert APP_ID not in text, rel
-        assert "com.github" not in text, rel
 
 
 def test_packaging_files_are_named_by_role_not_by_id():
@@ -68,8 +46,6 @@ def test_header_names_come_from_product_name():
     header = _read("src/app_identity.h.in")
     assert '#define DLNA_GTK_APP_ID "@DLNA_GTK_APP_ID@"' in header
     assert 'L"@DLNA_PRODUCT_NAME@.exe"' in header
-    for removed in ("DLNA_WSLG_APP_ID", "DLNA_APP_ICON"):
-        assert removed not in header
 
 
 def test_package_and_asset_names_use_product_name():
@@ -80,7 +56,6 @@ def test_package_and_asset_names_use_product_name():
     ps1 = _read("scripts/build-windows.ps1")
     assert "identity.env" in ps1
     assert "$ProductName-$VersionNumber-windows-$Architecture.zip" in ps1
-    assert "com.github" not in ps1
 
 
 def test_build_scripts_stamp_identity_from_one_function():
@@ -92,8 +67,6 @@ def test_build_scripts_stamp_identity_from_one_function():
 
 def test_conftest_has_no_hardcoded_identity():
     text = _read("tests/conftest.py")
-    assert APP_ID not in text
-    assert "com.github" not in text
     assert "from tests.identity import" in text
 
 

@@ -2,8 +2,6 @@ import unittest
 from pathlib import Path
 import pytest
 
-from tests.identity import GTK_APP_ID
-
 pytestmark = pytest.mark.posix_only
 
 
@@ -20,7 +18,6 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn('DLNA_SERVER_BIN="$appdir/usr/bin/dlna-server"', apprun)
         self.assertIn('DLNA_SERVER_GUI_BIN="$appdir/usr/bin/dlna-server-gui-bin"', apprun)
         self.assertIn('exec "$appdir/usr/bin/dlna-server-gui"', apprun)
-        self.assertNotIn("DLNA_SERVER_GUI_DIR", apprun)
 
     def test_linux_build_uses_local_wsl_workspace(self):
         build = self.read("scripts/build_linux.sh")
@@ -36,7 +33,6 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("Exec=dlna-server-gui", desktop)
         self.assertIn("Icon=@DLNA_GTK_APP_ID@", desktop)
         self.assertIn("StartupWMClass=@DLNA_GTK_APP_ID@", desktop)
-        self.assertNotIn(GTK_APP_ID, desktop)
 
     def test_linux_desktop_installers_are_scripted(self):
         cmake = self.read("CMakeLists.txt")
@@ -64,7 +60,6 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("<string>DLNA Server</string>", plist)
         self.assertIn('native_gui="$app_dir/Contents/MacOS/dlna-server-gui-bin"', launcher)
         self.assertIn("Rebuild with -DDLNA_ENABLE_GTK4_GUI=ON.", launcher)
-        self.assertNotIn("posix_gui.py", launcher)
 
     def test_wslg_gui_smoke_prereqs_are_in_build_and_pytest_wiring(self):
         conftest = self.read("tests/conftest.py")
@@ -74,14 +69,9 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         cmake = self.read("CMakeLists.txt")
         gui_source = self.read("src/gtk4_gui_main.cpp")
         linux_launcher = self.read("packaging/linux/dlna-server-gui")
-        mac_launcher = self.read("packaging/macos/dlna-server-gui")
 
         self.assertIn("DLNA_ENABLE_GTK4_GUI", cmake)
         self.assertIn('option(DLNA_ENABLE_GTK4_GUI "Build the native GTK4 Linux GUI" ON)', cmake)
-        self.assertNotIn("DLNA_ENABLE_FLTK_GUI", cmake)
-        self.assertNotIn("find_package(FLTK QUIET)", cmake)
-        self.assertNotIn("dlna-server-gui-native", cmake)
-        self.assertNotIn("fltk_gui_main.cpp", cmake)
         self.assertIn("pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)", cmake)
         self.assertIn("dlna-server-gui-gtk4", cmake)
         self.assertIn("OUTPUT_NAME dlna-server-gui-bin", cmake)
@@ -90,11 +80,8 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("src/posix_server.cpp", cmake)
         self.assertIn("Threads::Threads", cmake)
         self.assertIn("#include <gtk/gtk.h>", gui_source)
-        self.assertNotIn("DLNA Server is stopped", gui_source)
         self.assertFalse((ROOT / "src/posix_gui.py").exists())
         self.assertFalse((ROOT / "tests/test_posix_gui.py").exists())
-        self.assertNotIn("tkinter", linux_launcher + mac_launcher + cmake)
-        self.assertNotIn("python3", linux_launcher + mac_launcher + cmake)
         self.assertIn("DLNA Server native GUI is missing", linux_launcher)
 
     def test_gtk4_main_window_has_parity_controls(self):

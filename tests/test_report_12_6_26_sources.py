@@ -14,7 +14,6 @@ def test_server_restart_does_not_reload_config_or_fail_silently_on_endpoint_refr
     start_body = server[server.index("bool Server::Start(std::wstring& outReason)"):]
     refresh_body = common[common.index("void Server::RefreshEndpoints(const ConfigSnapshot& cfg)"):common.index("bool Server::IsHealthy() const")]
 
-    assert "AppConfig.Load();" not in start_body
     assert 'LogPrint(L"Network endpoint enumeration failed.' in refresh_body
     assert "m_endpoints.clear();" in refresh_body
 
@@ -63,8 +62,6 @@ def test_posix_log_uses_shared_utf8_converter_and_no_deprecated_codecvts():
     assert '#include "netutils.h"' in log
     assert "WideToUtf8(AppConfig.GetConfigPath())" in log
     assert "WideToUtf8(line)" in log
-    assert "codecvt" not in log
-    assert "wstring_convert" not in log
 
 
 

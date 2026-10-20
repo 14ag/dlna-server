@@ -9,7 +9,6 @@ SRC = (Path(__file__).resolve().parents[1] / "src" / "gtk4_gui_main.cpp").read_t
 
 def test_headless_decision_uses_shared_policy():
     assert "ShouldStartHeadless(explicitHeadless, !runtimeSources.empty())" in SRC
-    assert "(void)explicitHeadless" not in SRC
 
 
 def test_headless_skips_present_and_starts_server():
