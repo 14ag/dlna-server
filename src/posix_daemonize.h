@@ -23,7 +23,6 @@ inline bool ShouldDetachToBackground(bool debugLogEnabled, bool isTestOnlyFlag) 
 // classic double role fork plus pipe handoff pattern see
 // stevens advanced programming in the unix environment chapter 13
 // daemon processes and the linux daemon 7 man page sysv daemons section
-// a null ready message prints nothing
 bool DetachToBackgroundOrPrintReady(const char* readyMessage);
 
 #endif // DLNA_POSIX

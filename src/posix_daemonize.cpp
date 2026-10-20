@@ -31,7 +31,7 @@ bool DetachToBackgroundOrPrintReady(const char* readyMessage) {
         ssize_t readCount = read(pipeFds[0], &ready, 1);
         close(pipeFds[0]);
         if (readCount == 1 && ready == 1) {
-            if (readyMessage) std::fprintf(stdout, "%s\n", readyMessage);
+            std::fprintf(stdout, "%s\n", readyMessage);
             std::fflush(stdout);
             std::exit(0);
         }
@@ -48,8 +48,7 @@ bool DetachToBackgroundOrPrintReady(const char* readyMessage) {
     if (devNull >= 0) {
         dup2(devNull, STDIN_FILENO);
         dup2(devNull, STDOUT_FILENO);
-        // keep a redirected stderr such as the launch log
-        if (isatty(STDERR_FILENO)) dup2(devNull, STDERR_FILENO);
+        dup2(devNull, STDERR_FILENO);
         if (devNull > STDERR_FILENO) close(devNull);
     }
 

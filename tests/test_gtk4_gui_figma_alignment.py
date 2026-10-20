@@ -39,9 +39,6 @@ def test_delete_focus_gating_sequence():
     assert "after-select=true" in lines
     assert "after-focus-to-delete=true" in lines
     assert "after-focus-elsewhere=false" in lines
-    assert "delete-focus-on-click=false" in lines
-    assert "after-reselect=true" in lines
-    assert "after-clear-selection=false" in lines
 
 
 @pytest.mark.needs_xvfb

@@ -27,6 +27,16 @@ NEEDS_INCLUDE = [
 ]
 
 
+def sources():
+    return list(SRC.glob("*.cpp")) + list(SRC.glob("*.h"))
+
+
+def test_old_internal_names_are_gone_from_src():
+    for path in sources():
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for literal in OLD_LITERALS:
+            assert literal not in text, f"{path.name}: {literal}"
+
 
 def test_edited_files_include_identity_header():
     for name in NEEDS_INCLUDE:

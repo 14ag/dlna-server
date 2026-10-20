@@ -69,22 +69,6 @@ void OnSingleInstanceCommand(const std::string& cmd) {
     }
 }
 
-// debug mode runs in the foreground so only then are the lines shown
-// without debug the process is detached and its output goes nowhere
-void ReportNetworkMode(bool& announcedLocalhost) {
-    const bool localhostNow = DLNAServer.IsLocalhostMode();
-    const bool restored = DLNAServer.ConsumeNetworkRestored();
-    const bool debugForeground = AppConfig.IsDebugLogEnabled();
-    if (localhostNow && !announcedLocalhost && debugForeground) {
-        std::cerr << "dlna-server: " << WideToUtf8(NetworkLostCliText()) << std::endl;
-        std::cout << WideToUtf8(LocalhostRunningCliText()) << std::endl;
-    }
-    announcedLocalhost = localhostNow;
-    if (restored && debugForeground) {
-        std::cout << WideToUtf8(NetworkRestoredCliText()) << std::endl;
-    }
-}
-
 std::string EffectiveSourcesResponse() {
     std::string out;
     auto snap = AppConfig.Snapshot();
@@ -287,7 +271,6 @@ int main(int argc, char** argv) {
         return 1;
     }
     bool loggedUnhealthy = false;
-    bool announcedLocalhost = false;
     int consecutiveUnhealthyPolls = 0;
     while (!g_stop) {
         const bool runningNow = DLNAServer.IsRunning();
@@ -300,7 +283,6 @@ int main(int argc, char** argv) {
             }
             DLNAServer.Stop();
         }
-        ReportNetworkMode(announcedLocalhost);
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
     DLNAServer.Stop();

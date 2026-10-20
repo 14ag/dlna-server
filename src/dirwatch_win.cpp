@@ -66,8 +66,6 @@ void WatchLoopThread() {
 }
 
 bool StartDirectoryWatch(const std::vector<std::wstring>& localFolders, std::function<void()> onChange) {
-    // a second start must never assign over a joinable thread
-    StopDirectoryWatch();
     g_onChange = std::move(onChange);
     bool anyOk = false;
     for (const auto& path : localFolders) {
@@ -85,6 +83,10 @@ bool StartDirectoryWatch(const std::vector<std::wstring>& localFolders, std::fun
     }
     if (!anyOk) return false;
 
+    if (g_thread.joinable()) {
+        g_running.store(false);
+        g_thread.join();
+    }
     g_running.store(true);
     g_thread = std::thread(WatchLoopThread);
     return true;

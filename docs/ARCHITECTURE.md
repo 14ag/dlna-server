@@ -110,10 +110,6 @@ Order in `Server::Stop()`:
 
 `Server::IsHealthy()` is true when the server is stopped. When it runs, it is true only if the HTTP accept loop and the SSDP worker are alive. The user interfaces poll it. `ShouldTreatServerAsUnhealthy` needs four polls in a row to fail before it acts. One failed poll can be a normal SSDP restart.
 
-### Localhost mode
-
-When `Server::Start` finds zero network endpoints it still starts: HTTP binds as before, SSDP is not started, and the server runs in localhost mode with the endpoint text `127.0.0.1:<port>`. The same happens later when the network watcher sees the last endpoint disappear: `RestartSsdpForNetworkChange` stops SSDP only (HTTP keeps serving) and the server stays up in localhost mode. The front ends learn about the mode by polling `Server::IsLocalhostMode()` and `Server::ConsumeNetworkRestored()` on their existing timers; the Win32 and GTK4 windows show a warning box and a localhost status text, and the CLI prints the localhost lines when `--debug` is on. When the network comes back, `ConsumeNetworkRestored()` returns true once, the front ends ask the user to restart, and a restart is what returns the server to normal mode with SSDP advertising again.
-
 ## Threads
 
 | Thread | Created by | Ends when |

@@ -78,6 +78,12 @@ def test_release_workflow_calls_both_builds_then_notes():
     assert set(jobs["publish"]["needs"]) == {"version", "windows", "linux"}
 
 
+def test_no_workflow_calls_gemini_outside_notes():
+    for path in WORKFLOWS.glob("*.yml"):
+        if path.name != "release-notes.yml":
+            assert "gemini" not in path.read_text(encoding="utf-8").lower()
+
+
 @pytest.mark.posix_only
 @pytest.mark.parametrize("script", ["build.sh", "scripts/release-notes.sh"])
 def test_shell_scripts_parse(script):
@@ -122,7 +128,11 @@ def test_release_notes_fall_back_to_commit_list_without_api_key(tmp_path):
 @pytest.mark.parametrize(
     ("response", "expected", "success"),
     [
+<<<<<<< HEAD
+        ('{"candidates":[{"content":{"parts":[{"text":"## Features\\n\\n- Added feature"}]}}]}',
+=======
         ('{"output":[{"type":"text","text":"## Features\\n\\n- Added feature"}]}',
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
          "## Features", True),
         ("", "Gemini returned an invalid response", False),
         ("not json", "Gemini returned an invalid response", False),

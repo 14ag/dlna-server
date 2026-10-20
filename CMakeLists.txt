@@ -163,7 +163,6 @@ set(HEADERS
             src/access_key_hook.h
             src/win_geometry_dump.h
             src/server_ui_state.h
-            src/network_mode.h
             src/media_sources.h
            resources/resource.h
      )
@@ -291,41 +290,6 @@ add_library(dlna_core STATIC
         install(FILES
             "${CMAKE_SOURCE_DIR}/resources/fonts/SIL Open Font License.txt"
             DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/dlna-server)
-    endif()
-
-    # man pages and completions are not used inside flatpak or the mac bundle
-    if(NOT APPLE AND NOT DLNA_FLATPAK_BUILD)
-        set(DLNA_ZSH_COMPLETION_DIR "${CMAKE_INSTALL_DATADIR}/zsh/vendor-completions" CACHE STRING "zsh completion install directory")
-        set(DLNA_DOC_DIR "${CMAKE_BINARY_DIR}/cli-docs")
-        set(DLNA_CLI_DOC_FILES)
-        foreach(DLNA_DOC_PROG "${DLNA_PRODUCT_NAME}" "${DLNA_PRODUCT_NAME}-gui")
-            list(APPEND DLNA_CLI_DOC_FILES
-                "${DLNA_DOC_DIR}/man/${DLNA_DOC_PROG}.1.gz"
-                "${DLNA_DOC_DIR}/completions/bash/${DLNA_DOC_PROG}"
-                "${DLNA_DOC_DIR}/completions/zsh/_${DLNA_DOC_PROG}"
-                "${DLNA_DOC_DIR}/completions/fish/${DLNA_DOC_PROG}.fish")
-        endforeach()
-        add_custom_command(
-            OUTPUT ${DLNA_CLI_DOC_FILES}
-            COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/gen_cli_docs.py"
-                    --header "${CMAKE_SOURCE_DIR}/src/cli_flags.h"
-                    --product "${DLNA_PRODUCT_NAME}"
-                    --version "${PROJECT_VERSION}"
-                    --date "${DLNA_RELEASE_DATE}"
-                    --out "${DLNA_DOC_DIR}"
-            DEPENDS "${CMAKE_SOURCE_DIR}/src/cli_flags.h" "${CMAKE_SOURCE_DIR}/tools/gen_cli_docs.py"
-            COMMENT "Generating man pages and shell completions from cli_flags.h")
-        add_custom_target(dlna_cli_docs ALL DEPENDS ${DLNA_CLI_DOC_FILES})
-        install(FILES "${DLNA_DOC_DIR}/man/${DLNA_PRODUCT_NAME}.1.gz" DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
-        install(FILES "${DLNA_DOC_DIR}/completions/bash/${DLNA_PRODUCT_NAME}" DESTINATION ${CMAKE_INSTALL_DATADIR}/bash-completion/completions)
-        install(FILES "${DLNA_DOC_DIR}/completions/zsh/_${DLNA_PRODUCT_NAME}" DESTINATION ${DLNA_ZSH_COMPLETION_DIR})
-        install(FILES "${DLNA_DOC_DIR}/completions/fish/${DLNA_PRODUCT_NAME}.fish" DESTINATION ${CMAKE_INSTALL_DATADIR}/fish/vendor_completions.d)
-        if(DLNA_ENABLE_GTK4_GUI)
-            install(FILES "${DLNA_DOC_DIR}/man/${DLNA_PRODUCT_NAME}-gui.1.gz" DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
-            install(FILES "${DLNA_DOC_DIR}/completions/bash/${DLNA_PRODUCT_NAME}-gui" DESTINATION ${CMAKE_INSTALL_DATADIR}/bash-completion/completions)
-            install(FILES "${DLNA_DOC_DIR}/completions/zsh/_${DLNA_PRODUCT_NAME}-gui" DESTINATION ${DLNA_ZSH_COMPLETION_DIR})
-            install(FILES "${DLNA_DOC_DIR}/completions/fish/${DLNA_PRODUCT_NAME}-gui.fish" DESTINATION ${CMAKE_INSTALL_DATADIR}/fish/vendor_completions.d)
-        endif()
     endif()
 
     if(APPLE)

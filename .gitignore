@@ -102,8 +102,6 @@ posix-full-suite-log.txt
 /CPack*.cmake
 /_CPack_Packages/
 /packaging/flatpak/*.stamped.yml
-/remoteaccess
-
 
 # whitelist
 !*.sh
