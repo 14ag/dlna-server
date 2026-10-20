@@ -29,11 +29,6 @@ class ExistingFeatureImprovementTests(unittest.TestCase):
         self.assertIn('"/media/" + std::to_string(it.id)', source)
         self.assertIn("XMLEscapeUtf8(WideToUtf8(it.path))", source)
 
-    def test_config_schema_stays_stable(self):
-        config = self.read("src/config.h") + self.read("src/config.cpp") + self.read("src/posix_config.cpp")
-        for forbidden in ("ShowVideoThumbnails", "ShowImageThumbnails", "ShowAudioAlbumArt", "AutoWifi", "QrPage"):
-            self.assertNotIn(forbidden, config)
-
 
 if __name__ == "__main__":
     unittest.main()

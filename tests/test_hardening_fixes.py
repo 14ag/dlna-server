@@ -9,6 +9,17 @@ class HardeningFixSourceTests(unittest.TestCase):
     def read(self, path: str) -> str:
         return (ROOT / path).read_text(encoding="utf-8")
 
+<<<<<<< HEAD
+=======
+    def test_begin_rescan_is_thread_guarded(self):
+        source = self.read("src/mainwindow.cpp")
+        start = source.index("void MainWindow::BeginRescan()")
+        end = source.index("// swallow up slash down arrow", start)
+        body = source[start:end]
+        self.assertIn("RunGuarded", body)
+        self.assertIn('L"rescan-worker"', body)
+
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
     def test_whitelist_and_http_shutdown_are_synchronized(self):
         whitelist_h = self.read("src/ipwhitelist.h")
         whitelist_cpp = self.read("src/ipwhitelist.cpp")

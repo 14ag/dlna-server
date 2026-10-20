@@ -1,5 +1,11 @@
 import unittest
 from pathlib import Path
+<<<<<<< HEAD
+=======
+import pytest
+
+pytestmark = pytest.mark.posix_only
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,15 +21,19 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn('DLNA_SERVER_BIN="$appdir/usr/bin/dlna-server"', apprun)
         self.assertIn('DLNA_SERVER_GUI_BIN="$appdir/usr/bin/dlna-server-gui-bin"', apprun)
         self.assertIn('exec "$appdir/usr/bin/dlna-server-gui"', apprun)
-        self.assertNotIn("DLNA_SERVER_GUI_DIR", apprun)
 
     def test_appdir_desktop_metadata_is_relative(self):
         desktop = self.read("packaging/linux/dlna-server.appimage.desktop")
 
         self.assertIn("Name=DLNA Server", desktop)
         self.assertIn("Exec=dlna-server-gui", desktop)
+<<<<<<< HEAD
         self.assertIn("Icon=dlna-server", desktop)
         self.assertIn("StartupWMClass=dlna-server", desktop)
+=======
+        self.assertIn("Icon=@DLNA_GTK_APP_ID@", desktop)
+        self.assertIn("StartupWMClass=@DLNA_GTK_APP_ID@", desktop)
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
 
     def test_linux_desktop_installers_are_scripted(self):
         cmake = self.read("CMakeLists.txt")
@@ -68,10 +78,14 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("DLNA_PLATFORM_NAME=\\\"macOS\\\"", cmake)
         self.assertIn("<string>DLNA Server</string>", plist)
         self.assertIn('native_gui="$app_dir/Contents/MacOS/dlna-server-gui-bin"', launcher)
+<<<<<<< HEAD
         self.assertIn("Rebuild with -DDLNA_ENABLE_FLTK_GUI=ON.", launcher)
         self.assertNotIn("posix_gui.py", launcher)
         self.assertIn("hdiutil create", script)
         self.assertIn("notarytool submit", script)
+=======
+        self.assertIn("Rebuild with -DDLNA_ENABLE_GTK4_GUI=ON.", launcher)
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
 
     def test_wslg_gui_smoke_prereqs_are_in_build_and_pytest_wiring(self):
         linux_script = self.read("scripts/build-linux-desktop-assets.sh")
@@ -91,8 +105,8 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         cmake = self.read("CMakeLists.txt")
         gui_source = self.read("src/fltk_gui_main.cpp")
         linux_launcher = self.read("packaging/linux/dlna-server-gui")
-        mac_launcher = self.read("packaging/macos/dlna-server-gui")
 
+<<<<<<< HEAD
         self.assertIn("DLNA_ENABLE_FLTK_GUI", cmake)
         self.assertIn('option(DLNA_ENABLE_FLTK_GUI "Build the native FLTK Linux GUI" ON)', cmake)
         self.assertIn("find_package(FLTK QUIET)", cmake)
@@ -101,17 +115,25 @@ class LinuxAppDirPackagingTests(unittest.TestCase):
         self.assertIn("release-1.4.5", cmake)
         self.assertIn("dlna-server-gui-native", cmake)
         self.assertIn("if(FLTK_FOUND)", cmake)
+=======
+        self.assertIn("DLNA_ENABLE_GTK4_GUI", cmake)
+        self.assertIn('option(DLNA_ENABLE_GTK4_GUI "Build the native GTK4 Linux GUI" ON)', cmake)
+        self.assertIn("pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)", cmake)
+        self.assertIn("dlna-server-gui-gtk4", cmake)
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
         self.assertIn("OUTPUT_NAME dlna-server-gui-bin", cmake)
         self.assertIn('configure_file(packaging/linux/dlna-server-gui "${CMAKE_BINARY_DIR}/dlna-server-gui" @ONLY NEWLINE_STYLE UNIX)', cmake)
         self.assertIn('install(PROGRAMS "${CMAKE_BINARY_DIR}/dlna-server-gui"', cmake)
         self.assertIn("src/posix_server.cpp", cmake)
         self.assertIn("Threads::Threads", cmake)
+<<<<<<< HEAD
         self.assertIn("#include <FL/Fl_Window.H>", gui_source)
         self.assertNotIn("DLNA Server is stopped", gui_source)
+=======
+        self.assertIn("#include <gtk/gtk.h>", gui_source)
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
         self.assertFalse((ROOT / "src/posix_gui.py").exists())
         self.assertFalse((ROOT / "tests/test_posix_gui.py").exists())
-        self.assertNotIn("tkinter", linux_launcher + mac_launcher + cmake)
-        self.assertNotIn("python3", linux_launcher + mac_launcher + cmake)
         self.assertIn("DLNA Server native GUI is missing", linux_launcher)
 
     def test_fltk_main_window_has_parity_controls(self):

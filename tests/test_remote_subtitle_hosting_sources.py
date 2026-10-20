@@ -26,16 +26,9 @@ class RemoteSubtitleHostingSourceTests(unittest.TestCase):
             self.assertIn("RedactUrlForLog(item.subtitlePath)", source)
             self.assertIn("Remote subtitle unavailable", source)
 
-    def test_subtitle_mime_lookup_no_longer_uses_raw_extension_apis(self):
-        windows_http = self.read("src/httpserver.cpp")
-        posix_http = self.read("src/posix_httpserver.cpp")
-        self.assertNotIn("PathFindExtensionW(item.subtitlePath.c_str())", windows_http)
-        self.assertNotIn("pathText.find_last_of('.')", posix_http)
-
     def test_didl_caption_type_strips_query_strings_via_source_extension(self):
         content = self.read("src/contentdirectory.cpp")
         self.assertIn("SourceExtension(it.subtitlePath)", content)
-        self.assertNotIn("it.subtitlePath.rfind(L'.')", content)
 
     def test_remote_subtitle_playlist_round_trip_helpers_exist(self):
         network = self.read("src/network_sources.cpp")

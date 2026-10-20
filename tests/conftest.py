@@ -67,6 +67,54 @@ def _configure_binary_envs():
 
 
 _configure_binary_envs()
+<<<<<<< HEAD
+=======
+# Ensure no test invocation of the binary ever blocks on the interactive
+# Windows firewall dialog.  Tests that specifically exercise the empty-var
+# path construct their own env dict, so this default does not interfere.
+os.environ.setdefault("DLNA_SERVER_SKIP_FIREWALL", "1")
+
+
+def _repo_tmp_root():
+    root = Path(__file__).resolve().parent.parent
+    d = root / "tmp"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _repo_tmp_dir(prefix):
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=str(_repo_tmp_root())))
+
+
+# Redirect every bare tempfile call site (mkdtemp, TemporaryDirectory, ...) so
+# tests never write outside the repository folder.  pytest_sessionfinish wipes
+# the whole tmp/ tree when the session ends.
+tempfile.tempdir = str(_repo_tmp_root())
+
+
+def pytest_sessionfinish(session, exitstatus):
+    try:
+        shutil.rmtree(str(_repo_tmp_root()), ignore_errors=True)
+    except OSError:
+        pass
+
+
+_WINDOW_MANAGERS = (
+    "openbox", "matchbox-window-manager", "mutter", "metacity",
+    "xfwm4", "kwin_x11", "icewm", "fluxbox", "compiz",
+)
+
+
+def _window_manager():
+    # Minimizing windows and querying the active window need a window
+    # manager; bare Xvfb provides none. No WM binary installed means the
+    # needs_wm tests cannot run in this environment.
+    return next((wm for wm in _WINDOW_MANAGERS if shutil.which(wm)), None)
+
+
+def _has_window_manager():
+    return _window_manager() is not None
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -82,7 +130,10 @@ def pytest_collection_modifyitems(config, items):
         remaining.append(item)
     if deselected:
         config.hook.pytest_deselected(items=deselected)
-        items[:] = remaining
+    target = [i for i in remaining if Path(i.path).name == "test_vlc_discovery_browse.py"]
+    if target:
+        remaining = target + [i for i in remaining if i not in target]
+    items[:] = remaining
 
 
 class ServerClient:
@@ -288,6 +339,232 @@ def dlna_binary():
     pytest.skip("DLNA Server executable not found" +
                 (" (set DLNA_SERVER env var to path)" if os.name != "nt" else ""))
 
+<<<<<<< HEAD
+=======
+@pytest.fixture
+def dlna_server_binary(dlna_binary):
+    """Alias for dlna_binary — provided for tests that use that name."""
+    return dlna_binary
+
+@pytest.fixture
+def server_binary(dlna_binary):
+    """Alias for dlna_binary — provided for tests that use that name."""
+    return dlna_binary
+
+
+@pytest.fixture
+def dlna_server_gui_binary():
+    # DLNA_GUI_BINARY env var overrides all auto-detection
+    env_path = os.environ.get("DLNA_GUI_BINARY")
+    if env_path:
+        p = Path(env_path)
+        if p.exists():
+            return str(p)
+        pytest.fail(f"DLNA_GUI_BINARY={env_path} set but binary not found")
+
+    root = Path(__file__).resolve().parent
+    candidates = [
+        root.parent / "output" / "linux" / "dlna-server-gui-bin",
+    ]
+    for path in candidates:
+        if path.exists():
+            return str(path)
+    pytest.fail("GTK4 GUI binary not found (set DLNA_GUI_BINARY env var to path)")
+
+
+@pytest.fixture
+def xvfb():
+    """Start a private Xvfb so GUI tests get a live DISPLAY.
+
+    This hands back the environment the parent should pass to Popen(env=...),
+    and shuts the X server down on teardown. Tests must pass this env into any
+    subprocess they spawn.
+    """
+    import shutil
+    import socket
+    if shutil.which("Xvfb") is None:
+        pytest.fail("Xvfb not installed")
+    display = f":{100 + (os.getpid() % 4000)}"
+    # On some WSL environments the X Unix socket dir (/tmp/.X11-unix) is
+    # root-owned and Xvfb cannot create its socket there. Fall back to
+    # TCP-only transport which still works for local connections.
+    args = ["Xvfb", display, "-screen", "0", "1280x800x24", "-listen", "tcp", "-ac"]
+    proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.time() + 5
+        ok = False
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                break
+            # Try Unix socket first, then TCP as fallback for WSL
+            try:
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                sock.settimeout(0.2)
+                sock.connect(f"/tmp/.X11-unix/X{display.lstrip(':')}")
+                ok = True
+                sock.close()
+                break
+            except (OSError, socket.error):
+                pass
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.2)
+                sock.connect(("127.0.0.1", 6000 + int(display.lstrip(":"))))
+                ok = True
+                sock.close()
+                break
+            except (OSError, socket.error):
+                pass
+            time.sleep(0.1)
+        if not ok:
+            pytest.fail("Xvfb did not become ready in time")
+        yield dict(os.environ, DISPLAY=display)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+             proc.kill()
+             proc.wait(timeout=3)
+
+
+@pytest.fixture
+def window_manager(xvfb):
+    """Run a window manager on the private Xvfb display."""
+    wm = _window_manager()
+    if wm is None:
+        pytest.skip("window manager not installed")
+    proc = subprocess.Popen([wm], env=xvfb, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(1)
+        yield xvfb
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
+
+
+@pytest.fixture
+def gtk_binary(dlna_server_gui_binary):
+    """Alias for dlna_server_gui_binary — provided for tests that use that name."""
+    return dlna_server_gui_binary
+
+
+@pytest.fixture
+def xvfb_env(xvfb):
+    """Alias for xvfb — provided for tests that use that name."""
+    return xvfb
+
+
+@pytest.fixture(scope="session")
+def gtk4_geometry_dump(tmp_path_factory):
+    """stdout of one `--dump-widget-geometry` run, shared by every geometry test."""
+    binary = os.environ.get("DLNA_GUI_BINARY") or str(
+        Path(__file__).resolve().parent.parent / "output" / "linux" / "dlna-server-gui-bin")
+    if not Path(binary).exists():
+        pytest.fail("GTK4 binary not built at %s" % binary)
+    home = tmp_path_factory.mktemp("gtk4-dump-home")
+    runtime = tempfile.mkdtemp(prefix="dlna-gui-geom-", dir="/tmp")
+    os.chmod(runtime, 0o700)
+    env = dict(os.environ, GDK_BACKEND="x11", HOME=str(home),
+               XDG_CONFIG_HOME=str(home), XDG_RUNTIME_DIR=runtime)
+    proc = subprocess.run(
+        ["dbus-run-session", "--", "xvfb-run", "-a", binary, "--dump-widget-geometry"],
+        capture_output=True, text=True, env=env, timeout=60)
+    return proc.stdout
+
+
+def _kill_all_runtime_instances():
+    """Kill any leftover daemon instances before each test.
+
+    The POSIX single-instance lock + socket live at a fixed
+    the single instance dir under /tmp location (independent of XDG_RUNTIME_DIR), so one
+    --kill-server call always reaches whatever instance is running. A
+    process-level backstop then hard-stops any daemonized child that ignored
+    the IPC kill, guaranteeing no more than one instance can carry over into
+    the next test.
+    On Windows: post WM_KILL_SERVER to every main window found,
+    then wait briefly for them to exit.
+    """
+    if os.name == "nt":
+        count = _win_kill_by_window()
+        if count:
+            time.sleep(0.5)  # give the processes a moment to exit
+        return
+
+    binaries = []
+    for key in ("DLNA_SERVER", "DLNA_CLI_BINARY", "DLNA_GUI_BINARY"):
+        value = os.environ.get(key)
+        if value:
+            binaries.append(value)
+
+    base_env = os.environ.copy()
+    for binary in binaries:
+        try:
+            subprocess.run(
+                [binary, "--kill-server"],
+                env=base_env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+    time.sleep(0.5)  # give a just-killed instance time to release its lock
+    _hard_kill_leftover_processes()
+
+
+def _hard_kill_leftover_processes():
+    """Hard-stop any dlna-server / dlna-server-gui-bin process still alive.
+
+    Covers daemonized children that detach and never drain the IPC kill, or
+    instances stuck in a state where the socket no longer exists.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    subprocess.run(
+        'top -b -n 1 | grep "dlna-server" | awk \'{print $1}\' | xargs kill -9',
+        shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
+def _win_clean_stale_config():
+    """Delete any config.ini left next to the Windows binary.
+
+    On Windows the server reads config.ini from the directory containing the
+    executable.  A test that calls _launch_server() writes a port-specific
+    config.ini there and restores it on teardown, but if a prior run was
+    hard-killed or crashed the file stays behind.  The stale file can carry
+    DebugLog=1 and a port that causes Server::Start() to show a blocking
+    firewall MessageBox (when DLNA_SERVER_SKIP_FIREWALL is not set by the
+    caller) and therefore hang indefinitely.
+    """
+    if os.name != "nt":
+        return
+    binary = os.environ.get("DLNA_SERVER") or os.environ.get("DLNA_CLI_BINARY")
+    if not binary:
+        return
+    config_ini = Path(binary).parent / "config.ini"
+    if config_ini.exists():
+        try:
+            config_ini.unlink()
+        except OSError:
+            pass
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _kill_previously_running_instance() -> None:
+    _kill_all_runtime_instances()
+    _win_clean_stale_config()
+
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
 
 @pytest.fixture
 def media_source_dir(tmp_path):

@@ -83,6 +83,149 @@ class TestNotifyPoolWorkerCount:
         assert 0 < value <= 16, f"expected small worker count (1..16), got {value}"
 
 
+<<<<<<< HEAD
+=======
+class TestMaxClientThreadsParity:
+    """Task 3: kMaxClientThreads must live in http_common.h exactly once,
+    and every platform binary must report the same value through the
+    --print-max-client-threads hook without hardcoding 64 here."""
+    def test_max_client_threads_reported(self, dlna_binary):
+        result = subprocess.run(
+            [dlna_binary, "--print-max-client-threads"],
+            capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0
+        value = int(result.stdout.strip())
+        assert value > 0, f"expected positive thread cap, got {value}"
+
+    def test_max_client_threads_single_definition_in_header(self):
+        from pathlib import Path
+        repo_root = Path(__file__).resolve().parents[1]
+        header = (repo_root / "src" / "http_common.h").read_text(encoding="utf-8")
+        httpserver = (repo_root / "src" / "httpserver.cpp").read_text(encoding="utf-8")
+        posix_httpserver = (repo_root / "src" / "posix_httpserver.cpp").read_text(encoding="utf-8")
+        header_defs = header.count("constexpr size_t kMaxClientThreads")
+        assert header_defs == 1
+        assert "constexpr size_t kMaxClientThreads = 64" in header
+        assert "kMaxClientThreads" in httpserver
+        assert "kMaxClientThreads" in posix_httpserver
+        # The two platform .cpp files must no longer define their own copy
+
+    @staticmethod
+    def _kmax_client_threads(dlna_binary):
+        result = subprocess.run(
+            [dlna_binary, "--print-max-client-threads"],
+            capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0
+        return int(result.stdout.strip())
+
+    @staticmethod
+    def _source_scan_pool_workers(dlna_binary):
+        result = subprocess.run(
+            [dlna_binary, "--print-source-scan-pool-worker-count"],
+            capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0
+        return int(result.stdout.strip())
+
+    @staticmethod
+    def _proc_thread_count(pid):
+        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
+        for line in status.splitlines():
+            if line.startswith("Threads:"):
+                return int(line.split()[1])
+        return 0
+
+    @pytest.mark.posix_only
+    def test_thread_count_stays_bounded_under_request_burst(
+            self, dlna_binary, media_source_dir):
+        """Task 8: a burst of kMaxClientThreads*3 sequential requests must
+        not grow the process thread count beyond a small margin of the pool
+        size (pre-fix threads lingered unreaped between bursts)."""
+        import urllib.request
+        kMax = self._kmax_client_threads(dlna_binary)
+        sourceScan = self._source_scan_pool_workers(dlna_binary)
+        # Fixed background threads (2 accept loops + SSDP worker + watch loop
+        # + main thread) sit on top of the client pool and the source-scan
+        # pool; the pre-spawned SourceScanPool is machine-dependent
+        # (min(hardware_concurrency*2, kMaxClientThreads)), so the absolute
+        # bound must include it or the check fails on low-core hosts before
+        # any request is served.
+        absBound = kMax + sourceScan + 16
+        port = _free_port()
+        proc, connected, old_config, config_ini = _launch_server(
+            dlna_binary, port, media_source_dir)
+        if not connected:
+            pytest.fail("Server did not start")
+        try:
+            time.sleep(3)  # let startup and background threads settle
+            before = self._proc_thread_count(proc.pid)
+            for _ in range(kMax * 3):
+                with urllib.request.urlopen(
+                        f"http://127.0.0.1:{port}/description.xml",
+                        timeout=10):
+                    pass
+            after = self._proc_thread_count(proc.pid)
+            assert after <= absBound, (
+                f"thread count {after} exceeded kMaxClientThreads({kMax}) "
+                f"plus source-scan pool ({sourceScan}) plus 16 margin")
+            assert after <= before + 4, (
+                f"thread count grew across request burst: {before} -> {after}")
+            time.sleep(10)  # idle
+            idle = self._proc_thread_count(proc.pid)
+            assert idle <= absBound, (
+                f"thread count {idle} still unbounded after 10s idle")
+        finally:
+            _teardown_server(proc, old_config, config_ini)
+
+    def test_concurrent_slow_connections_queue_no_503(
+            self, dlna_binary, media_source_dir):
+        """Task 8: kMaxClientThreads+5 concurrent slow connections are queued
+        and all eventually complete with HTTP 200, none receiving an abrupt
+        503 (the pool queues in the kernel backlog instead of rejecting)."""
+        kMax = self._kmax_client_threads(dlna_binary)
+        port = _free_port()
+        proc, connected, old_config, config_ini = _launch_server(
+            dlna_binary, port, media_source_dir)
+        if not connected:
+            pytest.fail("Server did not start")
+        try:
+            sockets = []
+            try:
+                for _ in range(kMax + 5):
+                    s = socket.create_connection(("127.0.0.1", port), timeout=5)
+                    s.settimeout(30)
+                    sockets.append(s)
+                time.sleep(0.5)  # delay sending the request line
+                request = (
+                    b"GET /description.xml HTTP/1.1\r\n"
+                    b"Host: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                for s in sockets:
+                    s.sendall(request)
+                status_lines = []
+                for s in sockets:
+                    buf = b""
+                    while b"\r\n" not in buf:
+                        chunk = s.recv(4096)
+                        if not chunk:
+                            break
+                        buf += chunk
+                    status_lines.append(buf.split(b"\r\n", 1)[0])
+            finally:
+                for s in sockets:
+                    try:
+                        s.close()
+                    except OSError:
+                        pass
+            for line in status_lines:
+                assert line, "connection closed without any HTTP response"
+                assert b"503" not in line, (
+                    f"connection received abrupt 503: {line!r}")
+                assert line.startswith(b"HTTP/1.1 200"), (
+                    f"expected HTTP/1.1 200, got {line!r}")
+        finally:
+            _teardown_server(proc, old_config, config_ini)
+
+
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
 class TestGetChildCountsPagination:
     """Task 7: GetChildCounts pagination fix."""
     @staticmethod

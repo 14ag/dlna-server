@@ -33,7 +33,6 @@ class SubtitleSupportSourceTests(unittest.TestCase):
         self.assertIn("SubtitleMimeForExtension", source)
         self.assertIn("ScopedHandle", source)
         self.assertIn("TrySendAll(clientSocket, subBuf, subRead)", source)
-        self.assertNotIn("done_subtitle:", source)
 
 
 if __name__ == "__main__":

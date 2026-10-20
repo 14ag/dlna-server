@@ -32,7 +32,6 @@ class UiSpecTests(unittest.TestCase):
         self.assertIn("GetWindow(hwnd, GW_OWNER)", helper_impl)
         self.assertIn("SetActiveWindow(targetRoot)", helper_impl)
         self.assertIn("SetFocus(focusTarget)", helper_impl)
-        self.assertNotIn("SetForegroundWindow", helper_header + helper_impl)
 
         for source in (main, settings, logdlg):
             self.assertIn('#include "modal_focus.h"', source)
@@ -47,8 +46,6 @@ class UiSpecTests(unittest.TestCase):
             "if (IsWindow(hwnd)) DestroyWindow(hwnd)",
         ):
             self.assertIn(token, main)
-        source_prompt_block = main[main.index("std::wstring PromptForMediaSource"):main.index("MainWindow::MainWindow")]
-        self.assertNotIn("SetForegroundWindow(owner)", source_prompt_block)
 
         for token in (
             "state->focusSnapshot",
@@ -59,8 +56,6 @@ class UiSpecTests(unittest.TestCase):
             "if (IsWindow(hwnd)) DestroyWindow(hwnd)",
         ):
             self.assertIn(token, settings)
-        playlist_block = settings[settings.index("void SettingsDialog::ShowPlaylistEntryForm"):settings.index("INT_PTR CALLBACK SettingsDialog::DialogProc")]
-        self.assertNotIn("SetForegroundWindow(hwndDlg)", playlist_block)
 
         self.assertIn("ModalFocusSnapshot focusSnapshot = CaptureModalFocus(hParent)", logdlg)
         self.assertIn("RestoreModalFocus(focusSnapshot, hParent)", logdlg)

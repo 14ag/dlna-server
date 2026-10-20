@@ -1,9 +1,8 @@
 import subprocess
-import pathlib
-import sys
 
 import pytest
 
+<<<<<<< HEAD
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 # Adjust these two paths to match this repository's actual build output
@@ -27,6 +26,8 @@ def _native_exe():
         return WIN32_EXE
     return POSIX_EXE
 
+=======
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
 
 def _run(exe, *args):
     result = subprocess.run(
@@ -140,6 +141,7 @@ def test_media_source_file_extensions_symmetric_across_platforms():
         assert expected_media in sample
     for expected_playlist in ("m3u", "m3u8", "pls"):
         assert expected_playlist in sample
+<<<<<<< HEAD
     # Images are intentionally excluded from the media-source picker.
     for excluded in ("jpg", "png", "gif"):
         assert excluded not in sample
@@ -157,3 +159,5 @@ def test_playlist_button_identifier_removed_win32():
 def test_playlist_button_identifier_removed_posix():
     src = (REPO_ROOT / "src" / "fltk_gui_main.cpp").read_text(encoding="utf-8")
     assert "playlistButton" not in src
+=======
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)

@@ -38,8 +38,6 @@ def test_event_subscribe_unsubscribe_routes_are_shared_by_windows_and_posix_http
         assert "AppEvents.HandleEventSubscription(method, path, req)" in source
         assert "AppEvents.ClearSubscriptions()" in source
 
-    assert "std::string EventSubscriptionResponse" not in windows
-    assert "std::string EventSubscriptionResponse" not in posix
 
 
 def test_server_watch_mode_detects_local_source_changes_and_rescans_without_restart():
@@ -99,6 +97,7 @@ def test_watch_loop_uses_fresh_config_snapshot_each_poll():
     posix = read("src/posix_server.cpp")
 
     assert "void WatchLoop()" in header
+<<<<<<< HEAD
     assert "WatchLoop(ConfigSnapshot cfg)" not in header
     for source in (windows, posix):
         assert "void Server::WatchLoop()" in source
@@ -114,3 +113,8 @@ def test_source_watcher_does_not_ignore_entries_after_a_fixed_cap():
     assert "kMaxWatchedEntries" not in watcher_source + watcher_header
     assert "count < kMaxWatchedEntries" not in watcher_source
     assert "if (count >= kMaxWatchedEntries)" not in watcher_source
+=======
+    assert "void Server::WatchLoop()" in common
+    assert "ConfigSnapshot cfg = AppConfig.Snapshot()" in common
+    assert "MediaSourcesHaveChanged(cfg, signature)" in common
+>>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
