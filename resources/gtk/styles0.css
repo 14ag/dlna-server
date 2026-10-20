@@ -367,13 +367,19 @@ popover.menu > contents {
     background-color: #191919;
     box-shadow: none;
 }
+popover.menu button.model,
 popover.menu modelbutton {
     min-height: 16px;
     min-width: 40px;
     padding: 4px;
+    border: none;
     border-radius: 0;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
     color: #ffffff;
 }
+popover.menu button.model:hover,
 popover.menu modelbutton:hover {
     background-color: #4d4d4d;
 }
