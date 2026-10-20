@@ -597,6 +597,25 @@ bool MainWindow::IsShowingOverrideSources() const {
     return AppConfig.HasRuntimeSourceOverride() && IsRunning();
 }
 
+void MainWindow::PollNetworkMode() {
+    const bool localhostNow = DLNAServer.IsLocalhostMode();
+    if (localhostNow != m_lastLocalhostMode) {
+        m_lastLocalhostMode = localhostNow;
+        // status band text is painted in wm paint
+        InvalidateRect(m_hwnd, NULL, TRUE);
+        if (localhostNow) {
+            MessageBoxW(m_hwnd, NetworkLostGuiText(), L"DLNA Server", MB_ICONWARNING | MB_OK);
+        }
+    }
+    if (IsRunning() && !IsBusy() && DLNAServer.ConsumeNetworkRestored()) {
+        const int answer = MessageBoxW(m_hwnd, NetworkRestoredGuiText(), L"DLNA Server",
+                                       MB_ICONINFORMATION | MB_YESNO | MB_DEFBUTTON2);
+        if (answer == IDYES && IsRunning() && !IsBusy()) {
+            BeginRestartServer();
+        }
+    }
+}
+
 void MainWindow::UpdateWakeLock() {
     if (m_state == ServerUiState::Stopped) {
         SetThreadExecutionState(ES_CONTINUOUS);
@@ -1220,7 +1239,8 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         RECT rcStatusText = { UiTokens::kGutter, UiTokens::kToolbarHeight, rcClient.right - UiTokens::kGutter, UiTokens::kToolbarHeight + UiTokens::kStatusHeight };
         const std::wstring statusText = StatusTextFor(m_state,
             m_scanningStatusActive || (IsRunning() && DLNAServer.IsInitialScanInProgress()),
-            AppConfig.HasRuntimeSourceOverride());
+            AppConfig.HasRuntimeSourceOverride(),
+            DLNAServer.IsLocalhostMode());
         DrawTextW(hdc, statusText.c_str(), -1, &rcStatusText, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
         if (SendMessage(m_hListSources, LB_GETCOUNT, 0, 0) == 0) {
@@ -1383,10 +1403,12 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
     }
     case WM_CONTEXTMENU: {
         HWND sourceHwnd = reinterpret_cast<HWND>(wParam);
-        int screenX = GET_X_LPARAM(lParam);
-        int screenY = GET_Y_LPARAM(lParam);
-        ShowSourceListContextMenu(sourceHwnd, screenX, screenY);
-        return 0;
+        if (sourceHwnd == m_hListSources) {
+            ShowSourceListContextMenu(sourceHwnd, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            return 0;
+        }
+        // caption and every other area use the system menu
+        break;
     }
     case WM_SHOW_EXISTING_INSTANCE: {
         RestoreAndFocusMainWindow();
@@ -1543,6 +1565,7 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
     case WM_TIMER: {
         if (wParam == kInitialScanPollTimerId) {
             const bool scanInProgress = DLNAServer.IsInitialScanInProgress();
+            PollNetworkMode();
             if (scanInProgress != m_lastPolledScanInProgress) {
                 m_lastPolledScanInProgress = scanInProgress;
                 SetControlsForState();

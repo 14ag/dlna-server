@@ -1857,7 +1857,7 @@ void RefreshStatus() {
         g_scanInProgress.load() ||
         DLNAServer.IsInitialScanInProgress();
     gtk_label_set_text(GTK_LABEL(g_status),
-        WideToUtf8(StatusTextFor(g_state, scanBusy, AppConfig.HasRuntimeSourceOverride())).c_str());
+        WideToUtf8(StatusTextFor(g_state, scanBusy, AppConfig.HasRuntimeSourceOverride(), DLNAServer.IsLocalhostMode())).c_str());
 
     const bool transition =
         g_state == ServerUiState::Starting ||
@@ -2311,13 +2311,26 @@ gboolean OnPollTick(gpointer) {
     static ServerUiState lastState = ServerUiState::Stopped;
     static bool lastScanBusy = false;
     static bool lastOverride = false;
+    static bool lastLocalhost = false;
     const bool scanBusyNow = g_scanInProgress.load() || DLNAServer.IsInitialScanInProgress();
     const bool overrideNow = AppConfig.HasRuntimeSourceOverride();
-    if (g_state != lastState || scanBusyNow != lastScanBusy || overrideNow != lastOverride) {
+    const bool localhostNow = DLNAServer.IsLocalhostMode();
+    if (g_state != lastState || scanBusyNow != lastScanBusy || overrideNow != lastOverride ||
+        localhostNow != lastLocalhost) {
+        const bool enteredLocalhost = localhostNow && !lastLocalhost;
         lastState = g_state;
         lastScanBusy = scanBusyNow;
         lastOverride = overrideNow;
+        lastLocalhost = localhostNow;
         RefreshStatus();
+        if (enteredLocalhost && !g_closePending.IsPending()) {
+            MessageBoxShow(ActiveTopLevelWindow(), WideToUtf8(NetworkLostGuiText()));
+        }
+    }
+    if (g_state == ServerUiState::Running && !g_closePending.IsPending() && DLNAServer.ConsumeNetworkRestored()) {
+        if (MessageBoxQuestion(ActiveTopLevelWindow(), WideToUtf8(NetworkRestoredGuiText()))) {
+            RestartServer();
+        }
     }
     if (g_mainWindow != nullptr && gtk_widget_get_visible(GTK_WIDGET(g_mainWindow))) {
         GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(g_mainWindow));

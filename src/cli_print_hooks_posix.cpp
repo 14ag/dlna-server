@@ -578,6 +578,35 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
             std::cout << endpoints.size() << std::endl;
             exitCode = 0; return true;
         }
+        else if (arg == "--print-network-mode-event" && i + 3 < argc) {
+            const NetworkMode mode = std::string(argv[++i]) == "1" ? NetworkMode::Localhost : NetworkMode::Normal;
+            const size_t count = static_cast<size_t>(std::atoll(argv[++i]));
+            const bool announced = std::string(argv[++i]) == "1";
+            switch (DecideNetworkModeEvent(mode, count, announced)) {
+            case NetworkModeEvent::Lost: std::cout << "lost" << std::endl; break;
+            case NetworkModeEvent::Restored: std::cout << "restored" << std::endl; break;
+            case NetworkModeEvent::None: std::cout << "none" << std::endl; break;
+            }
+            exitCode = 0; return true;
+        }
+        else if (arg == "--print-start-mode" && i + 1 < argc) {
+            const size_t count = static_cast<size_t>(std::atoll(argv[++i]));
+            std::cout << (DecideStartMode(count) == NetworkMode::Localhost ? "localhost" : "normal") << std::endl;
+            exitCode = 0; return true;
+        }
+        else if (arg == "--print-localhost-mode-lifecycle") {
+            std::wstring reason;
+            const bool startOk = DLNAServer.Start(reason);
+            while (DLNAServer.IsInitialScanInProgress()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
+            std::cout << "localhost=" << (DLNAServer.IsLocalhostMode() ? "1" : "0") << std::endl;
+            std::cout << "healthy=" << (DLNAServer.IsHealthy() ? "1" : "0") << std::endl;
+            DLNAServer.Stop();
+            std::cout << "after-stop-localhost=" << (DLNAServer.IsLocalhostMode() ? "1" : "0") << std::endl;
+            exitCode = 0; return true;
+        }
         else if (arg == "--print-sockaddr-length-safety" && i + 2 < argc) {
             // IsSockaddrLengthSafeToCopy has no windows types
             // lives in netutils h shared by both platforms already
@@ -710,7 +739,8 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
             const int stateValue = std::atoi(argv[++i]);
             const bool scanning = std::string(argv[++i]) == "1";
             const bool temporary = std::string(argv[++i]) == "1";
-            std::cout << "[" << WideToUtf8(StatusTextFor(static_cast<ServerUiState>(stateValue), scanning, temporary)) << "]" << std::endl;
+            const bool localhost = i + 1 < argc && std::string(argv[i + 1]) == "1";
+            std::cout << "[" << WideToUtf8(StatusTextFor(static_cast<ServerUiState>(stateValue), scanning, temporary, localhost)) << "]" << std::endl;
             exitCode = 0; return true;
         }
         else if (arg == "--print-should-join-worker-for-result" && i + 1 < argc) {

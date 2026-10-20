@@ -440,6 +440,35 @@ bool TryRunPrintHook(int argc, wchar_t** argv, int& exitCode) {
         std::cout << endpoints.size() << std::endl;
         exitCode = 0;
         return true;
+    } else if (wcscmp(argv[i], L"--print-network-mode-event") == 0 && i + 3 < argc) {
+        const NetworkMode mode = wcscmp(argv[++i], L"1") == 0 ? NetworkMode::Localhost : NetworkMode::Normal;
+        const size_t count = static_cast<size_t>(_wtoi64(argv[++i]));
+        const bool announced = wcscmp(argv[++i], L"1") == 0;
+        switch (DecideNetworkModeEvent(mode, count, announced)) {
+        case NetworkModeEvent::Lost: std::cout << "lost" << std::endl; break;
+        case NetworkModeEvent::Restored: std::cout << "restored" << std::endl; break;
+        case NetworkModeEvent::None: std::cout << "none" << std::endl; break;
+        }
+        exitCode = 0;
+        return true;
+    } else if (wcscmp(argv[i], L"--print-start-mode") == 0 && i + 1 < argc) {
+        const size_t count = static_cast<size_t>(_wtoi64(argv[++i]));
+        std::cout << (DecideStartMode(count) == NetworkMode::Localhost ? "localhost" : "normal") << std::endl;
+        exitCode = 0;
+        return true;
+    } else if (wcscmp(argv[i], L"--print-localhost-mode-lifecycle") == 0) {
+        std::wstring reason;
+        const bool startOk = DLNAServer.Start(reason);
+        while (DLNAServer.IsInitialScanInProgress()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        std::cout << "start-ok=" << (startOk ? "1" : "0") << std::endl;
+        std::cout << "localhost=" << (DLNAServer.IsLocalhostMode() ? "1" : "0") << std::endl;
+        std::cout << "healthy=" << (DLNAServer.IsHealthy() ? "1" : "0") << std::endl;
+        DLNAServer.Stop();
+        std::cout << "after-stop-localhost=" << (DLNAServer.IsLocalhostMode() ? "1" : "0") << std::endl;
+        exitCode = 0;
+        return true;
     } else if (wcscmp(argv[i], L"--print-sockaddr-length-safety") == 0 && i + 2 < argc) {
         int reportedLength = _wtoi(argv[++i]);
         int destinationCapacity = _wtoi(argv[++i]);
@@ -499,7 +528,8 @@ bool TryRunPrintHook(int argc, wchar_t** argv, int& exitCode) {
         const int stateValue = _wtoi(argv[++i]);
         const bool scanning = wcscmp(argv[++i], L"1") == 0;
         const bool temporary = wcscmp(argv[++i], L"1") == 0;
-        std::wcout << L"[" << StatusTextFor(static_cast<ServerUiState>(stateValue), scanning, temporary) << L"]" << std::endl;
+        const bool localhost = i + 1 < argc && wcscmp(argv[i + 1], L"1") == 0;
+        std::wcout << L"[" << StatusTextFor(static_cast<ServerUiState>(stateValue), scanning, temporary, localhost) << L"]" << std::endl;
         exitCode = 0;
         return true;
     } else if (wcscmp(argv[i], L"--print-should-join-worker-for-result") == 0 && i + 1 < argc) {

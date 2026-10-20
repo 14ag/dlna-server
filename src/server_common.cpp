@@ -94,20 +94,46 @@ void Server::StartNetworkChangeWatcher() {
 void Server::RestartSsdpForNetworkChange() {
     std::lock_guard<std::mutex> lock(m_ssdpRestartMutex);
     if (!m_running.load(std::memory_order_acquire)) return;
-    const auto now = std::chrono::steady_clock::now();
-    if (m_hasSsdpRestartCompletedAt && (now - m_lastSsdpRestartCompletedAt) < std::chrono::seconds(2)) {
-        LogPrint(L"SSDP restart skipped: already restarted less than 2s ago.");
-        return;
-    }
     LogPrint(L"Network topology change detected; refreshing endpoints");
-    const std::vector<NetworkEndpoint> endpointsBeforeRefresh = GetEndpoints();
     const ConfigSnapshot cfg = AppConfig.Snapshot();
     RefreshEndpoints(cfg);
     const std::vector<NetworkEndpoint> endpointsAfterRefresh = GetEndpoints();
+
+    // mode changes are decided before any rate limit so a network loss is never skipped
+    const NetworkMode mode = m_networkMode.load(std::memory_order_acquire);
+    const NetworkModeEvent modeEvent = DecideNetworkModeEvent(
+        mode, endpointsAfterRefresh.size(), m_networkRestoredAnnounced.load(std::memory_order_acquire));
+    if (modeEvent == NetworkModeEvent::Lost) {
+        LogPrint(L"Network lost; switching to localhost mode.");
+        InvalidateRoutableHostUrlCache();
+        m_networkMode.store(NetworkMode::Localhost, std::memory_order_release);
+        m_networkRestoredAnnounced.store(false, std::memory_order_release);
+        SSDP::Get().Stop();
+        std::lock_guard<std::mutex> endpointLock(m_endpointMutex);
+        m_endpoint = LocalhostEndpointText(cfg.port);
+        return;
+    }
+    if (mode == NetworkMode::Localhost) {
+        if (modeEvent == NetworkModeEvent::Restored) {
+            LogPrint(L"Network restored; restart the server to leave localhost mode.");
+            InvalidateRoutableHostUrlCache();
+            m_networkRestoredAnnounced.store(true, std::memory_order_release);
+            m_networkRestored.store(true, std::memory_order_release);
+        } else if (endpointsAfterRefresh.empty()) {
+            m_networkRestoredAnnounced.store(false, std::memory_order_release);
+        }
+        return;
+    }
+
+    // normal mode compares against what ssdp really advertises
+    const std::vector<NetworkEndpoint> endpointsBeforeRefresh = SSDP::Get().ActiveEndpoints();
     if (NetworkEndpointSetsEqual(endpointsBeforeRefresh, endpointsAfterRefresh)) {
         LogPrint(L"Endpoint set unchanged after refresh; SSDP restart skipped");
-        m_lastSsdpRestartCompletedAt = std::chrono::steady_clock::now();
-        m_hasSsdpRestartCompletedAt = true;
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (m_hasSsdpRestartCompletedAt && (now - m_lastSsdpRestartCompletedAt) < std::chrono::seconds(2)) {
+        LogPrint(L"SSDP restart skipped: already restarted less than 2s ago.");
         return;
     }
     InvalidateRoutableHostUrlCache();
@@ -207,7 +233,9 @@ void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
 // while running both reachable components must still be alive
 bool Server::IsHealthy() const {
     if (!m_running.load(std::memory_order_acquire)) return true;
-    return HttpServer::Get().IsHealthy() && SSDP::Get().IsHealthy();
+    if (!HttpServer::Get().IsHealthy()) return false;
+    // ssdp is deliberately stopped in localhost mode
+    return m_networkMode.load(std::memory_order_acquire) == NetworkMode::Localhost || SSDP::Get().IsHealthy();
 }
 
 // snapshot copy under the endpoint mutex for hook and start callers
@@ -255,6 +283,10 @@ void Server::Stop() {
     JoinBackgroundScan();
 
     AppConfig.ClearRuntimeSourceOverride();
+
+    m_networkMode.store(NetworkMode::Normal, std::memory_order_release);
+    m_networkRestored.store(false, std::memory_order_release);
+    m_networkRestoredAnnounced.store(false, std::memory_order_release);
 
     {
         std::lock_guard<std::mutex> lock(m_endpointMutex);
