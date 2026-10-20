@@ -366,6 +366,7 @@ def test_closing_window_before_start_does_not_abort(tmp_path, xvfb):
 @pytest.mark.skipif(XDOTOOL is None, reason="xdotool not installed")
 @pytest.mark.needs_wm
 def test_second_launch_restores_minimized_window(tmp_path, window_manager):
+def test_second_launch_restores_minimized_window(tmp_path, window_manager):
     env = _isolated_env(tmp_path)
     env["DISPLAY"] = window_manager["DISPLAY"]
     # the gui detaches so dbus run session would tear its bus down at
