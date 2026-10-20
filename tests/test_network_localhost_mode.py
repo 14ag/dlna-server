@@ -107,3 +107,16 @@ def test_restart_guard_is_after_equality_check():
     body = text.split("void Server::RestartSsdpForNetworkChange() {", 1)[1].split("void Server::StopNetworkChangeWatcher()", 1)[0]
     assert body.index("NetworkEndpointSetsEqual") < body.index("less than 2s ago")
     assert body.index("DecideNetworkModeEvent") < body.index("less than 2s ago")
+
+
+def test_http_start_passes_localhost_flag_when_in_localhost_mode():
+    for name in ("server.cpp", "posix_server.cpp"):
+        text = read(name)
+        assert "HttpServer::Get().Start(cfg.port, startMode == NetworkMode::Localhost)" in text
+
+
+def test_http_create_listen_socket_binds_loopback_when_flag_set():
+    for name in ("httpserver.cpp", "posix_httpserver.cpp"):
+        text = read(name)
+        assert "loopback ? " in text
+        assert "INADDR_LOOPBACK" in text
