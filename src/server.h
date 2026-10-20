@@ -9,6 +9,7 @@
 #include <vector>
 #include <thread>
 #include "netutils.h"
+#include "network_mode.h"
 
 struct ConfigSnapshot;
 
@@ -35,6 +36,13 @@ public:
     bool IsHealthy() const;
     bool IsInitialScanComplete() const { return m_initialScanComplete.load(std::memory_order_acquire); }
     bool IsInitialScanInProgress() const { return m_initialScanInProgress.load(std::memory_order_acquire); }
+    // true while running with no usable network endpoint
+    bool IsLocalhostMode() const {
+        return m_running.load(std::memory_order_acquire) &&
+               m_networkMode.load(std::memory_order_acquire) == NetworkMode::Localhost;
+    }
+    // true once per network restoration while in localhost mode then clears itself
+    bool ConsumeNetworkRestored() { return m_networkRestored.exchange(false, std::memory_order_acq_rel); }
     std::wstring GetEndpoint() const;
     std::vector<NetworkEndpoint> GetEndpoints() const;
     void RefreshEndpoints(const ConfigSnapshot& cfg);
@@ -80,6 +88,9 @@ private:
     std::condition_variable m_watchCv;
     std::atomic<bool> m_stopWatch;
     std::atomic<bool> m_directoryWatchActive{false};
+    std::atomic<NetworkMode> m_networkMode{NetworkMode::Normal};
+    std::atomic<bool> m_networkRestored{false};
+    std::atomic<bool> m_networkRestoredAnnounced{false};
 };
 
 #define DLNAServer Server::Get()

@@ -87,26 +87,32 @@ bool Server::Start(std::wstring& outReason) {
         }
     }
 
+    // a stale routable host cache from an earlier run must never survive a start
+    InvalidateRoutableHostUrlCache();
     RefreshEndpoints(cfg);
     std::vector<NetworkEndpoint> endpoints = GetEndpoints();
-    if (endpoints.empty()) {
-        LogPrint(L"Failed to find any active network endpoint for discovery.");
-        outReason = L"No active network endpoints found";
-        return false;
-    }
+    const NetworkMode startMode = DecideStartMode(endpoints.size());
+    m_networkMode.store(startMode, std::memory_order_release);
+    m_networkRestored.store(false, std::memory_order_release);
+    m_networkRestoredAnnounced.store(false, std::memory_order_release);
 
-    const NetworkEndpoint* displayEndpoint = NULL;
-    for (const auto& endpoint : endpoints) {
-        if (endpoint.family == AF_INET) {
-            displayEndpoint = &endpoint;
-            break;
+    std::wstring endpointText;
+    if (startMode == NetworkMode::Localhost) {
+        LogPrint(L"No active network endpoint found; starting in localhost mode.");
+        endpointText = LocalhostEndpointText(cfg.port);
+    } else {
+        const NetworkEndpoint* displayEndpoint = NULL;
+        for (const auto& endpoint : endpoints) {
+            if (endpoint.family == AF_INET) {
+                displayEndpoint = &endpoint;
+                break;
+            }
         }
+        if (displayEndpoint == NULL) {
+            displayEndpoint = &endpoints.front();
+        }
+        endpointText = std::wstring(displayEndpoint->host.begin(), displayEndpoint->host.end()) + L":" + std::to_wstring(cfg.port);
     }
-    if (displayEndpoint == NULL) {
-        displayEndpoint = &endpoints.front();
-    }
-
-    const std::wstring endpointText = std::wstring(displayEndpoint->host.begin(), displayEndpoint->host.end()) + L":" + std::to_wstring(cfg.port);
     {
         std::lock_guard<std::mutex> lock(m_endpointMutex);
         m_endpoint = endpointText;
@@ -136,14 +142,14 @@ bool Server::Start(std::wstring& outReason) {
         m_initialScanInProgress.store(true, std::memory_order_release);
     }
 
-    if (!HttpServer::Get().Start(cfg.port)) {
+    if (!HttpServer::Get().Start(cfg.port, startMode == NetworkMode::Localhost)) {
         LogPrint(L"Failed to start HTTP server.");
         outReason = L"Failed to start HTTP server on port " + std::to_wstring(cfg.port);
         m_initialScanInProgress.store(false, std::memory_order_release);
         return false;
     }
 
-    if (!SSDP::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
+    if (startMode == NetworkMode::Normal && !SSDP::Get().Start(m_endpoints, cfg.port, cfg.serverName, cfg.deviceUUID)) {
         LogPrint(L"Failed to start SSDP.");
         outReason = L"Failed to start SSDP discovery";
         HttpServer::Get().Stop();
