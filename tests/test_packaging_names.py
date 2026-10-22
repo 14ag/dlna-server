@@ -58,7 +58,7 @@ def test_install_templates_use_app_id():
     assert "@DLNA_GTK_APP_ID@.desktop" in desktop
     assert "Icon=@DLNA_GTK_APP_ID@" in desktop
     assert "StartupWMClass=@DLNA_GTK_APP_ID@" in desktop
-    assert "Exec=env DLNA_SERVER_GTK_LAUNCHED=1 /usr/bin/dlna-server-gui" in desktop
+    assert "Exec=/usr/bin/dlna-server-gui" in desktop
     assert "@DLNA_GTK_APP_ID@.desktop" in read("packaging/linux/postinst.in")
     assert 'exec "$native_gui" "$@"' in read("packaging/linux/dlna-server-gui")
 

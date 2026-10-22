@@ -2,9 +2,12 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
+
+from tests.identity import APP_ID
 
 pytestmark = pytest.mark.posix_only
 
@@ -27,6 +30,14 @@ def _isolated_env():
     env["HOME"] = str(config_root)
     env["XDG_CONFIG_HOME"] = str(config_root)
     env["XDG_RUNTIME_DIR"] = str(runtime_root)
+    return env
+
+
+def _isolated_env_no_runtime_dir():
+    # the gui wrapper waits for a compositor socket under XDG_RUNTIME_DIR
+    # so this launch leaves the wslg default lookup in place instead
+    env = _isolated_env()
+    env.pop("XDG_RUNTIME_DIR", None)
     return env
 
 
@@ -69,16 +80,23 @@ def test_gui_binary_does_not_deadlock_on_fresh_install():
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=_isolated_env(),
+        env=_isolated_env_no_runtime_dir(),
     )
     try:
-        stdout_text, stderr_text = process.communicate(timeout=3)
+        # the launcher exits at once the gui keeps running in the background
+        stdout_text, stderr_text = process.communicate(timeout=10)
+        assert process.returncode == 0
         assert DEADLOCK_TEXT not in stderr_text
-    except subprocess.TimeoutExpired:
-        process.terminate()
-        try:
-            stdout_text, stderr_text = process.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            stdout_text, stderr_text = process.communicate()
-        assert DEADLOCK_TEXT not in stderr_text
+        sock_path = Path("/tmp") / f"{APP_ID}-{os.getuid()}" / f"{APP_ID}.sock"
+        deadline = time.time() + 10
+        while not sock_path.exists() and time.time() < deadline:
+            time.sleep(0.25)
+        assert sock_path.exists(), "detached gui never took the singleton socket"
+    finally:
+        subprocess.run(
+            [binary_path, "--kill-server"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=_isolated_env(),
+        )

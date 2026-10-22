@@ -97,6 +97,7 @@ private:
     bool IsBusy() const;
     bool IsRunning() const;
     void UpdateWakeLock();
+    void PollNetworkMode();
     void SetControlsForState();
 
     HWND m_hwnd;
@@ -134,6 +135,7 @@ private:
     std::atomic<bool> m_scanInProgress;
     std::atomic<bool> m_scanningStatusActive;
     int m_consecutiveUnhealthyPolls = 0;
+    bool m_lastLocalhostMode = false;
     SourceListFocusState m_focusState;
     HoverFocusState m_hoverFocusState;
     RECT m_listRingRect = {0, 0, 0, 0};

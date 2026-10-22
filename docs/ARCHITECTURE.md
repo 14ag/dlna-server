@@ -114,6 +114,10 @@ Order in `Server::Stop()`:
 
 When `Server::Start` finds zero network endpoints it still starts: HTTP binds to the loopback addresses only (`127.0.0.1` and `::1`), SSDP is not started, and the server runs in localhost mode with the endpoint text `127.0.0.1:<port>`. `HttpServer::Start` takes a `loopback` flag for this. `CreateListenSocket` uses `INADDR_LOOPBACK` and `in6addr_loopback` when the flag is set. The same happens later when the network watcher sees the last endpoint disappear: `RestartSsdpForNetworkChange` stops SSDP only (HTTP keeps serving) and the server stays up in localhost mode. The front ends learn about the mode by polling `Server::IsLocalhostMode()` and `Server::ConsumeNetworkRestored()` on their existing timers; the Win32 and GTK4 windows show a warning box and a localhost status text, and the CLI prints the localhost lines when `--debug` is on. When the network comes back, `ConsumeNetworkRestored()` returns true once, the front ends ask the user to restart, and a restart is what returns the server to normal mode with SSDP advertising again.
 
+### Localhost mode
+
+When `Server::Start` finds zero network endpoints it still starts: HTTP binds as before, SSDP is not started, and the server runs in localhost mode with the endpoint text `127.0.0.1:<port>`. The same happens later when the network watcher sees the last endpoint disappear: `RestartSsdpForNetworkChange` stops SSDP only (HTTP keeps serving) and the server stays up in localhost mode. The front ends learn about the mode by polling `Server::IsLocalhostMode()` and `Server::ConsumeNetworkRestored()` on their existing timers; the Win32 and GTK4 windows show a warning box and a localhost status text, and the CLI prints the localhost lines when `--debug` is on. When the network comes back, `ConsumeNetworkRestored()` returns true once, the front ends ask the user to restart, and a restart is what returns the server to normal mode with SSDP advertising again.
+
 ## Threads
 
 | Thread | Created by | Ends when |

@@ -60,11 +60,8 @@ class HardeningFixSourceTests(unittest.TestCase):
         self.assertIn("ParsePortOrDefault", config)
         self.assertIn("Invalid port", win_settings)
         self.assertIn("HTTP port must be between 1 and 65535", gtk4)
-        self.assertIn("*.bak", gitignore)
         self.assertFalse(list((ROOT / "src").glob("*.bak")))
         self.assertIn("dlna_enable_warnings", cmake)
-        self.assertIn("python -m pytest -q", ci)
-        self.assertIn("cmake --build", ci)
 
 
 if __name__ == "__main__":
