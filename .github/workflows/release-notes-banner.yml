@@ -1,8 +1,8 @@
 name: Add release notes banner
 
 on:
-  workflow_dispatch:
-  workflow_call:
+  release:
+    types: [published]
 
 permissions:
   contents: write

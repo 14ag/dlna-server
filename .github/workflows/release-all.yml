@@ -54,20 +54,12 @@ jobs:
         with:
           name: linux
           path: output/linux
-      - run: >
-          gh release create "$TAG"
-          --target "$GITHUB_SHA"
-          --title "$TAG"
-          --notes "Release assets build."
-          output/winx64/*.zip output/winx86/*.zip output/linux/*
-
-  notes:
-    needs: [version, publish]
-    uses: ./.github/workflows/release-notes.yml
-    with:
-      tag: ${{ needs.version.outputs.tag }}
-    secrets: inherit
-  
-  banner:
-    needs: [version, notes]
-    uses: ./.github/workflows/release-notes-banner.yml
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: |
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG" \
+            --notes-file CHANGELOG.md \
+            output/winx64/*.zip output/winx86/*.zip output/linux/*
