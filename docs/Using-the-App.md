@@ -23,7 +23,9 @@ The line under the toolbar shows the state:
 | `starting server...` / `stopping server...` | A start or stop is in progress. |
 | `scanning...` | A scan is running. |
 | `Server running` | The server is running and no scan is active. |
+| `Server running (localhost mode)` | The server runs, but it has no usable network address. Only this computer can reach it. Players cannot find it. |
 | `temporary source` | The server runs with sources from the command line, not from `config.ini`. |
+| `temporary source (localhost mode)` | Same as `temporary source`, but the server is in localhost mode. |
 
 An empty list shows: *Please add shared folders or files with Add.*
 
@@ -89,6 +91,17 @@ The app puts an icon in the notification area.
 - Click it to show the window.
 - Windows menu: *Show Window*, *Start Server* or *Stop Server*, *Exit*.
 - Linux menu: *Show Window*, *Start/Stop Server*, *Exit*. The icon needs a desktop that provides a StatusNotifier host. Some desktops, such as WSLg, do not. Then the app logs a note and has no tray icon.
+
+## Network changes while the server runs
+
+The app watches the network. Both windows react in the same way.
+
+- **The last network address goes away.** A warning box says: *Network connection lost. The server is now in localhost mode and can only be reached from this computer.* The status line adds `(localhost mode)`.
+- **A network address comes back.** A question box says: *Network connection restored. A server restart is needed to make the server visible to other devices again. Restart server now?* Choose **Yes** to restart the server. Choose **No** to stay in localhost mode.
+
+The Linux `dlna-server` command shows nothing unless **Debug log** is on. With **Debug log** on, it prints `warning: network connection lost, switching to localhost mode` when the network goes away. It prints `network connection restored, run the same command again to restart in normal mode` when the network returns.
+
+See [Troubleshooting](Troubleshooting.md#only-this-computer-can-reach-the-server).
 
 ## Closing the window
 

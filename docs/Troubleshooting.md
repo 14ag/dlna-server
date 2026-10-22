@@ -12,6 +12,7 @@ Each entry lists the symptom, the likely cause, and what to do. Turn on **Debug 
 | Wrong adapter | The app skips adapters that look virtual (VPN, Docker, Hyper-V, WSL, VirtualBox, VMware) unless they have a default gateway. | Set `NetworkInterfaceAllowList` in `config.ini`. See [Configuration](Configuration.md#network-adapters). |
 | IP whitelist | A whitelist blocks all other addresses with `403`. | Clear **IP whitelist** or add the player's address. Log line: `Blocked connection from <address>`. |
 | Port in use | Another program holds the HTTP port. | Pick another port in Settings. Log line: `Failed to start HTTP server on port N`. |
+| Status line says `localhost mode` | The server found no usable network address. It does not advertise. | Connect to a network, then restart the server. See [Only this computer can reach the server](#only-this-computer-can-reach-the-server). |
 | Player sleeps or joined late | Players that missed the start messages wait for the next one. | Wait up to 6 minutes, or press **Stop** then **Start**. The server repeats its announcement every 4 to 6 minutes. |
 
 ### Log lines that help
@@ -19,10 +20,30 @@ Each entry lists the symptom, the likely cause, and what to do. Turn on **Debug 
 | Log line | Meaning |
 |---|---|
 | `SSDP IPv4 multicast join failed` / `SSDP multicast join failed on all endpoints` | The operating system refused multicast on that adapter. Discovery will not work there. |
-| `Failed to find any active network endpoint for discovery.` | No usable adapter or address was found. |
+| `No active network endpoint found; starting in localhost mode.` | No usable adapter or address was found when the server started. The server runs in localhost mode. See [Only this computer can reach the server](#only-this-computer-can-reach-the-server). |
+| `Network lost; switching to localhost mode.` | The last usable address went away while the server ran. SSDP stops. The HTTP server keeps running. |
+| `Network restored; restart the server to leave localhost mode.` | A usable address is back. Restart the server to advertise again. |
 | `Discovery endpoint selected: ...` | Debug only. Shows every address that is advertised. |
 | `SSDP search ignored: ...` | Debug only. A search arrived but did not match, so no answer was sent. |
 | `Network topology change detected; refreshing endpoints` | The network changed. The server re-announces if the address list changed. |
+
+## Only this computer can reach the server
+
+The status line shows `Server running (localhost mode)`. This is localhost mode. It starts when the server finds no usable network address. It also starts when the last address goes away while the server runs.
+
+In localhost mode:
+
+- The server does not advertise itself. SSDP is stopped, so players cannot find it.
+- When the server starts in this mode, the HTTP server listens on the loopback addresses only (`127.0.0.1` and `::1`). Only this computer can open it.
+- The server keeps running. The app does not stop it.
+
+How to leave localhost mode:
+
+1. Connect the computer to a network.
+2. The app shows a message that the network is back. Choose **Yes** on *Restart server now?* Or press **Stop** and then **Start**.
+3. On Linux, the `dlna-server` command prints the same hint when **Debug log** is on. Run the same command again.
+
+Check `NetworkInterfaceAllowList` if the network is up but the server stays in localhost mode. A wrong name there hides every adapter.
 
 ## The server does not start
 
@@ -31,7 +52,6 @@ Each entry lists the symptom, the likely cause, and what to do. Turn on **Debug 
 | `No media sources configured` | No source, and the default playlist is off. | Add a source. |
 | `Invalid port` | `Port` is outside 1-65535. | Fix the port. |
 | `Firewall access was denied` (Windows) | You chose **No** or cancelled the permission prompt. | Press **Start** again and accept. |
-| `No active network endpoints found` | No adapter is up with a usable address. | Connect to a network. Check `NetworkInterfaceAllowList`. |
 | `Failed to start SSDP discovery` | Port 1900 or multicast is not available. | Close other DLNA or UPnP programs. Check the firewall. |
 | `Server is already starting on another thread` | A start is already in progress. | Wait. |
 

@@ -20,7 +20,7 @@ A `FileServerPort` value in `config.ini` is loaded without error and persists on
 
 ## Top-level unreachable sources appear as empty containers
 
-When a media source (local folder, FTP URL, playlist) cannot be read or fetched at scan time, a top-level container is still created with zero children. A renderer browsing the tree sees an empty folder and cannot distinguish "folder exists but was unreachable" from "folder is genuinely empty." Nested unreachable playlist entries do not create empty folders — they are silently skipped (see `docs/MEDIA-SCANNING.md`). Fixing this for top-level sources would require a change to the scan source-dispatch path (e.g., deferring container creation until the first successful probe of each source).
+When a media source (local folder, FTP URL, playlist) cannot be read or fetched at scan time, a top-level container is still created with zero children. A renderer browsing the tree sees an empty folder and cannot distinguish "folder exists but was unreachable" from "folder is genuinely empty." Nested unreachable playlist entries do not create empty folders — they are silently skipped (see [Media Library Deep Dive](Media-Library.md)). Fixing this for top-level sources would require a change to the scan source-dispatch path (e.g., deferring container creation until the first successful probe of each source).
 
 ## Watch-mode time-of-check/time-of-use gap
 
