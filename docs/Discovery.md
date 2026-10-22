@@ -207,6 +207,7 @@ Setting `DLNA_SERVER_SKIP_FIREWALL` skips all of this.
 ## Known limits
 
 - Only five targets exist. A search for any other `ST` gets no answer.
+- With no usable endpoint, SSDP does not run. The server is in localhost mode and is not advertised. See [Troubleshooting](Troubleshooting.md#only-this-computer-can-reach-the-server).
 - No `ssdp:update` message is sent. A changed address set causes `byebye` and a new `alive` burst.
 - The IP whitelist does not apply to SSDP. It applies to HTTP.
 - Link-local IPv6 is dropped whenever another address exists.

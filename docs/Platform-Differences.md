@@ -50,9 +50,9 @@ Names treated as virtual:
 
 | Format | Notes |
 |---|---|
-| `.deb` | Depends on `libcurl4` and the libraries found at build time. Installs launchers, icons, fonts, desktop entry. |
+| `.deb` | Depends on `libcurl4` and the libraries found at build time. Installs launchers, icons, fonts, desktop entry, man pages and shell completions (bash, zsh, fish). |
 | AppImage | x86_64. Built with `linuxdeploy`. |
-| Flatpak | GNOME 47 runtime. Network access, X11 and Wayland sockets, home folder access. |
+| Flatpak | GNOME 47 runtime. Network access, X11 and Wayland sockets, home folder access. No man pages and no shell completions. |
 
 ### macOS
 

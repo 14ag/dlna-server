@@ -1,7 +1,7 @@
 > Historical requirement capture. Most items below are implemented in the
 > current code; this file is kept as the original spec, not as a
 > statement of missing work. Current behavior is documented in
-> `docs/ARCHITECTURE.md`, `docs/CONFIGURATION.md`, and `docs/BUILD.md`.
+> `docs/ARCHITECTURE.md`, `docs/CONFIGURATION.md`, and `docs/Development-Guide.md`.
 
 ## windows and posix gui versions
 ### A: flags

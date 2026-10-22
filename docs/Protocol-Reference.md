@@ -6,7 +6,7 @@ Discovery (SSDP) is in the [Discovery Deep Dive](Discovery.md).
 
 ## HTTP server
 
-- Listens on TCP port `Port` (default 8200) on all addresses, IPv4 and IPv6, as separate sockets. If one family fails to bind, the other still runs. If both fail, the server does not start.
+- Listens on TCP port `Port` (default 8200) on all addresses, IPv4 and IPv6, as separate sockets. If one family fails to bind, the other still runs. If both fail, the server does not start. In localhost mode (no usable network address at start) it listens on the loopback addresses only.
 - HTTP/1.1 keep-alive is the default. `Connection: close` or an HTTP/1.0 request closes the connection after the reply.
 - Limits: request headers 64 KiB; SOAP body 1 MiB; 64 client workers. When all 64 are busy, new connections wait in the operating system queue.
 - Timeouts: 10 s for reads and writes; 5 s idle between keep-alive requests; 60 s for writes while streaming.

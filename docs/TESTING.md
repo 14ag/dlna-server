@@ -21,12 +21,18 @@ Filter failures only on a full run:
 python -m pytest -v --tb=no 2>&1 | Select-String -Pattern " FAILED | ERROR | SKIP "
 ```
 
+## CI
+
+CI runs only `tests/test_vlc_discovery_browse.py`. It runs on every push to `main` and on every pull request. CI does not run the full suite. Run the full suite on your own machine.
+
 ## Environment
 
-- `DLNA_EXPECTED_VERSION` — numeric version (`1.YY.DDD`) the version-aware
-  tests expect from built binaries (SSDP `SERVER:` header, metainfo,
-  `--print-app-id` output). Set it to the tag under test, e.g.
-  `DLNA_EXPECTED_VERSION=1.26.76153`. Defaults to `0.0.00000`
+- `DLNA_EXPECTED_VERSION` - numeric version the version-aware tests expect
+  from built binaries (SSDP `SERVER:` header, metainfo, `--print-app-id`
+  output). The format is `2.<YY>.<MM><DD>` with an optional patch digit.
+  Get it from the tag under test with
+  `python scripts/version.py --numeric-of <tag>`, for example
+  `DLNA_EXPECTED_VERSION=2.26.7631`. It defaults to `0.0.00000`
   (unconfigured build) when unset.
 
 ## Conventions
