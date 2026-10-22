@@ -67,3 +67,6 @@ jobs:
     with:
       tag: ${{ needs.version.outputs.tag }}
     secrets: inherit
+  
+  banner:
+    uses: ./.github/workflows/release-notes-banner.yml
