@@ -112,3 +112,4 @@ posix-full-suite-log.txt
 !identity.env
 review-diff-rest.txt
 review-diff-tests.txt
+.worktrees/origin-main
