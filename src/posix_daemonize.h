@@ -9,8 +9,9 @@
 // extracted as a pure predicate so it has a fast deterministic test see
 // startup mode h and server close policy h in this codebase for the same
 // extraction pattern already used for other yes no launch decisions
-inline bool ShouldDetachToBackground(bool debugLogEnabled, bool isTestOnlyFlag) {
-    return !debugLogEnabled && !isTestOnlyFlag;
+inline bool ShouldDetachToBackground(bool debugLogEnabled, bool isTestOnlyFlag,
+                                     bool foregroundRequested = false) {
+    return !foregroundRequested && !debugLogEnabled && !isTestOnlyFlag;
 }
 
 // forks once the parent prints readyMessage to its own stdout waits for

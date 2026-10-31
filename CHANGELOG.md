@@ -10,6 +10,14 @@ Linux app (GTK4)
 - Closing the window no longer causes an X11 error when the display server has already removed it.
 - `dlna-server-gui` no longer holds the terminal. It starts in the background.
 
+Docker
+
+- Added a Linux container image, `Dockerfile`, `.dockerignore` and `compose.yaml`. The image runs the headless `dlna-server` command as a non-root user with a read-only root filesystem and a health check.
+- Added the `--foreground` command-line option. It keeps the POSIX server attached without turning on debug logging, so the container stays alive under `tini`.
+- Added `.github/workflows/docker.yml`. Pull requests build and smoke-test the image; pushes to `main` publish `linux/amd64` and `linux/arm64` images to GHCR.
+- Added [Docker](docs/Docker.md) with installation, host networking, multi-adapter, permissions, media mounting and troubleshooting steps.
+- Added Docker asset tests and a POSIX foreground test.
+
 Command line
 
 - When the network is lost, the Linux `dlna-server` command prints a warning, but only with `--debug`. When the network returns, it tells you to run the same command again.

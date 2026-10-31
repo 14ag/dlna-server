@@ -81,6 +81,31 @@ Then run:
 
 Use `-InstallTools` if the Termux environment still needs `clang`, `cmake`, `make`, or `python`.
 
+## Docker Development
+
+The Docker image is the headless POSIX target built in a Debian builder and
+copied into a small runtime image. The container uses host networking, so do
+not add port mappings or a bridge network.
+
+Build and smoke-test:
+
+```sh
+docker build -t dlna-server .
+docker run -d --name dlna-test --network host --read-only \
+  --tmpfs /tmp:size=16m,mode=1777 \
+  --security-opt no-new-privileges:true \
+  -e XDG_CONFIG_HOME=/config \
+  -v dlna-test-config:/config \
+  -v "$PWD/media:/media:ro" \
+  dlna-server --source /media
+docker exec dlna-test curl -fsS http://127.0.0.1:8200/description.xml
+docker stop -t 20 dlna-test
+```
+
+See [Docker](docs/Docker.md) for installation and troubleshooting. Docker
+changes must pass `pytest -q tests/test_docker_assets.py` and, on Linux,
+`pytest -q tests/test_posix_foreground.py`.
+
 ## Configuration
 
 The app stores settings in `config.ini` beside the executable. The file is created on startup when missing, then read on later launches.
