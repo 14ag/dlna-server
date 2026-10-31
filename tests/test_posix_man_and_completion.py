@@ -10,7 +10,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GENERATOR = os.path.join(ROOT, "tools", "gen_cli_docs.py")
 HEADER = os.path.join(ROOT, "src", "cli_flags.h")
 USER_FLAGS = ["--headless", "-h", "--port", "--name", "--uuid", "--source",
-              "--kill-server", "-k", "--debug", "--no-debug", "--help"]
+              "--kill-server", "-k", "--debug", "--no-debug", "--foreground",
+              "--help"]
 
 
 @pytest.fixture(scope="module")

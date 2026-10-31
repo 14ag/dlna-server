@@ -17,6 +17,9 @@ inline std::vector<CliFlagInfo> GetCliFlagTable() {
         { L"--kill-server, -k", L"Stop the running server and close the app" },
         { L"--debug", L"Enable debug logging" },
         { L"--no-debug", L"Disable debug logging for this session" },
+#ifndef _WIN32
+        { L"--foreground", L"Run in foreground and do not detach" },
+#endif
 #ifdef _WIN32
         { L"--configure-firewall", L"Run firewall helper and exit" },
 #endif

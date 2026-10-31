@@ -117,6 +117,9 @@ bool TryRunPrintHook(int argc, char** argv, int& exitCode) {
         else if (pre == "--headless" || pre == "-h") {
             // Accepted for symmetry with the Win32 binary
         }
+        else if (pre == "--foreground") {
+            // accepted here so test hooks can be combined with it
+        }
         else if (pre == "--no-debug") {
             AppConfig.debugLog = false;
         }

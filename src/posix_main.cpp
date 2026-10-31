@@ -106,6 +106,7 @@ int main(int argc, char** argv) {
     }
     std::vector<std::wstring> runtimeSources;
     bool wroteConfigOverride = false;
+    bool foregroundRequested = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--port" && i + 1 < argc) {
@@ -152,6 +153,12 @@ int main(int argc, char** argv) {
             // server always runs without a window. Accepted for symmetry
             // with the Win32 binary (main.cpp) so tests and wrappers that
             // pass --headless do not have it mis-parsed as a media source.
+        }
+        else if (arg == "--foreground") {
+            // Keep the process in front without turning on debug logging.
+            // Containers and service managers need the server to stay as
+            // PID 1's child instead of forking to the background.
+            foregroundRequested = true;
         }
         else if (arg == "--no-debug") {
             // Override a DebugLog=1 read from the config file so daemonize
@@ -229,7 +236,7 @@ int main(int argc, char** argv) {
     // non gui requirement that server is up means the upnp server is up
     int readyPipe[2] = { -1, -1 };
     bool isDetachedChild = false;
-    if (ShouldDetachToBackground(AppConfig.debugLog, false)) {
+    if (ShouldDetachToBackground(AppConfig.debugLog, false, foregroundRequested)) {
         if (pipe(readyPipe) == 0) {
             pid_t child = fork();
             if (child > 0) {

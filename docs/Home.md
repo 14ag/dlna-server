@@ -21,6 +21,7 @@ dlna-server shares media from your computer to DLNA and UPnP players. It runs on
 | [Getting Started](Getting-Started.md) | Install the app and share your first folder. |
 | [Using the App](Using-the-App.md) | Learn the window, tray icon, dialogs and keyboard keys. |
 | [Configuration](Configuration.md) | Find every setting, command-line option and file the app uses. |
+| [Docker](Docker.md) | Run the Linux container on a Linux host, Windows or macOS. |
 | [Troubleshooting](Troubleshooting.md) | Fix a player that cannot find the server or cannot play a file. |
 | [Platform Differences](Platform-Differences.md) | See where Windows and Linux behave differently. |
 | [Known Issues](Known-Issues.md) | See the list of known issues and their workarounds. |

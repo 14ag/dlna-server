@@ -25,6 +25,8 @@ python -m pytest -v --tb=no 2>&1 | Select-String -Pattern " FAILED | ERROR | SKI
 
 CI runs only `tests/test_vlc_discovery_browse.py`. It runs on every push to `main` and on every pull request. CI does not run the full suite. Run the full suite on your own machine.
 
+`.github/workflows/docker.yml` builds the Linux image and starts it with host networking on pull requests. On `main` it also publishes `linux/amd64` and `linux/arm64` images to GHCR. Docker asset checks live in `tests/test_docker_assets.py`; the foreground behavior test is `tests/test_posix_foreground.py`.
+
 ## Environment
 
 - `DLNA_EXPECTED_VERSION` - numeric version the version-aware tests expect
