@@ -2,9 +2,7 @@
 
 # DLNA Server
 
-[![Version](https://img.shields.io/badge/Version-1.7.0-blue.svg)](https://github.com/14ag/dlna-server/releases)
-![GitHub top language](https://img.shields.io/github/languages/top/14ag/dlna-server)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey.svg)](https://github.com/14ag/dlna-server/releases)
 
 # dlna-server
 
