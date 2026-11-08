@@ -102,6 +102,7 @@ See [Discovery Deep Dive](Discovery.md) for how adapters are chosen.
 | `--kill-server`, `-k` | Stop the running instance and close it. |
 | `--debug` | Turn on the debug log. |
 | `--no-debug` | Turn off the debug log for this run. |
+| `--foreground` | Linux and macOS only. Stay in the foreground without turning on the debug log. Use it in Docker or under a service manager. Not saved. |
 | `--configure-firewall` | Windows only. Adds the firewall rules and exits. Needs administrator rights. Use with `--port N`. |
 | `--help` | Show the option list. |
 
@@ -115,6 +116,7 @@ Options starting with `--print-` or `--dump-` are hidden test hooks. They are no
 |---|---|---|
 | `--port`, `--name`, `--uuid`, `--debug` | Used for this run. A later save from the app writes them to `config.ini`. | Saved to `config.ini` at start. |
 | `--no-debug` | This run only. | This run only. |
+| `--foreground` | Not accepted. | This run only. |
 | `--source`, `PATH` | This run only. | This run only. |
 
 ### How sources from the command line behave

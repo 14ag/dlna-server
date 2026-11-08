@@ -75,6 +75,9 @@ vlc-help.txt
 *.log
 *.bak
 
+# Docker media bind mount
+/media/
+
 # Personal/AI specific
 .antigravity/
 .gemini/
