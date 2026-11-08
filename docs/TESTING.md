@@ -1,0 +1,67 @@
+# Testing
+
+Python-only suite under `tests/`. No C++ tests. Blackbox tests first
+(HTTP, SOAP, SSDP, GENA, browse, playlists, packaging, build outputs).
+Source-grep contract tests only where device behavior cannot run in CI.
+
+## Run
+
+From repo root:
+
+```
+pytest                       # full suite (~6 min on Windows)
+pytest -q --tb=no            # quiet, no tracebacks
+pytest -q tests/test_access_keys.py
+pytest -q --collect-only     # count only (~540 collected, ~86 deselected on Windows)
+```
+
+Filter failures only on a full run:
+
+```
+python -m pytest -v --tb=no 2>&1 | Select-String -Pattern " FAILED | ERROR | SKIP "
+```
+
+## CI
+
+CI runs only `tests/test_vlc_discovery_browse.py`. It runs on every push to `main` and on every pull request. CI does not run the full suite. Run the full suite on your own machine.
+
+`.github/workflows/docker.yml` builds the Linux image and starts it with host networking on pull requests. On `main` it also publishes `linux/amd64` and `linux/arm64` images to GHCR. Docker asset checks live in `tests/test_docker_assets.py`; the foreground behavior test is `tests/test_posix_foreground.py`.
+
+## Environment
+
+- `DLNA_EXPECTED_VERSION` - numeric version the version-aware tests expect
+  from built binaries (SSDP `SERVER:` header, metainfo, `--print-app-id`
+  output). The format is `2.<YY>.<MM><DD>` with an optional patch digit.
+  Get it from the tag under test with
+  `python scripts/version.py --numeric-of <tag>`, for example
+  `DLNA_EXPECTED_VERSION=2.26.7631`. It defaults to `0.0.00000`
+  (unconfigured build) when unset.
+
+## Conventions
+
+- One behavior, one assertion site. Duplicate hook checks merge into a single
+  `@pytest.mark.parametrize` table (see `tests/test_access_keys.py`).
+- Expensive setup is shared, not repeated. `gtk4_geometry_dump` (session
+  fixture in `tests/conftest.py`) dumps GUI geometry once for all geometry
+  tests. `media_tree` (module fixture in
+  `tests/test_vlc_discovery_browse.py`) walks the catalog once for all
+  tree-content tests.
+- Platform markers deselect automatically (`tests/conftest.py`):
+
+  | marker         | runs on            |
+  |----------------|--------------------|
+  | `posix_only`   | Linux/macOS only   |
+  | `windows_only` | Windows only       |
+  | `gui_only`     | GUI builds only    |
+
+  Tag environment-locked tests instead of skipping. No `skip`/`skipif`
+  without a platform marker.
+
+## Flaky by environment
+
+Live-server and multicast tests vary run to run on Windows:
+`tests/test_incremental_scan.py` (timing),
+`tests/test_vlc_discovery_browse.py` device/browse tests (need a server
+advertising ContentDirectory over multicast). A single green retry clears
+them. Server-header format is pinned separately and stable:
+`tests/test_ssdp_server_header.py::test_server_header_format`.

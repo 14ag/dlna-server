@@ -6,7 +6,7 @@
 // see the workflow document task a1 for the full rationale
 
 enum class FunctionKeyAction {
-    None,
+    NoAction,
     ShowHelp,
     Rescan,
     RefreshSourceList,
@@ -24,10 +24,10 @@ inline FunctionKeyAction DecideFunctionKeyAction(int vkCode, bool isRunning, boo
         return FunctionKeyAction::ShowHelp;
     }
     if (vkCode == kVkF5) {
-        if (isBusy || isScanning) return FunctionKeyAction::None;
+        if (isBusy || isScanning) return FunctionKeyAction::NoAction;
         return isRunning ? FunctionKeyAction::Rescan : FunctionKeyAction::RefreshSourceList;
     }
-    return FunctionKeyAction::None;
+    return FunctionKeyAction::NoAction;
 }
 
 #endif // FUNCTION_KEY_ACTION_H

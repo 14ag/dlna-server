@@ -39,7 +39,7 @@ int FindOrAddContainer(MediaIndexState& state, int parentId, const std::wstring&
                        const std::wstring& keyPath,
                        std::function<std::wstring(const std::wstring&)> canonicalize) {
     const std::wstring lookupKey = ContainerLookupKey(parentId, title, keyPath);
-    std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+    std::lock_guard<std::mutex> lock(state.mutationMutex);
     auto found = state.containerKeys.find(lookupKey);
     if (found != state.containerKeys.end()) return found->second;
     const int id = AppMedia.PublishContainer(state.mediaDatabase, parentId, title, keyPath, canonicalize);
@@ -103,7 +103,7 @@ void AddArtistAlbumMirrorIfPresent(MediaIndexState& state, const ConfigSnapshot&
     int artistId = FindOrAddContainer(state, sourceParentId, artist, artistPath, canonicalize);
     int albumId = FindOrAddContainer(state, artistId, album, albumPath, canonicalize);
     {
-        std::lock_guard<std::mutex> lock(*state.mutationMutex.get());
+        std::lock_guard<std::mutex> lock(state.mutationMutex);
         if (!state.duplicateKeys.insert(BuildDuplicateMediaKey(albumId, item.path, canonicalize)).second) return;
     }
     MediaItem mirror = item;

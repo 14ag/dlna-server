@@ -4,3 +4,8 @@ args = ["-y", "@modelcontextprotocol/server-sequential-thinking"]
 
 [mcp_servers.microsoft-docs-mcp]
 url = "https://learn.microsoft.com/api/mcp"
+
+[mcp_servers.caveman]
+command = "~/.nvm/versions/node/v24.21.0/bin/npx"
+args = ["-y", "caveman-mcp"]
+env_vars = ["CAVEMAN_HOME", "CAVEMAN_CCR_DB"]

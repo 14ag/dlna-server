@@ -38,6 +38,13 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
 
 bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList, std::vector<NetworkEndpoint>& endpoints);
 const NetworkEndpoint* SelectBestEndpoint(const std::vector<NetworkEndpoint>& endpoints, const SOCKADDR* remoteAddr);
+// true when both endpoint lists describe the same set of family
+// address interface index tuples regardless of vector order
+// used by Server RestartSsdpForNetworkChange to skip a Stop Start
+// pair when a network change notification fired but nothing about
+// the actual advertised endpoint set changed
+bool NetworkEndpointSetsEqual(const std::vector<NetworkEndpoint>& a,
+                              const std::vector<NetworkEndpoint>& b);
 // pure predicate see the workflow document for the RFC 4007 citation
 // a link-local ipv6 address never carries a usable zone id once it
 // leaves this node per RFC 4007 section 6 the zone index is strictly

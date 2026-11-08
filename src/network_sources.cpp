@@ -3,13 +3,16 @@
 #include "log.h"
 #include "netutils.h"
 #include "scan_cancellation.h"
+#include "version.h"
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cwctype>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 #include <vector>
 
 std::string UrlWithoutQueryOrFragment(const std::string& value);
@@ -39,6 +42,17 @@ constexpr int kMaxPlsIndex = 10000;
 constexpr long kCurlCaptureTimeoutSeconds = 30L;
 constexpr long kCurlLowSpeedLimitBytes = 1L;
 constexpr long kCurlLowSpeedTimeSeconds = 30L;
+
+constexpr auto kRemoteProbeCacheTtl = std::chrono::minutes(5);
+
+struct ProbeCacheEntry {
+    long long length;
+    std::chrono::steady_clock::time_point expiresAt;
+};
+
+std::mutex g_probeCacheMutex;
+std::unordered_map<std::wstring, ProbeCacheEntry> g_probeCache;
+long g_probeRecomputeCount = 0;
 
 bool HasScheme(const std::string& value, const char* scheme) {
     std::string prefix = std::string(scheme) + "://";
@@ -91,15 +105,6 @@ struct RemoteFetchResult {
     std::string body;
 };
 
-struct CurlGlobalInit {
-    CurlGlobalInit() {
-        curl_global_init(CURL_GLOBAL_DEFAULT);
-    }
-    ~CurlGlobalInit() {
-        curl_global_cleanup();
-    }
-};
-
 class CurlShareHandle {
 public:
     CurlShareHandle() {
@@ -136,8 +141,6 @@ private:
 };
 
 CURLSH* GetSharedCurlHandle() {
-    static CurlGlobalInit init;
-    (void)init;
     static CurlShareHandle share;
     return share.Get();
 }
@@ -185,8 +188,6 @@ int ScanCancelXferInfo(void* /*clientp*/, curl_off_t /*dltotal*/, curl_off_t /*d
 }
 
 CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutSeconds) {
-    static CurlGlobalInit init;
-    (void)init;
     CURL* curl = curl_easy_init();
     if (!curl) return nullptr;
     std::string urlText = WideToUtf8(url);
@@ -194,7 +195,7 @@ CURL* CreateCurlHandle(const std::wstring& url, char* errorBuffer, long timeoutS
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "DLNA-Server/1.7");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "DLNA-Server/" DLNA_SERVER_VERSION_STRING);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeoutSeconds);
     curl_easy_setopt(curl, CURLOPT_FTP_RESPONSE_TIMEOUT, 30L);
@@ -294,28 +295,6 @@ bool CurlStream(const std::wstring& url,
 return true;
 }
 
-std::string ReadLocalTextFile(const std::wstring& path) {
-#ifdef _WIN32
-    FILE* fp = nullptr;
-    if (_wfopen_s(&fp, path.c_str(), L"rb") != 0 || !fp) return {};
-    std::string text;
-    char buffer[4096];
-    while (!std::feof(fp)) {
-        size_t readCount = std::fread(buffer, 1, sizeof(buffer), fp);
-        if (readCount > 0) text.append(buffer, readCount);
-        if (readCount < sizeof(buffer) && std::ferror(fp)) break;
-    }
-    std::fclose(fp);
-    return text;
-#else
-    std::ifstream file(WideToUtf8(path), std::ios::binary);
-    if (!file) return {};
-    std::ostringstream ss;
-    ss << file.rdbuf();
-    return ss.str();
-#endif
-}
-
 std::string ReadSourceText(const std::wstring& source, bool* ok = nullptr) {
     if (IsRemoteMediaUrl(source)) {
         RemoteFetchResult fetch = CurlCapture(source, false, false);
@@ -323,7 +302,7 @@ std::string ReadSourceText(const std::wstring& source, bool* ok = nullptr) {
         return fetch.body;
     }
     if (ok) *ok = true;
-    return ReadLocalTextFile(source);
+    return ReadWholeFileBinary(source);
 }
 
 std::wstring TitleFromEntry(const std::wstring& location) {
@@ -420,11 +399,7 @@ std::vector<PlaylistEntry> ParsePls(const std::wstring& playlistPath, const std:
         }
         if (digitsAt == std::string::npos) continue;
         int index = 0;
-        try {
-            index = std::stoi(key.substr(digitsAt));
-        } catch (...) {
-            continue;
-        }
+        if (!TryParseIntStrict(key.substr(digitsAt), index)) continue;
 
         if (index <= 0 || index > kMaxPlsIndex) {
             LogPrint(L"[remote:parse] Ignoring out-of-range PLS index %d in %ls", index, RedactUrlForLog(playlistPath).c_str());
@@ -880,12 +855,45 @@ std::vector<RemoteDirectoryEntry> ListRemoteDirectory(const std::wstring& direct
 
 long long ProbeRemoteContentLength(const std::wstring& url) {
     if (!IsRemoteMediaUrl(url)) return 0;
-    
+
+    const auto now = std::chrono::steady_clock::now();
+    {
+        std::lock_guard<std::mutex> lock(g_probeCacheMutex);
+        auto found = g_probeCache.find(url);
+        if (found != g_probeCache.end() && found->second.expiresAt > now) {
+            return found->second.length;
+        }
+    }
+
     auto& limiter = GetRemoteProbeLimiter();
     limiter.Acquire();
-    
+
     auto cleanup = ScopeGuard([&]() { limiter.Release(); });
-    return CurlCapture(url, true, false).contentLength;
+    const long long length = CurlCapture(url, true, false).contentLength;
+
+    {
+        std::lock_guard<std::mutex> lock(g_probeCacheMutex);
+        if (g_probeCache.find(url) == g_probeCache.end() &&
+            ShouldEvictBeforeCacheInsert(g_probeCache.size(), kMaxRemoteProbeCacheEntries)) {
+            // evict whichever entries expire soonest so this cache
+            // never grows past kMaxRemoteProbeCacheEntries no matter
+            // how many distinct remote urls this server probes over
+            // its uptime batch-evict 64 entries per overflow to amortize
+            // the O(n) scan cost across many inserts
+            constexpr size_t kProbeCacheEvictBatch = 64;
+            size_t evicted = 0;
+            while (evicted < kProbeCacheEvictBatch && !g_probeCache.empty()) {
+                auto soonestToExpire = std::min_element(g_probeCache.begin(), g_probeCache.end(),
+                    [](const auto& a, const auto& b) { return a.second.expiresAt < b.second.expiresAt; });
+                if (soonestToExpire == g_probeCache.end()) break;
+                g_probeCache.erase(soonestToExpire);
+                ++evicted;
+            }
+        }
+        g_probeCache[url] = ProbeCacheEntry{ length, now + kRemoteProbeCacheTtl };
+        ++g_probeRecomputeCount;
+    }
+    return length;
 }
 
 namespace {
@@ -894,6 +902,16 @@ namespace {
 
 AdaptiveConcurrencyLimiter& GetRemoteProbeLimiter() {
     return g_remoteProbeLimiter;
+}
+
+long GetRemoteProbeRecomputeCountForTest() {
+    std::lock_guard<std::mutex> lock(g_probeCacheMutex);
+    return g_probeRecomputeCount;
+}
+
+long GetRemoteProbeCacheSizeForTest() {
+    std::lock_guard<std::mutex> lock(g_probeCacheMutex);
+    return static_cast<long>(g_probeCache.size());
 }
 
 bool StreamRemoteContent(const std::wstring& url,

@@ -9,7 +9,7 @@
       "inheritEnvironments": [ "msvc_x64_x64" ],
       "buildRoot": "${projectDir}\\out\\build\\${name}",
       "installRoot": "${projectDir}\\out\\install\\${name}",
-      "cmakeCommandArgs": "-A x64 -DCMAKE_TOOLCHAIN_FILE=C:/Users/philip/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "cmakeCommandArgs": "-A x64 -DCMAKE_TOOLCHAIN_FILE=${env.VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
       "buildCommandArgs": "",
       "ctestCommandArgs": ""
     },
@@ -20,7 +20,7 @@
       "inheritEnvironments": [ "msvc_x64_x64" ],
       "buildRoot": "${projectDir}\\out\\build\\${name}",
       "installRoot": "${projectDir}\\out\\install\\${name}",
-      "cmakeCommandArgs": "-A x64 -DCMAKE_TOOLCHAIN_FILE=C:/Users/philip/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "cmakeCommandArgs": "-A x64 -DCMAKE_TOOLCHAIN_FILE=${env.VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
       "buildCommandArgs": "",
       "ctestCommandArgs": ""
     }

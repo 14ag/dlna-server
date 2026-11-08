@@ -17,7 +17,7 @@
 //
 // Wrap every std::thread/detached-thread entry point that can reach
 // allocation, container mutation, or third-party library calls
-// (libcurl, FLTK, file I/O) with this. threadName is a short constant
+// (libcurl, file I/O) with this. threadName is a short constant
 // identifying the call site in the log; it is not an OS thread name.
 template <typename F>
 void RunGuarded(const wchar_t* threadName, F&& fn) {

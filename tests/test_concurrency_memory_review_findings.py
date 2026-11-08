@@ -1,4 +1,6 @@
 import re
+
+import pytest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -13,50 +15,24 @@ def test_task1_watch_thread_mutex_declared():
     assert "m_watchThreadMutex" in header
 
 
-def test_task1_watch_thread_guarded_windows():
-    src = _read("src/server.cpp")
+def test_task1_watch_thread_guarded():
+    src = _read("src/server_common.cpp")
     start = src.index("void Server::StartWatchMode()")
     stop = src.index("void Server::StopWatchMode()")
-    start_body = src[start:stop]
+    assert "m_watchThreadMutex" in src[start:stop]
     stop_body = src[stop:stop + 800]
-    assert "m_watchThreadMutex" in start_body
     assert "m_watchThreadMutex" in stop_body
     assert "threadToJoin" in stop_body
 
 
-def test_task2_watch_thread_guarded_posix():
-    src = _read("src/posix_server.cpp")
-    start = src.index("void Server::StartWatchMode()")
-    stop = src.index("void Server::StopWatchMode()")
-    start_body = src[start:stop]
-    stop_body = src[stop:stop + 800]
-    assert "m_watchThreadMutex" in start_body
-    assert "m_watchThreadMutex" in stop_body
-    assert "threadToJoin" in stop_body
-
-
-def test_task3_scan_completion_thread_not_detached_windows():
-    header = _read("src/server.h")
-    src = _read("src/server.cpp")
-    assert "m_scanCompletionThread" in header
-    start_fn = src.index("bool Server::Start(")
-    stop_fn = src.index("bool Server::Rescan(")
-    start_body = src[start_fn:stop_fn]
+@pytest.mark.parametrize("path", ["src/server.cpp", "src/posix_server.cpp"])
+def test_task3_scan_completion_thread_not_detached(path):
+    assert "m_scanCompletionThread" in _read("src/server.h")
+    start_body = _read(path)
+    start_body = start_body[start_body.index("bool Server::Start("):]
     assert ".detach()" not in start_body
     assert "m_scanCompletionThread = std::thread" in start_body
-    stop_body = src[src.index("void Server::Stop()"):]
-    assert "m_scanCompletionThread.join()" in stop_body
-
-
-def test_task4_scan_completion_thread_not_detached_posix():
-    src = _read("src/posix_server.cpp")
-    start_fn = src.index("bool Server::Start(")
-    stop_fn = src.index("bool Server::Rescan(")
-    start_body = src[start_fn:stop_fn]
-    assert ".detach()" not in start_body
-    assert "m_scanCompletionThread = std::thread" in start_body
-    stop_body = src[src.index("void Server::Stop()"):]
-    assert "m_scanCompletionThread.join()" in stop_body
+    assert "m_scanCompletionThread.join()" in _read("src/server_common.cpp")
 
 
 def test_task5_get_descendants_no_full_catalog_copy():
@@ -92,20 +68,16 @@ def test_task7_catalog_reserve_present():
     fn_start = src.index("void MediaSources::ResetForRescan")
     fn_end = src.index("\n}\n", fn_start)
     body = src[fn_start:fn_end]
-    # Task 5.1 evolved this from the fixed baseline reserve
-    # (m_items.reserve(kInitialCatalogReserve)) to an ADAPTIVE reserve:
-    # size off the previous pass's catalog size with 12.5% slack, floored
-    # by kInitialCatalogReserve, applied to both m_items and m_idToIndex so
-    # neither repeatedly rehashes/reallocates for the same large catalog on
-    # every rescan. This contract test pins the NEW shape -- the computed
-    # reserveHint derived from previousSize -- not the old fixed reserve.
-    assert "previousSize" in body
-    assert "reserveHint" in body
-    assert "(std::max)" in body
-    assert "m_items.reserve(reserveHint)" in body
-    assert "m_idToIndex.reserve(reserveHint)" in body
-    # the old fixed-reserve shape is gone
-    assert "m_items.reserve(kInitialCatalogReserve)" not in body
+    # Workflow 17-08-26 Task 1 3 replaced the adaptive reserve with a
+    # generation based sweep so a concurrent HTTP reader never observes
+    # an empty catalog mid rescan This contract test pins the new shape
+    # ResetForRescan must never clear the catalog or the id index maps
+    assert "m_items.clear()" not in body
+    assert "m_idToIndex.clear()" not in body
+    assert "m_childrenByParent.clear()" not in body
+    assert "++m_currentGeneration" in body
+    assert "scanGeneration = m_currentGeneration" in body
+    assert "SweepStaleEntries" in src
 
 
 def test_task8_album_art_stat_calls_not_locked_for_whole_function():
@@ -113,7 +85,7 @@ def test_task8_album_art_stat_calls_not_locked_for_whole_function():
     fn_start = src.index("void SetAlbumArtIfExists")
     fn_end = src.index("\n}\n", fn_start)
     body = src[fn_start:fn_end]
-    lock_count = len(re.findall(r"lock_guard<std::mutex> lock\(\*state\.mutationMutex", body))
+    lock_count = len(re.findall(r"lock_guard<std::mutex> lock\(state\.mutationMutex", body))
     assert lock_count == 3
 
 
@@ -122,8 +94,12 @@ def test_task9_source_jobs_not_submitted_to_pool():
     fn_start = src.index("void MediaSources::Scan()")
     fn_end = src.index("void MediaSources::AddMediaFile")
     body = src[fn_start:fn_end]
-    assert "TaskGroup sourceGroup" not in body
-    assert "sourceThreads" in body
+    # Source jobs go through the bounded SourceScanPool (never PlaylistScanPool,
+    # which would starve the leaf tasks being waited on) with a TaskGroup guard
+    # so a nested playlist deadlock is impossible. See Task 9.
+    assert "TaskGroup sourceGroup" in body
+    assert "sourceThreads" not in body
+    assert "SourceScanPool::Get().Submit([this, &job, &sourceGroup]" in body
     assert "PlaylistScanPool::Get().Submit([this, &job, &sourceGroup]" not in body
 
 

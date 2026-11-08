@@ -63,14 +63,6 @@ void HashEntry(uint64_t& hash, const fs::directory_entry& entry) {
     ec.clear();
     if (entry.is_regular_file(ec)) {
         HashText(hash, "file");
-        ec.clear();
-        const uintmax_t size = entry.file_size(ec);
-        if (ec) {
-            HashText(hash, "size-error");
-            HashText(hash, ec.message());
-        } else {
-            HashNumber(hash, static_cast<uint64_t>(size));
-        }
     } else if (entry.is_directory(ec)) {
         HashText(hash, "dir");
     } else {

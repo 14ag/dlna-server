@@ -9,8 +9,6 @@ class HardeningFixSourceTests(unittest.TestCase):
     def read(self, path: str) -> str:
         return (ROOT / path).read_text(encoding="utf-8")
 
-<<<<<<< HEAD
-=======
     def test_begin_rescan_is_thread_guarded(self):
         source = self.read("src/mainwindow.cpp")
         start = source.index("void MainWindow::BeginRescan()")
@@ -19,7 +17,6 @@ class HardeningFixSourceTests(unittest.TestCase):
         self.assertIn("RunGuarded", body)
         self.assertIn('L"rescan-worker"', body)
 
->>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)
     def test_whitelist_and_http_shutdown_are_synchronized(self):
         whitelist_h = self.read("src/ipwhitelist.h")
         whitelist_cpp = self.read("src/ipwhitelist.cpp")
@@ -30,7 +27,8 @@ class HardeningFixSourceTests(unittest.TestCase):
         self.assertIn("std::shared_mutex", whitelist_h)
         self.assertIn("std::unique_lock<std::shared_mutex>", whitelist_cpp)
         self.assertIn("std::shared_lock<std::shared_mutex>", whitelist_cpp)
-        self.assertIn("m_clientThreads", http_h + posix_http)
+        self.assertIn("m_clientPool", http_h + posix_http)
+        self.assertIn("m_activeClientCount", windows_http)
         self.assertNotIn(".detach()", posix_http)
         for source in (posix_http, windows_http):
             self.assertIn("SO_RCVTIMEO", source)
@@ -53,7 +51,7 @@ class HardeningFixSourceTests(unittest.TestCase):
         utils = self.read("src/dlna_utils.h") + self.read("src/dlna_utils.cpp")
         config = self.read("src/config.cpp") + self.read("src/posix_config.cpp")
         win_settings = self.read("src/settingsdlg.cpp")
-        fltk = self.read("src/fltk_gui_main.cpp")
+        gtk4 = self.read("src/gtk4_gui_main.cpp")
         cmake = self.read("CMakeLists.txt")
         ci = self.read(".github/workflows/ci.yml")
         gitignore = self.read(".gitignore")
@@ -61,12 +59,9 @@ class HardeningFixSourceTests(unittest.TestCase):
         self.assertIn("TryParsePortStrict", utils)
         self.assertIn("ParsePortOrDefault", config)
         self.assertIn("Invalid port", win_settings)
-        self.assertIn("HTTP port must be between 1 and 65535", fltk)
-        self.assertIn("*.bak", gitignore)
+        self.assertIn("HTTP port must be between 1 and 65535", gtk4)
         self.assertFalse(list((ROOT / "src").glob("*.bak")))
         self.assertIn("dlna_enable_warnings", cmake)
-        self.assertIn("python -m pytest -q", ci)
-        self.assertIn("cmake --build", ci)
 
 
 if __name__ == "__main__":

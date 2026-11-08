@@ -1,0 +1,27 @@
+app-id: "@DLNA_GTK_APP_ID@"
+runtime: org.gnome.Platform
+runtime-version: "47"
+sdk: org.gnome.Sdk
+command: dlna-server-gui
+build-args:
+  - --share=network
+  - --filesystem=host
+finish-args:
+  - --share=network
+  - --socket=x11
+  - --socket=wayland
+  - --filesystem=home
+modules:
+  - name: dlna-server
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DCMAKE_INSTALL_PREFIX=/app
+      - -DDLNA_ENABLE_GTK4_GUI=ON
+      - -DDLNA_FLATPAK_BUILD=ON
+      - -DDLNA_VERSION=@PROJECT_VERSION@
+    sources:
+      - type: dir
+        path: ../..
+    post-install:
+      - install -Dm644 packaging/flatpak/@DLNA_GTK_APP_ID@.stamped.desktop /app/share/applications/@DLNA_GTK_APP_ID@.desktop

@@ -8,8 +8,11 @@
 #include <shellapi.h>
 #include <oleauto.h>
 #include <functional>
+#include <algorithm>
 #include <string>
 #include <vector>
+#include <mutex>
+#include <unordered_map>
 
 namespace {
 constexpr uint64_t kFnvOffset = 1469598103934665603ULL;
@@ -32,6 +35,25 @@ uint64_t HashModulePath(const std::wstring& path) {
         hash *= kFnvPrime;
     }
     return hash;
+}
+
+// Cache the firewall verdict keyed by exe path hash so repeated
+// Server::Start() calls do not re-enumerate the entire firewall
+// rule set. The cache is invalidated when the exe path changes.
+std::mutex g_firewallVerdictMutex;
+std::unordered_map<uint64_t, bool> g_firewallVerdictCache;
+
+bool ReadCachedFirewallVerdict(const std::wstring& exePath) {
+    const uint64_t hash = HashModulePath(exePath);
+    std::lock_guard<std::mutex> lock(g_firewallVerdictMutex);
+    auto it = g_firewallVerdictCache.find(hash);
+    return it != g_firewallVerdictCache.end() && it->second;
+}
+
+void WriteCachedFirewallVerdict(const std::wstring& exePath, bool configured) {
+    const uint64_t hash = HashModulePath(exePath);
+    std::lock_guard<std::mutex> lock(g_firewallVerdictMutex);
+    g_firewallVerdictCache[hash] = configured;
 }
 
 std::wstring BuildRuleSuffix(const std::wstring& exePath) {
@@ -103,15 +125,11 @@ bool IsElevated() {
     return ok && elevation.TokenIsElevated != 0;
 }
 
-bool SetBstr(HRESULT hr, BSTR value) {
-    SysFreeString(value);
-    return SUCCEEDED(hr);
-}
-
 bool PutBstr(INetFwRule* rule, HRESULT (__stdcall INetFwRule::*setter)(BSTR), const std::wstring& value) {
     BSTR bstr = SysAllocString(value.c_str());
     HRESULT hr = (rule->*setter)(bstr);
-    return SetBstr(hr, bstr);
+    SysFreeString(bstr);
+    return SUCCEEDED(hr);
 }
 
 HRESULT GetFirewallRules(INetFwRules** rules) {
@@ -336,7 +354,8 @@ bool EvaluateFirewallRules(bool collectRemovals,
                            bool& currentTcpNamePresent,
                            bool& currentUdpNamePresent,
                            std::vector<std::wstring>& removals,
-                           std::wstring& message) {
+                           std::wstring& message,
+                           HRESULT* hrOut) {
     hasTcpAllow = false;
     hasUdpAllow = false;
     currentTcpNamePresent = false;
@@ -347,12 +366,14 @@ bool EvaluateFirewallRules(bool collectRemovals,
     ComInit com;
     if (FAILED(com.hr)) {
         message = L"Firewall access check failed: COM initialization failed (" + FormatHresult(com.hr) + L").";
+        if (hrOut) *hrOut = com.hr;
         return false;
     }
 
     std::wstring exePath = GetModulePath();
     if (exePath.empty()) {
         message = L"Firewall access check failed: executable path unavailable.";
+        if (hrOut) *hrOut = E_FAIL;
         return false;
     }
 
@@ -360,6 +381,7 @@ bool EvaluateFirewallRules(bool collectRemovals,
     HRESULT hr = GetFirewallRules(&rules);
     if (FAILED(hr) || !rules) {
         message = L"Firewall access check failed: INetFwPolicy2 unavailable (" + FormatHresult(hr) + L").";
+        if (hrOut) *hrOut = hr;
         return false;
     }
 
@@ -398,8 +420,10 @@ bool EvaluateFirewallRules(bool collectRemovals,
     rules->Release();
     if (!enumerated) {
         message = L"Firewall access check failed: " + enumMessage;
+        if (hrOut) *hrOut = E_FAIL;
         return false;
     }
+    if (hrOut) *hrOut = S_OK;
     return true;
 }
 
@@ -497,10 +521,7 @@ bool LaunchElevatedFirewallHelper(int port, std::wstring& message) {
     return true;
 }
 
-bool MessageIndicatesAccessDenied(const std::wstring& message) {
-    return message.find(FormatHresult(HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED))) != std::wstring::npos;
-}
-}
+} // namespace
 
 std::wstring BuildFirewallAccessSummary(int port) {
     return L"DLNA Server needs Windows Firewall access for this app on TCP port " +
@@ -532,7 +553,8 @@ bool ConfigureFirewallAccessElevated(int port, std::wstring& message) {
     bool currentTcpNamed = false;
     bool currentUdpNamed = false;
     std::vector<std::wstring> removals;
-    if (!EvaluateFirewallRules(true, hasTcpAllow, hasUdpAllow, currentTcpNamed, currentUdpNamed, removals, message)) {
+    HRESULT evalHr = S_OK;
+    if (!EvaluateFirewallRules(true, hasTcpAllow, hasUdpAllow, currentTcpNamed, currentUdpNamed, removals, message, &evalHr)) {
         return false;
     }
     if (currentTcpNamed && currentUdpNamed) {
@@ -572,7 +594,7 @@ bool ConfigureFirewallAccessElevated(int port, std::wstring& message) {
     bool verifiedTcpNamed = false;
     bool verifiedUdpNamed = false;
     std::vector<std::wstring> unused;
-    if (!EvaluateFirewallRules(false, verifiedTcp, verifiedUdp, verifiedTcpNamed, verifiedUdpNamed, unused, message)) {
+    if (!EvaluateFirewallRules(false, verifiedTcp, verifiedUdp, verifiedTcpNamed, verifiedUdpNamed, unused, message, nullptr)) {
         return false;
     }
     if (!verifiedTcp || !verifiedUdp) {
@@ -582,23 +604,36 @@ bool ConfigureFirewallAccessElevated(int port, std::wstring& message) {
 
     message = L"Firewall access configured.";
     LogPrint(L"%ls", message.c_str());
+    WriteCachedFirewallVerdict(exePath, true);
     return true;
 }
 
 bool EnsureFirewallAccess(int port, FirewallAccessMode mode, std::wstring& message) {
     message.clear();
 
+    std::wstring exePath = GetModulePath();
+    if (exePath.empty()) {
+        message = L"Firewall access failed: executable path unavailable.";
+        return false;
+    }
+
+    if (ReadCachedFirewallVerdict(exePath)) {
+        return true;
+    }
+
     bool hasTcpAllow = false;
     bool hasUdpAllow = false;
     bool currentTcpNamed = false;
     bool currentUdpNamed = false;
     std::vector<std::wstring> removals;
-    bool canReadRules = EvaluateFirewallRules(false, hasTcpAllow, hasUdpAllow, currentTcpNamed, currentUdpNamed, removals, message);
-    bool readDenied = !canReadRules && MessageIndicatesAccessDenied(message);
+    HRESULT readHr = S_OK;
+    bool canReadRules = EvaluateFirewallRules(false, hasTcpAllow, hasUdpAllow, currentTcpNamed, currentUdpNamed, removals, message, &readHr);
+    bool readDenied = !canReadRules && readHr == HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED);
     if (!canReadRules && !readDenied) {
         return false;
     }
     if (canReadRules && hasTcpAllow && hasUdpAllow && currentTcpNamed && currentUdpNamed) {
+        WriteCachedFirewallVerdict(exePath, true);
         return true;
     }
 
@@ -629,8 +664,9 @@ bool EnsureFirewallAccess(int port, FirewallAccessMode mode, std::wstring& messa
     hasUdpAllow = false;
     currentTcpNamed = false;
     currentUdpNamed = false;
-    if (!EvaluateFirewallRules(false, hasTcpAllow, hasUdpAllow, currentTcpNamed, currentUdpNamed, removals, message)) {
-        if (MessageIndicatesAccessDenied(message)) {
+    HRESULT postHr = S_OK;
+    if (!EvaluateFirewallRules(false, hasTcpAllow, hasUdpAllow, currentTcpNamed, currentUdpNamed, removals, message, &postHr)) {
+        if (postHr == HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED)) {
             message = L"Firewall access configured.";
             return true;
         }
@@ -642,5 +678,6 @@ bool EnsureFirewallAccess(int port, FirewallAccessMode mode, std::wstring& messa
     }
 
     message = L"Firewall access configured.";
+    WriteCachedFirewallVerdict(exePath, true);
     return true;
 }

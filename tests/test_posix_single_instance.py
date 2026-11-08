@@ -11,6 +11,7 @@ They skip entirely on Windows where these APIs do not exist.
 """
 
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -21,17 +22,24 @@ from pathlib import Path
 
 import pytest
 
+from tests.identity import APP_ID
+
 pytestmark = pytest.mark.posix_only
 
 
 # ---- Helpers matching the C++ implementation ----
 
+def _global_instance_dir() -> str:
+    """The fixed per-user instance dir used by the C++ single-instance code"""
+    return os.path.join("/tmp", APP_ID + "-" + str(os.getuid()))
+
+
 def _lock_file_path(rundir: str) -> str:
-    return os.path.join(rundir, "dlna-server.lock")
+    return os.path.join(rundir, APP_ID + ".lock")
 
 
 def _socket_path(rundir: str) -> str:
-    return os.path.join(rundir, "dlna-server.sock")
+    return os.path.join(rundir, APP_ID + ".sock")
 
 
 # ---- Tests ----
@@ -213,6 +221,8 @@ class TestUnixSocketProtocol:
         deadline = time.time() + 5
         while not os.path.exists(sock_path):
             time.sleep(0.01)
+            if time.time() > deadline:
+                pytest.fail("Server socket not created in time")
 
         for msg in (b"show\n", b"sources:/media/video\n"):
             cli = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -257,8 +267,112 @@ class TestUnixSocketProtocol:
 
 @pytest.fixture
 def rundir(tmp_path: Path) -> str:
-    """A writable directory for lock / socket files."""
-    return str(tmp_path)
+    """A writable directory for lock / socket files.
+
+    Lives under /tmp rather than the repo tmp/ (which in WSL sits on the
+    drvfs-backed C: mount) because AF_UNIX bind() is unsupported on drvfs
+    (errno 95 EOPNOTSUPP). flock() works on both, but the socket protocol
+    tests require a real Unix filesystem.
+    """
+    d = tempfile.mkdtemp(prefix="dlna-si-", dir="/tmp")
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
+
+
+class TestSecondLaunchSupersedesFirst:
+    """A POSIX second launch never forwards "show" (that is GUI-only). It
+    always kills and replaces the running instance with its own args, exits
+    quickly, and the follow-up print hook reads the NEW instance's sources.
+    """
+
+    def test_second_launch_replaces_first(self, dlna_binary, tmp_path):
+        import subprocess
+        config_dir = tmp_path / "config"
+        media_dir = tmp_path / "media"
+        config_dir.mkdir()
+        media_dir.mkdir()
+
+        env = os.environ.copy()
+        env["XDG_CONFIG_HOME"] = str(config_dir)
+        env["HOME"] = str(config_dir)
+        env["DLNA_SERVER_SKIP_FIREWALL"] = "1"
+
+        # First instance runs in the foreground with --debug so we can wait
+        # on its exit to prove the second launch supersedes it. stdout/stderr
+        # are discarded (not PIPE) because --debug logs SSDP notifications
+        # continuously; an undrained pipe deadlocks the process once the 64
+        # KiB buffer fills, preventing it from processing the "kill" command
+        # from the second instance.
+        proc_a = subprocess.Popen(
+            [dlna_binary, "--debug", "--source", str(media_dir)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+        )
+        try:
+            # A acquires the fixed global lock before StartListening() binds
+            # its socket; wait for the socket so B reliably finds A.
+            sock_path = Path(_global_instance_dir()) / (APP_ID + ".sock")
+            deadline = time.time() + 10
+            while not sock_path.exists():
+                if proc_a.poll() is not None:
+                    pytest.fail("Instance A exited before binding its socket")
+                if time.time() > deadline:
+                    pytest.fail("Instance A never bound its socket")
+                time.sleep(0.05)
+
+            # Launch B immediately after A's socket appears, exercising the
+            # kill-and-reacquire race. --no-debug keeps B's launch
+            # deterministic even if a config DebugLog=1 is persisted
+            # somewhere in the inherited environment.
+            start = time.time()
+            result_b = subprocess.run(
+                [dlna_binary, "--no-debug", "--source", str(media_dir)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=env,
+            )
+            elapsed = time.time() - start
+            # B's takeover includes the SSDP alive burst (~1s) and the
+            # single-instance poll window (25 * 200ms = 5s). The previous
+            # 2.0s threshold was too tight for this environment and caused
+            # spurious failures even though B always succeeds within the
+            # 5s poll window. A genuine hang is still caught by the
+            # returncode check below (B exits non-zero with "did not exit
+            # in time; giving up" when it cannot acquire the lock).
+            assert elapsed < 5.0, (
+                f"Second instance took {elapsed:.2f}s to take over: "
+                f"{result_b.stdout} {result_b.stderr}"
+            )
+            assert result_b.returncode == 0, result_b.stderr
+
+            # A must be stopped by B's kill, proving replacement.
+            proc_a.wait(timeout=10)
+            assert proc_a.returncode == 0
+
+            # The running instance is B's server, which serves the same media
+            # dir; the follow-up print hook must reflect the RUNNING
+            # instance's sources, not an empty standalone config.
+            query = subprocess.run(
+                [dlna_binary, "--print-effective-media-sources"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=env,
+            )
+            assert str(media_dir) in query.stdout
+        finally:
+            subprocess.run(
+                [dlna_binary, "--kill-server"],
+                capture_output=True, text=True, timeout=10, env=env,
+            )
+            proc_a.terminate()
+            try:
+                proc_a.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc_a.kill()
+                proc_a.wait(timeout=3)
 
 
 # fcntl is imported inside test functions that use it because it is

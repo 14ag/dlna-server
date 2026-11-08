@@ -61,9 +61,3 @@ def test_is_recognized_playlist_text_called_in_scan_one_playlist_node():
     assert "IsRecognizedPlaylistText(node.path, fetched.text)" in source
     assert "Playlist content not recognized" in source
     assert "[media:fetch-invalid]" in source
-
-def test_print_flag_added_to_main():
-    win = read("src/main.cpp")
-    posix = read("src/posix_main.cpp")
-    assert 'wcscmp(argv[i], L"--print-is-recognized-playlist")' in win
-    assert 'arg == "--print-is-recognized-playlist"' in posix

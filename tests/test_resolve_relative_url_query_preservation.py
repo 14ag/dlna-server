@@ -9,7 +9,7 @@ class TestResolveRelativeUrlQueryPreservation:
     @classmethod
     def _binary(cls, dlna_binary):
         if cls.BINARY_ERR:
-            pytest.skip(cls.BINARY_ERR)
+            pytest.fail(cls.BINARY_ERR)
         return dlna_binary
 
     def _resolve(self, dlna_binary, base, relative):

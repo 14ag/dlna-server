@@ -1,0 +1,75 @@
+
+*:focus {
+  outline-width: 1px;
+  outline-offset: -3px;
+  outline-style: dashed;
+  outline-color: #595959;
+}
+
+
+*:disabled {
+  opacity: 0.55;
+}
+
+
+checkbutton,
+radiobutton {
+  padding: 4px;
+  outline-offset: 0;
+}
+
+check,
+radio {
+  margin: 4px;
+  min-height: 13px;
+  min-width: 13px;
+}
+
+.frame,
+frame > border {
+  border-width: 1px;
+  border-style: solid;
+  border-color: #333333;
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+}
+
+button.suggested-action {
+  border-color: #2e2e2e;
+  box-shadow: inset 0 0 0 1px #2e2e2e;
+}
+
+button.suggested-action:hover {
+  border-color: #2e2e2e;
+  box-shadow: inset 0 0 0 1px #2e2e2e;
+}
+
+
+textview text:selected,
+textview text selection,
+textview text:selected:focus,
+textview text selection:focus {
+  color: #FFFFFF;
+  background-color: #0078D7;
+}
+
+
+button.flat {
+  border-color: transparent;
+  border-radius: 0px;
+  color: #FFFFFF;
+  background-color: transparent;
+}
+
+button.flat:disabled {
+  border-color: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  background-color: transparent;
+}
+
+button.flat:backdrop {
+  border-color: transparent;
+  background-color: transparent;
+  color: #FFFFFF;
+}

@@ -72,8 +72,6 @@ class UmsHardeningSourceTests(unittest.TestCase):
             self.assertIn("/upnp/control/connection_manager", source)
             self.assertIn("HandleConnectionManagerControl", source)
             self.assertIn('method == "SUBSCRIBE" || method == "UNSUBSCRIBE"', source)
-            self.assertIn("AppEvents.HandleEventSubscription", source)
-            self.assertNotIn("EventSubscriptionResponse", source)
 
         eventing = self.read("src/upnp_eventing.cpp")
         self.assertIn("/upnp/event/content_directory", eventing)

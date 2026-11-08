@@ -191,38 +191,6 @@ std::wstring Utf8ToWide(const std::string& value) {
     return result;
 }
 
-std::string XMLEscapeUtf8(const std::string& value) {
-    std::string result;
-    result.reserve(value.size());
-
-    for (char ch : value) {
-        switch (ch) {
-        case '&': result += "&amp;"; break;
-        case '<': result += "&lt;"; break;
-        case '>': result += "&gt;"; break;
-        case '"': result += "&quot;"; break;
-        case '\'': result += "&apos;"; break;
-        default: result += ch; break;
-        }
-    }
-
-    return result;
-}
-
-std::string NormalizeIpLiteral(const std::string& ipAddress) {
-    std::string value = ToLowerAscii(TrimAscii(ipAddress));
-    if (!value.empty() && value.front() == '[' && value.back() == ']') {
-        value = value.substr(1, value.size() - 2);
-    }
-
-    size_t zonePos = value.find('%');
-    if (zonePos != std::string::npos) {
-        value.erase(zonePos);
-    }
-
-    return value;
-}
-
 std::string SockaddrToLiteral(const SOCKADDR* addr) {
     char host[NI_MAXHOST] = {};
     DWORD flags = NI_NUMERICHOST;
@@ -307,6 +275,7 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
             continue;
         }
 
+        const IP_ADAPTER_UNICAST_ADDRESS* chosenV4 = NULL;
         const IP_ADAPTER_UNICAST_ADDRESS* chosenV6 = NULL;
         int chosenV6Rank = 0;
 
@@ -317,8 +286,12 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
 
             if (unicast->Address.lpSockaddr->sa_family == AF_INET) {
                 const SOCKADDR_IN* addr4 = reinterpret_cast<const SOCKADDR_IN*>(unicast->Address.lpSockaddr);
-                if (!IsIPv4Apipa(addr4)) {
-                    AddEndpointForUnicast(endpoints, adapter, unicast, port);
+                // One advertised address per adapter per family. A control
+                // point keys a device by USN and keeps the LAST LOCATION it
+                // saw, so advertising a secondary address under the same USN
+                // can replace a reachable LOCATION with an unreachable one.
+                if (!IsIPv4Apipa(addr4) && chosenV4 == NULL) {
+                    chosenV4 = unicast;
                 }
             } else if (unicast->Address.lpSockaddr->sa_family == AF_INET6) {
                 const SOCKADDR_IN6* addr6 = reinterpret_cast<const SOCKADDR_IN6*>(unicast->Address.lpSockaddr);
@@ -330,6 +303,9 @@ bool EnumerateNetworkEndpoints(int port, const std::wstring& interfaceAllowList,
             }
         }
 
+        if (chosenV4 && chosenV4->Address.lpSockaddr) {
+            AddEndpointForUnicast(endpoints, adapter, chosenV4, port);
+        }
         if (chosenV6 && chosenV6->Address.lpSockaddr) {
             AddEndpointForUnicast(endpoints, adapter, chosenV6, port);
         }
@@ -420,46 +396,4 @@ bool WriteFileAtomicUtf8(const std::wstring& path, const std::string& utf8Conten
     }
     DeleteFileW(tempPath.c_str());
     return false;
-}
-
-namespace {
-// guarded because HandleClient calls GetRoutableHostUrl from many
-// concurrent client threads on both platforms see the workflow
-// document for the full rationale
-std::mutex g_routableHostCacheMutex;
-std::string g_routableHostCached;
-int g_routableHostCachedPort = 0;
-bool g_routableHostCacheValid = false;
-long g_routableHostRecomputeCount = 0;
-}
-
-void InvalidateRoutableHostUrlCache() {
-    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
-    g_routableHostCacheValid = false;
-}
-
-long GetRoutableHostUrlRecomputeCountForTest() {
-    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
-    return g_routableHostRecomputeCount;
-}
-
-std::string GetRoutableHostUrl(int port, const std::wstring& interfaceAllowList) {
-    std::lock_guard<std::mutex> lock(g_routableHostCacheMutex);
-    if (!g_routableHostCacheValid || g_routableHostCachedPort != port) {
-        ++g_routableHostRecomputeCount;
-        g_routableHostCached.clear();
-        std::vector<NetworkEndpoint> endpoints;
-        if (EnumerateNetworkEndpoints(port, interfaceAllowList, endpoints)) {
-            for (const auto& ep : endpoints) {
-                // first non link local endpoint is the best routable address
-                if (!ep.isLinkLocal) {
-                    g_routableHostCached = ep.address + ":" + std::to_string(port);
-                    break;
-                }
-            }
-        }
-        g_routableHostCachedPort = port;
-        g_routableHostCacheValid = true;
-    }
-    return g_routableHostCached;
 }

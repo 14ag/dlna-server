@@ -1,43 +1,15 @@
-<<<<<<< HEAD
-name: CI
-
-on:
-  workflow_dispatch:
-  # pull_request:
-  # push:
-  #    branches:
-  #     - main
-
-jobs:
-  tests:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            cmake_args: -DDLNA_ENABLE_FLTK_GUI=OFF
-          - os: windows-latest
-            cmake_args: ""
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-      - name: Install Python test dependencies
-        run: python -m pip install --upgrade pip pytest
-      - name: Run Python tests
-        run: python -m pytest -q
-      - name: Configure CMake
-        run: cmake -S . -B build-ci ${{ matrix.cmake_args }}
-      - name: Build
-        run: cmake --build build-ci --config Release
-=======
 name: ci
 
 on:
   push:
     branches: [main]
+    paths:
+      - scripts/**
+      - resources/**
+      - packaging/**
+      - scripts/**
+      - tools/**
+
   pull_request:
 
 jobs:
@@ -65,4 +37,3 @@ jobs:
       - run: bash build.sh
       - run: python3 -m pip install pytest
       - run: python3 -m pytest tests/test_vlc_discovery_browse.py
->>>>>>> 03fabad (Refactor tests to remove deprecated checks and improve coverage)

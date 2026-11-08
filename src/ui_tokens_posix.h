@@ -1,0 +1,124 @@
+#ifndef UI_TOKENS_POSIX_H
+#define UI_TOKENS_POSIX_H
+
+// POSIX/GTK4-only geometry that intentionally diverges from the values in
+// src/ui_tokens.h. src/ui_tokens.h is shared with the Win32 build
+// (src/mainwindow.cpp) and documents itself as such; it must not be
+// edited to chase the dlna-server-14ag Figma file, or the Win32 GUI's
+// pixel geometry changes as a side effect. See Section 1, Conflict B of
+// dlna-server-posix-gui-figma-alignment-workflow-20-08-26.md.
+//
+// Included only by src/gtk4_gui_main.cpp.
+
+namespace UiTokensPosix {
+
+constexpr int kTitlebarHeight = 30;
+// distance from the window left edge to the app icon in the titlebar
+constexpr int kTitlebarLeftPadding = 8;
+// gap between the app icon and the title label in the titlebar
+constexpr int kTitlebarIconTitleGap = 5;
+
+constexpr int kMainWindowWidth = 426;
+constexpr int kMainWindowHeight = 593;
+constexpr int kMainWindowBodyHeight = 563;
+// Must equal UiTokens::kToolbarHeight (56). GTK takes max(size_request,
+// CSS min-height), so resources/gtk/styles0.css `box.toolbar { min-height }`
+// and resources/gtk/styles1.css `.toolbar { min-height }` must also be 56px
+// or the rendered toolbar silently grows.
+constexpr int kMainToolbarHeight = 56;
+constexpr int kMainSourceListX = 21;
+constexpr int kMainSourceListYFromListArea = 52;
+constexpr int kMainSourceListWidth = 385;
+constexpr int kMainSourceListHeight = 430;
+
+// Toolbar buttons, left to right, y is relative to the toolbar's own
+// origin (not the window origin).
+// y = (kMainToolbarHeight - buttonHeight) / 2 = (56 - 30) / 2 = 13, matching
+// mainwindow.cpp's WM_SIZE buttonTop computation.
+constexpr int kAddButtonX = 103, kAddButtonY = 13, kAddButtonW = 54, kAddButtonH = 30;
+constexpr int kDeleteButtonX = 167, kDeleteButtonY = 13, kDeleteButtonW = 70, kDeleteButtonH = 30;
+constexpr int kStartStopButtonX = 248, kStartStopButtonY = 13, kStartStopButtonW = 70, kStartStopButtonH = 30;
+constexpr int kSettingsButtonX = 327, kSettingsButtonY = 13, kSettingsButtonW = 81, kSettingsButtonH = 30;
+
+constexpr int kSettingsWindowWidth = 700;
+constexpr int kSettingsWindowHeight = 797;
+constexpr int kSettingsWindowBodyHeight = 767;
+constexpr int kSettingsRibbonHeight = 23;
+constexpr int kSettingsRibbonLogsX = 10;
+constexpr int kSettingsRibbonHelpX = 54;
+
+constexpr int kServerGroupX = 20, kServerGroupY = 51, kServerGroupW = 660, kServerGroupH = 213;
+constexpr int kGeneralGroupX = 24, kGeneralGroupY = 304, kGeneralGroupW = 308, kGeneralGroupH = 124;
+constexpr int kPlaylistGroupX = 348, kPlaylistGroupY = 304, kPlaylistGroupW = 330, kPlaylistGroupH = 124;
+constexpr int kMediaGroupX = 24, kMediaGroupY = 468, kMediaGroupW = 660, kMediaGroupH = 216;
+
+constexpr int kSettingsServerNameLabelX = 41, kSettingsServerNameLabelY = 87, kSettingsServerNameLabelW = 76, kSettingsServerNameLabelH = 15;
+constexpr int kSettingsServerNameEditX = 195, kSettingsServerNameEditY = 77;
+constexpr int kSettingsHttpPortLabelX = 41, kSettingsHttpPortLabelY = 146, kSettingsHttpPortLabelW = 76, kSettingsHttpPortLabelH = 15;
+constexpr int kSettingsHttpPortEditX = 195, kSettingsHttpPortEditY = 135;
+constexpr int kSettingsIpWhitelistLabelX = 41, kSettingsIpWhitelistLabelY = 207, kSettingsIpWhitelistLabelW = 76, kSettingsIpWhitelistLabelH = 15;
+constexpr int kSettingsIpWhitelistEditX = 194, kSettingsIpWhitelistEditY = 194;
+constexpr int kServerNameEditW = 332, kServerNameEditH = 41;
+constexpr int kHttpPortEditW = 330, kHttpPortEditH = 41;
+constexpr int kIpWhitelistEditW = 455, kIpWhitelistEditH = 40;
+constexpr int kPlaylistAddButtonW = 99, kPlaylistAddButtonH = 36;
+
+constexpr int kSettingsDebugLogX = 38, kSettingsDebugLogY = 384, kSettingsDebugLogW = 156, kSettingsDebugLogH = 15;
+constexpr int kSettingsDefaultPlaylistX = 383, kSettingsDefaultPlaylistY = 343, kSettingsDefaultPlaylistW = 106, kSettingsDefaultPlaylistH = 15;
+constexpr int kSettingsPlaylistAddX = 556, kSettingsPlaylistAddY = 377;
+constexpr int kSettingsArtistAlbumsX = 39, kSettingsArtistAlbumsY = 506, kSettingsArtistAlbumsW = 209, kSettingsArtistAlbumsH = 15;
+constexpr int kSettingsHideAllMediaX = 36, kSettingsHideAllMediaY = 551, kSettingsHideAllMediaW = 199, kSettingsHideAllMediaH = 17;
+constexpr int kSettingsSortByTitleX = 37, kSettingsSortByTitleY = 593, kSettingsSortByTitleW = 202, kSettingsSortByTitleH = 15;
+constexpr int kSettingsFlatFoldersX = 378, kSettingsFlatFoldersY = 514, kSettingsFlatFoldersW = 117, kSettingsFlatFoldersH = 15;
+constexpr int kSettingsShowFileNamesX = 378, kSettingsShowFileNamesY = 555, kSettingsShowFileNamesW = 206, kSettingsShowFileNamesH = 15;
+constexpr int kSettingsProxyStreamsX = 378, kSettingsProxyStreamsY = 596, kSettingsProxyStreamsW = 103, kSettingsProxyStreamsH = 15;
+constexpr int kSettingsBackgroundScanX = 37, kSettingsBackgroundScanY = 639, kSettingsBackgroundScanW = 272, kSettingsBackgroundScanH = 15;
+constexpr int kSettingsCancelX = 465, kSettingsCancelY = 715, kSettingsCancelW = 98, kSettingsCancelH = 32;
+constexpr int kSettingsOkX = 580, kSettingsOkY = 715, kSettingsOkW = 104, kSettingsOkH = 32;
+
+constexpr int kLogWindowWidth = 772;
+constexpr int kLogWindowHeight = 712;
+constexpr int kLogWindowBodyHeight = 682;
+constexpr int kLogTextX = 19, kLogTextY = 23, kLogTextW = 735, kLogTextH = 590;
+constexpr int kLogRefreshX = 528, kLogRefreshY = 632, kLogRefreshW = 107, kLogRefreshH = 38;
+constexpr int kLogCloseX = 652, kLogCloseY = 632, kLogCloseW = 101, kLogCloseH = 38;
+
+constexpr int kHelpWindowWidth = 530;
+constexpr int kHelpWindowHeight = 400;
+constexpr int kHelpWindowBodyHeight = 370;
+constexpr int kHelpTextX = 0, kHelpTextY = 0, kHelpTextW = 530, kHelpTextH = 370;
+
+constexpr int kSourcePromptWindowWidth = 538;
+constexpr int kSourcePromptWindowHeight = 209;
+constexpr int kSourcePromptWindowBodyHeight = 179;
+constexpr int kSourcePromptInputX = 18, kSourcePromptInputY = 48, kSourcePromptInputW = 514, kSourcePromptInputH = 33;
+constexpr int kSourcePromptFolderW = 93, kSourcePromptFolderH = 31;
+constexpr int kSourcePromptFileW = 198, kSourcePromptFileH = 30;
+constexpr int kSourcePromptAddW = 76, kSourcePromptAddH = 30;
+constexpr int kSourcePromptCancelW = 75, kSourcePromptCancelH = 28;
+
+constexpr int kPlaylistWindowWidth = 538;
+constexpr int kPlaylistWindowHeight = 189;
+constexpr int kPlaylistWindowBodyHeight = 159;
+constexpr int kPlaylistMovieLabelX = 17, kPlaylistMovieLabelY = 24;
+constexpr int kPlaylistMovieEditX = 113, kPlaylistMovieEditY = 18, kPlaylistMovieEditW = 323, kPlaylistMovieEditH = 31;
+constexpr int kPlaylistMovieBrowseX = 447, kPlaylistMovieBrowseY = 18, kPlaylistMovieBrowseW = 88, kPlaylistMovieBrowseH = 28;
+constexpr int kPlaylistSubtitleLabelX = 17, kPlaylistSubtitleLabelY = 62;
+constexpr int kPlaylistSubtitleEditX = 95, kPlaylistSubtitleEditY = 62, kPlaylistSubtitleEditW = 325, kPlaylistSubtitleEditH = 31;
+constexpr int kPlaylistSubtitleBrowseX = 445, kPlaylistSubtitleBrowseY = 62, kPlaylistSubtitleBrowseW = 91, kPlaylistSubtitleBrowseH = 31;
+constexpr int kPlaylistAddX = 445, kPlaylistAddY = 111, kPlaylistAddW = 90, kPlaylistAddH = 30;
+
+// Warning/restart dialog (Figma node 5:321). No equivalent window exists
+// yet in gtk4_gui_main.cpp; MessageBoxShow/MessageBoxQuestion currently
+// auto-size around their content. See Phase 9.
+constexpr int kWarningWindowWidth = 245;
+constexpr int kWarningWindowHeight = 150;
+constexpr int kWarningWindowBodyHeight = 120;
+constexpr int kWarningMessageAreaH = 76;
+constexpr int kWarningFooterH = 44;
+constexpr int kWarningOkW = 73, kWarningOkH = 22;
+constexpr int kWarningTriangleW = 32, kWarningTriangleH = 38;
+
+}  // namespace UiTokensPosix
+
+#endif  // UI_TOKENS_POSIX_H

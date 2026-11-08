@@ -49,11 +49,7 @@ std::string ExecutableDirectory() {
 }
 
 std::string Trim(const std::string& value) {
-    const char* ws = " \t\r\n";
-    const size_t start = value.find_first_not_of(ws);
-    if (start == std::string::npos) return {};
-    const size_t end = value.find_last_not_of(ws);
-    std::string result = value.substr(start, end - start + 1);
+    std::string result = TrimAscii(value);
     if (result.size() >= 3 &&
         static_cast<unsigned char>(result[0]) == 0xEF &&
         static_cast<unsigned char>(result[1]) == 0xBB &&
@@ -92,20 +88,25 @@ std::string ResolveXdgConfigBase() {
 }
 
 std::string AppRootConfigPath() {
-    const std::string configDir = ResolveXdgConfigBase() + "/dlna-server";
-    std::error_code ec;
-    std::filesystem::create_directories(configDir, ec);
-    // create_directories() is a documented no-op (returns false, ec clear)
-    // when the directory already exists -- safe to call on every launch,
-    // no separate "first run" bootstrap step is needed.
-    if (ec) {
-        // Directory could not be created (e.g. degraded /tmp fallback on a
-        // read-only root). Fall through and let the subsequent
-        // WriteFileAtomicUtf8() failure produce the existing, already
-        // logged "Config save failed" message rather than silently
-        // guessing at another location.
-    }
-    return configDir + "/config.ini";
+    // computed once per process resolved xdg config base and the mkdir
+    // side effect below only need to happen once every LogPrint call with
+    // debug logging on previously re ran create_directories which is a
+    // filesystem syscall per log line function local static
+    // initialization is thread safe by the c plus plus standard so this
+    // needs no manual locking see F-PERF-02
+    static const std::string cachedPath = []() -> std::string {
+        const std::string configDir = ResolveXdgConfigBase() + "/dlna-server";
+        std::error_code ec;
+        std::filesystem::create_directories(configDir, ec);
+        // create_directories() is a documented no-op (returns false, ec
+        // clear) when the directory already exists. If ec is set here
+        // (e.g. a degraded /tmp fallback on a read-only root), fall
+        // through and let the subsequent WriteFileAtomicUtf8() failure
+        // produce the existing, already logged "Config save failed"
+        // message rather than silently guessing at another location.
+        return configDir + "/config.ini";
+    }();
+    return cachedPath;
 }
 
 void MigrateLegacyConfigIfPresent(const std::wstring& newConfigPath) {
@@ -129,12 +130,8 @@ void MigrateLegacyConfigIfPresent(const std::wstring& newConfigPath) {
 }
 
 int ParseIntOrDefault(const std::string& value, int fallback) {
-    if (value.empty()) return fallback;
-    try {
-        return std::stoi(value);
-    } catch (...) {
-        return fallback;
-    }
+    int parsed = 0;
+    return TryParseIntStrict(TrimAscii(value), parsed) ? parsed : fallback;
 }
 
 std::wstring DefaultServerName() {
@@ -161,6 +158,9 @@ std::string ResolveBundledResourcePath(const std::string& fileName) {
     const std::vector<std::string> candidates = {
         std::string(DLNA_RESOURCE_DIR) + "/" + fileName,
         exeDir + "/" + fileName,
+        exeDir + "/resources/" + fileName,
+        exeDir + "/../resources/" + fileName,
+        exeDir + "/../share/dlna-server/" + fileName,
         exeDir + "/../share/dlna-server/icons/" + fileName,
         exeDir + "/../Resources/" + fileName,
     };
@@ -181,7 +181,6 @@ Config& Config::Get() {
 Config::Config()
     : serverName(DefaultServerName()),
       port(8200),
-      fileServerPort(8201),
       flatFolderStyle(false),
       showFileNamesInsteadOfTitles(false),
       proxyStreams(false),
@@ -196,8 +195,8 @@ Config::Config()
       presentationUrl(L"/"),
       runOnBoot(false),
       defaultPlaylistEnabled(false),
-      defaultPlaylistPath(L""),
-      backgroundScanEnabled(false) {
+      backgroundScanEnabled(false),
+      defaultPlaylistPath(L"") {
 }
 
 ConfigSnapshot Config::Snapshot() const {
@@ -205,7 +204,6 @@ ConfigSnapshot Config::Snapshot() const {
     return ConfigSnapshot{
         serverName,
         port,
-        fileServerPort,
         flatFolderStyle,
         showFileNamesInsteadOfTitles,
         proxyStreams,
@@ -249,6 +247,11 @@ bool Config::IsProxyStreamsEnabled() const {
     return proxyStreams;
 }
 
+std::wstring Config::GetNetworkInterfaceAllowList() const {
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
+    return networkInterfaceAllowList;
+}
+
 int ParsePortOrDefault(const std::string& value, int fallback) {
     int parsed = ParseIntOrDefault(value, fallback);
     return IsValidPort(parsed) ? parsed : fallback;
@@ -284,7 +287,7 @@ std::wstring Config::GetDefaultPlaylistPath() {
     return Utf8ToWide(path.substr(0, slash + 1) + "default.m3u");
 }
 
-// Intentionally inert: the FLTK settings dialog no longer exposes a
+// Intentionally inert: the settings dialog no longer exposes a
 // "run on startup" control on POSIX (see remediation workflow Phase 6E),
 // so RunOnBoot in a legacy config.ini is read and persisted but never
 // acted on. Re-implement this only alongside an explicit XDG autostart
@@ -321,7 +324,8 @@ void Config::Load() {
         const std::string value = line.substr(eq + 1);
         if (key == "ServerName") serverName = Utf8ToWide(value);
         else if (key == "Port") port = ParsePortOrDefault(value, port);
-        else if (key == "FileServerPort") fileServerPort = ParsePortOrDefault(value, fileServerPort);
+        // Dead key kept readable so old config files still load
+        else if (key == "FileServerPort") ParsePortOrDefault(value, 8201);
         else if (key == "FlatFolderStyle") flatFolderStyle = ParseIntOrDefault(value, 0) != 0;
         else if (key == "ShowFileNamesInsteadOfTitles") showFileNamesInsteadOfTitles = ParseIntOrDefault(value, 0) != 0;
         else if (key == "ProxyStreams") proxyStreams = ParseIntOrDefault(value, 0) != 0;
@@ -382,7 +386,6 @@ void Config::Save() {
     out << "[Settings]\n";
     out << "ServerName=" << WideToUtf8(serverName) << "\n";
     out << "Port=" << port << "\n";
-    out << "FileServerPort=" << fileServerPort << "\n";
     out << "FlatFolderStyle=" << (flatFolderStyle ? 1 : 0) << "\n";
     out << "ShowFileNamesInsteadOfTitles=" << (showFileNamesInsteadOfTitles ? 1 : 0) << "\n";
     out << "ProxyStreams=" << (proxyStreams ? 1 : 0) << "\n";

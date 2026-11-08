@@ -29,6 +29,18 @@ public:
     static BoundedThreadPool& Get();
 };
 
+// bounded pool for per source top level scan jobs deliberately separate
+// from PlaylistScanPool a source job blocks waiting for PlaylistScanPool
+// workers via RunPlaylistDispatcher so a source job must never itself run
+// on PlaylistScanPool see MediaSources Scan in media_sources_common cpp
+// for the full deadlock rationale this pool never blocks on
+// PlaylistScanPool workers it only ever blocks on tasks submitted to
+// itself so bounding it here introduces no equivalent risk
+class SourceScanPool {
+public:
+    static BoundedThreadPool& Get();
+};
+
 constexpr size_t kPlaylistScanPoolSize = 20;
 // 10x the worker count: deep enough that a normal burst of newly
 // discovered nodes never blocks a producer, shallow enough that a

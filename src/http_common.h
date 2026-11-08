@@ -9,6 +9,13 @@
 constexpr size_t kMaxSoapBodyBytes = 1024 * 1024;
 constexpr size_t kHttpBufSize = 8192;
 
+// Shared by httpserver.cpp (Win32) and posix_httpserver.cpp (POSIX): the
+// maximum number of simultaneously handled client connections. One
+// canonical definition so the two platforms cannot silently drift apart
+// (they previously carried two hand-synced literals with a comment
+// asking maintainers to keep them equal by hand).
+constexpr size_t kMaxClientThreads = 64;
+
 std::string ConnectionHeader(bool keepAlive);
 bool ShouldKeepAlive(const std::string& req);
 std::string SplitRequestTarget(const std::string& requestTarget);

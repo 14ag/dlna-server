@@ -8,14 +8,14 @@
 #include "server.h"
 #include "browse_page_cap.h"
 #include <algorithm>
-#include <filesystem>
+#include <atomic>
 #include <sstream>
 #include <vector>
 #include <cwctype>
 
-namespace fs = std::filesystem;
-
 namespace {
+std::atomic<long> g_searchRecomputeCount{0};
+
 size_t FindXmlTagEnd(const std::string& xml, size_t openAt) {
     char quote = '\0';
     for (size_t i = openAt + 1; i < xml.size(); ++i) {
@@ -141,6 +141,30 @@ bool ExtractTagValue(const std::string& req, const char* tag, std::string& value
     return false;
 }
 
+std::unordered_map<std::string, std::string> ParseSoapTags(const std::string& req) {
+    std::unordered_map<std::string, std::string> tags;
+    size_t pos = 0;
+    while (pos < req.size()) {
+        const size_t closeStart = req.find("</", pos);
+        if (closeStart == std::string::npos) break;
+        const size_t closeEnd = FindXmlTagEnd(req, closeStart);
+        if (closeEnd == std::string::npos) break;
+        std::string body = TrimAscii(req.substr(closeStart + 2, closeEnd - closeStart - 2));
+        const size_t nameEnd = body.find_first_of(" \t\r\n");
+        const std::string name = LocalXmlName(nameEnd == std::string::npos ? body : body.substr(0, nameEnd));
+        const std::string openTag = "<" + name;
+        const size_t openStart = req.rfind(openTag, closeStart);
+        if (openStart != std::string::npos) {
+            const size_t valueStart = req.find('>', openStart);
+            if (valueStart != std::string::npos && valueStart < closeStart) {
+                tags[name] = req.substr(valueStart + 1, closeStart - valueStart - 1);
+            }
+        }
+        pos = closeEnd + 1;
+    }
+    return tags;
+}
+
 std::string SoapEnvelope(const std::string& body) {
     return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
            "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\">\n"
@@ -213,17 +237,18 @@ void SortItems(std::vector<MediaItem>& items, const std::string& sortCriteria) {
     }
 }
 
-bool ContainsNoCase(const std::wstring& haystack, const std::wstring& needle) {
-    std::wstring h = haystack;
-    std::wstring n = needle;
-    std::transform(h.begin(), h.end(), h.begin(), [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
-    std::transform(n.begin(), n.end(), n.begin(), [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
-    return h.find(n) != std::wstring::npos;
+bool ContainsNoCase(const std::wstring& haystack, const std::wstring& loweredNeedle) {
+    if (loweredNeedle.empty()) return true;
+    return std::search(haystack.begin(), haystack.end(),
+                       loweredNeedle.begin(), loweredNeedle.end(),
+                       [](wchar_t a, wchar_t b) {
+                           return std::towlower(a) == std::towlower(b);
+                       }) != haystack.end();
 }
 
-bool StartsWithNoCase(const std::wstring& value, const std::wstring& prefix) {
-    if (value.size() < prefix.size()) return false;
-    return ContainsNoCase(value.substr(0, prefix.size()), prefix);
+bool StartsWithNoCase(const std::wstring& value, const std::wstring& loweredPrefix) {
+    if (value.size() < loweredPrefix.size()) return false;
+    return ContainsNoCase(value.substr(0, loweredPrefix.size()), loweredPrefix);
 }
 
 std::string ExtractQuotedCriteriaValue(const std::string& criteria) {
@@ -255,11 +280,15 @@ bool MatchesSearchCriteria(const MediaItem& item, const std::string& criteria) {
     if (normalized.empty() || normalized == "*" || normalized == "true") return true;
     if (normalized.find("dc:title") != std::string::npos && normalized.find("contains") != std::string::npos) {
         std::string needle = ExtractQuotedCriteriaValue(criteria);
-        return needle.empty() ? true : ContainsNoCase(item.title, Utf8ToWide(needle));
+        if (needle.empty()) return true;
+        const std::wstring loweredNeedle = ToLowerWide(Utf8ToWide(needle));
+        return ContainsNoCase(item.title, loweredNeedle);
     }
     if (normalized.find("upnp:class") != std::string::npos && normalized.find("derivedfrom") != std::string::npos) {
         std::string value = ExtractQuotedCriteriaValue(criteria);
-        return value.empty() ? true : StartsWithNoCase(item.upnpClass, Utf8ToWide(value));
+        if (value.empty()) return true;
+        const std::wstring loweredValue = ToLowerWide(Utf8ToWide(value));
+        return StartsWithNoCase(item.upnpClass, loweredValue);
     }
     const bool classEquals = normalized.find("upnp:class =") != std::string::npos ||
                              normalized.find("upnp:class=") != std::string::npos;
@@ -288,8 +317,9 @@ std::string BuildDIDL(const std::vector<MediaItem>& items, int startingIndex, in
     const bool includeAlbumArt = ApplyDidlFilter(filter, "upnp:albumArtURI");
     const bool includeResource = ApplyDidlFilter(filter, "res");
     const bool includeDate = ApplyDidlFilter(filter, "dc:date");
-    std::string didl = "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" xmlns:dlna=\"urn:schemas-dlna-org:metadata-1-0/\" xmlns:sec=\"http://www.sec.co.kr/dlna\">";
+    std::string didl;
     didl.reserve(256 + (static_cast<size_t>((std::max)(0, requested)) * 512));
+    didl.append("<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\" xmlns:dlna=\"urn:schemas-dlna-org:metadata-1-0/\" xmlns:sec=\"http://www.sec.co.kr/dlna\">");
     std::ostringstream entry;
     for (int i = safeStart; i < static_cast<int>(items.size()) && returnCount < requested; ++i) {
         const auto& it = items[i];
@@ -568,6 +598,26 @@ std::string ContentDirectory::HandleConnectionManagerControl(const std::string& 
     return SoapFault(401, "Invalid Action");
 }
 
+long ContentDirectory::GetSearchRecomputeCountForTest() {
+    return g_searchRecomputeCount.load(std::memory_order_relaxed);
+}
+
+void ContentDirectory::ClearSearchCache() {
+    std::lock_guard<std::mutex> lock(m_searchCacheMutex);
+    m_searchCacheByContainer.clear();
+    m_searchCacheTotalItems = 0;
+}
+
+long ContentDirectory::GetSearchCacheTotalItemsForTest() {
+    std::lock_guard<std::mutex> lock(m_searchCacheMutex);
+    return static_cast<long>(m_searchCacheTotalItems);
+}
+
+long ContentDirectory::GetSearchCacheSizeForTest() {
+    std::lock_guard<std::mutex> lock(m_searchCacheMutex);
+    return static_cast<long>(m_searchCacheByContainer.size());
+}
+
 std::string ContentDirectory::HandleContentDirectoryControl(const std::string& req, const std::string& hostUrl) {
     bool malformed = false;
     const std::string action = ExtractSoapActionName(req, malformed);
@@ -599,18 +649,16 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
             // target, not an error (see remediation workflow S1).
             return SoapFault(710, "Content directory not yet initialized");
         }
-        std::string containerIdStr;
-        std::string searchCriteria;
-        std::string filter;
-        std::string startingIndexStr;
-        std::string requestedCountStr;
-        if (!ExtractTagValue(req, "ContainerID", containerIdStr) ||
-            !ExtractTagValue(req, "SearchCriteria", searchCriteria) ||
-            !ExtractTagValue(req, "StartingIndex", startingIndexStr) ||
-            !ExtractTagValue(req, "RequestedCount", requestedCountStr)) {
+        const auto tags = ParseSoapTags(req);
+        static const std::string emptyStr;
+        const std::string& containerIdStr = tags.count("ContainerID") ? tags.at("ContainerID") : emptyStr;
+        const std::string& searchCriteria = tags.count("SearchCriteria") ? tags.at("SearchCriteria") : emptyStr;
+        const std::string& filter = tags.count("Filter") ? tags.at("Filter") : emptyStr;
+        const std::string& startingIndexStr = tags.count("StartingIndex") ? tags.at("StartingIndex") : emptyStr;
+        const std::string& requestedCountStr = tags.count("RequestedCount") ? tags.at("RequestedCount") : emptyStr;
+        if (containerIdStr.empty() || startingIndexStr.empty() || requestedCountStr.empty() || tags.count("SearchCriteria") == 0) {
             return SoapFault(402, "Invalid Args");
         }
-        ExtractTagValue(req, "Filter", filter);
 
         int containerId = 0;
         int startingIndex = 0;
@@ -624,6 +672,20 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         }
         if (AppMedia.GetItem(containerId).id == -1) return SoapFault(701, "No such object");
 
+        const std::string& sortCriteria = tags.count("SortCriteria") ? tags.at("SortCriteria") : emptyStr;
+
+        const int currentUpdateId = AppMedia.GetSystemUpdateID();
+        const std::wstring cacheKey = Utf8ToWide(searchCriteria) + L"\x1f" + Utf8ToWide(sortCriteria);
+        {
+            std::lock_guard<std::mutex> lock(m_searchCacheMutex);
+            auto found = m_searchCacheByContainer.find(containerId);
+            if (found != m_searchCacheByContainer.end() &&
+                found->second.systemUpdateId == currentUpdateId &&
+                found->second.key == cacheKey) {
+                return BrowseSearchResponse("Search", found->second.results, startingIndex, requestedCount, hostUrl, filter, static_cast<int>(found->second.results.size()));
+            }
+        }
+
         std::vector<MediaItem> descendants = AppMedia.GetDescendants(containerId);
         std::vector<MediaItem> results;
         for (const auto& item : descendants) {
@@ -631,10 +693,43 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
                 results.push_back(item);
             }
         }
-        std::string sortCriteria;
-        ExtractTagValue(req, "SortCriteria", sortCriteria);
         SortItems(results, sortCriteria);
-        return BrowseSearchResponse("Search", results, startingIndex, requestedCount, hostUrl, filter, static_cast<int>(results.size()));
+        const std::string response = BrowseSearchResponse("Search", results, startingIndex, requestedCount, hostUrl, filter, static_cast<int>(results.size()));
+        {
+            std::lock_guard<std::mutex> lock(m_searchCacheMutex);
+            auto existingEntry = m_searchCacheByContainer.find(containerId);
+            const bool containerAlreadyCached = existingEntry != m_searchCacheByContainer.end();
+            const size_t previousItemCount = containerAlreadyCached ? existingEntry->second.results.size() : 0;
+            const size_t incomingItemCount = results.size();
+
+            // evict oldest by systemUpdateId entries never the slot this
+            // Search is about to overwrite until both the container
+            // count cap and the total cached item budget are satisfied
+            // container count alone does not bound memory each cached
+            // results vector is a full descendant subtree with no size
+            // limit of its own see F-CACHE-01
+            while (!m_searchCacheByContainer.empty() &&
+                   SearchCacheNeedsEviction(m_searchCacheByContainer.size(), m_searchCacheTotalItems,
+                                            previousItemCount, incomingItemCount, containerAlreadyCached,
+                                            kMaxSearchCacheContainers, kMaxSearchCacheTotalItems)) {
+                auto oldest = m_searchCacheByContainer.end();
+                for (auto it = m_searchCacheByContainer.begin(); it != m_searchCacheByContainer.end(); ++it) {
+                    if (it->first == containerId) continue;
+                    if (oldest == m_searchCacheByContainer.end() || it->second.systemUpdateId < oldest->second.systemUpdateId) {
+                        oldest = it;
+                    }
+                }
+                if (oldest == m_searchCacheByContainer.end()) break;
+                m_searchCacheTotalItems -= oldest->second.results.size();
+                m_searchCacheByContainer.erase(oldest);
+            }
+
+            m_searchCacheTotalItems = m_searchCacheTotalItems - previousItemCount + incomingItemCount;
+            m_searchCacheByContainer[containerId] = SearchCacheEntry{ currentUpdateId, cacheKey, std::move(results) };
+            ++g_searchRecomputeCount;
+        }
+        LogPrint(L"[search-cache] recompute count now %ld total-items=%zu", g_searchRecomputeCount.load(), m_searchCacheTotalItems);
+        return response;
     }
 
     if (action != "Browse") {
@@ -649,20 +744,19 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         return SoapFault(710, "Content directory not yet initialized");
     }
 
-    std::string objIdStr;
-    std::string browseFlag;
-    std::string filter;
-    std::string startingIndexStr;
-    std::string requestedCountStr;
-    if (!ExtractTagValue(req, "ObjectID", objIdStr) ||
-        !ExtractTagValue(req, "BrowseFlag", browseFlag)) {
+    const auto tags = ParseSoapTags(req);
+    static const std::string emptyStr;
+    const std::string& objIdStr = tags.count("ObjectID") ? tags.at("ObjectID") : emptyStr;
+    const std::string& browseFlag = tags.count("BrowseFlag") ? tags.at("BrowseFlag") : emptyStr;
+    const std::string& filter = tags.count("Filter") ? tags.at("Filter") : emptyStr;
+    const std::string& startingIndexStr = tags.count("StartingIndex") ? tags.at("StartingIndex") : emptyStr;
+    const std::string& requestedCountStr = tags.count("RequestedCount") ? tags.at("RequestedCount") : emptyStr;
+    if (objIdStr.empty() || browseFlag.empty()) {
         return SoapFault(401, "Invalid XML");
     }
-    if (!ExtractTagValue(req, "StartingIndex", startingIndexStr) ||
-        !ExtractTagValue(req, "RequestedCount", requestedCountStr)) {
+    if (startingIndexStr.empty() || requestedCountStr.empty()) {
         return SoapFault(402, "Invalid Args");
     }
-    ExtractTagValue(req, "Filter", filter);
 
     int objId = 0;
     int startingIndex = 0;
@@ -693,8 +787,7 @@ std::string ContentDirectory::HandleContentDirectoryControl(const std::string& r
         return SoapFault(402, "Invalid Args");
     }
 
-    std::string sortCriteria;
-    ExtractTagValue(req, "SortCriteria", sortCriteria);
+    const std::string& sortCriteria = tags.count("SortCriteria") ? tags.at("SortCriteria") : emptyStr;
     SortItems(results, sortCriteria);
     int totalMatches = browseFlag == "BrowseMetadata" ? 1 : static_cast<int>(results.size());
     return BrowseSearchResponse("Browse", results, startingIndex, requestedCount, hostUrl, filter, totalMatches);

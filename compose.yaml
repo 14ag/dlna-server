@@ -1,0 +1,26 @@
+name: dlna-server
+
+services:
+  dlna-server:
+    build:
+      context: .
+    image: ${DLNA_IMAGE:-ghcr.io/14ag/dlna-server:latest}
+    container_name: dlna-server
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HOME: /config
+      XDG_CONFIG_HOME: /config
+    volumes:
+      - ./media:/media:ro
+      - dlna-config:/config
+    command: ["--source", "/media"]
+    stop_grace_period: 20s
+
+volumes:
+  dlna-config:

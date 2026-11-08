@@ -10,10 +10,14 @@ def make_nested_playlist_tree(root_dir, num_nested=20, delay_ms=100):
     root_dir = Path(root_dir)
     root_dir.mkdir(parents=True, exist_ok=True)
 
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
+    # bind the ephemeral port once and hand the socket straight to the
+    # HTTPServer so no other process can take the port between bind
+    # and serve this removes the close then rebind TOCTOU race that
+    # made the scan fetch loop stall under full suite port pressure
+    listen_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listen_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listen_socket.bind(("127.0.0.1", 0))
+    port = listen_socket.getsockname()[1]
 
     root_playlist = root_dir / "broadband.m3u"
     lines = ["#EXTM3U"]
@@ -62,7 +66,9 @@ def make_nested_playlist_tree(root_dir, num_nested=20, delay_ms=100):
         def log_message(self, *a):
             pass
 
-    server = HTTPServer(("127.0.0.1", port), _Handler)
+    server = HTTPServer(("127.0.0.1", port), _Handler, bind_and_activate=False)
+    server.socket = listen_socket
+    server.server_activate()
 
     @contextmanager
     def serve():

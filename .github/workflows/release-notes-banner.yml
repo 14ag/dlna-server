@@ -1,8 +1,8 @@
-name: Update Latest Release Notes
+name: Add release notes banner
 
 on:
   release:
-    types: [published]
+    types: [created, edited, published]
 
 permissions:
   contents: write

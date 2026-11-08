@@ -11,8 +11,9 @@ EXPECTED_LEAF_COUNT = 3  # file1.mp4, file2.mp4, file3.mp4
 
 @pytest.fixture
 def media_folder():
-    if not CONCURRENT_TEST_MEDIA.is_dir():
-        pytest.skip(f"test media folder not found: {CONCURRENT_TEST_MEDIA}")
+    assert CONCURRENT_TEST_MEDIA.is_dir(), (
+        f"test media folder not found: {CONCURRENT_TEST_MEDIA}"
+    )
     return str(CONCURRENT_TEST_MEDIA)
 
 

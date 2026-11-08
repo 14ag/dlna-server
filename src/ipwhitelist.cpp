@@ -21,6 +21,8 @@ IPWhitelist& IPWhitelist::Get() {
 IPWhitelist::IPWhitelist() {
 }
 
+namespace {
+
 bool ParseAddressBytes(const std::string& text, int& family, std::array<unsigned char, 16>& bytes) {
     bytes.fill(0);
     in_addr addr4{};
@@ -71,6 +73,8 @@ bool IsInRange(const CidrRange& range, const std::string& ipAddress) {
     return PrefixBytesMatch(range.address.data(), bytes.data(), range.prefixLength);
 }
 
+} // namespace
+
 void IPWhitelist::Load(const std::wstring& configStr) {
     std::unordered_set<std::string> parsed;
     std::vector<CidrRange> ranges;
@@ -104,10 +108,9 @@ void IPWhitelist::Load(const std::wstring& configStr) {
 }
 
 bool IPWhitelist::IsAllowed(const std::string& ipAddress) {
+    const std::string normalized = NormalizeIpLiteral(TrimAscii(ipAddress));
     std::shared_lock<std::shared_mutex> lock(m_mutex);
     if (m_allowedIps.empty() && m_allowedRanges.empty()) return true; // Empty means all allowed
-
-    std::string normalized = NormalizeIpLiteral(TrimAscii(ipAddress));
 
     if (m_allowedIps.find(normalized) != m_allowedIps.end()) return true;
     for (const auto& range : m_allowedRanges) if (IsInRange(range, normalized)) return true;
