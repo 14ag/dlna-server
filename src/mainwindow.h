@@ -135,7 +135,7 @@ private:
     std::atomic<bool> m_scanInProgress;
     std::atomic<bool> m_scanningStatusActive;
     int m_consecutiveUnhealthyPolls = 0;
-    bool m_lastLocalhostMode = false;
+    bool m_lastStandbyMode = false;
     SourceListFocusState m_focusState;
     HoverFocusState m_hoverFocusState;
     RECT m_listRingRect = {0, 0, 0, 0};

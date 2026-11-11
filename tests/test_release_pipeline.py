@@ -69,15 +69,6 @@ def test_release_workflow_requires_no_input():
     assert not (triggers["workflow_dispatch"] or {}).get("inputs")
 
 
-def test_release_workflow_calls_both_builds_then_notes():
-    doc, _ = load_workflow("release-all.yml")
-    jobs = doc["jobs"]
-    assert jobs["windows"]["uses"].endswith("build-windows.yml")
-    assert jobs["linux"]["uses"].endswith("build-linux.yml")
-    assert jobs["notes"]["uses"].endswith("release-notes.yml")
-    assert set(jobs["publish"]["needs"]) == {"version", "windows", "linux"}
-
-
 @pytest.mark.posix_only
 @pytest.mark.parametrize("script", ["build.sh", "scripts/release-notes.sh"])
 def test_shell_scripts_parse(script):

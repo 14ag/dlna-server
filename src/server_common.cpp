@@ -101,29 +101,35 @@ void Server::RestartSsdpForNetworkChange() {
 
     // mode changes are decided before any rate limit so a network loss is never skipped
     const NetworkMode mode = m_networkMode.load(std::memory_order_acquire);
-    const NetworkModeEvent modeEvent = DecideNetworkModeEvent(
-        mode, endpointsAfterRefresh.size(), m_networkRestoredAnnounced.load(std::memory_order_acquire));
-    if (modeEvent == NetworkModeEvent::Lost) {
-        LogPrint(L"Network lost; switching to localhost mode.");
+    const NetworkModeEvent modeEvent = DecideNetworkModeEvent(mode, endpointsAfterRefresh.size());
+    if (modeEvent == NetworkModeEvent::EnterStandby) {
+        LogPrint(L"Network lost; entering standby.");
         InvalidateRoutableHostUrlCache();
-        m_networkMode.store(NetworkMode::Localhost, std::memory_order_release);
-        m_networkRestoredAnnounced.store(false, std::memory_order_release);
+        m_networkMode.store(NetworkMode::Standby, std::memory_order_release);
         SSDP::Get().Stop();
         std::lock_guard<std::mutex> endpointLock(m_endpointMutex);
-        m_endpoint = LocalhostEndpointText(cfg.port);
+        m_endpoint.clear();
         return;
     }
-    if (mode == NetworkMode::Localhost) {
-        if (modeEvent == NetworkModeEvent::Restored) {
-            LogPrint(L"Network restored; restart the server to leave localhost mode.");
-            InvalidateRoutableHostUrlCache();
-            m_networkRestoredAnnounced.store(true, std::memory_order_release);
-            m_networkRestored.store(true, std::memory_order_release);
-        } else if (endpointsAfterRefresh.empty()) {
-            m_networkRestoredAnnounced.store(false, std::memory_order_release);
+    if (modeEvent == NetworkModeEvent::LeaveStandby) {
+        InvalidateRoutableHostUrlCache();
+        // rejoining the network so the boot id must increase
+        if (!SSDP::Get().Start(endpointsAfterRefresh, cfg.port, cfg.serverName, cfg.deviceUUID, true)) {
+            LogPrint(L"Network restored but SSDP could not start; staying in standby and retrying.");
+            return;
         }
+        m_networkMode.store(NetworkMode::Normal, std::memory_order_release);
+        m_lastSsdpRestartCompletedAt = std::chrono::steady_clock::now();
+        m_hasSsdpRestartCompletedAt = true;
+        const NetworkEndpoint* shown = SelectBestEndpoint(endpointsAfterRefresh, nullptr);
+        {
+            std::lock_guard<std::mutex> endpointLock(m_endpointMutex);
+            m_endpoint = shown ? Utf8ToWide(shown->host + ":" + std::to_string(cfg.port)) : std::wstring();
+        }
+        LogPrint(L"Network restored; standby ended.");
         return;
     }
+    if (mode == NetworkMode::Standby) return;
 
     // normal mode compares against what ssdp really advertises
     const std::vector<NetworkEndpoint> endpointsBeforeRefresh = SSDP::Get().ActiveEndpoints();
@@ -141,6 +147,16 @@ void Server::RestartSsdpForNetworkChange() {
     SSDP::Get().Start(endpointsAfterRefresh, cfg.port, cfg.serverName, cfg.deviceUUID);
     m_lastSsdpRestartCompletedAt = std::chrono::steady_clock::now();
     m_hasSsdpRestartCompletedAt = true;
+}
+
+// quiet probe used by the watch loop while in standby
+// the full restart path logs every call so it only runs once an endpoint exists
+void Server::TryLeaveStandby() {
+    if (m_networkMode.load(std::memory_order_acquire) != NetworkMode::Standby) return;
+    const ConfigSnapshot cfg = AppConfig.Snapshot();
+    std::vector<NetworkEndpoint> probe;
+    if (!EnumerateNetworkEndpoints(cfg.port, cfg.networkInterfaceAllowList, probe)) return;
+    RestartSsdpForNetworkChange();
 }
 
 void Server::StopNetworkChangeWatcher() {
@@ -181,17 +197,30 @@ void Server::StopWatchMode() {
 }
 
 void Server::WatchLoop() {
+    // one short tick serves both jobs
+    // standby probing runs every tick
+    // source checks keep their own slower schedule
+    constexpr auto kTickInterval = std::chrono::seconds(5);
+    auto sourcePollInterval = [this]() {
+        return m_directoryWatchActive.load(std::memory_order_acquire)
+            ? std::chrono::seconds(15 * 60)
+            : std::chrono::seconds(60);
+    };
     ConfigSnapshot cfg = AppConfig.Snapshot();
     std::string signature = ComputeMediaSourceSignature(cfg);
+    auto nextSourceCheckAt = std::chrono::steady_clock::now() + sourcePollInterval();
     while (!m_stopWatch.load()) {
         std::unique_lock<std::mutex> lock(m_watchMutex);
-        const auto pollInterval = m_directoryWatchActive.load(std::memory_order_acquire)
-            ? std::chrono::minutes(15)
-            : std::chrono::seconds(60);
-        if (m_watchCv.wait_for(lock, pollInterval, [&]() { return m_stopWatch.load(); })) {
+        if (m_watchCv.wait_for(lock, kTickInterval, [&]() { return m_stopWatch.load(); })) {
             break;
         }
         lock.unlock();
+
+        TryLeaveStandby();
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now < nextSourceCheckAt) continue;
+        nextSourceCheckAt = now + sourcePollInterval();
 
         cfg = AppConfig.Snapshot();
         const bool sourcesChanged = MediaSourcesHaveChanged(cfg, signature);
@@ -234,8 +263,8 @@ void Server::RefreshEndpoints(const ConfigSnapshot& cfg) {
 bool Server::IsHealthy() const {
     if (!m_running.load(std::memory_order_acquire)) return true;
     if (!HttpServer::Get().IsHealthy()) return false;
-    // ssdp is deliberately stopped in localhost mode
-    return m_networkMode.load(std::memory_order_acquire) == NetworkMode::Localhost || SSDP::Get().IsHealthy();
+    // ssdp is deliberately stopped in standby mode
+    return m_networkMode.load(std::memory_order_acquire) == NetworkMode::Standby || SSDP::Get().IsHealthy();
 }
 
 // snapshot copy under the endpoint mutex for hook and start callers
@@ -285,8 +314,6 @@ void Server::Stop() {
     AppConfig.ClearRuntimeSourceOverride();
 
     m_networkMode.store(NetworkMode::Normal, std::memory_order_release);
-    m_networkRestored.store(false, std::memory_order_release);
-    m_networkRestoredAnnounced.store(false, std::memory_order_release);
 
     {
         std::lock_guard<std::mutex> lock(m_endpointMutex);

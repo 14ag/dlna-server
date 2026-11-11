@@ -37,12 +37,11 @@ public:
     bool IsInitialScanComplete() const { return m_initialScanComplete.load(std::memory_order_acquire); }
     bool IsInitialScanInProgress() const { return m_initialScanInProgress.load(std::memory_order_acquire); }
     // true while running with no usable network endpoint
-    bool IsLocalhostMode() const {
+    // the server waits and resumes by itself when a network returns
+    bool IsStandbyMode() const {
         return m_running.load(std::memory_order_acquire) &&
-               m_networkMode.load(std::memory_order_acquire) == NetworkMode::Localhost;
+               m_networkMode.load(std::memory_order_acquire) == NetworkMode::Standby;
     }
-    // true once per network restoration while in localhost mode then clears itself
-    bool ConsumeNetworkRestored() { return m_networkRestored.exchange(false, std::memory_order_acq_rel); }
     std::wstring GetEndpoint() const;
     std::vector<NetworkEndpoint> GetEndpoints() const;
     void RefreshEndpoints(const ConfigSnapshot& cfg);
@@ -60,6 +59,7 @@ private:
     void StopNetworkChangeWatcher();
     void StartDirectoryWatcher();
     void StopDirectoryWatcher();
+    void TryLeaveStandby();
     void TriggerAutoRescanIfEnabled();
     std::vector<std::wstring> LocalWatchFolders() const;
 
@@ -89,8 +89,6 @@ private:
     std::atomic<bool> m_stopWatch;
     std::atomic<bool> m_directoryWatchActive{false};
     std::atomic<NetworkMode> m_networkMode{NetworkMode::Normal};
-    std::atomic<bool> m_networkRestored{false};
-    std::atomic<bool> m_networkRestoredAnnounced{false};
 };
 
 #define DLNAServer Server::Get()

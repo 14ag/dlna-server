@@ -598,21 +598,13 @@ bool MainWindow::IsShowingOverrideSources() const {
 }
 
 void MainWindow::PollNetworkMode() {
-    const bool localhostNow = DLNAServer.IsLocalhostMode();
-    if (localhostNow != m_lastLocalhostMode) {
-        m_lastLocalhostMode = localhostNow;
-        // status band text is painted in wm paint
-        InvalidateRect(m_hwnd, NULL, TRUE);
-        if (localhostNow) {
-            MessageBoxW(m_hwnd, NetworkLostGuiText(), L"DLNA Server", MB_ICONWARNING | MB_OK);
-        }
-    }
-    if (IsRunning() && !IsBusy() && DLNAServer.ConsumeNetworkRestored()) {
-        const int answer = MessageBoxW(m_hwnd, NetworkRestoredGuiText(), L"DLNA Server",
-                                       MB_ICONINFORMATION | MB_YESNO | MB_DEFBUTTON2);
-        if (answer == IDYES && IsRunning() && !IsBusy()) {
-            BeginRestartServer();
-        }
+    const bool standbyNow = DLNAServer.IsStandbyMode();
+    if (standbyNow == m_lastStandbyMode) return;
+    m_lastStandbyMode = standbyNow;
+    // status band text is painted in wm paint
+    InvalidateRect(m_hwnd, NULL, TRUE);
+    if (standbyNow) {
+        MessageBoxW(m_hwnd, StandbyEnteredGuiText(), L"DLNA Server", MB_ICONINFORMATION | MB_OK);
     }
 }
 
@@ -1240,7 +1232,7 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         const std::wstring statusText = StatusTextFor(m_state,
             m_scanningStatusActive || (IsRunning() && DLNAServer.IsInitialScanInProgress()),
             AppConfig.HasRuntimeSourceOverride(),
-            DLNAServer.IsLocalhostMode());
+            DLNAServer.IsStandbyMode());
         DrawTextW(hdc, statusText.c_str(), -1, &rcStatusText, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
         if (SendMessage(m_hListSources, LB_GETCOUNT, 0, 0) == 0) {

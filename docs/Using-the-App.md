@@ -23,9 +23,9 @@ The line under the toolbar shows the state:
 | `starting server...` / `stopping server...` | A start or stop is in progress. |
 | `scanning...` | A scan is running. |
 | `Server running` | The server is running and no scan is active. |
-| `Server running (localhost mode)` | The server runs, but it has no usable network address. Only this computer can reach it. Players cannot find it. |
+| `Standby (waiting for network)` | The server runs with no usable network address. SSDP is stopped, so players cannot find it. It resumes by itself when the network returns. |
 | `temporary source` | The server runs with sources from the command line, not from `config.ini`. |
-| `temporary source (localhost mode)` | Same as `temporary source`, but the server is in localhost mode. |
+| `temporary source (standby)` | Same as `temporary source`, but the server has no usable network address and is in standby. |
 
 An empty list shows: *Please add shared folders or files with Add.*
 
@@ -96,10 +96,10 @@ The app puts an icon in the notification area.
 
 The app watches the network. Both windows react in the same way.
 
-- **The last network address goes away.** A warning box says: *Network connection lost. The server is now in localhost mode and can only be reached from this computer.* The status line adds `(localhost mode)`.
-- **A network address comes back.** A question box says: *Network connection restored. A server restart is needed to make the server visible to other devices again. Restart server now?* Choose **Yes** to restart the server. Choose **No** to stay in localhost mode.
+- **The last network address goes away.** One information box says: *Network connection lost. The server is in standby and will resume by itself when the network returns.* The status line reads `Standby (waiting for network)`.
+- **A network address comes back.** No prompt appears. The server rejoins the network by itself: SSDP advertises again and the status line reads `Server running`.
 
-The Linux `dlna-server` command shows nothing unless **Debug log** is on. With **Debug log** on, it prints `warning: network connection lost, switching to localhost mode` when the network goes away. It prints `network connection restored, run the same command again to restart in normal mode` when the network returns.
+The Linux `dlna-server` command shows nothing unless **Debug log** is on. With **Debug log** on, it prints `warning: network connection lost, waiting in standby` when the network goes away. It prints nothing special when the network returns.
 
 See [Troubleshooting](Troubleshooting.md#only-this-computer-can-reach-the-server).
 

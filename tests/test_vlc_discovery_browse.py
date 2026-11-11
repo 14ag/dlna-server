@@ -512,9 +512,20 @@ def ssdp_responses(dlna_server_endpoint):
     matching how a real control point degrades on such a network.
     """
     host = dlna_server_endpoint.split(":")[0]
-    responses = discover_via_multicast(search_target=SSDP_SEARCH_TARGET)
-    if not responses:
-        responses = discover_via_multicast(search_target="ssdp:all")
+    responses = []
+    for _ in range(6):
+        responses = discover_via_multicast(search_target=SSDP_SEARCH_TARGET)
+        if not responses:
+            responses = discover_via_multicast(search_target="ssdp:all")
+        # a foreign upnp device may answer while this server response is delayed
+        # require a mediaserver response before accepting the discovery result
+        if not any("mediaserver" in (r.st or "").lower() for r in responses):
+            responses = discover_via_unicast(server_host=host, search_target=SSDP_SEARCH_TARGET)
+        if any("mediaserver" in (r.st or "").lower() for r in responses):
+            break
+        time.sleep(3)
+    if not any("mediaserver" in (r.st or "").lower() for r in responses):
+        responses = []
     if not responses:
         responses = discover_via_unicast(server_host=host, search_target=SSDP_SEARCH_TARGET)
     if not responses:

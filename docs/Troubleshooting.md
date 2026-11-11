@@ -12,7 +12,7 @@ Each entry lists the symptom, the likely cause, and what to do. Turn on **Debug 
 | Wrong adapter | The app skips adapters that look virtual (VPN, Docker, Hyper-V, WSL, VirtualBox, VMware) unless they have a default gateway. | Set `NetworkInterfaceAllowList` in `config.ini`. See [Configuration](Configuration.md#network-adapters). |
 | IP whitelist | A whitelist blocks all other addresses with `403`. | Clear **IP whitelist** or add the player's address. Log line: `Blocked connection from <address>`. |
 | Port in use | Another program holds the HTTP port. | Pick another port in Settings. Log line: `Failed to start HTTP server on port N`. |
-| Status line says `localhost mode` | The server found no usable network address. It does not advertise. | Connect to a network, then restart the server. See [Only this computer can reach the server](#only-this-computer-can-reach-the-server). |
+| Status line says `Standby (waiting for network)` | The server found no usable network address. It does not advertise. | Connect to a network. The server resumes by itself. See [The server waits in standby](#the-server-waits-in-standby). |
 | Player sleeps or joined late | Players that missed the start messages wait for the next one. | Wait up to 6 minutes, or press **Stop** then **Start**. The server repeats its announcement every 4 to 6 minutes. |
 
 ### Log lines that help
@@ -20,30 +20,31 @@ Each entry lists the symptom, the likely cause, and what to do. Turn on **Debug 
 | Log line | Meaning |
 |---|---|
 | `SSDP IPv4 multicast join failed` / `SSDP multicast join failed on all endpoints` | The operating system refused multicast on that adapter. Discovery will not work there. |
-| `No active network endpoint found; starting in localhost mode.` | No usable adapter or address was found when the server started. The server runs in localhost mode. See [Only this computer can reach the server](#only-this-computer-can-reach-the-server). |
-| `Network lost; switching to localhost mode.` | The last usable address went away while the server ran. SSDP stops. The HTTP server keeps running. |
-| `Network restored; restart the server to leave localhost mode.` | A usable address is back. Restart the server to advertise again. |
+| `No active network endpoint found; starting in standby.` | No usable adapter or address was found when the server started. The server waits in standby. See [The server waits in standby](#the-server-waits-in-standby). |
+| `Network lost; entering standby.` | The last usable address went away while the server ran. SSDP stops. The HTTP server keeps running. |
+| `Network restored; standby ended.` | A usable address is back. SSDP advertises again with a higher boot id. |
 | `Discovery endpoint selected: ...` | Debug only. Shows every address that is advertised. |
 | `SSDP search ignored: ...` | Debug only. A search arrived but did not match, so no answer was sent. |
 | `Network topology change detected; refreshing endpoints` | The network changed. The server re-announces if the address list changed. |
 
-## Only this computer can reach the server
+## The server waits in standby
 
-The status line shows `Server running (localhost mode)`. This is localhost mode. It starts when the server finds no usable network address. It also starts when the last address goes away while the server runs.
+The status line shows `Standby (waiting for network)`. This is standby mode. It starts when the server finds no usable network address. It also starts when the last address goes away while the server runs.
 
-In localhost mode:
+In standby mode:
 
 - The server does not advertise itself. SSDP is stopped, so players cannot find it.
-- When the server starts in this mode, the HTTP server listens on the loopback addresses only (`127.0.0.1` and `::1`). Only this computer can open it.
+- The HTTP server keeps listening on all addresses. It opens no SSDP sockets.
+- The app shows one information box when standby begins.
 - The server keeps running. The app does not stop it.
 
-How to leave localhost mode:
+How to leave standby mode:
 
 1. Connect the computer to a network.
-2. The app shows a message that the network is back. Choose **Yes** on *Restart server now?* Or press **Stop** and then **Start**.
-3. On Linux, the `dlna-server` command prints the same hint when **Debug log** is on. Run the same command again.
+2. The server rejoins by itself within a few seconds. SSDP advertises again and the status line reads `Server running`.
+3. On Linux, with **Debug log** on, the `dlna-server` command prints `warning: network connection lost, waiting in standby` when standby begins.
 
-Check `NetworkInterfaceAllowList` if the network is up but the server stays in localhost mode. A wrong name there hides every adapter.
+Check `NetworkInterfaceAllowList` if the network is up but the server stays in standby. A wrong name there hides every adapter.
 
 ## The server does not start
 

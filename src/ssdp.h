@@ -39,7 +39,9 @@ class SSDP {
 public:
     static SSDP& Get();
 
-    bool Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid);
+    // isRejoin is true when the device returns to the network after standby
+    // UPnP Device Architecture 1 1 requires the boot id to increase then
+    bool Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid, bool isRejoin = false);
     void Stop();
     // true only while the search and notify worker thread that Start
     // launched is still executing mirrors HttpServer IsHealthy exactly
@@ -109,8 +111,8 @@ private:
     }
     std::string m_uuidStr;
     std::vector<SSDPTarget> m_targets;
-    unsigned int m_bootId;
-    unsigned int m_configId;
+    unsigned int m_bootId = 0;
+    unsigned int m_configId = 0;
     // true once m_bootId has been assigned for this process lifetime
     // BOOTID.UPNP.ORG must not change on a restart that is not a
     // genuine device reboot per UPnP Device Architecture 1 1 section

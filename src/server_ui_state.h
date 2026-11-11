@@ -18,14 +18,14 @@ inline bool ShouldJoinWorkerForResult(ServerUiState state) {
 
 // text for the status band shared by every front end
 // scanning wins over the server state because a scan can run while stopped
-inline const wchar_t* StatusTextFor(ServerUiState state, bool scanning, bool temporarySource, bool localhostMode = false) {
+inline const wchar_t* StatusTextFor(ServerUiState state, bool scanning, bool temporarySource, bool standbyMode = false) {
     if (scanning) return L"scanning...";
     switch (state) {
     case ServerUiState::Starting: return L"starting server...";
     case ServerUiState::Stopping: return L"stopping server...";
     case ServerUiState::Running:
-        if (temporarySource) return localhostMode ? L"temporary source (localhost mode)" : L"temporary source";
-        return localhostMode ? L"Server running (localhost mode)" : L"Server running";
+        if (temporarySource) return standbyMode ? L"temporary source (standby)" : L"temporary source";
+        return standbyMode ? L"Standby (waiting for network)" : L"Server running";
     case ServerUiState::Stopped: break;
     }
     return L"";

@@ -1857,7 +1857,7 @@ void RefreshStatus() {
         g_scanInProgress.load() ||
         DLNAServer.IsInitialScanInProgress();
     gtk_label_set_text(GTK_LABEL(g_status),
-        WideToUtf8(StatusTextFor(g_state, scanBusy, AppConfig.HasRuntimeSourceOverride(), DLNAServer.IsLocalhostMode())).c_str());
+        WideToUtf8(StatusTextFor(g_state, scanBusy, AppConfig.HasRuntimeSourceOverride(), DLNAServer.IsStandbyMode())).c_str());
 
     const bool transition =
         g_state == ServerUiState::Starting ||
@@ -2311,25 +2311,20 @@ gboolean OnPollTick(gpointer) {
     static ServerUiState lastState = ServerUiState::Stopped;
     static bool lastScanBusy = false;
     static bool lastOverride = false;
-    static bool lastLocalhost = false;
+    static bool lastStandby = false;
     const bool scanBusyNow = g_scanInProgress.load() || DLNAServer.IsInitialScanInProgress();
     const bool overrideNow = AppConfig.HasRuntimeSourceOverride();
-    const bool localhostNow = DLNAServer.IsLocalhostMode();
+    const bool standbyNow = DLNAServer.IsStandbyMode();
     if (g_state != lastState || scanBusyNow != lastScanBusy || overrideNow != lastOverride ||
-        localhostNow != lastLocalhost) {
-        const bool enteredLocalhost = localhostNow && !lastLocalhost;
+        standbyNow != lastStandby) {
+        const bool enteredStandby = standbyNow && !lastStandby;
         lastState = g_state;
         lastScanBusy = scanBusyNow;
         lastOverride = overrideNow;
-        lastLocalhost = localhostNow;
+        lastStandby = standbyNow;
         RefreshStatus();
-        if (enteredLocalhost && !g_closePending.IsPending()) {
-            MessageBoxShow(ActiveTopLevelWindow(), WideToUtf8(NetworkLostGuiText()));
-        }
-    }
-    if (g_state == ServerUiState::Running && !g_closePending.IsPending() && DLNAServer.ConsumeNetworkRestored()) {
-        if (MessageBoxQuestion(ActiveTopLevelWindow(), WideToUtf8(NetworkRestoredGuiText()))) {
-            RestartServer();
+        if (enteredStandby && !g_closePending.IsPending()) {
+            MessageBoxShow(ActiveTopLevelWindow(), WideToUtf8(StandbyEnteredGuiText()));
         }
     }
     if (g_mainWindow != nullptr && gtk_widget_get_visible(GTK_WIDGET(g_mainWindow))) {

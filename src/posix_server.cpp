@@ -60,13 +60,10 @@ bool Server::Start(std::wstring& outReason) {
     std::vector<NetworkEndpoint> endpoints = GetEndpoints();
     const NetworkMode startMode = DecideStartMode(endpoints.size());
     m_networkMode.store(startMode, std::memory_order_release);
-    m_networkRestored.store(false, std::memory_order_release);
-    m_networkRestoredAnnounced.store(false, std::memory_order_release);
 
     std::wstring endpointText;
-    if (startMode == NetworkMode::Localhost) {
-        LogPrint(L"No active network endpoint found; starting in localhost mode.");
-        endpointText = LocalhostEndpointText(cfg.port);
+    if (startMode == NetworkMode::Standby) {
+        LogPrint(L"No active network endpoint found; starting in standby.");
     } else {
         const NetworkEndpoint* displayEndpoint = SelectBestEndpoint(endpoints, nullptr);
         endpointText = Utf8ToWide(displayEndpoint->host + ":" + std::to_string(cfg.port));
@@ -98,7 +95,7 @@ bool Server::Start(std::wstring& outReason) {
         m_initialScanInProgress.store(true, std::memory_order_release);
     }
 
-    if (!HttpServer::Get().Start(cfg.port, startMode == NetworkMode::Localhost)) {
+    if (!HttpServer::Get().Start(cfg.port)) {
         LogPrint(L"Failed to start HTTP server.");
         outReason = L"Failed to start HTTP server on port " + std::to_wstring(cfg.port);
         m_initialScanInProgress.store(false, std::memory_order_release);
@@ -131,6 +128,6 @@ bool Server::Start(std::wstring& outReason) {
     });
     StartNetworkChangeWatcher();
     StartDirectoryWatcher();
-    LogPrint(L"DLNA server running on %ls", endpointText.c_str());
+    LogPrint(L"DLNA server running on %ls", endpointText.empty() ? L"standby" : endpointText.c_str());
     return true;
 }

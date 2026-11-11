@@ -93,4 +93,10 @@ if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
 fi
 
 # stderr of the gui goes to the launch log because the gui detaches from the terminal
-exec "$native_gui" "$@" 2>>"$log_file"
+# a desktop entry launch already runs inside a session bus
+if [ "${DLNA_SERVER_GTK_LAUNCHED:-}" = "1" ]; then
+    exec "$native_gui" "$@" 2>>"$log_file"
+fi
+
+# a direct terminal launch gets its own private session bus
+exec dbus-run-session -- "$native_gui" "$@" 2>>"$log_file"

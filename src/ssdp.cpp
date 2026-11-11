@@ -90,7 +90,7 @@ SSDP::SSDP()
       m_ipv6Socket(INVALID_SOCKET) {
 }
 
-bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid) {
+bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid, bool isRejoin) {
     bool expectedIdle = false;
     if (!m_lifecycleBusy.compare_exchange_strong(expectedIdle, true, std::memory_order_acq_rel)) {
         LogPrint(L"SSDP Start rejected: a Start or Stop call is already in progress.");
@@ -112,6 +112,10 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     if (!m_bootIdAssigned) {
         m_bootId = static_cast<unsigned int>(time(nullptr));
         m_bootIdAssigned = true;
+    } else if (isRejoin) {
+        // rejoining the network after standby so the boot id must increase
+        const unsigned int nowSeconds = static_cast<unsigned int>(time(nullptr));
+        m_bootId = (std::max)(nowSeconds, m_bootId + 1);
     }
     // CONFIGID.UPNP.ORG stays fixed across every restart in this
     // process this server's description.xml and SCPD documents never

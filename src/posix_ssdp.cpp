@@ -212,7 +212,7 @@ SSDP& SSDP::Get() {
 SSDP::SSDP() : m_running(false), m_ipv4Socket(-1), m_ipv6Socket(-1) {
 }
 
-bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid) {
+bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const std::wstring& serverName, const std::wstring& uuid, bool isRejoin) {
     (void)port;
     (void)serverName;
     bool expectedIdle = false;
@@ -235,6 +235,10 @@ bool SSDP::Start(const std::vector<NetworkEndpoint>& endpoints, int port, const 
     if (!m_bootIdAssigned) {
         m_bootId = static_cast<unsigned int>(time(nullptr));
         m_bootIdAssigned = true;
+    } else if (isRejoin) {
+        // rejoining the network after standby so the boot id must increase
+        const unsigned int nowSeconds = static_cast<unsigned int>(time(nullptr));
+        m_bootId = (std::max)(nowSeconds, m_bootId + 1);
     }
     // CONFIGID.UPNP.ORG stays fixed across every restart in this
     // process this server's description.xml and SCPD documents never

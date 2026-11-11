@@ -93,13 +93,10 @@ bool Server::Start(std::wstring& outReason) {
     std::vector<NetworkEndpoint> endpoints = GetEndpoints();
     const NetworkMode startMode = DecideStartMode(endpoints.size());
     m_networkMode.store(startMode, std::memory_order_release);
-    m_networkRestored.store(false, std::memory_order_release);
-    m_networkRestoredAnnounced.store(false, std::memory_order_release);
 
     std::wstring endpointText;
-    if (startMode == NetworkMode::Localhost) {
-        LogPrint(L"No active network endpoint found; starting in localhost mode.");
-        endpointText = LocalhostEndpointText(cfg.port);
+    if (startMode == NetworkMode::Standby) {
+        LogPrint(L"No active network endpoint found; starting in standby.");
     } else {
         const NetworkEndpoint* displayEndpoint = NULL;
         for (const auto& endpoint : endpoints) {
@@ -117,7 +114,7 @@ bool Server::Start(std::wstring& outReason) {
         std::lock_guard<std::mutex> lock(m_endpointMutex);
         m_endpoint = endpointText;
     }
-    LogPrint(L"Starting server on %ls", endpointText.c_str());
+    LogPrint(L"Starting server on %ls", endpointText.empty() ? L"standby" : endpointText.c_str());
 
     // Initialize the content directory before starting the HTTP/SSDP layers
     // so the root container exists and the scan-in-progress flag is set
@@ -142,7 +139,7 @@ bool Server::Start(std::wstring& outReason) {
         m_initialScanInProgress.store(true, std::memory_order_release);
     }
 
-    if (!HttpServer::Get().Start(cfg.port, startMode == NetworkMode::Localhost)) {
+    if (!HttpServer::Get().Start(cfg.port)) {
         LogPrint(L"Failed to start HTTP server.");
         outReason = L"Failed to start HTTP server on port " + std::to_wstring(cfg.port);
         m_initialScanInProgress.store(false, std::memory_order_release);

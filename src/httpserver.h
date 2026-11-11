@@ -20,7 +20,7 @@ class HttpServer {
 public:
     static HttpServer& Get();
 
-    bool Start(int port, bool localhostOnly = false);
+    bool Start(int port);
     void Stop();
     // true only while the accept loop that Start launched is still
     // executing false the instant that loop returns for any reason
