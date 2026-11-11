@@ -105,7 +105,7 @@ posix-full-suite-log.txt
 /CPack*.cmake
 /_CPack_Packages/
 /packaging/flatpak/*.stamped.yml
-/remoteaccess
+.worktrees/*
 
 
 # whitelist
@@ -115,4 +115,3 @@ posix-full-suite-log.txt
 !identity.env
 review-diff-rest.txt
 review-diff-tests.txt
-.worktrees/origin-main
