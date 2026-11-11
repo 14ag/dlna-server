@@ -75,6 +75,9 @@ vlc-help.txt
 *.log
 *.bak
 
+# Docker media bind mount
+/media/
+
 # Personal/AI specific
 .antigravity/
 .gemini/
@@ -102,7 +105,7 @@ posix-full-suite-log.txt
 /CPack*.cmake
 /_CPack_Packages/
 /packaging/flatpak/*.stamped.yml
-/remoteaccess
+.worktrees/*
 
 
 # whitelist

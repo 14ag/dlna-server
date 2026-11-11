@@ -2,9 +2,7 @@
 
 # DLNA Server
 
-[![Version](https://img.shields.io/badge/Version-1.7.0-blue.svg)](https://github.com/14ag/dlna-server/releases)
-![GitHub top language](https://img.shields.io/github/languages/top/14ag/dlna-server)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey.svg)](https://github.com/14ag/dlna-server/releases)
 
 # dlna-server
 
@@ -15,6 +13,7 @@ The app finds your files, then plays them on any device that supports DLNA or UP
 ## Features
 
 - Works on Windows 10 or later (x64 and x86) and on Linux.
+- Runs as a Linux container on Linux, or through Docker Desktop on Windows and macOS.
 - Has a window with a tray icon. Also runs without a window (`--headless` on Windows, the `dlna-server` command on Linux).
 - Shares local folders, single files and playlists. Also shares FTP and FTPS folders, and HTTP or HTTPS playlists.
 - Plays `.m3u`, `.m3u8` and `.pls` playlists, and HLS streams.
@@ -39,6 +38,7 @@ Download a file from the [releases page](https://github.com/14ag/dlna-server/rel
 | Debian or Ubuntu | `.deb` | `sudo apt install ./<file>.deb` |
 | Any Linux (x86_64) | `.AppImage` | `chmod +x <file>.AppImage`, then run it. |
 | Any Linux with Flatpak | `.flatpak` | `flatpak install --user <file>.flatpak` |
+| Docker (Linux container) | `Dockerfile` | `docker compose up -d --build`. See [Docker](docs/Docker.md). |
 
 ## Quick start
 
@@ -70,6 +70,15 @@ dlna-server.exe --kill-server
 ```
 
 Paths you give on the command line are used for this run only. They are not saved.
+
+### Docker
+
+```bash
+mkdir -p media
+docker compose up -d --build
+```
+
+The container needs host networking for SSDP discovery. See [Docker](docs/Docker.md) for settings, security and Docker Desktop limits.
 
 ## Settings
 

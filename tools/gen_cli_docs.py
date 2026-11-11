@@ -9,6 +9,7 @@ FILE_VALUE_OPTIONS = {"--source"}
 CLI_BEHAVIOR = [
     'Without --debug the server detaches to the background once it is up, prints "server is up" and exits with status 0.',
     "With --debug the process stays in the foreground, prints the log to the terminal and stops on Ctrl+C.",
+    "With --foreground the process stays in the foreground without enabling debug logging. Use it in Docker or under a service manager.",
     "Running the command again while an instance is running restarts that instance with the new arguments.",
     "Sources given with --source or as plain paths last for the session only. The values of --port, --name, --uuid and --debug are saved to the configuration file.",
 ]

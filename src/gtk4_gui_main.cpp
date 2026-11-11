@@ -3253,6 +3253,8 @@ int main(int argc, char** argv) {
             } else {
                 for (auto& p : parsed) runtimeSources.push_back(p);
             }
+        } else if (arg == "--foreground") {
+            // The GUI never detaches; accept the shared POSIX help entry.
         } else if (arg == "--no-debug") {
             AppConfig.Mutate([](Config& cfg) { cfg.debugLog = false; });
         } else if (arg == "--help") {
