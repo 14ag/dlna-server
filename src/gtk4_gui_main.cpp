@@ -3215,6 +3215,7 @@ int main(int argc, char** argv) {
 
     bool killServer = false;
     bool explicitHeadless = false;
+    bool foregroundRequested = g_strcmp0(g_getenv("DLNA_SERVER_FOREGROUND"), "1") == 0;
     std::vector<std::wstring> runtimeSources;
     bool wroteConfigOverride = false;
     for (int i = 1; i < argc; ++i) {
@@ -3249,7 +3250,7 @@ int main(int argc, char** argv) {
                 for (auto& p : parsed) runtimeSources.push_back(p);
             }
         } else if (arg == "--foreground") {
-            // The GUI never detaches; accept the shared POSIX help entry.
+            foregroundRequested = true;
         } else if (arg == "--no-debug") {
             AppConfig.Mutate([](Config& cfg) { cfg.debugLog = false; });
         } else if (arg == "--help") {
@@ -3334,7 +3335,8 @@ int main(int argc, char** argv) {
         g_printCloseWithContextMenuOpen || g_printPlaylistAddSensitivity ||
         g_printCloseWhileStarting || g_printCloseWhileStartingFails || g_printToolbarAccessKeys;
     // the gui never holds the terminal
-    if (ShouldDetachToBackground(false, anyTestHook || sawTestOnlyFlag)) {
+    if (ShouldDetachToBackground(false, anyTestHook || sawTestOnlyFlag,
+                                 foregroundRequested)) {
         DetachToBackgroundOrPrintReady(nullptr);
     }
     if (!anyTestHook) {
