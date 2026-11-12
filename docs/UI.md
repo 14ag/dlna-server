@@ -94,3 +94,7 @@ If the window sends the full id with dots, WSLg finds no
 entry and the taskbar shows a generic icon. The Start Menu
 icon still works because it uses the desktop file channel.
 
+## Linux AppImage test launch
+
+During Linux AppImage tests, the GUI stays attached to the process watched by the test worker. This lets the worker see the live window and finish its startup check. Normal app launches keep their current background behavior. See `DLNA_SERVER_FOREGROUND` and `ShouldDetachToBackground` in [src/gtk4_gui_main.cpp](../src/gtk4_gui_main.cpp), and the test setting in [tools/test.yml](../tools/test.yml).
+
